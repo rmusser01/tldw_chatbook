@@ -23,6 +23,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual import events
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, Static, TextArea
@@ -126,7 +130,7 @@ def _two_row_state_no_blocked(*, sort: str = "name") -> SkillsListState:
     )
 
 
-class _CanvasHost(App):
+class _CanvasHost(ConsolidatedCSSApp):
     def __init__(self, state: SkillsListState | None, **kwargs: Any) -> None:  # type: ignore[valid-type]
         super().__init__()
         self._state = state
@@ -356,7 +360,7 @@ def _editor_state(
     )
 
 
-class _EditorHost(App):
+class _EditorHost(ConsolidatedCSSApp):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
         self._kwargs = kwargs
@@ -2041,7 +2045,7 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
     takes purpose copy overrides."""
     from tldw_chatbook.UI.Screens.skills_screen import SkillTrustPassphraseModal
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     app = _Host()

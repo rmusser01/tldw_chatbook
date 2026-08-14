@@ -4,6 +4,10 @@ import pytest
 
 from textual.app import App, ComposeResult
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
     MAX_CONSOLE_BACKGROUND_FPS,
@@ -20,7 +24,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 
 
-class EffectHarness(App[None]):
+class EffectHarness(ConsolidatedCSSApp):
     def __init__(self, settings: ConsoleBackgroundEffectSettings) -> None:
         super().__init__()
         self.settings = settings
@@ -29,7 +33,7 @@ class EffectHarness(App[None]):
         yield ConsoleBackgroundEffect(self.settings, id="console-background-effect")
 
 
-class SurfaceHarness(App[None]):
+class SurfaceHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscriptSurface(
             ConsoleBackgroundEffectSettings(enabled=True, effect="rain", fps=6),

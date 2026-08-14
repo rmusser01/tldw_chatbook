@@ -9,6 +9,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -88,7 +92,7 @@ async def _wait_for_widget_text(
 async def test_loading_surfaces_keep_unicode_copy_and_notes_sync_hook() -> None:
     """Canvas-owned loading views retain their user-facing glyphs and copy."""
 
-    class LoadingCanvasApp(App[None]):
+    class LoadingCanvasApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LibraryNotesCanvas(mode="loading", id="notes")
             yield LibraryPromptsListCanvas(mode="loading", id="prompts")

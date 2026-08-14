@@ -118,7 +118,7 @@ class MainNavigationBar(Container):
     Replaces the tab-based navigation with screen-based navigation.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MainNavigationBar {
         height: 3;
         min-height: 3;

@@ -10,6 +10,10 @@ anchor guarantee the old TextArea-splitting approach could not make.
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
@@ -19,7 +23,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 pytestmark = pytest.mark.asyncio
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasCharacterEditorWidget()
 
@@ -66,7 +70,7 @@ async def test_greetings_edit_textarea_does_not_mark_dirty_on_selection():
     must not flip the editor dirty (it isn't a persisted field by itself)."""
     dirty_events = []
 
-    class CaptureApp(App):
+    class CaptureApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield PersonasCharacterEditorWidget()
 

@@ -1671,7 +1671,7 @@ class ChatScreen(BaseAppScreen):
     # never obscures, or swallows clicks aimed at, the composer's controls.
     # Kept in DEFAULT_CSS (not the bundle) so it applies in both the real app
     # and test harnesses, which load widget DEFAULT_CSS but not the built bundle.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ChatScreen ToastRack {
         dock: top;
         align: right top;

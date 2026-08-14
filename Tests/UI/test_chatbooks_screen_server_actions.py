@@ -1,6 +1,10 @@
 import pytest
 
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Grid
 from textual.widgets import Button, Input, ListView, Static
 
@@ -19,7 +23,7 @@ async def test_chatbooks_screen_uses_improved_window(monkeypatch):
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksScreenApp(App):
+    class ChatbooksScreenApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksScreen(self)
 
@@ -40,7 +44,7 @@ async def test_chatbooks_empty_state_explains_portable_context_and_escape(monkey
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksScreenApp(App):
+    class ChatbooksScreenApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksScreen(self)
 
@@ -79,7 +83,7 @@ async def test_improved_window_exposes_server_action_cards(monkeypatch):
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -97,7 +101,7 @@ async def test_chatbooks_view_toggles_explain_grid_and_list_modes(monkeypatch):
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -145,7 +149,7 @@ async def test_update_content_renders_multiple_chatbooks_grid_view_without_mount
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -195,7 +199,7 @@ async def test_update_content_renders_multiple_chatbooks_list_view_without_mount
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -220,7 +224,7 @@ async def test_server_create_action_uses_server_mode(monkeypatch):
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -245,7 +249,7 @@ async def test_server_import_action_uses_server_mode(monkeypatch):
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
@@ -301,7 +305,7 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
 
     monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
 
-    class ChatbooksWindowApp(App):
+    class ChatbooksWindowApp(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 

@@ -22,6 +22,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleToolsChip,
 )
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 _CSS = (
     Path(__file__).resolve().parents[2]
     / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
@@ -223,7 +227,7 @@ async def test_changing_the_query_unstages_a_pending_pick():
         ConsoleCharacterOption(2, "Zara"),
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         pass
 
     app = _Host()

@@ -240,7 +240,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
     # never require the mouse to back out of. No-op when unarmed.
     BINDINGS = [Binding("escape", "disarm_delete", "Cancel delete", show=False)]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPServersMode {
         width: 1fr;
         height: 100%;

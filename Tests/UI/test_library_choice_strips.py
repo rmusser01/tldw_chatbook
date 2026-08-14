@@ -25,6 +25,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -144,7 +148,7 @@ async def test_prompts_collection_control_is_a_chooser_not_a_cycler():
         collection_label="All prompts",
     )
 
-    class Host(App):
+    class Host(ConsolidatedCSSApp):
         def compose(self):
             yield canvas
 
@@ -565,7 +569,7 @@ async def test_prompts_canvas_composes_sort_strip_when_visible():
         sort_choices_visible=True,
     )
 
-    class Host(App):
+    class Host(ConsolidatedCSSApp):
         def compose(self):
             yield canvas
 

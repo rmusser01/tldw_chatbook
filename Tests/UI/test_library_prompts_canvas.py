@@ -34,6 +34,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from loguru import logger
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
 
@@ -267,7 +271,7 @@ def _browse_result(
     )
 
 
-class _CanvasHost(App):
+class _CanvasHost(ConsolidatedCSSApp):
     def __init__(self, state: PromptsListState | None, **kwargs: Any) -> None:  # type: ignore[valid-type]
         super().__init__()
         self._state = state

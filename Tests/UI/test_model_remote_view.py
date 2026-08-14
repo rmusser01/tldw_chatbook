@@ -29,6 +29,10 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
@@ -247,7 +251,7 @@ def _catalog(*, license_id: str = "apache-2.0"):
     return build_remote_catalog(resolved, resolved.candidates[0])
 
 
-class _RemoteApp(App):
+class _RemoteApp(ConsolidatedCSSApp):
     def __init__(self, view) -> None:
         self.view = view
         super().__init__()
@@ -720,7 +724,7 @@ def _capturing_app(view) -> App:
     """Build an App that captures ``RemoteView.InstallRequested`` events."""
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
-    class _App(App):
+    class _App(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.view = view
             self.requests: list = []

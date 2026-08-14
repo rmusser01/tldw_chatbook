@@ -78,8 +78,11 @@ class DictationPerformanceWidget(Widget):
         padding: 1;
     }
     
+    /* TASK-15450: `margin-bottom: 0.5` is not a valid Textual value (integers
+       only), and one invalid declaration fails the WHOLE stylesheet -- mounting
+       this widget raised StylesheetParseError. Removed rather than rounded: no
+       rule in this block has ever applied, so removal is the inert repair. */
     .session-item {
-        margin-bottom: 0.5;
         color: $text-muted;
     }
     

@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Markdown, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -157,7 +161,7 @@ def _painted_foreground_and_background(app: App, widget) -> tuple[object, object
 MIN_SPEAKER_CONTRAST = 4.5
 
 
-class TranscriptHarness(App):
+class TranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         transcript = ConsoleTranscript(id="console-native-transcript")
         transcript.set_messages(
@@ -173,17 +177,17 @@ class TranscriptHarness(App):
         yield transcript
 
 
-class EmptyTranscriptHarness(App):
+class EmptyTranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
 
 
-class MutableTranscriptHarness(App):
+class MutableTranscriptHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
 
 
-class StyledRoleplayTranscriptHarness(App):
+class StyledRoleplayTranscriptHarness(ConsolidatedCSSApp):
     CSS_PATH = str(_BUNDLE)
 
     def compose(self) -> ComposeResult:
@@ -531,7 +535,7 @@ def _generation_message(*, variant_count: int, message_id: str = "gen-1"):
     return message
 
 
-class GenerationActionRowHarness(App):
+class GenerationActionRowHarness(ConsolidatedCSSApp):
     """Mount one selected generation message, optionally pre-browsed.
 
     ``on_mount`` stamps ``_generation_browse`` directly onto ``self.screen``
@@ -558,7 +562,7 @@ class GenerationActionRowHarness(App):
         transcript.select_message(self._message.id)
 
 
-class SpeakActionRowHarness(App):
+class SpeakActionRowHarness(ConsolidatedCSSApp):
     """Mount one selected message, optionally marked as the Console TTS
     "speaking" message (task-559 unit 2).
 
@@ -587,7 +591,7 @@ class SpeakActionRowHarness(App):
         transcript.select_message(self._message.id)
 
 
-class SaveAsModalHarness(App):
+class SaveAsModalHarness(ConsolidatedCSSApp):
     def __init__(
         self, destinations: list[ConsoleSaveDestination] | None = None
     ) -> None:
@@ -1473,7 +1477,7 @@ async def test_save_as_modal_empty_state_names_the_temporary_chat_when_ephemeral
     say WHY (the chat is temporary) -- and the generic copy must still be
     the one shown otherwise (the control)."""
 
-    class _EphemeralSaveAsModalHarness(App):
+    class _EphemeralSaveAsModalHarness(ConsolidatedCSSApp):
         def on_mount(self) -> None:
             self.push_screen(
                 ConsoleSaveAsModal(

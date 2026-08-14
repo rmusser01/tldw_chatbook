@@ -114,7 +114,7 @@ class AppFooterStatus(Widget):
     # has no consumers): DEFAULT_CSS covers stylesheet-less harnesses; the
     # app bundle wins by origin in production. A bundle-only edit would
     # silently diverge harness geometry from production (task-264 review).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     AppFooterStatus {
         dock: bottom;
         height: 1;

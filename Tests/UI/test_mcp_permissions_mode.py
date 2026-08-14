@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, Static
 
 import tldw_chatbook
@@ -85,7 +89,7 @@ def _tool_row(
     )
 
 
-class PermissionsModeApp(App):
+class PermissionsModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -891,7 +895,7 @@ async def test_update_server_profiles_markup_safe():
 
 
 def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-table` the same
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-table` the same
     `height: auto; max-height: 70%;` discipline T7 (P3 UX batch) gave
     `#mcp-tools-table`/`#mcp-servers-table` -- so it hugs its own row count
     instead of ballooning to fill the canvas and stranding the
@@ -923,7 +927,7 @@ def test_perm_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """`MCPPermissionsMode.DEFAULT_CSS` gives `#mcp-perm-preview`
+    """`MCPPermissionsMode.BUNDLED_CSS` gives `#mcp-perm-preview`
     `height: auto;` so the policy-preview Static hugs its own (one- or
     two-sentence) content instead of competing with the matrix table above
     for the canvas's remaining space. Pins the matching bundle-layer copy
@@ -960,7 +964,7 @@ def test_perm_preview_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 # to 0x0 under the real app stylesheet's global widget rules) ---------------
 
 
-class PermissionsModeAppWithBundledCSS(App):
+class PermissionsModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Mirrors `ToolsModeAppWithBundledCSS` (test_mcp_tools_mode.py) --
     loads the real generated bundle as CSS_PATH so the matrix table and
     kill-switch row contest their actual CSS priority battle exactly as

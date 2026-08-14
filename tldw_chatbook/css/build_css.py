@@ -2,10 +2,50 @@
 """
 CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
+
+Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
+
+* ``tldw_cli_modular.tcss`` -- the app bundle, concatenated from ``CSS_MODULES``.
+* ``widget_defaults_{self,scoped}.tcss`` -- the class-level ``BUNDLED_CSS``
+  blocks, loaded by the app as two widget-defaults stylesheet sources in place
+  of one source per widget class.
+* ``screen_css_{self,scoped}.tcss`` -- the class-level ``BUNDLED_SCREEN_CSS``
+  blocks, loaded as app CSS either side of the bundle, in place of the source
+  Textual used to add (with a full cold reparse) on a modal's first open.
 """
 
+import sys
 from datetime import datetime
 from pathlib import Path
+
+try:
+    # Normal package import (tests, `python -m`) -- no global side effects.
+    from . import widget_css
+except ImportError:  # pragma: no cover - only when run as a bare script
+    # Direct script execution has no package context; add the sibling dir.
+    sys.path.insert(0, str(Path(__file__).parent))
+    import widget_css  # type: ignore[no-redef]
+
+#: Output filenames for the consolidated widget-defaults stylesheets.
+WIDGET_DEFAULTS_SELF_FILENAME = "widget_defaults_self.tcss"
+WIDGET_DEFAULTS_SCOPED_FILENAME = "widget_defaults_scoped.tcss"
+
+#: Output filenames for the consolidated screen/modal stylesheets.  These stay
+#: *separate stylesheet files* rather than being concatenated into the bundle:
+#: Textual accumulates ``$variable`` definitions per source, and a screen's CSS
+#: is its own source today, so several of these blocks carry local ``$ds-*``
+#: fallbacks ("so this CSS parses without the app bundle").  Concatenated into
+#: the bundle those fallbacks redefine the real design tokens for every rule
+#: after them -- measured: ``$ds-focus-bg`` went from ``#51677E`` to ``$surface``
+#: across the app.  As separate sources they stay local, exactly as today.
+SCREEN_CSS_SCOPED_FILENAME = "screen_css_scoped.tcss"
+SCREEN_CSS_SELF_FILENAME = "screen_css_self.tcss"
+
+#: Tie-breaker for the scoped widget-defaults source.  Textual's own default-CSS
+#: sources sit at ``-(MRO depth)``, so any value below that floor makes the
+#: scoped sheet lose every specificity tie -- which is exactly the set of ties
+#: it only entered by having its scope selector written out.
+SCOPED_DEFAULTS_TIE_BREAKER = -1_000_000
 
 # Define the order of imports (based on dependencies)
 CSS_MODULES = [
@@ -144,19 +184,16 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     combined_css = [header]
 
     for module in CSS_MODULES:
-        module_path = css_dir / module
-
         print(f"✓ Processing: {module}")
-        with open(module_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = (css_dir / module).read_text(encoding="utf-8")
 
-            # Add module separator
-            combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
-            combined_css.append(content)
+        # Add module separator
+        combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
+        combined_css.append(content)
 
-            # Ensure there's a newline at the end
-            if not content.endswith("\n"):
-                combined_css.append("\n")
+        # Ensure there's a newline at the end
+        if not content.endswith("\n"):
+            combined_css.append("\n")
 
     # Write the combined CSS
     with open(output_file, "w", encoding="utf-8") as f:
@@ -164,6 +201,125 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
     print(f"\n✅ CSS build complete: {output_file}")
     print(f"📏 Total size: {len(''.join(combined_css)):,} characters")
+
+
+def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
+    """Write the two consolidated widget-defaults stylesheets.
+
+    Every class-level ``BUNDLED_CSS`` block in the package is lifted here so the
+    app registers **two** widget-defaults stylesheet sources instead of one per
+    widget class (TASK-15450).
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        self_file: Output path for the self-selector stream.
+        scoped_file: Output path for the scope-prefixed stream.
+
+    Raises:
+        ValueError: If a ``BUNDLED_CSS`` declaration cannot be lifted.
+    """
+    blocks = widget_css.iter_blocks(css_dir.parent, widget_css.WIDGET_ATTR)
+    own, scoped = widget_css.render_stylesheets(
+        blocks,
+        "Widget DEFAULT_CSS (widget-defaults tier), lifted from Python sources",
+    )
+    self_file.write_text(own, encoding="utf-8")
+    scoped_file.write_text(scoped, encoding="utf-8")
+    print(f"\n✅ Widget defaults build complete: {self_file}, {scoped_file}")
+    print(f"📏 {len(blocks)} widget classes, {len(own):,} + {len(scoped):,} characters")
+
+
+def widget_defaults_sources(
+    css_dir: Path,
+) -> list[tuple[tuple[str, str], str, int, str]]:
+    """The consolidated widget-defaults sources, as ``_get_default_css`` wants them.
+
+    Shared by the real app and by test harnesses that mount a consolidated
+    widget, so both put these rules in the same cascade position. Each entry is
+    ``(location, css, tie_breaker, scope)``; prepend them to the stack returned
+    by ``super()._get_default_css()``.
+
+    The self stream keeps tie-breaker 0 -- the position each class's own
+    ``DEFAULT_CSS`` had. The scoped stream takes a tie-breaker below every other
+    default-CSS source, because writing its scope selector out costs it one
+    specificity point Textual's injected one did not, and it must therefore lose
+    the ties that shift created. See ``widget_css.py``.
+
+    Args:
+        css_dir: The package's ``css`` directory.
+
+    Returns:
+        The sources, self stream first. A sheet that cannot be read is skipped
+        rather than raising: an unstyled widget beats an app that will not boot.
+    """
+    sources: list[tuple[tuple[str, str], str, int, str]] = []
+    for filename, tie_breaker in (
+        (WIDGET_DEFAULTS_SELF_FILENAME, 0),
+        (WIDGET_DEFAULTS_SCOPED_FILENAME, SCOPED_DEFAULTS_TIE_BREAKER),
+    ):
+        path = css_dir / filename
+        try:
+            css = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        sources.append(((str(path), filename), css, tie_breaker, ""))
+    return sources
+
+
+def screen_css_paths(css_dir: Path) -> tuple[Path, Path]:
+    """The two screen/modal stylesheets, in cascade order.
+
+    Order is the whole point, so it lives here rather than at each call site.
+    The scope-prefixed sheet goes first (it must *lose* the specificity ties
+    that writing its scope selector out created) and the self sheet last (where
+    Textual appended a screen's class-level ``CSS`` on first open). The app
+    slots the bundle between them; a test harness that has no bundle just uses
+    the pair.
+
+    Args:
+        css_dir: The package's ``css`` directory.
+
+    Returns:
+        ``(scoped_first, self_last)``.
+    """
+    return (
+        css_dir / SCREEN_CSS_SCOPED_FILENAME,
+        css_dir / SCREEN_CSS_SELF_FILENAME,
+    )
+
+
+def build_screen_css(css_dir: Path, self_file: Path, scoped_file: Path) -> None:
+    """Write the two consolidated screen/modal stylesheets.
+
+    Every class-level ``BUNDLED_SCREEN_CSS`` block in the package is lifted here
+    so a modal's first open no longer adds a stylesheet source -- which forced a
+    full cold ``Stylesheet.reparse()`` and an app-wide restyle (TASK-15450).
+
+    Unlike the widget defaults, these keep Textual's *app-CSS* origin tier, so
+    the app loads them as ``CSS_PATH`` entries either side of the bundle.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        self_file: Output path for the self-selector stream.
+        scoped_file: Output path for the scope-prefixed stream.
+
+    Raises:
+        ValueError: If a ``BUNDLED_SCREEN_CSS`` declaration cannot be lifted.
+    """
+    blocks = widget_css.iter_blocks(css_dir.parent, widget_css.SCREEN_ATTR)
+    own, scoped = widget_css.render_stylesheets(
+        blocks,
+        "Screen/modal CSS (app-CSS tier), lifted from Python sources",
+        # These sheets are live from boot, where a screen's `CSS` only became
+        # live once that screen was first opened. Textual's last-selector-only
+        # scoping would therefore leak a modal's rules app-wide from startup, so
+        # every selector is scoped here rather than reproducing that quirk.
+        scope_every_selector=True,
+    )
+    self_file.write_text(own, encoding="utf-8")
+    scoped_file.write_text(scoped, encoding="utf-8")
+    print(f"\n✅ Screen CSS build complete: {self_file}, {scoped_file}")
+    print(f"📏 {len(blocks)} screen classes, {len(own):,} + {len(scoped):,} characters")
 
 
 def main():
@@ -176,6 +332,16 @@ def main():
 
     # Build the CSS
     build_css(css_dir, output_file)
+    build_widget_defaults(
+        css_dir,
+        css_dir / WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / WIDGET_DEFAULTS_SCOPED_FILENAME,
+    )
+    build_screen_css(
+        css_dir,
+        css_dir / SCREEN_CSS_SELF_FILENAME,
+        css_dir / SCREEN_CSS_SCOPED_FILENAME,
+    )
 
     print("\nTo use the modular CSS:")
     print("1. Update app.py to use 'tldw_cli_modular.tcss'")

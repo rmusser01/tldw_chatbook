@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
@@ -150,7 +154,7 @@ class FakeHubService:
         return {"ok": True}
 
 
-class WorkbenchApp(App):
+class WorkbenchApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = FakeHubService()
@@ -249,7 +253,7 @@ def _missing_env_record(profile_id: str) -> dict:
     }
 
 
-class ProblemRecordsApp(App):
+class ProblemRecordsApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict]) -> None:
         super().__init__()
         self.unified_mcp_service = ProblemRecordsService(records)
@@ -576,7 +580,7 @@ class MutationsAvailableHubService:
         return {"ok": True}
 
 
-class MutationsAvailableApp(App):
+class MutationsAvailableApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = MutationsAvailableHubService()
@@ -1364,7 +1368,7 @@ class ScopeTrackingHubService:
         return {"ok": True}
 
 
-class ScopeTrackingApp(App):
+class ScopeTrackingApp(ConsolidatedCSSApp):
     def __init__(self, *, selected_scope: str) -> None:
         super().__init__()
         self.unified_mcp_service = ScopeTrackingHubService(selected_scope=selected_scope)
@@ -1518,7 +1522,7 @@ class SecretLeakHubService:
         return {"ok": True}
 
 
-class SecretLeakApp(App):
+class SecretLeakApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = SecretLeakHubService()
@@ -1604,7 +1608,7 @@ class LifecycleFakeHubService(FakeHubService):
         return True
 
 
-class LifecycleApp(App):
+class LifecycleApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = LifecycleFakeHubService()
@@ -1938,7 +1942,7 @@ class ProfileFormHubService(FakeHubService):
         return True
 
 
-class ProfileFormApp(App):
+class ProfileFormApp(ConsolidatedCSSApp):
     def __init__(self, *, fail_next: bool = False) -> None:
         super().__init__()
         self.unified_mcp_service = ProfileFormHubService(fail_next=fail_next)
@@ -2495,7 +2499,7 @@ class ImportHubService(FakeHubService):
         return dict(payload)
 
 
-class ImportApp(App):
+class ImportApp(ConsolidatedCSSApp):
     def __init__(self, *, fail_ids: set[str] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = ImportHubService(fail_ids=fail_ids)
@@ -3011,7 +3015,7 @@ class NoServersHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class NoServersApp(App):
+class NoServersApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = NoServersHubService()
@@ -3155,7 +3159,7 @@ class ServerToolsHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": effective_section}
 
 
-class ServerToolsApp(App):
+class ServerToolsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = ServerToolsHubService()
@@ -3210,7 +3214,7 @@ class DuplicateNameToolsHubService(FakeHubService):
         return await self.load_section("external_servers")
 
 
-class DuplicateNameToolsApp(App):
+class DuplicateNameToolsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = DuplicateNameToolsHubService()
@@ -3367,7 +3371,7 @@ class ToolTestHubService(FakeHubService):
         return self.test_result
 
 
-class ToolTestApp(App):
+class ToolTestApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = ToolTestHubService()
@@ -4332,7 +4336,7 @@ class NoGateToolTestHubService(FakeHubService):
         return {"ok": True}
 
 
-class NoGateToolTestApp(App):
+class NoGateToolTestApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = NoGateToolTestHubService()
@@ -5224,7 +5228,7 @@ class PermissionsHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class PermissionsApp(App):
+class PermissionsApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = PermissionsHubService(store_path)
@@ -5358,7 +5362,7 @@ class EmptyCatalogHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": "external_servers"}
 
 
-class EmptyCatalogApp(App):
+class EmptyCatalogApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = EmptyCatalogHubService()
@@ -5420,7 +5424,7 @@ class BuiltinDistinctHubService(PermissionsHubService):
         self.local_service = _FakeLocalServiceWithInventory()
 
 
-class BuiltinDistinctApp(App):
+class BuiltinDistinctApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = BuiltinDistinctHubService(store_path)
@@ -5771,7 +5775,7 @@ class GuardedEffectiveStatesHubService(PermissionsHubService):
         return super().effective_tool_states(tools)
 
 
-class GuardedEffectiveStatesApp(App):
+class GuardedEffectiveStatesApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = GuardedEffectiveStatesHubService(store_path)
@@ -7056,7 +7060,7 @@ class CountingEffectiveStatesHubService(PermissionsHubService):
         return super().effective_tool_states(tools)
 
 
-class CountingEffectiveStatesApp(App):
+class CountingEffectiveStatesApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = CountingEffectiveStatesHubService(store_path)
@@ -7114,7 +7118,7 @@ class GovernanceHubService(FakeHubService):
         return {"external_servers": [], "source": "server", "section": effective_section}
 
 
-class GovernanceApp(App):
+class GovernanceApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceHubService()
@@ -7168,7 +7172,7 @@ class GovernanceFetchFailsHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceFetchFailsApp(App):
+class GovernanceFetchFailsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceFetchFailsHubService()
@@ -7257,7 +7261,7 @@ class GovernanceCachingHubService(FakeHubService):
         return await super().load_section(section)
 
 
-class GovernanceCachingApp(App):
+class GovernanceCachingApp(ConsolidatedCSSApp):
     def __init__(self, store_path: Path) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceCachingHubService(store_path)
@@ -7349,7 +7353,7 @@ class GovernanceNonMappingHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceNonMappingApp(App):
+class GovernanceNonMappingApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceNonMappingHubService()
@@ -7386,7 +7390,7 @@ class GovernanceProfilesNotListHubService(GovernanceHubService):
         return await super().load_section(section)
 
 
-class GovernanceProfilesNotListApp(App):
+class GovernanceProfilesNotListApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = GovernanceProfilesNotListHubService()
@@ -7490,7 +7494,7 @@ class AuditHubService(ToolTestHubService):
         self.execution_log = FakeExecutionLog(records)
 
 
-class AuditApp(App):
+class AuditApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = AuditHubService(records)
@@ -7544,7 +7548,7 @@ class AuditRunAppendsHubService(AuditHubService):
         return result
 
 
-class AuditRunAppendsApp(App):
+class AuditRunAppendsApp(ConsolidatedCSSApp):
     def __init__(self, records: list[dict] | None = None) -> None:
         super().__init__()
         self.unified_mcp_service = AuditRunAppendsHubService(records)
@@ -7633,7 +7637,7 @@ class RaisingExecutionLogHubService(FakeHubService):
         raise RuntimeError("boom")
 
 
-class RaisingExecutionLogApp(App):
+class RaisingExecutionLogApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = RaisingExecutionLogHubService()
@@ -7864,7 +7868,7 @@ class MultiTargetAuditFindingsHubService(AuditFindingsHubService):
         return await super().load_section(section)
 
 
-class AuditFindingsApp(App):
+class AuditFindingsApp(ConsolidatedCSSApp):
     def __init__(
         self,
         records: list[dict] | None = None,
@@ -7957,7 +7961,7 @@ class RaisingAdvancedSectionHubService(AuditFindingsHubService):
         return await super().load_section(section)
 
 
-class RaisingAdvancedSectionApp(App):
+class RaisingAdvancedSectionApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = RaisingAdvancedSectionHubService()
@@ -8253,7 +8257,7 @@ class TargetSwitchTrackingHubService(FakeHubService):
         return await super().load_section(section)
 
 
-class TargetSwitchTrackingApp(App):
+class TargetSwitchTrackingApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = TargetSwitchTrackingHubService()

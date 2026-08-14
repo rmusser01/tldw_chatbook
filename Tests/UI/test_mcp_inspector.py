@@ -8,6 +8,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
 
 import tldw_chatbook
@@ -110,7 +114,7 @@ class FakeAdvService:
         return {"ok": True}
 
 
-class InspectorApp(App):
+class InspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = FakeAdvService(error=error)
@@ -280,7 +284,7 @@ async def test_readiness_badge_carries_and_swaps_state_css_class():
 # -- A2: disabled action buttons must stay legible ---------------------------
 
 
-class InspectorAppWithBundledCSS(App):
+class InspectorAppWithBundledCSS(ConsolidatedCSSApp):
     """Mounts MCPInspector under `#mcp-hub-inspector` (the id the real MCP
     workbench uses) and loads the actual bundled stylesheet, so
     `#mcp-hub-inspector Button.mcp-inspector-action:disabled` resolves
@@ -393,7 +397,7 @@ async def test_advanced_reveal_button_renders_with_bundled_css(monkeypatch):
 async def test_inspector_action_buttons_are_left_aligned_with_bundled_css():
     """A3: Button defaults BOTH `text-align` and `content-align` to center
     (see Textual's own Button.DEFAULT_CSS -- the same lesson already
-    documented on `Button.mcp-rail-row` in MCPRail.DEFAULT_CSS and
+    documented on `Button.mcp-rail-row` in MCPRail.BUNDLED_CSS and
     `Button.mcp-callout` in _agentic_terminal.tcss). `Button.mcp-inspector-
     action` must override both, or the inspector's action stack (Connect/
     Check readiness/Edit config/... and the lone Cancel button during an
@@ -570,7 +574,7 @@ class GatedAdvService(FakeAdvService):
         return object()  # the gate fakes below ignore the value
 
 
-class GatedInspectorApp(App):
+class GatedInspectorApp(ConsolidatedCSSApp):
     """Like InspectorApp, but with a real (callable) policy-gate seam.
 
     `gate` is invoked as `gate(action_id, runtime_state_override)` in place of
@@ -658,7 +662,7 @@ class SectionAwareFakeService:
         return {"ok": True}
 
 
-class SectionAwareInspectorApp(App):
+class SectionAwareInspectorApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.service = SectionAwareFakeService()
@@ -823,7 +827,7 @@ class OverlappingActionsService:
         return {"ok": True}
 
 
-class OverlappingActionsApp(App):
+class OverlappingActionsApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.service = OverlappingActionsService()
@@ -4065,7 +4069,7 @@ class ToolExecuteAdvService(FakeAdvService):
         return {"ok": True}
 
 
-class ToolExecuteInspectorApp(App):
+class ToolExecuteInspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = ToolExecuteAdvService(error=error)
@@ -4105,7 +4109,7 @@ class ToolExecuteAndReadAdvService(ToolExecuteAdvService):
         return {"ok": True, "action": action_name}
 
 
-class ToolExecuteAndReadInspectorApp(App):
+class ToolExecuteAndReadInspectorApp(ConsolidatedCSSApp):
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()
         self.service = ToolExecuteAndReadAdvService(error=error)
@@ -4630,7 +4634,7 @@ class _TallSectionAdvService(ToolExecuteAdvService):
         }
 
 
-class _TallSectionInspectorApp(App):
+class _TallSectionInspectorApp(ConsolidatedCSSApp):
     """Bundled CSS + real workbench id, like `InspectorAppWithBundledCSS`
     above -- geometry claims are meaningless against Textual's defaults."""
 

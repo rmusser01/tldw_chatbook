@@ -35,6 +35,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import get_template
@@ -61,7 +65,7 @@ pytestmark = pytest.mark.asyncio
 EXPRESSION_STATES = ("thinking", "speaking", "error")
 
 
-class _CaptureApp(App):
+class _CaptureApp(ConsolidatedCSSApp):
     """Bare editor host that records the three new generate messages, plus
     (Task 4) the style-pick message."""
 

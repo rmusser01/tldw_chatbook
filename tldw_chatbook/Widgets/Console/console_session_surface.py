@@ -122,7 +122,7 @@ class ConsoleSessionTabButton(Button):
 
     # TASK-375: keep the (middle-truncated) label on one line so its ellipsis
     # renders instead of being word-wrapped onto a hidden second row.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSessionTabButton {
         text-wrap: nowrap;
         text-overflow: clip;

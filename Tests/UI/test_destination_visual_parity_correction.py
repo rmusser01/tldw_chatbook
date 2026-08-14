@@ -9,6 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.widgets import Button
 from textual.widgets import Collapsible
@@ -469,7 +473,7 @@ async def test_destination_content_starts_immediately_below_nav():
         assert dashboard.region.y <= 4
 
 
-class WorkbenchHarness(App[None]):
+class WorkbenchHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield DestinationWorkbench(
             WorkbenchPane("List", Static("left"), id="test-list-pane"),

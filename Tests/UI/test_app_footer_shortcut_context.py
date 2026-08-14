@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
@@ -13,7 +17,7 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 @pytest.mark.asyncio
 async def test_footer_uses_global_shortcuts_by_default():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -29,7 +33,7 @@ async def test_footer_uses_global_shortcuts_by_default():
 
 @pytest.mark.asyncio
 async def test_footer_replaces_stale_context_shortcuts():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -68,7 +72,7 @@ async def test_footer_renders_workbench_shortcuts():
     ``_remaining_global_text``), so "F1" appears exactly once even though
     both the context AND the (undeduped) global constant would otherwise
     spell it "F1 help"."""
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -143,7 +147,7 @@ async def test_footer_db_indicator_collapses_when_empty_and_stays_down():
     """The DB-size indicator only takes footer space while it has content;
     the priority reflow must not resurrect an empty indicator on resize."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -180,7 +184,7 @@ async def test_footer_token_chip_hidden_until_a_real_count_lands():
     hides again when the count clears (non-chat tabs write "" via the
     periodic updater)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -209,7 +213,7 @@ async def test_footer_token_chip_hidden_until_a_real_count_lands():
 async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
     """A narrow footer hides the debug memory stats to preserve the key hints."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -247,7 +251,7 @@ async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
 async def test_footer_reflows_when_counts_change_without_a_resize():
     """A word/token count change re-runs the priority reflow (Qodo #834)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -314,7 +318,7 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
             ("n", "new note"),
         )
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -359,7 +363,7 @@ async def test_footer_compacts_globals_before_dropping_screen_hints_when_narrow(
 async def test_footer_keeps_primary_ingest_and_recovery_hints_at_80_columns():
     """TASK-15702: narrow fitting preserves the ordered workflow prefix."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -393,7 +397,7 @@ async def test_footer_control_reproduces_the_historical_ellipsis_drop():
     reproduce the historical bare-ellipsis drop itself (there is no
     fixture here with that step disabled to show the old behavior)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -436,7 +440,7 @@ async def test_footer_screen_supplied_f6_hint_survives_at_170_cols():
     pane") renders, and the generic global "F6 panes" text does not --
     the key is covered exactly once, by the more specific label."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -470,7 +474,7 @@ async def test_footer_screen_supplied_f6_hint_survives_at_100_cols():
     The fix renders the context unfiltered, so F6 survives here even
     though the compact global tier omits it."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -495,7 +499,7 @@ async def test_footer_screen_supplied_f6_hint_survives_at_100_cols():
 async def test_footer_screen_supplied_f6_hint_survives_at_80_cols():
     """Same repro, the other live-verified width (80 cols)."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 
@@ -520,7 +524,7 @@ async def test_footer_genuine_reserved_key_duplicate_still_collapses_to_one():
     exactly once -- the fix narrows what gets filtered, it does not
     disable dedup altogether."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
 

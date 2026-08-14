@@ -8,6 +8,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input
 
 from Tests.UI.test_console_native_chat_flow import (
@@ -121,7 +125,7 @@ def _library_prompt_application(
     )
 
 
-class _StagedPromptConsoleHarness(App[None]):
+class _StagedPromptConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance) -> None:
         super().__init__()
         self.app_instance = app_instance

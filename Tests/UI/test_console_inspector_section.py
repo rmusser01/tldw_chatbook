@@ -17,6 +17,10 @@ from pathlib import Path
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 
@@ -73,7 +77,7 @@ def test_state_construction_with_an_explicit_empty_summary_still_works():
     assert state.summary == ""
 
 
-class _SectionHarness(App[None]):
+class _SectionHarness(ConsolidatedCSSApp):
     """Minimal host mounting one Inspector section directly (no ChatScreen
     involved -- this is a standalone-component test, mirroring the
     `_HandleHarness`/`_SectionHeaderHarness` pattern in
@@ -111,7 +115,7 @@ class _SectionHarness(App[None]):
         self.collapse_events.append((event.section_id, event.open))
 
 
-class _ScrolledSectionHarness(App[None]):
+class _ScrolledSectionHarness(ConsolidatedCSSApp):
     """Hosts a section inside a height-constrained `VerticalScroll`, the
     same shape as the real Console rail body (`#console-left-rail-body`) --
     needed to create a genuine below-the-fold row for the hit-test guard."""

@@ -14,6 +14,10 @@ from typing import cast
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
@@ -31,7 +35,7 @@ from tldw_chatbook.Video_Generation.video_store import (
 )
 
 
-class _ModalHost(App[None]):
+class _ModalHost(ConsolidatedCSSApp):
     """Small real Textual host used to exercise modal interaction."""
 
 
@@ -1781,7 +1785,7 @@ async def test_mounted_chat_screen_exit_drains_modal_and_picker_waiters(
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
 
-    class Host(App[None]):
+    class Host(ConsolidatedCSSApp):
         def __init__(self, app_instance) -> None:
             super().__init__()
             self.app_instance = app_instance

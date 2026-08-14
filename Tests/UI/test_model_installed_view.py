@@ -9,6 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, Static
@@ -24,7 +28,7 @@ from tldw_chatbook.Model_Artifacts.service import (
 )
 
 
-class _InstalledApp(App):
+class _InstalledApp(ConsolidatedCSSApp):
     def __init__(self, view) -> None:
         self.view = view
         super().__init__()
@@ -736,7 +740,7 @@ async def test_activation_controls_emit_intents_and_refuse_pending_reentry() -> 
 
     reference = ArtifactRef("parakeet-v2", "immutable-revision", "int8")
 
-    class _ControlsApp(App):
+    class _ControlsApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.messages = []
             super().__init__()
@@ -778,7 +782,7 @@ async def test_unassigned_controls_omit_activate_and_keep_delete_available() -> 
 
     reference = ArtifactRef("remote-gguf", "immutable-revision", "q4_k_m")
 
-    class _ControlsApp(App):
+    class _ControlsApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.messages = []
             super().__init__()

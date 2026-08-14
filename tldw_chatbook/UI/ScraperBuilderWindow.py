@@ -54,7 +54,7 @@ from ..Web_Scraping.Article_Extractor_Lib import scrape_article_sync as get_page
 class ScraperBuilderWindow(Screen):
     """Visual scraper builder for creating custom extraction rules."""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     ScraperBuilderWindow {
         background: $background;
     }

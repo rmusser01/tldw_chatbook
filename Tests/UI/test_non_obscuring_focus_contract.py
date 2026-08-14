@@ -1012,7 +1012,7 @@ def test_acp_selected_session_row_uses_selected_contract():
 def test_top_navigation_inline_focus_uses_hybrid_contract():
     from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 
-    text = MainNavigationBar.DEFAULT_CSS
+    text = MainNavigationBar.BUNDLED_CSS
     focus = css_block(text, ".nav-button:focus")
     active = css_block(text, ".nav-button.is-active")
     active_focus = css_block(text, ".nav-button.is-active:focus")

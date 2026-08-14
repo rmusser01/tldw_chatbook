@@ -2,6 +2,10 @@
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
@@ -19,7 +23,7 @@ def _row_text(item: ListItem) -> str:
     return str(item.query_one(Static).renderable)
 
 
-class InspectorApp(App):
+class InspectorApp(ConsolidatedCSSApp):
     def compose(self):
         yield PersonasInspectorPane(id="personas-inspector-pane")
 
@@ -285,7 +289,7 @@ async def test_disabled_tts_checkbox_stays_legible():
 
     from textual.color import Color
 
-    class StyledInspectorApp(App):
+    class StyledInspectorApp(ConsolidatedCSSApp):
         CSS_PATH = str(
             Path(__file__).resolve().parents[2]
             / "tldw_chatbook"
@@ -718,7 +722,7 @@ async def test_state_pushed_before_children_mount_defers_then_replays():
     # The exact call observed crashing live, issued pre-mount:
     pane.set_console_actions_enabled(False, reason="task-2727-probe")
 
-    class LateStateApp(App):
+    class LateStateApp(ConsolidatedCSSApp):
         def compose(self):
             yield pane
 

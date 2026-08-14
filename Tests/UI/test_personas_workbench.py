@@ -15,6 +15,10 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal
@@ -180,7 +184,7 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(App):
+class PersonasTestApp(ConsolidatedCSSApp):
     def __init__(self, mock_app_instance):
         super().__init__()
         self._mock = mock_app_instance
@@ -9641,7 +9645,7 @@ class TestConfirmationDialogEscape:
 
         results: list[bool] = []
 
-        class DialogApp(App):
+        class DialogApp(ConsolidatedCSSApp):
             def on_mount(self) -> None:
                 self.push_screen(ConfirmationDialog(), callback=results.append)
 
@@ -9923,7 +9927,7 @@ async def test_inspector_pane_exposes_an_avatar_thumbnail_holder() -> None:
         PersonasInspectorPane,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         def compose(self):
             yield PersonasInspectorPane()
 
@@ -9943,7 +9947,7 @@ async def test_inspector_avatar_thumbnail_mounts_and_clears() -> None:
         PersonasInspectorPane,
     )
 
-    class _Host(App):
+    class _Host(ConsolidatedCSSApp):
         def compose(self):
             yield PersonasInspectorPane()
 
@@ -10150,7 +10154,7 @@ class _CharacterTTSProfileService:
         )
 
 
-class _CharacterTTSWidgetHost(App[None]):
+class _CharacterTTSWidgetHost(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.actions: list[CharacterTTSActionRequested] = []

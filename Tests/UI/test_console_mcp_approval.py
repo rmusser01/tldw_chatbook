@@ -21,6 +21,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Select, Static
 
@@ -77,7 +81,7 @@ def _assert_rule_pinned_in_bundle_source_and_bundle(
             )
 
 
-class _CardHarnessApp(App[None]):
+class _CardHarnessApp(ConsolidatedCSSApp):
     """Minimal host for `ChatApprovalCard` that records `ApprovalDecided`."""
 
     def __init__(self) -> None:
@@ -1047,7 +1051,7 @@ def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     claim a `1fr` share of its `#approval-batch-rows` parent's remaining
     space instead of hugging its own single-line content, the same
     fr-inside-auto-parent collapse class documented on
-    `MCPAuditMode.DEFAULT_CSS`'s Findings-view comment."""
+    `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
     _assert_rule_pinned_in_bundle_source_and_bundle(
         ".approval-row {", ("height: auto;", "width: 1fr;")
     )

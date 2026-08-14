@@ -25,6 +25,10 @@ from __future__ import annotations
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from Tests import network_guard
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.local_server_discovery import (
@@ -36,7 +40,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     """Real ChatScreen harness (mirrors test_console_setup_lock_polish)."""
 
     def __init__(self, app_instance):

@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.content import Content
 from textual.css.query import NoMatches
@@ -1277,7 +1281,7 @@ class ConsoleNavigationHarness(ConsoleHarness):
         message.stop()
 
 
-class RestoredConsoleHarness(App[None]):
+class RestoredConsoleHarness(ConsolidatedCSSApp):
     """Mount a Console ChatScreen from a previously saved state.
 
     Args:

@@ -12,6 +12,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, RichLog
 
 from tldw_chatbook.UI.Logs_Window import (
@@ -46,7 +50,7 @@ def _fake_app_instance():
     return SimpleNamespace(_log_records=_records())
 
 
-class _LogsHarness(App[None]):
+class _LogsHarness(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.logs_window = LogsWindow(_fake_app_instance(), id="logs-window")
@@ -146,7 +150,7 @@ async def test_empty_state_shows_guidance() -> None:
     class EmptyWindow(LogsWindow):
         pass
 
-    class EmptyHarness(App[None]):
+    class EmptyHarness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LogsWindow(SimpleNamespace(_log_records=deque(maxlen=10000)))
 
@@ -183,7 +187,7 @@ def _many_matching_records(count: int) -> deque:
     )
 
 
-class _ManyRecordsHarness(App[None]):
+class _ManyRecordsHarness(ConsolidatedCSSApp):
     def __init__(self, count: int) -> None:
         super().__init__()
         self.logs_window = LogsWindow(

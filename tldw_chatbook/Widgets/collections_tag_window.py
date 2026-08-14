@@ -467,7 +467,7 @@ class CollectionsTagWindow(Container):
         class DeleteConfirmationModal(ModalScreen):
             """Modal for delete confirmation."""
 
-            CSS = """
+            BUNDLED_SCREEN_CSS = """
             #delete-dialog {
                 align: center middle;
                 width: 60;

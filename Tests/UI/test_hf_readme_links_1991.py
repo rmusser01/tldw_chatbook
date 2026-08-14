@@ -9,6 +9,10 @@ import webbrowser
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Markdown
 
 from tldw_chatbook.Widgets.HuggingFace.model_card_viewer import (
@@ -43,7 +47,7 @@ def test_resolver_tiers():
     assert resolve_readme_href("", "o/m")[0] == "unresolvable"
 
 
-class ViewerHarness(App):
+class ViewerHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ModelCardViewer(id="viewer")
 

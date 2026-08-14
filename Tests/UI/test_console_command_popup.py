@@ -5,6 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 import tldw_chatbook
@@ -25,7 +29,7 @@ SUGGESTIONS = [
 ]
 
 
-class _PopupApp(App):
+class _PopupApp(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         # The popup repositions against whatever carries this id; a Static
         # suffices for widget-level tests.

@@ -194,7 +194,7 @@ def derive_prompt_queue_presentation(
 class ConsolePromptQueueRegion(Widget):
     """Always-mounted one-row queue shelf directly above the composer."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsolePromptQueueRegion {
         display: none;
         height: 1;

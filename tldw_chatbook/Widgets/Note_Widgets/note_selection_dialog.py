@@ -34,7 +34,7 @@ class NoteItem(Container):
 class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     """Dialog for selecting notes to convert to audio"""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     NoteSelectionDialog {
         align: center middle;
     }
@@ -97,7 +97,6 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     
     .note-date {
         color: $text-disabled;
-        font-size: 10;
     }
     
     .selection-info {

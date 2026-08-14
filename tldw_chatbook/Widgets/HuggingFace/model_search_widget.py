@@ -25,7 +25,7 @@ class ModelSelectedEvent(Message):
 class ModelSearchWidget(Container):
     """Widget for searching and browsing HuggingFace models."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelSearchWidget {
         height: 100%;
         layout: vertical;

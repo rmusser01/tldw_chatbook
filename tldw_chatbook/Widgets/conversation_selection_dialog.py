@@ -53,7 +53,7 @@ class ConversationItem(Container):
 class ConversationSelectionDialog(ModalScreen[Optional[Dict[str, Any]]]):
     """Dialog for selecting a conversation to convert to audio"""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     ConversationSelectionDialog {
         align: center middle;
     }
@@ -113,7 +113,6 @@ class ConversationSelectionDialog(ModalScreen[Optional[Dict[str, Any]]]):
     
     .conversation-date {
         color: $text-disabled;
-        font-size: 10;
     }
     
     .options-section {

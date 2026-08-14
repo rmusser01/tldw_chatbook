@@ -9,11 +9,15 @@ from unittest.mock import Mock, PropertyMock, patch
 
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
 
 
-class MockApp(App):
+class MockApp(ConsolidatedCSSApp):
     """Mock app for testing."""
 
     def notify(self, message, severity="info"):

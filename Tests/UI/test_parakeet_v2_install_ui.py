@@ -14,6 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_ingest_state import LibraryIngestFormState
@@ -38,7 +42,7 @@ from tldw_chatbook.UI.Screens.library_screen import (
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
 
 
-class _ModalApp(App):
+class _ModalApp(ConsolidatedCSSApp):
     def compose(self):
         return []
 

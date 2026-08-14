@@ -37,6 +37,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual import on
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
@@ -54,7 +58,7 @@ from tldw_chatbook.Model_Artifacts.curated_registry import CuratedRegistry
 from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
 
-class _ViewApp(App):
+class _ViewApp(ConsolidatedCSSApp):
     def __init__(self, view: CuratedView) -> None:
         self.view = view
         super().__init__()
@@ -292,7 +296,7 @@ async def test_install_click_posts_install_requested_with_the_resolved_service_a
 
     view = CuratedView(service_factory=lambda: service, registry_factory=lambda: registry)
 
-    class _CapturingApp(App):
+    class _CapturingApp(ConsolidatedCSSApp):
         def __init__(self, view: CuratedView) -> None:
             self.view = view
             self.requests: list[CuratedView.InstallRequested] = []
@@ -454,7 +458,7 @@ async def test_every_exact_parakeet_root_posts_use_from_disk_with_its_catalog_re
         registry_factory=lambda: registry,
     )
 
-    class _CapturingApp(App[None]):
+    class _CapturingApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             self.requests: list[CuratedView.UseFromDiskRequested] = []
             super().__init__()

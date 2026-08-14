@@ -59,6 +59,7 @@ import multiprocessing
 import multiprocessing.connection
 import queue
 import random
+import re
 import sqlite3
 import subprocess
 import sys
@@ -90,6 +91,7 @@ from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
 
+from tldw_chatbook.css import build_css, widget_css
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -5062,8 +5064,58 @@ class TldwCli(
 
     # Product name shown in the terminal title (legacy "tldw CLI" retired).
     TITLE = "tldw chatbook"
-    # CSS file path
-    CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
+    # CSS file paths, read in order. The screen/modal CSS lifted out of Python
+    # (TASK-15450) brackets the bundle: the scope-prefixed stream first, so it
+    # loses the specificity ties that writing the scope selector out created,
+    # and the self stream last, where Textual used to append a screen's `CSS` on
+    # first open. They stay separate files, not bundle modules, because Textual
+    # accumulates `$variable` definitions per source and several of these blocks
+    # carry local `$ds-*` fallbacks that would otherwise clobber the real design
+    # tokens for the rest of the bundle. See css/build_css.py.
+    CSS_PATH = [
+        str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
+        str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
+        str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
+    ]
+
+    def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
+        """Add the consolidated widget-defaults stylesheet as one CSS source.
+
+        TASK-15450: Textual registers a separate stylesheet source per widget
+        class that declares ``DEFAULT_CSS``, and its parse cache is an
+        ``LRUCache(64)``. A full destination tour used to end at 94 sources, past
+        which *every* ``Stylesheet.parse()`` ran fully cold (125-380 ms measured)
+        on each first mount of a not-yet-seen widget class. The widget CSS now
+        lives in ``css/widget_defaults.tcss``, generated from the class-level
+        ``BUNDLED_CSS`` declarations by ``build_css.py``, and is registered here
+        as a single source.
+
+        The sheets are added here (rather than as a plain ``DEFAULT_CSS`` class
+        attribute) for two reasons: they are read at app start, so a boot-time
+        CSS rebuild is picked up by the same run, and each needs its own
+        tie-breaker. Selectors that already named their own widget keep
+        tie-breaker 0, the cascade position their class's ``DEFAULT_CSS`` had.
+        Selectors that gained a written-out scope prefix cost one specificity
+        point more than Textual's injected one, so they take a tie-breaker below
+        every other default-CSS source and lose the ties that shift created --
+        which are exactly the ties they used to lose outright. See
+        ``css/widget_css.py`` for the derivation.
+
+        Returns:
+            The default-CSS stack, widget defaults first.
+        """
+        css_dir = Path(__file__).parent / "css"
+        sources = build_css.widget_defaults_sources(css_dir)
+        if len(sources) != 2:
+            # Never fatal: the app still runs, just with unstyled widgets whose
+            # CSS was consolidated. Loud, because that is a build/packaging bug,
+            # not a user-facing condition.
+            loguru_logger.error(
+                f"Consolidated widget CSS missing from {css_dir}: read "
+                f"{len(sources)} of 2 sheets. Run css/build_css.py."
+            )
+        return sources + super()._get_default_css()
+
     # Shell destination hotkey layer: Ctrl+1..Ctrl+9 then Ctrl+0, zipped against
     # SHELL_DESTINATION_ORDER, plus F7/F8/F9 for the remaining destinations
     # (Lab, Logs, Settings) so every destination has a keyboard route.
@@ -11266,6 +11318,101 @@ def _is_source_tree(package_root: Path) -> bool:
     return (package_root.parent / "pyproject.toml").is_file()
 
 
+#: A class-level ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` *assignment*, which is
+#: what makes a module an input to the generated stylesheets. Anchored on the
+#: assignment rather than matching the bare name anywhere in the file: four
+#: package modules -- including this one, via ``_generated_css_is_stale``'s own
+#: docstring -- discuss the marker while declaring nothing, and a plain substring
+#: test made every edit to any of them rebuild the CSS on the next boot, quietly
+#: rewriting the committed bundle's ``Generated:`` timestamp. A module that has
+#: just *gained* a declaration is still caught: a declaration is an assignment.
+_BUNDLED_CSS_DECLARATION_RE = re.compile(r"^\s*BUNDLED_(?:SCREEN_)?CSS\s*[:=]", re.M)
+
+
+def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
+    """Return whether the generated stylesheets need rebuilding, and why.
+
+    Source-tree boots rebuild the CSS when its inputs have moved on. Before
+    TASK-15450 every input was a ``.tcss`` module, so checking those mtimes was
+    exhaustive. Four of the five generated sheets are now built from class-level
+    ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` literals in Python modules, so a
+    widget-CSS edit would otherwise have *no effect* until someone remembered to
+    run ``build_css.py`` by hand -- where editing ``DEFAULT_CSS`` used to take
+    effect on the very next run, because Textual read it straight off the class.
+
+    A Python module counts as an input only if it is *newer than the build* and
+    actually mentions the marker. Both halves matter. Treating every ``.py`` as
+    an input was tried first and is wrong: editing ``app.py`` -- or any of the
+    ~1,640 files in this package -- would then re-run the build subprocess on
+    every single developer boot. Reading files to find the marker is likewise
+    only affordable because the mtime test has already narrowed the set, which is
+    normally empty. Checking the marker rather than the list of modules the
+    sheets currently name is what catches a module that has just *gained* a
+    ``BUNDLED_CSS`` declaration -- exactly the file a "nothing happened" bug
+    report starts from.
+
+    Cost: one ``os.walk`` of the package, ~0.3 ms warm for ~1,640 files, plus a
+    read of each file changed since the last build (normally none). It runs only
+    under ``_is_source_tree`` -- for developers, never for a wheel install -- and
+    never on the per-frame or per-keystroke paths.
+
+    Known gap: *deleting* a module that carried ``BUNDLED_CSS`` leaves no newer
+    file behind, so it is not detected here. The CSS bundle guard in CI covers
+    that; this check is a dev-loop convenience, not the authority.
+
+    Args:
+        package_root: The installed ``tldw_chatbook`` package directory.
+
+    Returns:
+        ``(stale, reason)``; ``reason`` is a log-ready phrase, empty when fresh.
+    """
+    css_dir = package_root / "css"
+    generated = [
+        css_dir / "tldw_cli_modular.tcss",
+        css_dir / build_css.WIDGET_DEFAULTS_SELF_FILENAME,
+        css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
+        css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+    ]
+    missing = [path.name for path in generated if not path.is_file()]
+    if missing:
+        return True, f"generated stylesheet(s) not found: {', '.join(missing)}"
+
+    # Compare against the OLDEST generated sheet: any one of them being behind
+    # its sources is enough to require a rebuild.
+    oldest = min(path.stat().st_mtime for path in generated)
+
+    for subdir in ("core", "layout", "components", "features", "utilities"):
+        subdir_path = css_dir / subdir
+        if not subdir_path.is_dir():
+            continue
+        for module in subdir_path.glob("*.tcss"):
+            if module.stat().st_mtime > oldest:
+                return True, f"CSS module {module.name} is newer than the build"
+
+    skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
+    for dirpath, dirnames, filenames in os.walk(package_root):
+        # Match the builder's own view of what an input is: `iter_blocks` skips
+        # these directories, so a vendored file mentioning the marker must not
+        # trigger a rebuild that would then ignore it.
+        dirnames[:] = [name for name in dirnames if name not in skip]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            source = os.path.join(dirpath, filename)
+            try:
+                if os.stat(source).st_mtime <= oldest:
+                    continue
+                with open(source, "r", encoding="utf-8", errors="ignore") as handle:
+                    text = handle.read()
+            except OSError:
+                continue  # vanished mid-walk; not our problem to report
+            if _BUNDLED_CSS_DECLARATION_RE.search(text):
+                return True, f"{filename} carries widget CSS newer than the build"
+
+    return False, ""
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Initialize logging first
@@ -11316,35 +11463,13 @@ if __name__ == "__main__":
             css_dir.mkdir(exist_ok=True)
 
             # Check if modular CSS needs to be built
-            modular_css_path = css_dir / "tldw_cli_modular.tcss"
             build_script_path = css_dir / "build_css.py"
 
-            # Check if any module is newer than the built file
-            should_rebuild = False
-            if not modular_css_path.exists():
-                should_rebuild = True
-                logging.info("Modular CSS file not found, will build it")
-            elif build_script_path.exists():
-                # Check if any module file is newer than the built file
-                modular_mtime = modular_css_path.stat().st_mtime
-                for subdir in [
-                    "core",
-                    "layout",
-                    "components",
-                    "features",
-                    "utilities",
-                ]:
-                    subdir_path = css_dir / subdir
-                    if subdir_path.exists():
-                        for css_file in subdir_path.glob("*.tcss"):
-                            if css_file.stat().st_mtime > modular_mtime:
-                                should_rebuild = True
-                                logging.info(
-                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
-                                )
-                                break
-                    if should_rebuild:
-                        break
+            # Check whether any input -- a .tcss module or a Python module
+            # carrying BUNDLED_CSS -- has moved on since the last build.
+            should_rebuild, reason = _generated_css_is_stale(package_root)
+            if should_rebuild:
+                logging.info(f"Rebuilding CSS: {reason}")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")
@@ -11510,11 +11635,13 @@ def get_app():
     package_root = Path(__file__).parent
     if _is_source_tree(package_root):
         css_dir = package_root / "css"
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
         build_script_path = css_dir / "build_css.py"
 
-        if not modular_css_path.exists() and build_script_path.exists():
-            print("Building modular CSS...")
+        # Same staleness rule as the main entry points: a missing generated
+        # sheet, or any input newer than the build (TASK-15450).
+        stale, reason = _generated_css_is_stale(package_root)
+        if stale and build_script_path.exists():
+            print(f"Building modular CSS: {reason}")
             import subprocess
 
             subprocess.run([sys.executable, str(build_script_path)], check=True)
@@ -11638,35 +11765,13 @@ def main_cli_runner():
             css_dir.mkdir(exist_ok=True)
 
             # Check if modular CSS needs to be built
-            modular_css_path = css_dir / "tldw_cli_modular.tcss"
             build_script_path = css_dir / "build_css.py"
 
-            # Check if any module is newer than the built file
-            should_rebuild = False
-            if not modular_css_path.exists():
-                should_rebuild = True
-                logging.info("Modular CSS file not found, will build it")
-            elif build_script_path.exists():
-                # Check if any module file is newer than the built file
-                modular_mtime = modular_css_path.stat().st_mtime
-                for subdir in [
-                    "core",
-                    "layout",
-                    "components",
-                    "features",
-                    "utilities",
-                ]:
-                    subdir_path = css_dir / subdir
-                    if subdir_path.exists():
-                        for css_file in subdir_path.glob("*.tcss"):
-                            if css_file.stat().st_mtime > modular_mtime:
-                                should_rebuild = True
-                                logging.info(
-                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
-                                )
-                                break
-                    if should_rebuild:
-                        break
+            # Check whether any input -- a .tcss module or a Python module
+            # carrying BUNDLED_CSS -- has moved on since the last build.
+            should_rebuild, reason = _generated_css_is_stale(package_root)
+            if should_rebuild:
+                logging.info(f"Rebuilding CSS: {reason}")
 
             if should_rebuild and build_script_path.exists():
                 logging.info("Building modular CSS...")

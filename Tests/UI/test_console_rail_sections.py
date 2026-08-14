@@ -6,6 +6,10 @@ import random
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -45,7 +49,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
 
-class _HeaderApp(App):
+class _HeaderApp(ConsolidatedCSSApp):
     def compose(self):
         yield DestinationRailSectionHeader(
             "Details",
@@ -135,7 +139,7 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
     )
 
 
-class _DetailsApp(App):
+class _DetailsApp(ConsolidatedCSSApp):
     def compose(self):
         yield ConsoleWorkspaceDetailsTray(_workspace_state(), id="details-tray")
 
@@ -155,7 +159,7 @@ async def test_details_tray_renders_status_and_handoff_rows():
         assert not list(app.query("#console-workspace-acp-handoff-audit"))
 
 
-class _ContextTrayApp(App):
+class _ContextTrayApp(ConsolidatedCSSApp):
     def compose(self):
         yield ConsoleWorkspaceContextTray(
             _workspace_state(),
@@ -189,7 +193,7 @@ def _card_state() -> ConsoleSetupCardState:
     )
 
 
-class _SetupPanelApp(App):
+class _SetupPanelApp(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState) -> None:
         super().__init__()
         self._state = state
@@ -230,7 +234,7 @@ async def test_empty_panel_has_no_legacy_shim_widgets():
         assert list(app.query("#console-empty-body"))
 
 
-class _SetupModalApp(App):
+class _SetupModalApp(ConsolidatedCSSApp):
     def __init__(self, state: ConsoleSetupCardState) -> None:
         super().__init__()
         self._state = state
@@ -385,7 +389,7 @@ def _snow_glyph_count(text: str) -> int:
     return sum(text.count(glyph) for glyph in _SNOW_GLYPHS)
 
 
-class _SnowBackdropApp(App):
+class _SnowBackdropApp(ConsolidatedCSSApp):
     def __init__(self, rng: random.Random) -> None:
         super().__init__()
         self._rng = rng
@@ -491,7 +495,7 @@ async def test_setup_backdrop_resume_before_mount_starts_timer_running():
     backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
     backdrop.resume_snow()
 
-    class _ResumeBeforeMountApp(App):
+    class _ResumeBeforeMountApp(ConsolidatedCSSApp):
         def compose(self):
             yield backdrop
 
@@ -506,7 +510,7 @@ async def test_setup_backdrop_resume_before_mount_starts_timer_running():
 async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
     backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
 
-    class _NoResumeApp(App):
+    class _NoResumeApp(ConsolidatedCSSApp):
         def compose(self):
             yield backdrop
 
@@ -547,7 +551,7 @@ def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     )
 
 
-class _SwitcherApp(App):
+class _SwitcherApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -624,7 +628,7 @@ def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...
     )
 
 
-class _TwoNativeSwitcherApp(App):
+class _TwoNativeSwitcherApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -691,7 +695,7 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
 _POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
 
 
-class _PopoverApp(App):
+class _PopoverApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.result = "unset"
@@ -820,7 +824,7 @@ def _popover_search_entries():
     )
 
 
-class _PopoverSearchApp(App):
+class _PopoverSearchApp(ConsolidatedCSSApp):
     """Popover host app exposing the catalog scope the search picker reads."""
 
     def __init__(self):
@@ -980,7 +984,7 @@ async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
     renders in the switcher as 'saved chat' (the rail's vocabulary), never
     the raw 'in-progress', with a recency label derived from updated_sort."""
 
-    class _App(App):
+    class _App(ConsolidatedCSSApp):
         async def on_mount(self) -> None:
             row = ConsoleConversationBrowserInputRow(
                 row_key="conv-9",
@@ -1022,7 +1026,7 @@ def _overflow_conversation_browser():
     return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
 
 
-class _OverflowTrayApp(App):
+class _OverflowTrayApp(ConsolidatedCSSApp):
     def compose(self):
         import dataclasses
 

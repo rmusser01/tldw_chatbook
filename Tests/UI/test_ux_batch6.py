@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Container as _Container
 from textual.widgets import Input, Static
 
@@ -52,7 +56,7 @@ async def test_ollama_path_autofills_when_found() -> None:
         def __init__(self, *args, **kwargs):
             super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
 
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LLMManagementWindow(None)
 

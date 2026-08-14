@@ -21,7 +21,7 @@ class BaseAppScreen(Screen):
     Provides common functionality like navigation bar and state management.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     BaseAppScreen {
         background: $background;
     }

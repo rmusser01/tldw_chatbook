@@ -6,6 +6,10 @@ from typing import Any
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
@@ -684,7 +688,7 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(App):
+class PersonasTestApp(ConsolidatedCSSApp):
     """Same harness as test_personas_workbench.py (delegating App)."""
 
     def __init__(self, mock_app_instance):
@@ -882,7 +886,7 @@ class TestDictionariesList:
             assert "No dictionaries yet" in str(empty.renderable)
 
 
-class DetailHarnessApp(App):
+class DetailHarnessApp(ConsolidatedCSSApp):
     def __init__(self):
         super().__init__()
         self.messages = []

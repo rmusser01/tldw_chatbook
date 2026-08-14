@@ -7,13 +7,17 @@ an entry scrolls the document to that heading.
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Markdown, TabbedContent
 from textual.widgets.markdown import MarkdownTableOfContents
 
 from tldw_chatbook.Widgets.HuggingFace.model_card_viewer import ModelCardViewer
 
 
-class ViewerHarness(App):
+class ViewerHarness(ConsolidatedCSSApp):
     CSS = "ModelCardViewer { height: 40; }"
 
     def compose(self) -> ComposeResult:

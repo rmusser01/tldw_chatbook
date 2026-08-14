@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class FileExtractionDialog(ModalScreen):
     """Dialog to preview and save extracted files."""
 
-    CSS = """
+    BUNDLED_SCREEN_CSS = """
     FileExtractionDialog {
         align: center middle;
     }

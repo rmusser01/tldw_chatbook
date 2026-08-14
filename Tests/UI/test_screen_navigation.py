@@ -8,6 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Input
 from unittest.mock import AsyncMock, patch
 
@@ -3326,7 +3330,7 @@ def test_media_screen_constructs_destination_local_runtime_state():
 async def test_main_navigation_exposes_all_routed_primary_screens():
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="chat")
 
@@ -3388,7 +3392,7 @@ async def test_main_navigation_copy_and_order():
         ("nav-settings", "F9 Settings"),
     ]
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="chat")
 
@@ -3423,7 +3427,7 @@ async def test_main_navigation_buttons_explain_compact_labels():
         for destination in SHELL_DESTINATION_ORDER
     }
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="chat")
 
@@ -3443,7 +3447,7 @@ async def test_main_navigation_buttons_explain_compact_labels():
 async def test_main_navigation_route_ids_match_shell_destinations():
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="chat")
 
@@ -4462,7 +4466,7 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
             raise AttributeError("type object 'Select' has no attribute 'NULL'")
             yield  # pragma: no cover - unreachable, keeps this a generator
 
-    class HostApp(App):
+    class HostApp(ConsolidatedCSSApp):
         pass
 
     app = HostApp()
@@ -4646,7 +4650,7 @@ async def test_nav_bar_no_destination_truncates_at_160_cols():
     """
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="chat")
 
@@ -4676,7 +4680,7 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
     """NV-01 (TASK-2154.21): clipped destinations live in the overflow menu."""
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def __init__(self):
             super().__init__()
             self.nav_requests: list[str] = []

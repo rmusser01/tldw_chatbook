@@ -78,7 +78,7 @@ _ECHO_CONSUMED = object()
 class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     """Canvas for the Tools mode: cross-server catalog, filters, empty state."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     MCPToolsMode {
         width: 1fr;
         height: 100%;

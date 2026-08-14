@@ -59,7 +59,7 @@ class PersonasInspectorPane(Vertical):
     # list is CAPPED (scrolls past 10 rows) so the Readiness section and the
     # action buttons below it are always visible when the pane renders.
     # Rows are ListItems in a ListView (keyboard-first, Notes idiom).
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     /* Portrait box for the selected character. Sized like the editor's
        thumbnail rather than the 80x40 transcript image box: this is a single
        always-visible preview, and the rail is narrow. `height: auto` keeps the

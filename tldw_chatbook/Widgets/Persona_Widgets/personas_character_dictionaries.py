@@ -49,7 +49,7 @@ class PersonasCharacterDictionariesWidget(Container):
     # of an auto-height container makes the measurement resolve to "fill all
     # available space" instead of "sum of children" - the old bottom-dock CSS
     # hid that behind an explicit wrapper max-height.
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     PersonasCharacterDictionariesWidget {
         height: auto;
         width: 100%;

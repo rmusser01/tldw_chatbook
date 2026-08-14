@@ -20,7 +20,7 @@ class CCPLoadingWidget(Static):
     Can be used as an overlay or inline loading indicator.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     CCPLoadingWidget {
         height: auto;
         width: auto;

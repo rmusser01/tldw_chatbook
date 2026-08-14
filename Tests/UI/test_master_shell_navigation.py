@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 from textual import events
 from textual.app import App
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Horizontal
 from textual.widgets import Button
 
@@ -19,7 +21,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
 #: task-3801: the real, generated app stylesheet -- mirrors
 #: `Tests/UI/test_mcp_inspector.py`'s `_BUNDLED_CSS_PATH` /
 #: `InspectorAppWithBundledCSS`. A bare `App()` with no `CSS_PATH` only
-#: exercises `MainNavigationBar.DEFAULT_CSS`, never the separately
+#: exercises `MainNavigationBar.BUNDLED_CSS`, never the separately
 #: maintained `.nav-button.nav-button-clip-ghost:disabled` override in
 #: `css/components/_navigation.tcss` -- which is the tier that actually wins
 #: live, since `App.CSS_PATH` stylesheets outrank widget `DEFAULT_CSS`
@@ -81,7 +83,7 @@ def test_compact_navigation_labels_preserve_full_meaning():
 
 
 def test_master_shell_navigation_uses_compact_spacing_for_full_destination_rail():
-    css = MainNavigationBar.DEFAULT_CSS
+    css = MainNavigationBar.BUNDLED_CSS
 
     assert "margin: 0;" in css
     assert "padding: 0;" in css
@@ -90,7 +92,7 @@ def test_master_shell_navigation_uses_compact_spacing_for_full_destination_rail(
 
 @pytest.mark.asyncio
 async def test_master_shell_navigation_order_and_labels():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 
@@ -139,7 +141,7 @@ def test_nav_button_label_numbering_scheme():
 
 @pytest.mark.asyncio
 async def test_master_shell_navigation_keeps_active_destination_visible_on_mount():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="settings")
 
@@ -162,7 +164,7 @@ async def test_master_shell_navigation_keeps_active_destination_visible_on_mount
 
 @pytest.mark.asyncio
 async def test_master_shell_navigation_reveals_active_destination_when_it_changes():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 
@@ -191,7 +193,7 @@ async def test_master_shell_navigation_reveals_active_destination_when_it_change
 
 @pytest.mark.asyncio
 async def test_master_shell_navigation_docks_overflow_hint_outside_destination_strip():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="settings")
 
@@ -215,7 +217,7 @@ async def test_master_shell_navigation_docks_overflow_hint_outside_destination_s
 
 @pytest.mark.asyncio
 async def test_master_shell_navigation_uses_terminal_tab_rail():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="console")
 
@@ -232,13 +234,13 @@ async def test_master_shell_navigation_uses_terminal_tab_rail():
     assert all(button.has_class("ascii-nav-tab") for button in nav_buttons)
     assert separators == []
     assert active_button.has_class("is-active")
-    assert ".nav-separator" not in MainNavigationBar.DEFAULT_CSS
-    assert "background: $primary-darken-1;" in MainNavigationBar.DEFAULT_CSS
+    assert ".nav-separator" not in MainNavigationBar.BUNDLED_CSS
+    assert "background: $primary-darken-1;" in MainNavigationBar.BUNDLED_CSS
 
 
 @pytest.mark.asyncio
 async def test_home_and_console_remain_first_primary_destinations():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 
@@ -258,7 +260,7 @@ async def test_home_and_console_remain_first_primary_destinations():
 async def test_master_shell_navigation_routes_to_primary_route():
     events = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 
@@ -280,7 +282,7 @@ async def test_master_shell_navigation_routes_to_primary_route():
 async def test_active_destination_subroute_can_return_to_primary_route():
     events = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="library", active_route="study")
 
@@ -301,7 +303,7 @@ async def test_active_destination_subroute_can_return_to_primary_route():
 async def test_active_destination_primary_route_still_noops():
     events = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="library", active_route="library")
 
@@ -340,7 +342,7 @@ async def test_media_folded_route_returns_to_library_primary_route():
     """
     events = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="library", active_route="media")
 
@@ -395,7 +397,7 @@ def test_folded_routes_highlight_owning_destination():
 
 @pytest.mark.asyncio
 async def test_folded_screen_boxes_owning_destination_button():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="search", active_route="search")
 
@@ -406,7 +408,7 @@ async def test_folded_screen_boxes_owning_destination_button():
         assert app.query_one("#nav-library", Button).has_class("is-active")
         assert not app.query_one("#nav-lab", Button).has_class("is-active")
 
-    class LabApp(App):
+    class LabApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="llm", active_route="llm")
 
@@ -501,7 +503,7 @@ async def test_nav_overflow_menu_reaches_hidden_destinations_at_100_cols():
     TASK-2154.21 replaced the old paging hint with this menu so a press
     navigates directly instead of scrolling page by page."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def __init__(self):
             super().__init__()
             self.nav_requests: list[str] = []
@@ -557,7 +559,7 @@ async def test_more_hint_never_scrolls_the_strip_so_it_cannot_overscroll():
     leaves the strip's scroll position untouched, so overscroll is
     structurally impossible."""
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 
@@ -655,7 +657,7 @@ def _straddling_buttons(app: App, strip) -> list[str]:
     ],
 )
 async def test_nav_strip_never_renders_a_partial_destination_label(width, active):
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active=active)
 
@@ -715,7 +717,7 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
 
 # --- task-4020: re-critique RC-02 -- ghosting effectiveness under the real,
 # BUNDLED stylesheet (the tier that actually governs what a user sees), not
-# just `MainNavigationBar.DEFAULT_CSS` ------------------------------------
+# just `MainNavigationBar.BUNDLED_CSS` ------------------------------------
 #
 # Root cause: the 2026-08-09 re-critique's mechanical probe captured the nav
 # bar with a COLORLESS text dump (`tmux capture-pane -p`, no `-e`/ANSI). That
@@ -736,7 +738,7 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
 # the `NavOverflowMenu` rework; nothing here needed a behavior fix.
 #
 # The real, fixable gap (AC#4): every geometry/readable-text test above runs
-# under a bare `App()` with ONLY `MainNavigationBar.DEFAULT_CSS` loaded --
+# under a bare `App()` with ONLY `MainNavigationBar.BUNDLED_CSS` loaded --
 # never `css/components/_navigation.tcss`'s separately-maintained override,
 # which is the copy that actually wins in the shipped app (`App.CSS_PATH`
 # always outranks widget `DEFAULT_CSS`, `!important` or not -- see the ghost
@@ -781,7 +783,7 @@ async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
     "Watc" fragment the re-critique reported, not new geometry.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         CSS_PATH = _BUNDLED_CSS_PATH
 
         def compose(self):
@@ -843,7 +845,7 @@ async def test_nav_strip_never_renders_a_partial_destination_label_under_bundled
     """task-4020 AC#1/#4: the SAME invariant as
     `test_nav_strip_never_renders_a_partial_destination_label` above, now
     proven under the REAL bundled stylesheet (`App.CSS_PATH`) instead of
-    only `MainNavigationBar.DEFAULT_CSS` -- see the section docstring above
+    only `MainNavigationBar.BUNDLED_CSS` -- see the section docstring above
     for why that tier distinction is exactly what the re-critique's
     "no ghosting observed" finding turned out to hinge on. Widths and
     active destinations mirror the re-critique's own 80/100/120 sweep with
@@ -852,7 +854,7 @@ async def test_nav_strip_never_renders_a_partial_destination_label_under_bundled
     live-verification-equivalent, deterministic regression coverage.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         CSS_PATH = _BUNDLED_CSS_PATH
 
         def compose(self):
@@ -935,7 +937,7 @@ async def test_tab_cycling_never_focuses_a_ghosted_nav_button():
     listed its id as ghosted).
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="settings")
 
@@ -978,7 +980,7 @@ async def test_press_on_a_ghosted_nav_button_is_a_no_op():
     """
     events = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="settings")
 
@@ -1040,7 +1042,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
     """
     events_seen = []
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="artifacts")
 
@@ -1124,7 +1126,7 @@ async def test_periodic_interval_does_not_drag_the_focused_button_out_of_view():
     still focused, un-ghosted, and enabled.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="schedules")
 
@@ -1231,7 +1233,7 @@ async def test_resize_does_not_strand_the_focused_button():
     restoring `_recenter_strip` passes it at every checkpoint.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield _IntervalSuppressibleNavBar(active="home")
 
@@ -1263,7 +1265,7 @@ async def test_resize_does_not_strand_the_focused_button():
         # transiently and drifted back ~0.3s later, so a single
         # post-resize assertion could not have caught it. The drift-back's
         # root cause (a ghost pass that reflowed the strip) is fixed in
-        # `MainNavigationBar.DEFAULT_CSS`; this sweep is what keeps it
+        # `MainNavigationBar.BUNDLED_CSS`; this sweep is what keeps it
         # fixed.
         for step in range(8):
             await pilot.pause(0.1)
@@ -1315,7 +1317,7 @@ async def test_ghosting_a_button_never_reflows_the_strip():
         def _ghost_clipped_buttons(self) -> None:
             return
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield _NoAutoGhostBar(active="home")
 
@@ -1368,9 +1370,9 @@ class _NoAutoGhostBarWithBundledCSS(MainNavigationBar):
         return
 
 
-class _NavAppWithBundledCSS(App):
+class _NavAppWithBundledCSS(ConsolidatedCSSApp):
     """Loads the REAL generated bundle (`App.CSS_PATH`), not just
-    `MainNavigationBar.DEFAULT_CSS`. Mirrors `InspectorAppWithBundledCSS`
+    `MainNavigationBar.BUNDLED_CSS`. Mirrors `InspectorAppWithBundledCSS`
     in `Tests/UI/test_mcp_inspector.py`."""
 
     CSS_PATH = _BUNDLED_CSS_PATH
@@ -1461,7 +1463,7 @@ async def test_restore_active_does_not_strand_the_focused_button():
     straddling, un-ghosted, enabled, and still focused.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="schedules")
 
@@ -1523,7 +1525,7 @@ async def test_recenter_strip_and_focused_strip_button_survive_a_detached_bar():
     raise.
     """
 
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 

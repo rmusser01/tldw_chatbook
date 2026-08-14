@@ -31,6 +31,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -45,7 +49,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsolePromptsModa
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsResult
 
 
-class ConsoleHarness(App):
+class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance

@@ -8,6 +8,10 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 
 CSS_BUNDLE = Path("tldw_chatbook/css/tldw_cli_modular.tcss")
@@ -34,7 +38,7 @@ def test_footer_hints_cover_queue_keyboard_ops() -> None:
 async def test_recovery_callout_shows_when_service_unavailable() -> None:
     from tldw_chatbook.UI.Workbench.workbench_widgets import RecoveryCallout
 
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield Static()
 
@@ -71,7 +75,7 @@ async def test_llamacpp_actions_above_the_fold() -> None:
         def __init__(self, *args, **kwargs):
             super().__init__(**{k: v for k, v in kwargs.items() if k == "id"})
 
-    class Harness(App[None]):
+    class Harness(ConsolidatedCSSApp):
         def compose(self) -> ComposeResult:
             yield LLMManagementWindow(None)
 

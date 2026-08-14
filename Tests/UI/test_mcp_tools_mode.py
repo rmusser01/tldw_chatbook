@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static
 
 import tldw_chatbook
@@ -44,7 +48,7 @@ def _tool(
     )
 
 
-class ToolsModeApp(App):
+class ToolsModeApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.events: list[object] = []
@@ -737,7 +741,7 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
 
 def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     """T7 (P3 UX batch) gave `#mcp-tools-table` `height: auto; max-height:
-    70%;` in `MCPToolsMode.DEFAULT_CSS` alone -- no matching rule was ever
+    70%;` in `MCPToolsMode.BUNDLED_CSS` alone -- no matching rule was ever
     added to the bundle-source component file (`_agentic_terminal.tcss`),
     unlike the established `#mcp-detail-builtin-toggles` / `#mcp-servers-
     form` / `#mcp-import-list` lockstep pairs there. Without a bundle-layer
@@ -769,7 +773,7 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
 
 
 def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
-    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.DEFAULT_CSS`
+    """Defect 1 (QA round mcp-hub-phase3-2026-07): `MCPToolsMode.BUNDLED_CSS`
     gives `#mcp-tools-filter-server-slot Select` a fixed `width: 28`, but
     Textual's cascade always treats every CSS_PATH-sourced rule (the app
     bundle) as higher priority than any widget's own DEFAULT_CSS regardless
@@ -799,7 +803,7 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         )
 
 
-class ToolsModeAppWithBundledCSS(App):
+class ToolsModeAppWithBundledCSS(ConsolidatedCSSApp):
     """Same harness as `ToolsModeApp` above but with the real bundled
     stylesheet loaded, so the filter-server Select contests its actual CSS
     priority battle against `_conversations.tcss`'s global
@@ -808,7 +812,7 @@ class ToolsModeAppWithBundledCSS(App):
     `RailAppWithBundledCSS` in test_mcp_rail.py. Regression coverage for
     Defect 1 (QA round mcp-hub-phase3-2026-07): before the bundle-layer fix
     above, this Select rendered at 0x0 under the real app stylesheet even
-    though `MCPToolsMode.DEFAULT_CSS` alone (no CSS_PATH) already asked for
+    though `MCPToolsMode.BUNDLED_CSS` alone (no CSS_PATH) already asked for
     the correct `width: 28`."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)

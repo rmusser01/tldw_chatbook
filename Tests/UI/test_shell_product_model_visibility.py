@@ -1,6 +1,10 @@
 import pytest
 from textual.app import App
 
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Constants import TAB_STUDY
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
@@ -23,7 +27,7 @@ def test_study_modules_remain_discoverable_as_legacy_direct_route():
 
 @pytest.mark.asyncio
 async def test_navigation_exposes_explicit_overflow_hint():
-    class TestApp(App):
+    class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield MainNavigationBar(active="home")
 

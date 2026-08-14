@@ -5,6 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+
+# Harness apps load the consolidated widget CSS the real app loads
+# (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
@@ -147,7 +151,7 @@ def _select_mode_canvas_state() -> LibraryMediaCanvasState:
     )
 
 
-class _MediaCanvasApp(App):
+class _MediaCanvasApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_select_mode_canvas_state(), id="library-media-canvas"
@@ -183,7 +187,7 @@ def _empty_select_mode_state() -> LibraryMediaCanvasState:
     )
 
 
-class _EmptySelectModeCanvasApp(App):
+class _EmptySelectModeCanvasApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_empty_select_mode_state(), id="library-media-canvas"
@@ -231,7 +235,7 @@ def _filtered_select_mode_state() -> LibraryMediaCanvasState:
     )
 
 
-class _FilteredMediaCanvasApp(App):
+class _FilteredMediaCanvasApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_filtered_select_mode_state(), id="library-media-canvas"
@@ -255,7 +259,7 @@ async def test_select_all_label_uses_rendered_count_not_total_count():
         assert str(state.count) not in label
 
 
-class _MediaCanvasSelectedApp(App):
+class _MediaCanvasSelectedApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=dataclasses.replace(_select_mode_canvas_state(), selected_count=1),
@@ -306,7 +310,7 @@ def _confirming_bulk_delete_state() -> LibraryMediaCanvasState:
     )
 
 
-class _MediaCanvasConfirmingApp(App):
+class _MediaCanvasConfirmingApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_confirming_bulk_delete_state(), id="library-media-canvas"
@@ -356,7 +360,7 @@ def _delete_receipt_state() -> LibraryMediaCanvasState:
     )
 
 
-class _MediaCanvasReceiptApp(App):
+class _MediaCanvasReceiptApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_delete_receipt_state(), id="library-media-canvas"
@@ -406,7 +410,7 @@ def _select_mode_with_preview_state() -> LibraryMediaCanvasState:
     )
 
 
-class _MediaCanvasSelectModePreviewApp(App):
+class _MediaCanvasSelectModePreviewApp(ConsolidatedCSSApp):
     def compose(self):
         yield LibraryMediaCanvas(
             canvas=_select_mode_with_preview_state(), id="library-media-canvas"
@@ -434,7 +438,7 @@ async def test_preview_pane_visible_outside_select_mode_with_selection():
         _select_mode_with_preview_state(), select_mode=False
     )
 
-    class _App(App):
+    class _App(ConsolidatedCSSApp):
         def compose(self):
             yield LibraryMediaCanvas(canvas=state, id="library-media-canvas")
 
