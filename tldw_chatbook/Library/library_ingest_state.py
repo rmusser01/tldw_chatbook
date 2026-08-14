@@ -99,7 +99,17 @@ def active_ingest_start_confirm_line(
     is_folder: bool,
     tooling_affected_count: int,
 ) -> str:
-    """Return the bounded inline consent copy for active-source matches."""
+    """Return the bounded inline consent copy for active-source matches.
+
+    Args:
+        active_source_count: Number of sources that match active ingest jobs.
+        is_folder: Whether the submitted source is a folder batch.
+        tooling_affected_count: Number of sources affected by a tooling warning.
+
+    Returns:
+        One-line confirmation instruction, or an empty string when no active
+        source match exists.
+    """
     if active_source_count and tooling_affected_count:
         return (
             f"Import active; {tooling_affected_count} may fail. "

@@ -140,6 +140,17 @@ def normalize_active_ingest_source(
 
     Local paths follow the host platform's case policy. HTTP(S) URLs normalize
     only scheme, host, default port, absent path, and fragment.
+
+    Args:
+        source: Local path or HTTP(S) URL to identify.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+
+    Returns:
+        Canonical source identity partitioned by backend origin.
+
+    Raises:
+        ValueError: If ``origin`` is unsupported, ``source`` is blank, or an
+            HTTP(S) source is malformed.
     """
     normalized_origin = str(origin).strip().lower()
     if normalized_origin not in {"local", "server"}:
@@ -213,7 +224,15 @@ class ActiveIngestConsentScope:
     active_source_count: int
 
     def covers(self, current: "ActiveIngestConsentScope") -> bool:
-        """Return whether ``current`` is within this exact consent scope."""
+        """Return whether ``current`` is within this exact consent scope.
+
+        Args:
+            current: Authoritatively recomputed admission scope to validate.
+
+        Returns:
+            ``True`` when the candidate set is unchanged and every current
+            active job is covered by complete consent snapshots.
+        """
         return (
             self.origin == current.origin
             and self.candidate_digest == current.candidate_digest
@@ -231,7 +250,18 @@ def build_active_ingest_consent_scope(
     active_job_ids: Iterable[str] = (),
     active_source_count: int = 0,
 ) -> ActiveIngestConsentScope:
-    """Build an opaque deterministic identity for candidates and active jobs."""
+    """Build an opaque deterministic identity for candidates and active jobs.
+
+    Args:
+        sources: Candidate local paths or HTTP(S) URLs.
+        origin: Ingest backend, either ``"local"`` or ``"server"``.
+        active_job_ids: Active job identifiers included in the snapshot.
+        active_source_count: Number of candidate sources with active matches.
+
+    Returns:
+        Privacy-safe scope containing candidate identity and bounded active-job
+        membership.
+    """
     keys = sorted(
         {
             key
