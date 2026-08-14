@@ -519,9 +519,9 @@ def build_console_controllers(
                 )
             )
         ),
-        # The change-review, image-generation, and image-view clusters
-        # stay screen-owned this wave (out of scope) -- each reach is a
-        # named callable, never a back-door through screen attributes.
+        # Change-review stays screen-owned; image-generation and image-view
+        # are controller-owned. Each reach is a named callable, never a
+        # back-door through screen attributes.
         console_change_review_run_id=(
             lambda store, message_id: screen._console_change_review_run_id(
                 store, message_id

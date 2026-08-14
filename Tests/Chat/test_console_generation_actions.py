@@ -1,10 +1,9 @@
-"""Screen-level tests for the P2a generation-variant actions (Task 8).
+"""Controller-level tests for the P2a generation-variant actions (Task 8).
 
-Covers the three new ``ChatScreen`` helpers browse/keep/regenerate-append
-wire into (`_select_console_generation_variant`, `_keep_console_generation_
-variant`, `_regenerate_console_generation_variant`) plus the button-id
-dispatch routing in `handle_console_message_action` that picks the
-generation-message branch over the text-sibling one.
+Covers the three ``ConsoleImageController`` browse/keep/regenerate-append
+actions plus the button-id dispatch routing in
+``handle_console_message_action`` that picks the generation-message branch
+over the text-sibling one.
 
 Follows ``Tests/UI/test_console_native_chat_flow.py``'s ``_bare_console_
 screen`` pattern (``ChatScreen.__new__(ChatScreen)``, bypassing ``__init__``)

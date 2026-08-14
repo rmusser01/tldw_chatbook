@@ -3,19 +3,16 @@
 Many Console tests build their screen with ``ChatScreen.__new__(ChatScreen)``
 and hand-set the handful of attributes the code under test reads, instead of
 mounting a real app. That shell never runs ``ChatScreen.__init__``, so it
-never gets the sub-controllers the Console decomposition introduced -- and
-any call into a method that was moved to one (reached through the screen's
-delegation under its original name) fails with
-``AttributeError: 'ChatScreen' object has no attribute '_message'``.
+never gets the sub-controllers the Console decomposition introduced, so a
+call into a moved method fails at the missing controller seam.
 
-``stub_message_controller`` closes that gap. Every constructor callable
+The controller-specific stub helpers close that gap. Every constructor callable
 defaults to a raiser, so a shell only gets working behaviour for the seams
 the caller explicitly wires -- a test that wanders into an unwired branch
 fails loudly at the seam instead of silently taking a no-op path.
 
-Wave-3 console decomposition, task 1. Waves 2 and 3 keep expanding the set
-of moved methods, so prefer extending this module over hand-rolling another
-copy of the constructor call inside a test file.
+Prefer extending this module over hand-rolling another controller
+constructor inside a test file.
 """
 
 from __future__ import annotations

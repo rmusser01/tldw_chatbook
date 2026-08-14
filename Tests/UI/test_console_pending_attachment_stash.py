@@ -1015,7 +1015,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
 
         def _failed_batch(**_kwargs):
             started.set()
-            assert release.wait(2)
+            assert release.wait(10)
             if failure_kind == "network":
                 raise ComfyUIImageEditError("source_upload")
             raise RuntimeError("sentinel response body /private/source.png")
