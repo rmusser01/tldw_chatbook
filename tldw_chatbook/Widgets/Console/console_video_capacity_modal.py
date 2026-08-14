@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Literal
 
 from textual import on
@@ -95,6 +96,8 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
         self._size_bytes = size_bytes
         self._max_bytes = max_bytes
         self._discard_confirmation_open = False
+        self._discard_confirmation_guard: CancelConfirmationDialog | None = None
+        self._discard_confirmation_generation: int | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the reason-specific copy and three terminal actions."""
@@ -144,7 +147,9 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
 
     def on_mount(self) -> None:
         """Focus the safest reason-specific default action."""
-        super().on_mount()
+        self._discard_confirmation_open = False
+        self._discard_confirmation_guard = None
+        self._discard_confirmation_generation = None
         self._focus_safe_default()
 
     def _focus_safe_default(self) -> None:
@@ -159,25 +164,55 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Require explicit confirmation before a generic discard request."""
         del source
-        if self._discard_confirmation_open:
+        if (
+            self._discard_confirmation_open
+            or not self.is_mounted
+            or self.app.screen is not self
+        ):
+            return
+        generation = self._safe_mount_generation
+        guard = CancelConfirmationDialog(
+            title="Discard generated video?",
+            message=(
+                "Discard this generated video? The generated result will be "
+                "lost and cannot be recovered."
+            ),
+            confirm_text="Discard",
+            cancel_text="Continue",
+        )
+        if not self.is_mounted or self.app.screen is not self:
             return
         self._discard_confirmation_open = True
+        self._discard_confirmation_guard = guard
+        self._discard_confirmation_generation = generation
         self.app.push_screen(
-            CancelConfirmationDialog(
-                title="Discard generated video?",
-                message=(
-                    "Discard this generated video? The generated result will be "
-                    "lost and cannot be recovered."
-                ),
-                confirm_text="Discard",
-                cancel_text="Continue",
+            guard,
+            callback=partial(
+                self._apply_discard_confirmation,
+                generation=generation,
+                guard=guard,
             ),
-            callback=self._apply_discard_confirmation,
         )
 
-    def _apply_discard_confirmation(self, confirmed: bool | None) -> None:
+    def _apply_discard_confirmation(
+        self,
+        confirmed: bool | None,
+        *,
+        generation: int,
+        guard: CancelConfirmationDialog,
+    ) -> None:
         """Apply only an explicit confirmation as a discard action."""
+        if (
+            not self.is_mounted
+            or self.app.screen is not self
+            or self._safe_mount_generation != generation
+            or self._discard_confirmation_generation != generation
+            or self._discard_confirmation_guard is not guard
+        ):
+            return
         self._discard_confirmation_open = False
+        self._discard_confirmation_guard = None
+        self._discard_confirmation_generation = None
         if confirmed is True:
             self.dismiss_safe_once("discard")
             return

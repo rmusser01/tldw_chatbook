@@ -818,6 +818,146 @@ def test_capacity_modal_uses_guarded_safe_dismissal_contract() -> None:
     ] == ["request_safe_cancel"]
 
 
+@pytest.mark.asyncio
+async def test_capacity_modal_mount_resets_one_generation_and_guard_identity() -> None:
+    app = _Task2Harness()
+    modal = ConsoleVideoCapacityModal(
+        reason="over_capacity",
+        size_bytes=2,
+        max_bytes=1,
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(modal)
+        await pilot.pause()
+        assert modal._safe_mount_generation == 1
+
+        await modal.request_safe_cancel(source="escape")
+        await pilot.pause()
+        first_guard = app.screen
+        assert isinstance(first_guard, CancelConfirmationDialog)
+
+        app.pop_screen()
+        app.pop_screen()
+        await pilot.pause()
+        app.push_screen(modal)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert modal._safe_mount_generation == 2
+        assert not modal._discard_confirmation_open
+        assert modal._discard_confirmation_guard is None
+        assert modal._discard_confirmation_generation is None
+
+        await modal.request_safe_cancel(source="escape")
+        await pilot.pause()
+        assert isinstance(app.screen, CancelConfirmationDialog)
+        assert app.screen is not first_guard
+
+
+@pytest.mark.parametrize("terminal", ["keep", "save", "navigation"])
+@pytest.mark.asyncio
+async def test_capacity_modal_stale_request_cannot_push_orphan_guard(
+    terminal: str,
+) -> None:
+    app = _Task2Harness()
+    modal = ConsoleVideoCapacityModal(
+        reason="over_capacity",
+        size_bytes=2,
+        max_bytes=1,
+    )
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        stale_request = modal.request_safe_cancel(source="escape")
+
+        if terminal == "keep":
+            await pilot.click("#video-capacity-keep")
+        elif terminal == "save":
+            await pilot.click("#video-capacity-save")
+        else:
+            app.pop_screen()
+        await pilot.pause()
+
+        await stale_request
+        await pilot.pause()
+
+        assert not isinstance(app.screen, CancelConfirmationDialog)
+        assert modal not in app.screen_stack
+        assert not modal._discard_confirmation_open
+
+
+@pytest.mark.parametrize("repushed_state", ["plain", "guarded"])
+@pytest.mark.asyncio
+async def test_capacity_modal_stale_guard_callback_cannot_mutate_repush(
+    repushed_state: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _Task2Harness()
+    modal = ConsoleVideoCapacityModal(
+        reason="store_failure",
+        size_bytes=2,
+        max_bytes=1,
+    )
+    first_results: list[object] = []
+    second_results: list[object] = []
+    queued_callbacks: list[tuple[Callable[..., object], tuple[object, ...]]] = []
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(modal, callback=first_results.append)
+        await pilot.pause()
+        await modal.request_safe_cancel(source="escape")
+        await pilot.pause()
+        first_guard = app.screen
+        assert isinstance(first_guard, CancelConfirmationDialog)
+
+        callback_requester = first_guard._result_callbacks[-1].requester
+        original_call_next = callback_requester.call_next
+
+        def capture_callback(callback, *args):  # type: ignore[no-untyped-def]
+            if args == (True,):
+                queued_callbacks.append((callback, args))
+                return
+            original_call_next(callback, *args)
+
+        monkeypatch.setattr(callback_requester, "call_next", capture_callback)
+        first_guard.dismiss(True)
+        monkeypatch.setattr(callback_requester, "call_next", original_call_next)
+        modal.dismiss("keep")
+        await pilot.pause()
+        app.push_screen(modal, callback=second_results.append)
+        await pilot.pause()
+
+        assert first_results == ["keep"]
+        assert len(queued_callbacks) == 1
+        assert app.screen is modal
+        repushed_generation = modal._safe_mount_generation
+
+        second_guard = None
+        if repushed_state == "guarded":
+            await modal.request_safe_cancel(source="escape")
+            await pilot.pause()
+            second_guard = app.screen
+            assert isinstance(second_guard, CancelConfirmationDialog)
+            assert modal._discard_confirmation_guard is second_guard
+
+        callback, args = queued_callbacks[0]
+        callback(*args)
+        await pilot.pause()
+
+        if repushed_state == "plain":
+            assert app.screen is modal
+            assert second_results == []
+            assert not modal._discard_confirmation_open
+        else:
+            assert app.screen is second_guard
+            assert modal._safe_mount_generation == repushed_generation
+            assert modal._discard_confirmation_open
+            assert modal._discard_confirmation_guard is second_guard
+            assert modal._discard_confirmation_generation == repushed_generation
+
+
 def test_task5_prompt_workbench_transition_table_is_complete_and_adopted() -> None:
     assert len(TASK5_PROMPTS_TRANSITIONS) == 15
     assert {
