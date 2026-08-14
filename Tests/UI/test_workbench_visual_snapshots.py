@@ -368,6 +368,15 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
     inspector_open: bool,
     expected_rail_widths: tuple[int, int],
 ) -> None:
+    """Verify directional rail controls across viewport and visibility states.
+
+    Args:
+        size: Terminal viewport dimensions.
+        target_state: Human-readable rail-state identifier.
+        context_open: Whether the Context rail should be open.
+        inspector_open: Whether the Inspector rail should be open.
+        expected_rail_widths: Expected Context and Inspector rail widths.
+    """
     app = _build_test_app(configured_default="home")
     _mark_console_onboarding_complete(app)
 

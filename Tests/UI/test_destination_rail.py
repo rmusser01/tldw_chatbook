@@ -351,7 +351,7 @@ async def test_console_handle_abbreviates_right_side_badges(badge, expected):
 
 
 @pytest.mark.asyncio
-async def test_console_handle_uses_inward_inspector_label_on_the_right():
+async def test_console_handle_uses_inward_inspector_label_on_the_right() -> None:
     handle = _console_handle(side="right", label=CONSOLE_RAIL_INSPECTOR_LABEL)
     app = _StyledHandleHarness(frame_console_region(handle))
     async with app.run_test(size=(40, 20)) as pilot:
@@ -366,7 +366,7 @@ async def test_console_handle_uses_inward_inspector_label_on_the_right():
 
 
 @pytest.mark.asyncio
-async def test_console_handle_uses_inward_context_label_on_the_left():
+async def test_console_handle_uses_inward_context_label_on_the_left() -> None:
     handle = _console_handle(side="left", label=CONSOLE_RAIL_CONTEXT_LABEL)
     app = _StyledHandleHarness(frame_console_region(handle))
 
