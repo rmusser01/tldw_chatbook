@@ -554,7 +554,9 @@ class ConsoleLeftRail(Vertical):
                 full_log_button = Button(
                     "View full log",
                     id="console-agent-view-full-log",
-                    classes=("console-workspace-action console-agent-view-full-log"),
+                    classes=(
+                        "console-workspace-action console-agent-view-full-log"
+                    ),
                     compact=True,
                 )
                 full_log_button.tooltip = (

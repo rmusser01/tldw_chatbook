@@ -2,14 +2,12 @@
 
 Extracted verbatim out of ``ChatScreen.compose_content`` (wave-1 console
 decomposition, task 4): the subtree that used to live inside
-``with self._frame_console_region(right_rail):`` — the rail header, the
-staged-Context tray, the retrieval-Scope row, the run inspector, and the
-live-work status/source-readiness card. Ids and nesting inside this subtree
-are preserved exactly.
+``with self._frame_console_region(right_rail):``. Its header is one full-width
+collapse Button (``#console-inspector-rail-collapse``), followed by the staged-
+Context tray, retrieval-Scope row, run inspector, and live-work card.
 
-**Naming**: every id this widget composes belongs to the
-``console-inspector-rail-*`` family (``console-inspector-rail-title``,
-``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
+**Naming**: shell ids use the ``console-inspector-rail-*`` family
+(``console-inspector-rail-collapse``, ``console-inspector-rail-body``) plus
 ids that already carry their own distinct names (``console-staged-context-
 tray``, the retrieval-scope row's ``ROW_ID``, ``console-run-inspector*``,
 ``console-settings-summary``). No id in this block belongs to the
@@ -231,7 +229,8 @@ class ConsoleInspectorRail(Vertical):
                     self._settings_summary_state,
                     id="console-settings-summary",
                     classes=(
-                        "console-inspector-session-settings console-settings-summary"
+                        "console-inspector-session-settings"
+                        " console-settings-summary"
                     ),
                 )
                 settings_summary.styles.width = "100%"
