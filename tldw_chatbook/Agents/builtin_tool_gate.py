@@ -561,12 +561,11 @@ LOCAL_TOOLS_DEFAULT_ENABLED = True
 #: making this switch also govern MCP exposure is a separate, out-of-scope
 #: behavior change.
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
-    "Master switch for standard web research (web_search, web_fetch, "
-    "web_crawl) and local workspace tools (fs_*/git_*/todo_*) in the "
+    "Master switch for workspace, web, and Watchlists tools in the "
     "Console/agent path. On by default; every call still follows the MCP "
-    "permission state, and web_deep_search also needs its "
-    "individual gate. Does NOT govern exposure to external MCP clients -- "
-    "that's the separate [mcp] expose_local_tools switch."
+    "permission state, and web_deep_search also needs its individual gate. "
+    "Does NOT govern exposure to external MCP clients -- that's the separate "
+    "[mcp] expose_local_tools switch."
 )
 
 #: Hand-written description for web_deep_search -- also has no Tool
@@ -738,7 +737,7 @@ def tool_gate_breadcrumb(gates: list[ToolGate] | None = None) -> str | None:
             f"{off} tool gate(s) are off in total."
         )
     return (
-        f"{off} tool gate(s) are off. Configure the local/web master switch "
-        "in Tools mode; other registration gates remain in the built-in "
-        "server detail."
+        f"{off} tool gate(s) are off. Configure the workspace, web, and "
+        "Watchlists master switch in Tools mode; other registration gates "
+        "remain in the built-in server detail."
     )

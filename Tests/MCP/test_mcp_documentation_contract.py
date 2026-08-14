@@ -349,6 +349,13 @@ def test_expanded_local_tool_group_copy_names_watchlists_everywhere() -> None:
         assert expected in text, path
 
 
+def test_builtin_gate_rejects_two_category_master_switch_copy() -> None:
+    text = BUILTIN_TOOL_GATE.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    assert "standard web research" not in normalized
+    assert "local/web master switch" not in normalized
+
+
 def test_skill_author_inventory_links_watchlists_task_and_permission_decisions() -> (
     None
 ):
