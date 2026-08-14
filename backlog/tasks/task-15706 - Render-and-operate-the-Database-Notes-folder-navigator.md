@@ -98,6 +98,17 @@ Evidence:
   pass `ruff format --check`; targeted `compileall` and `git diff --check`
   passed. `library_screen.py` retains the same 154 pre-existing Ruff findings
   as untouched `dev`, with no new finding from this task.
+- The four navigator failure diagnostics were reviewed against the persistent
+  logging boundary, changed from traceback capture to bounded operation/error
+  type metadata, and added to the generated diagnostic inventory. The focused
+  architecture and navigator gate passes `23` tests; the complete post-review
+  Notes/Library plus diagnostic-architecture regression run passes `680` tests.
+- A full Python 3.12 collection reaches all `42,613` tests. The full run was
+  stopped after `1,609 passed` when it reproduced seven unchanged media-ingest
+  test failures; the same seven fail on latest untouched `dev`. Latest `dev`
+  also has unrelated pre-existing diagnostic-inventory drift across several
+  recently merged modules, while this task's own inventory delta is reviewed
+  and green on its current base.
 - The final 60×20 SVG frame was rendered and visually reviewed: nested rows,
   focus, action labels, `⇄ Sync managed` / `⇄ Synced placement`, and
   `! Needs owner review` remain legible without color.

@@ -793,6 +793,23 @@ to carry — and each read as live to a grep.
 
 ---
 
+## Run source-inspection tests on a supported interpreter before changing them
+
+**TASK-15706, 2026-08-13.** A repository-wide collection under Python 3.14
+failed in `test_profile_store_lock.py` because the test compared integer source
+lines with `None`. The production code and test were unchanged from `dev`;
+inspection showed Python 3.14 emitted 12 `dis.findlinestarts()` entries whose
+line is `None`. The same repository collected all 42,613 tests under the
+installed, project-supported Python 3.12 interpreter.
+
+**What to do.** When a test derives source locations from bytecode or
+introspection APIs, check the interpreter version and inspect the raw API output
+before patching application code. Re-run collection under a supported project
+interpreter to distinguish an interpreter-assumption failure from a product
+regression, and record both results.
+
+---
+
 ## A suite that no gate runs can rot invisibly for days
 
 **TASK-1310, 2026-07-28.** `Tests/UI/test_settings_configuration_hub.py` carried 22

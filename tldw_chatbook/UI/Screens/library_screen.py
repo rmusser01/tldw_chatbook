@@ -9556,9 +9556,11 @@ class LibraryScreen(BaseAppScreen):
                 )
                 if not continuing_memberships:
                     membership_note_offset = note_offset
-        except Exception:  # noqa: BLE001 - normalized folder service boundary
-            logger.opt(exception=True).warning(
-                "Failed to continue the Database Notes folder navigator."
+        except Exception as exc:  # noqa: BLE001 - normalized service boundary
+            logger.warning(
+                "Failed to continue the Database Notes folder navigator; "
+                "error_type={}",
+                type(exc).__name__,
             )
             if generation == self._library_notes_tree_generation:
                 self._library_notes_tree_error = (
@@ -9612,9 +9614,10 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=expanded_ids,
                     **call_kwargs,
                 )
-        except Exception:  # noqa: BLE001 - normalized folder service boundary
-            logger.opt(exception=True).warning(
-                "Failed to load the Database Notes folder navigator."
+        except Exception as exc:  # noqa: BLE001 - normalized service boundary
+            logger.warning(
+                "Failed to load the Database Notes folder navigator; error_type={}",
+                type(exc).__name__,
             )
             if generation == self._library_notes_tree_generation:
                 self._library_notes_tree_loading = False
@@ -9715,10 +9718,11 @@ class LibraryScreen(BaseAppScreen):
                             note_id=note_id,
                             expected_version=int(payload["membership_version"]),
                         )
-                    except Exception:  # noqa: BLE001 - preserve both placements
-                        logger.opt(exception=True).warning(
+                    except Exception as exc:  # noqa: BLE001 - preserve placements
+                        logger.warning(
                             "Database Notes move kept both placements after "
-                            "the source detach failed."
+                            "the source detach failed; error_type={}",
+                            type(exc).__name__,
                         )
                         self._library_notes_notice = (
                             "Note added to the new folder, but the original "
@@ -9777,9 +9781,11 @@ class LibraryScreen(BaseAppScreen):
         except PolicyDeniedError as exc:
             self._library_notes_notice = exc.user_message
             return False
-        except Exception:  # noqa: BLE001 - render a safe mutation failure
-            logger.opt(exception=True).warning(
-                f"Database Notes tree mutation {operation!r} failed."
+        except Exception as exc:  # noqa: BLE001 - render a safe mutation failure
+            logger.warning(
+                "Database Notes tree mutation {!r} failed; error_type={}",
+                operation,
+                type(exc).__name__,
             )
             self._library_notes_notice = (
                 "Could not update folder organization — refresh and try again."
