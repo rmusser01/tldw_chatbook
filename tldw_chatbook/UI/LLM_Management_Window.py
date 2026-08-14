@@ -71,8 +71,6 @@ if TYPE_CHECKING:
 # Functions:
 
 
-
-
 class OllamaServiceView(VerticalScroll):
     """The Ollama view body, extracted verbatim from `compose` (task-2900).
 
@@ -105,9 +103,7 @@ class OllamaServiceView(VerticalScroll):
             )
 
         with Horizontal(classes="ollama-button-bar"):
-            yield Button(
-                "Start Ollama Service", id="ollama-start-service-button"
-            )
+            yield Button("Start Ollama Service", id="ollama-start-service-button")
             yield Button(
                 "Stop Ollama Service",
                 id="ollama-stop-service-button",
@@ -267,6 +263,7 @@ class OllamaServiceView(VerticalScroll):
             highlight=True,
             classes="log_output_large",
         )
+
 
 class LLMManagementWindow(Container):
     """
@@ -565,17 +562,14 @@ class LLMManagementWindow(Container):
             "installed": "llm-view-installed",
             "external": "llm-view-external",
             "remote": "llm-view-remote",
-            "download-models": "llm-view-download-models",
         }
 
     def on_mount(self) -> None:
         """Called when the widget is mounted."""
         logger.debug("LLMManagementWindow.on_mount called")
-        # task-2900: the five heavy hidden views mount here, after the first
-        # refresh, then the initial activation and the one-shot Ollama
-        # initializers run — in that order, because both touch views that no
-        # longer exist at compose time (the autofill would otherwise
-        # silently never fire, UX-078).
+        # task-2900: the five heavy hidden views — Ollama, Curated, Installed,
+        # External, and Remote — mount here after the first refresh. The
+        # eleven total views then share the normal activation path.
         self.call_after_refresh(self._finish_deferred_mount)
         self.set_interval(3.0, self._schedule_ollama_api_state)
 
@@ -616,14 +610,10 @@ class LLMManagementWindow(Container):
     async def _mount_deferred_views(self) -> None:
         """Mount the deferred views that arrive CSS-hidden (task-2900).
 
-        Screen survey: `#llm-view-download-models` (76 widgets),
-        `#llm-view-ollama` (58) and the curated/installed/remote library
-        views dominated this screen's 388-widget mount cost while arriving
-        `display: none` behind the `-active` CSS mechanism. Mounting them
-        here — off the click→paint critical path — leaves every activation
-        path working: `watch_active_view` tolerates absent views, and view
-        order inside `#llm-main-content` is irrelevant (exactly one view is
-        ever shown). Idempotent for re-entered mounts.
+        Ollama plus the Curated, Installed, External, and Remote library
+        views arrive `display: none` behind the `-active` CSS mechanism.
+        Deferring those five leaves eleven total views and keeps them off the
+        click→paint critical path. Idempotent for re-entered mounts.
         """
         try:
             content = self.query_one("#llm-main-content", Container)
@@ -636,28 +626,23 @@ class LLMManagementWindow(Container):
         from .Screens.model_external_view import ExternalModelView
         from .Screens.model_installed_view import InstalledView
         from .Screens.model_remote_view import RemoteView
-        from ..Widgets.HuggingFace import HuggingFaceModelBrowser
 
         curated = Container(id="llm-view-curated", classes="llm-view")
         installed = Container(id="llm-view-installed", classes="llm-view")
         external = Container(id="llm-view-external", classes="llm-view")
         remote = Container(id="llm-view-remote", classes="llm-view")
-        download = Container(id="llm-view-download-models", classes="llm-view")
         await content.mount(
             OllamaServiceView(self._ollama_prereq_text()),
             curated,
             installed,
             external,
             remote,
-            download,
         )
 
         legacy_dir = None
         app_config = getattr(self.app_instance, "app_config", {})
         if isinstance(app_config, dict):
-            configured = app_config.get("llm_management", {}).get(
-                "model_download_dir"
-            )
+            configured = app_config.get("llm_management", {}).get("model_download_dir")
             if configured:
                 from pathlib import Path
 
@@ -681,11 +666,6 @@ class LLMManagementWindow(Container):
         )
         # Remote is explicitly idle until Search is submitted.
         await remote.mount(RemoteView(id="remote-models-view"))
-        await download.mount(
-            HuggingFaceModelBrowser(
-                self.app_instance, id="huggingface-model-browser"
-            )
-        )
 
     async def _ollama_api_available(self) -> bool:
         """True when an Ollama service answers (app-launched or external)."""
@@ -1068,7 +1048,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamacpp-port", placeholder="8001")
-                yield Static("Default 8001 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8001 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments (single line):", classes="label")
                 yield Input(
@@ -1123,9 +1106,10 @@ class LLMManagementWindow(Container):
                     llamafile_stop.disabled = not initial_active["llamafile"]
                     yield llamafile_stop
 
-
                 with Container(classes="input_container"):
-                    yield Label("Llamafile Executable (.llamafile):", classes="inline-label")
+                    yield Label(
+                        "Llamafile Executable (.llamafile):", classes="inline-label"
+                    )
                     yield Input(
                         id="llamafile-exec-path",
                         placeholder="/path/to/model.llamafile",
@@ -1155,7 +1139,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="llamafile-port", placeholder="8000")
-                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8000 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments (multi-line):", classes="label")
                 yield TextArea(
@@ -1203,7 +1190,6 @@ class LLMManagementWindow(Container):
                         disabled=True,
                     )
 
-
                 with Container(classes="input_container"):
                     yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
@@ -1219,7 +1205,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Model Path (or HuggingFace Repo ID):", classes="inline-label")
+                    yield Label(
+                        "Model Path (or HuggingFace Repo ID):", classes="inline-label"
+                    )
                     yield Input(
                         id="vllm-model-path",
                         placeholder="e.g., /path/to/model or HuggingFaceName/ModelName",
@@ -1236,7 +1224,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="vllm-port", placeholder="8000")
-                yield Static("Default 8000 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8000 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Arguments:", classes="label")
                 yield TextArea(
@@ -1272,7 +1263,6 @@ class LLMManagementWindow(Container):
                         disabled=True,
                     )
 
-
                 with Container(classes="input_container"):
                     yield Label("Python Interpreter Path:", classes="inline-label")
                     yield Input(
@@ -1288,7 +1278,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Path to your ONNX Server Script (.py):", classes="inline-label")
+                    yield Label(
+                        "Path to your ONNX Server Script (.py):", classes="inline-label"
+                    )
                     yield Input(
                         id="onnx-script-path",
                         placeholder="/path/to/your/onnx_server_script.py",
@@ -1301,7 +1293,9 @@ class LLMManagementWindow(Container):
                     )
 
                 with Container(classes="input_container"):
-                    yield Label("Model to Load (Path for script):", classes="inline-label")
+                    yield Label(
+                        "Model to Load (Path for script):", classes="inline-label"
+                    )
                     yield Input(
                         id="onnx-model-path",
                         placeholder="Path to your .onnx model file or directory",
@@ -1318,7 +1312,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="onnx-port", placeholder="8004", classes="input_field")
-                yield Static("Default 8004 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8004 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 yield Label("Additional Script Arguments:", classes="label")
                 yield TextArea(
@@ -1423,7 +1420,10 @@ class LLMManagementWindow(Container):
 
                 yield Label("Port:", classes="label")
                 yield Input(id="mlx-port", placeholder="8080", classes="input_field")
-                yield Static("Default 8080 — change it if another server already uses that port.", classes="prereq-hint")
+                yield Static(
+                    "Default 8080 — change it if another server already uses that port.",
+                    classes="prereq-hint",
+                )
 
                 with Collapsible(
                     title="Common MLX-LM Server Arguments",
@@ -1460,7 +1460,6 @@ class LLMManagementWindow(Container):
                 yield RichLog(
                     id="mlx-log-output", classes="log_output", wrap=True, highlight=True
                 )
-
 
     @on(InstallProgressed)
     def _managed_install_progressed(self, event: InstallProgressed) -> None:
@@ -1942,14 +1941,7 @@ class LLMManagementWindow(Container):
                 logger.error(f"Target view #{target_view_id} not found")
 
     def _start_view_work(self, view_name: str, view_widget) -> None:
-        """Kick off work a view should only do once it is actually shown.
-
-        `compose()` builds all nine views eagerly, so anything a view does
-        at mount time happens on every visit to this screen regardless of
-        which view the user wanted. The HuggingFace browse was doing exactly
-        that -- a live request to huggingface.co on arrival, for users who
-        never open Download Models (task-887).
-        """
+        """Kick off work a view should only do once it is actually shown."""
         if view_name in {"llama-cpp", "llamafile"}:
             self._ensure_managed_gguf_inventory()
             return
@@ -1964,19 +1956,6 @@ class LLMManagementWindow(Container):
                 logger.debug(f"{view_name.title()} view is unavailable; skipped.")
                 return
             managed_view.ensure_loaded()
-            return
-        if view_name != "download-models":
-            return
-        # Local import: this module is on the Models mount path, and the
-        # point of the change is to keep that path cheap.
-        from ..Widgets.HuggingFace.model_search_widget import ModelSearchWidget
-
-        try:
-            search = view_widget.query_one(ModelSearchWidget)
-        except QueryError:
-            logger.debug("Download Models view has no ModelSearchWidget; skipped.")
-            return
-        search.ensure_initial_browse()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

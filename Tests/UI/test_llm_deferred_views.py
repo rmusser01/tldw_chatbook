@@ -1,7 +1,7 @@
 """task-2900: Lab ▸ Models defers its five heavy hidden views past first paint.
 
-Same pattern as task-2725 (Roleplay): the ollama view (58 widgets) and the
-four library views (download-models 76, curated, installed, remote) arrive
+Same pattern as task-2725 (Roleplay): the ollama view and the four library
+views (curated, installed, external, remote) arrive
 `display: none` behind the CSS `-active` mechanism anyway; mounting them
 after first paint takes their CSS-application cost off the click→paint
 critical path. `watch_active_view` already tolerates absent views.
@@ -24,8 +24,8 @@ _DEFERRED_VIEW_IDS = (
     "llm-view-ollama",
     "llm-view-curated",
     "llm-view-installed",
+    "llm-view-external",
     "llm-view-remote",
-    "llm-view-download-models",
 )
 
 _ALL_VIEW_IDS = _DEFERRED_VIEW_IDS + (
@@ -115,10 +115,7 @@ async def test_ollama_view_activates_and_renders_after_deferral():
         assert list(view.query("#ollama-exec-path")), (
             "extracted ollama view lost its executable-path input"
         )
-        prereq = [
-            str(w.renderable)
-            for w in view.query(".prereq-hint").results()
-        ]
+        prereq = [str(w.renderable) for w in view.query(".prereq-hint").results()]
         assert any("Requires: Ollama" in text for text in prereq), (
             f"prereq line missing from extracted view: {prereq}"
         )

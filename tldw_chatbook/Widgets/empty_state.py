@@ -62,20 +62,6 @@ class EmptyState(Widget):
 # Pre-configured empty states for common scenarios
 
 
-class ModelsEmptyState(EmptyState):
-    """Empty state for model lists."""
-
-    def __init__(self, **kwargs):
-        super().__init__(
-            icon="🤖",
-            title="No embedding models found",
-            description="Download or configure embedding models to get started",
-            action_label="Download Models",
-            action_id="empty-state-download-models",
-            **kwargs,
-        )
-
-
 class CollectionsEmptyState(EmptyState):
     """Empty state for collection lists."""
 

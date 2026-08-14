@@ -17,13 +17,11 @@ from Tests.UI.app_factory import _build_test_app
 
 @pytest.fixture(autouse=True)
 def _deterministic_models_mount(monkeypatch):
-    """Neutralise the splash race and live network call this file's
-    press/pause sequences can hit. Same rationale as the identically named
-    fixture in ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a
-    real 1.5s timer that can push a competing screen mid-test, and
-    The ``HuggingFaceAPI.search_models`` stub that used to sit here is gone:
-    the browse now waits for the Download Models view to be activated
-    (task-887), so mounting Models reaches no network at all.
+    """Neutralise the splash race this file's press/pause sequences can hit.
+
+    Same rationale as the identically named fixture in
+    ``test_lab_frame_mode_keys.py``: ``SplashScreen`` starts a real 1.5s
+    timer that can push a competing screen mid-test.
 
     Args:
         monkeypatch: pytest's monkeypatch fixture; reverts both patches
@@ -88,7 +86,6 @@ async def test_all_provider_and_model_rows_live_in_the_rail():
             "installed",
             "external",
             "remote",
-            "download-models",
         ]
 
 
@@ -534,8 +531,7 @@ async def test_curated_install_progress_after_recompose_still_mirrors_into_insta
             await pilot.pause()
 
         assert fresh_installed._install_progress == second_progress, (
-            "InstalledView's mirroring handler never observed the "
-            "post-recompose tick"
+            "InstalledView's mirroring handler never observed the post-recompose tick"
         )
         assert fresh_installed._install_active is True
 
@@ -594,7 +590,10 @@ async def test_deliver_curated_falls_back_to_the_screen_when_llm_window_is_stale
             "this must still be the stale, closed reference"
         )
         assert old_window._closed is True
-        assert old_window.post_message(InstallStatusChanged(reference, active=True)) is False, (
+        assert (
+            old_window.post_message(InstallStatusChanged(reference, active=True))
+            is False
+        ), (
             "test setup bug: the removed window must already be closed, "
             "i.e. post_message on it must return False, for this to be "
             "the gap _deliver_curated needs to survive"
@@ -691,8 +690,7 @@ async def test_hydration_mirrors_a_tick_delivered_during_the_recompose_gap_into_
 
         fresh_window = screen.llm_window
         assert fresh_window is not old_window, (
-            "test setup bug: _mount_lab_body did not actually replace "
-            "the window"
+            "test setup bug: _mount_lab_body did not actually replace the window"
         )
         fresh_installed = fresh_window.query_one(InstalledView)
         assert fresh_installed is not old_installed
@@ -1605,47 +1603,43 @@ async def test_the_initial_view_is_marked_active_on_arrival_with_no_press():
 
 
 @pytest.mark.asyncio
-async def test_mounting_models_reaches_no_network_until_the_view_is_opened(monkeypatch):
-    """Opening Models must not call huggingface.co (task-887).
+async def test_surviving_model_rails_trigger_no_unprompted_http_or_search(monkeypatch):
+    """Traversing the mounted Models rail stays idle until an explicit action."""
+    import httpx
 
-    `ModelSearchWidget` used to `call_after_refresh(self._initial_browse)`
-    from `on_mount`, and it lives inside `llm-view-download-models`, which
-    `LLMManagementWindow.compose()` builds eagerly -- so every visit to this
-    screen fired a live request for users who never open Download Models.
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import (
+        HuggingFaceRemoteAdapter,
+    )
 
-    Counting calls is the oracle. Asserting the results list is empty would
-    pass whether the request was skipped or merely returned nothing.
-    """
-    from tldw_chatbook.LLM_Calls.huggingface_api import HuggingFaceAPI
+    http_calls: list[tuple[str, str]] = []
+    search_calls: list[str] = []
 
-    calls: list[int] = []
+    async def counted_request(self, method, url, *args, **kwargs):
+        http_calls.append((str(method), str(url)))
+        return httpx.Response(
+            599,
+            request=httpx.Request(str(method), str(url)),
+        )
 
-    async def counted(self, *args, **kwargs):
-        calls.append(1)
-        return []
+    async def counted_search(self, query, *, token=None):
+        search_calls.append(query)
+        return ()
 
-    monkeypatch.setattr(HuggingFaceAPI, "search_models", counted)
+    monkeypatch.setattr(httpx.AsyncClient, "request", counted_request)
+    monkeypatch.setattr(HuggingFaceRemoteAdapter, "search", counted_search)
 
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
         screen = await _models_screen(app)
-        await pilot.pause()
-        await pilot.pause()
-        assert calls == [], "mounting Models reached the network"
+        for _ in range(6):
+            await pilot.pause()
 
-        window = screen.llm_window
-        assert window is not None
-        window.active_view = "download-models"
-        await pilot.pause()
-        await pilot.pause()
-        assert len(calls) == 1, "opening Download Models did not browse"
+        for row in _rail_rows(screen):
+            row.press()
+            await pilot.pause()
 
-        window.active_view = "llama-cpp"
-        await pilot.pause()
-        window.active_view = "download-models"
-        await pilot.pause()
-        await pilot.pause()
-        assert len(calls) == 1, "re-opening the view browsed again"
+        assert http_calls == [], f"rail traversal issued HTTP: {http_calls}"
+        assert search_calls == [], f"rail traversal searched Remote: {search_calls}"
 
 
 @pytest.mark.asyncio
@@ -1794,8 +1788,12 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
     catalog = _remote_catalog()
     reference = catalog.artifact.reference
-    first_progress = AcquisitionProgress("fetch", reference, "model-part-1.gguf", 100, 1024)
-    second_progress = AcquisitionProgress("fetch", reference, "model-part-2.gguf", 400, 1024)
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-1.gguf", 100, 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-2.gguf", 400, 1024
+    )
     resume = asyncio.Event()
 
     class _FakeAcquisitionService:
@@ -1810,7 +1808,9 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
                 credential_resolver: The credential resolver (unused).
             """
 
-        async def provision(self, root, consent, catalog, *, sources, progress, activate):
+        async def provision(
+            self, root, consent, catalog, *, sources, progress, activate
+        ):
             """Deliver two progress ticks with the recompose in between.
 
             Args:
@@ -1910,15 +1910,21 @@ async def test_remote_install_progress_after_recompose_still_mirrors_into_instal
 
     catalog = _remote_catalog()
     reference = catalog.artifact.reference
-    first_progress = AcquisitionProgress("fetch", reference, "model-part-1.gguf", 100, 1024)
-    second_progress = AcquisitionProgress("fetch", reference, "model-part-2.gguf", 400, 1024)
+    first_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-1.gguf", 100, 1024
+    )
+    second_progress = AcquisitionProgress(
+        "fetch", reference, "model-part-2.gguf", 400, 1024
+    )
     resume = asyncio.Event()
 
     class _FakeAcquisitionService:
         def __init__(self, _service, *, credential_resolver=None) -> None:
             """See the sibling recompose test above for this fake's rationale."""
 
-        async def provision(self, root, consent, catalog, *, sources, progress, activate):
+        async def provision(
+            self, root, consent, catalog, *, sources, progress, activate
+        ):
             progress(first_progress)
             await resume.wait()
             progress(second_progress)
@@ -1968,8 +1974,7 @@ async def test_remote_install_progress_after_recompose_still_mirrors_into_instal
             await pilot.pause()
 
         assert fresh_installed._install_progress == second_progress, (
-            "InstalledView's mirroring handler never observed the "
-            "post-recompose tick"
+            "InstalledView's mirroring handler never observed the post-recompose tick"
         )
         assert fresh_installed._install_active is True
 
@@ -2374,7 +2379,9 @@ def test_a_second_concurrent_install_is_refused_regardless_of_kind_or_phase(
     screen._model_install_service = MagicMock()
     screen._model_install_registry = MagicMock() if first_kind == "curated" else None
     screen._model_install_sources = {} if first_kind == "curated" else None
-    screen._model_install_catalog = _remote_catalog() if first_kind == "remote" else None
+    screen._model_install_catalog = (
+        _remote_catalog() if first_kind == "remote" else None
+    )
     screen._model_install_candidate = None
     screen._model_install_credential_resolver = (
         MagicMock() if first_kind == "remote" else None
@@ -2707,9 +2714,7 @@ async def test_provision_remote_reuses_exact_preflight_values_without_activation
                 activate,
             )
 
-    monkeypatch.setattr(
-        acquisition_module, "ArtifactAcquisitionService", _Acquisition
-    )
+    monkeypatch.setattr(acquisition_module, "ArtifactAcquisitionService", _Acquisition)
 
     screen = module.LLMScreen.__new__(module.LLMScreen)
     screen._model_install_service = core
