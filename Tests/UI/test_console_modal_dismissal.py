@@ -170,9 +170,7 @@ TASK2_MODAL_CONTRACTS = (
     ),
     _Task2ModalContract(
         ConsoleCostModal,
-        lambda: ConsoleCostModal(
-            [], ConsoleCostRowTotals(0, 0.0, False, 0)
-        ),
+        lambda: ConsoleCostModal([], ConsoleCostRowTotals(0, 0.0, False, 0)),
         "#console-cost-modal",
         None,
         "Console cost action",
