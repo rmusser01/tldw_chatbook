@@ -946,11 +946,15 @@ class AudioCppArtifactLeaseCoordinator:
                 "cannot shut down from an active artifact operation"
             )
         task = self._shutdown_task
-        if task is None:
+        if task is None or (
+            task.done() and (task.cancelled() or task.exception() is not None)
+        ):
             task = asyncio.create_task(self._shutdown_owned())
             self._shutdown_task = task
         cancellation, _result, error = await self._settle_task(task)
         if error is not None:
+            if self._shutdown_task is task:
+                self._shutdown_task = None
             if cancellation is not None:
                 error.add_note("shutdown caller was cancelled")
             raise error

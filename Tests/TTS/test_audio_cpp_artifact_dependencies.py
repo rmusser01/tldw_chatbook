@@ -723,6 +723,93 @@ async def test_shutdown_retries_active_consumer_close_failure_before_return() ->
 
 
 @pytest.mark.asyncio
+async def test_later_shutdown_retries_cleanup_after_prior_shutdown_failed() -> None:
+    body_entered = asyncio.Event()
+    events: list[str] = []
+
+    class Handle:
+        attempts = 0
+
+        def close(self) -> None:
+            self.attempts += 1
+            events.append(f"close-{self.attempts}")
+            if self.attempts < 3:
+                raise RuntimeError("PRIVATE /managed/root")
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Handle:
+            return Handle()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    async def mutate() -> None:
+        async with coordinator.lease_consumers((_requirement(),)):
+            body_entered.set()
+            await asyncio.Event().wait()
+
+    mutation = asyncio.create_task(mutate())
+    await body_entered.wait()
+
+    with pytest.raises(AudioCppArtifactDependencyError, match="cleanup"):
+        await coordinator.shutdown()
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert events == ["close-1", "close-2"]
+
+    await coordinator.shutdown()
+
+    assert events == ["close-1", "close-2", "close-3"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_shutdown_waiters_share_one_in_flight_cleanup() -> None:
+    body_entered = asyncio.Event()
+    close_entered = threading.Event()
+    release_close = threading.Event()
+    events: list[str] = []
+
+    class Handle:
+        def close(self) -> None:
+            events.append("close-start")
+            close_entered.set()
+            assert release_close.wait(timeout=3.0)
+            events.append("close-end")
+
+    class Service:
+        def acquire_installed_root(self, _reference: ArtifactRef) -> Handle:
+            return Handle()
+
+    coordinator = AudioCppArtifactLeaseCoordinator(
+        Service(),
+        saved_settings_snapshot=lambda: (),
+        catalog_entries=_catalog,
+    )
+
+    async def mutate() -> None:
+        async with coordinator.lease_consumers((_requirement(),)):
+            body_entered.set()
+            await asyncio.Event().wait()
+
+    mutation = asyncio.create_task(mutate())
+    await body_entered.wait()
+    first = asyncio.create_task(coordinator.shutdown())
+    second = asyncio.create_task(coordinator.shutdown())
+    assert await asyncio.to_thread(close_entered.wait, 1.0)
+    assert first.done() is False
+    assert second.done() is False
+
+    release_close.set()
+    await asyncio.gather(first, second)
+    with pytest.raises(asyncio.CancelledError):
+        await mutation
+    assert events == ["close-start", "close-end"]
+
+
+@pytest.mark.asyncio
 async def test_shutdown_cancels_and_joins_blocked_probe() -> None:
     entered = threading.Event()
     release = threading.Event()
