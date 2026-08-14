@@ -660,6 +660,284 @@ def test_hosted_chat_stream_accepts_usage_only_after_terminal_choice() -> None:
     assert stream.terminal_turn.usage == {"total_tokens": 3}
 
 
+def test_hosted_chat_stream_accepts_terminal_choice_usage() -> None:
+    event = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+                "usage": {"total_tokens": 3},
+            }
+        ]
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    assert list(stream) == [event]
+    assert stream.terminal_turn.usage == {"total_tokens": 3}
+
+
+def test_hosted_chat_stream_accepts_identical_trailing_usage_duplicate() -> None:
+    usage = {"total_tokens": 3}
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "done"},
+                                "finish_reason": "stop",
+                                "usage": usage,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [], "usage": usage}),
+            ),
+            SSERecord(event=None, data="[DONE]"),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    assert len(list(stream)) == 2
+    assert stream.terminal_turn.usage == usage
+
+
+def test_hosted_chat_stream_rejects_differing_trailing_usage_duplicate() -> None:
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "done"},
+                                "finish_reason": "stop",
+                                "usage": {"total_tokens": 3},
+                            }
+                        ]
+                    }
+                ),
+            ),
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [], "usage": {"total_tokens": 4}}),
+            ),
+            SSERecord(event=None, data="[DONE]"),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    with pytest.raises(
+        HostedChatProtocolError,
+        match=r"^Hosted Chat stream usage is malformed\.$",
+    ):
+        list(stream)
+
+
+@pytest.mark.parametrize(
+    "choice_usage,trailing_usages",
+    [
+        ({"total_tokens": 3}, [{"total_tokens": 3}, {"total_tokens": 3}]),
+        (None, [{"total_tokens": 3}, {"total_tokens": 3}]),
+        ({"total_tokens": 1}, [{"total_tokens": True}]),
+    ],
+)
+def test_hosted_chat_stream_rejects_unobserved_usage_duplicates(
+    choice_usage: dict[str, object] | None,
+    trailing_usages: list[dict[str, object]],
+) -> None:
+    choice: dict[str, object] = {
+        "index": 0,
+        "delta": {"content": "done"},
+        "finish_reason": "stop",
+    }
+    if choice_usage is not None:
+        choice["usage"] = choice_usage
+    records = iter(
+        [
+            SSERecord(
+                event=None,
+                data=json.dumps({"choices": [choice]}),
+            ),
+            *(
+                SSERecord(
+                    event=None,
+                    data=json.dumps({"choices": [], "usage": usage}),
+                )
+                for usage in trailing_usages
+            ),
+            SSERecord(event=None, data="[DONE]"),
+        ]
+    )
+    stream = HostedChatStream(records, finish_policy=_POLICY)
+
+    with pytest.raises(
+        HostedChatProtocolError,
+        match=r"^Hosted Chat stream usage is malformed\.$",
+    ):
+        list(stream)
+
+
+@pytest.mark.parametrize(
+    "choice_usage,top_level_usage,finish_reason,error_match",
+    [
+        (True, None, "stop", r"^Hosted Chat stream usage is malformed\.$"),
+        (
+            {"total_tokens": 3},
+            {"total_tokens": 3},
+            "stop",
+            r"^Hosted Chat stream usage is malformed\.$",
+        ),
+        (
+            {"total_tokens": 3},
+            None,
+            None,
+            r"^Hosted Chat stream usage preceded terminal state\.$",
+        ),
+    ],
+)
+def test_hosted_chat_stream_rejects_malformed_or_misplaced_choice_usage(
+    choice_usage: object,
+    top_level_usage: object,
+    finish_reason: str | None,
+    error_match: str,
+) -> None:
+    event = {
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": finish_reason,
+                "usage": choice_usage,
+            }
+        ]
+    }
+    if top_level_usage is not None:
+        event["usage"] = top_level_usage
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(HostedChatProtocolError, match=error_match):
+        list(stream)
+
+
+@pytest.mark.parametrize("fingerprint", ["fp_kimi_live", None])
+def test_hosted_chat_stream_accepts_system_fingerprint(
+    fingerprint: str | None,
+) -> None:
+    event = {
+        "system_fingerprint": fingerprint,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    assert list(stream) == [event]
+    assert stream.terminal_turn.text == "done"
+
+
+@pytest.mark.parametrize(
+    "fingerprint",
+    [True, 1, "", "x" * (hosted_chat._MAX_METADATA_CHARS + 1)],
+)
+def test_hosted_chat_stream_rejects_malformed_system_fingerprint(
+    fingerprint: object,
+) -> None:
+    event = {
+        "system_fingerprint": fingerprint,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(
+        HostedChatProtocolError,
+        match=r"^Hosted Chat system fingerprint is malformed\.$",
+    ):
+        list(stream)
+
+
+def test_hosted_chat_stream_rejects_unknown_top_level_metadata() -> None:
+    event = {
+        "unexpected_live_metadata": "value",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "done"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"total_tokens": 3},
+    }
+    stream = HostedChatStream(
+        iter(
+            [
+                SSERecord(event=None, data=json.dumps(event)),
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        ),
+        finish_policy=_POLICY,
+    )
+
+    with pytest.raises(
+        HostedChatProtocolError,
+        match=r"^Hosted Chat stream event is malformed\.$",
+    ):
+        list(stream)
+
+
 @pytest.mark.parametrize(
     "records",
     [
