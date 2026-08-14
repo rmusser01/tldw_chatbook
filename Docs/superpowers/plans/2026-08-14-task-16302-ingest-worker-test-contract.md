@@ -20,7 +20,7 @@
 
 **Files:**
 - Modify: `Tests/App/test_submit_library_ingest_job.py:2473-2476`
-- Modify: `backlog/tasks/task-16001 - Repair-stale-ingest-worker-test-contract.md`
+- Modify: `backlog/tasks/task-16302 - Repair-stale-ingest-worker-test-contract.md`
 - Test: `Tests/App/test_submit_library_ingest_job.py`
 
 - [ ] **Step 1: Confirm the seven-case RED baseline**
@@ -78,7 +78,7 @@ set -o pipefail
 Expected: lint passes. The formatter reports the existing whole-file dev
 baseline and its diff leaves the new unpack/assertion unchanged; do not format
 unrelated legacy regions. The only changed paths are this plan, the approved
-spec, TASK-16001, and the App test; the production-path query and privacy scan
+spec, TASK-16302, and the App test; the production-path query and privacy scan
 emit nothing. Inspect the complete diff for accidental behavior or
 secret-bearing content.
 
@@ -88,7 +88,7 @@ secret-bearing content.
 ../../.venv/bin/python -B -m pytest -q -x --tb=short
 ```
 
-Expected: the full suite passes. If it fails, leave TASK-16001 In Progress and
+Expected: the full suite passes. If it fails, leave TASK-16302 In Progress and
 stop; do not label the failure unrelated without separate pristine-base
 reproduction and a revised plan.
 
@@ -97,7 +97,7 @@ reproduction and a revised plan.
 Self-review the exact diff for scope, assertion strength, privacy, and test
 vacuity. Then record the approach, modified behavior, trade-off, exact files,
 verification, and ADR result in Implementation Notes; check both acceptance
-criteria and set TASK-16001 to Done through Backlog CLI.
+criteria and set TASK-16302 to Done through Backlog CLI.
 
 Stage and verify only the exact implementation paths:
 
@@ -105,7 +105,7 @@ Stage and verify only the exact implementation paths:
 git add \
   Docs/superpowers/plans/2026-08-14-ingest-worker-test-contract.md \
   Tests/App/test_submit_library_ingest_job.py \
-  'backlog/tasks/task-16001 - Repair-stale-ingest-worker-test-contract.md'
+  'backlog/tasks/task-16302 - Repair-stale-ingest-worker-test-contract.md'
 git diff --cached --check
 git diff --cached --stat
 git diff --cached
@@ -113,4 +113,4 @@ git commit -m 'test: align ingest worker request identity'
 ```
 
 Expected: the staged diff contains no production file and the commit contains
-only the plan, test, and TASK-16001 closeout.
+only the plan, test, and TASK-16302 closeout.

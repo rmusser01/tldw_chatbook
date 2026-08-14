@@ -1,5 +1,5 @@
 ---
-id: TASK-16220
+id: TASK-16304
 title: Isolate MCP conversation search from embedding download
 status: Done
 assignee:
