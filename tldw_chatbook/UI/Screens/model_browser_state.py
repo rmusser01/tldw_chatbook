@@ -303,6 +303,7 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
         InsufficientSpaceError,
         PreflightNotGrantableError,
         TransferError,
+        TransferFailureCode,
     )
 
     if isinstance(exc, InsufficientSpaceError):
@@ -323,30 +324,17 @@ def install_failure_message(exc: BaseException, *, model_label: str) -> str:
     if isinstance(exc, CatalogError):
         return f"The {model_label} download source is misconfigured."
     if isinstance(exc, TransferError):
-        classification = str(exc).casefold()
-        if any(
-            marker in classification
-            for marker in ("checksum", "sha-256", "sha256", "size", "preverify")
-        ):
+        if exc.code is TransferFailureCode.VERIFICATION_FAILED:
             return (
                 "Package verification failed (size or SHA-256). No package was "
                 "promoted. Select Retry install."
             )
+        if exc.code is TransferFailureCode.SOURCE_UNAVAILABLE:
+            return (
+                "Pinned source unavailable — the app may be offline. Select Retry "
+                "install when connectivity returns."
+            )
         if exc.retryable:
-            if any(
-                marker in classification
-                for marker in (
-                    "transport",
-                    "i/o error",
-                    "connection",
-                    "offline",
-                    "source",
-                )
-            ):
-                return (
-                    "Pinned source unavailable — the app may be offline. Select Retry "
-                    "install when connectivity returns."
-                )
             return "The download was interrupted. Retry Install to resume."
         return "The download failed and cannot be retried automatically."
     return f"{model_label} install failed. See the application log for details."

@@ -135,6 +135,26 @@ class AudioCppArtifactRemovalEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class AudioCppModelLibraryObservationSnapshot:
+    """One immutable, generation-local batch of exact package observations."""
+
+    observations: tuple[AudioCppArtifactRemovalEvidence, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.observations) is not tuple
+            or len(self.observations) > _MAX_CONSUMERS
+            or any(
+                type(observation) is not AudioCppArtifactRemovalEvidence
+                for observation in self.observations
+            )
+            or len({item.reference for item in self.observations})
+            != len(self.observations)
+        ):
+            raise AudioCppArtifactDependencyError("invalid model library observation")
+
+
+@dataclass(frozen=True, slots=True)
 class AudioCppArtifactRemovalPreview:
     """Immutable public dependency preview bound to stable consumer evidence."""
 
@@ -968,6 +988,7 @@ __all__ = [
     "AudioCppArtifactLeaseCoordinator",
     "AudioCppArtifactRemovalEvidence",
     "AudioCppArtifactRemovalPreview",
+    "AudioCppModelLibraryObservationSnapshot",
     "AudioCppManagedConsumerIdentity",
     "build_audio_cpp_artifact_removal_preview",
     "project_audio_cpp_artifact_removal_evidence",

@@ -693,9 +693,13 @@ async def test_audio_cpp_mode_filters_catalog_and_exposes_joined_recipe_facts(
         assert ordinary.model_id not in text
         assert audio_descriptor.model_id in text
         assert audio_descriptor.model_family in text
-        assert "Available: Not checked — pinned source was not contacted" in text
+        assert (
+            "Available: Complete pinned source recorded; live reachability not checked"
+            in text
+        )
         assert "Integrity: Not checked — package is not installed" in text
-        assert "Recipe: Catalog candidate — exact revision not checked" in text
+        assert "Recipe: audio-cpp-" in text
+        assert "installed scan not checked" in text
         assert "Compatibility:" in text
         assert "Configured: Unknown — Settings state was not checked" in text
         assert "Running: Unknown — supervisor state was not checked" in text
@@ -838,9 +842,10 @@ async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80
         text = _all_text(app)
         for fact in (
             descriptor.model_id,
-            "Available: Not checked — pinned source was not contacted",
+            "Available: Complete pinned source recorded; live reachability not checked",
             "Integrity: Not checked — package is not installed",
-            "Recipe: Catalog candidate — exact revision not checked",
+            f"Recipe: {recipe.recipe_id}@{recipe.recipe_revision}",
+            "installed scan not checked",
             "Compatibility:",
             "Configured: Unknown — Settings state was not checked",
             "Running: Unknown — supervisor state was not checked",
@@ -869,7 +874,7 @@ async def test_audio_cpp_row_is_truthful_expandable_and_keyboard_reachable_at_80
         )
         view.refresh(recompose=True)
         await pilot.pause()
-        assert "Recipe: Catalog candidate" in _all_text(app)
+        assert f"Recipe: {recipe.recipe_id}@{recipe.recipe_revision}" in _all_text(app)
 
         disclosure = view.query_one(".audio-cpp-companions", Collapsible)
         assert str(disclosure.title) == "Companion files (12)"
@@ -964,3 +969,250 @@ async def test_refresh_restores_focus_after_curated_worker_recompose(
             ),
             pilot=pilot,
         )
+
+
+def test_default_only_evidence_does_not_claim_guided_settings_membership() -> None:
+    """A global default is not evidence that the package is in Guided Settings."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+    )
+    from tldw_chatbook.UI.Screens.model_curated_view import (
+        AudioCppPackageProjection,
+        project_audio_cpp_observation,
+    )
+
+    reference = ArtifactRef("audio-cpp-model", "a" * 40, "f16")
+    projection = AudioCppPackageProjection(
+        "recipe", "compatibility", (), "TTS", "model.bin", "source", "1 byte"
+    )
+    evidence = AudioCppArtifactRemovalEvidence(
+        reference,
+        settings_consumers=(
+            ("saved-default", "Saved global TTS default", "model"),
+            ("draft-default", "Unsaved global TTS default", "model"),
+        ),
+    )
+
+    observed = project_audio_cpp_observation(projection, reference, evidence)
+
+    assert observed.configured == "Not configured — exact Settings state checked"
+    assert "Saved Settings" not in observed.configured
+    assert "draft" not in observed.configured
+
+
+@pytest.mark.asyncio
+async def test_all_audio_cpp_rows_share_one_bulk_observation_call(
+    tmp_path: Path,
+) -> None:
+    """The catalog's many rows must not each trigger a full app evidence snapshot."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    registry = CuratedRegistry()
+    for descriptor, sources in audio_cpp_curated_entries():
+        registry.register(descriptor, sources=sources)
+    calls = []
+
+    async def observe(references):
+        calls.append(references)
+        return AudioCppModelLibraryObservationSnapshot(())
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _ViewApp(view)
+    async with app.run_test() as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded and bool(calls), pilot=pilot)
+        await pilot.pause()
+
+    assert len(registry.list()) >= 40
+    assert calls == [(tuple(item.reference for item in registry.list()))]
+
+
+@pytest.mark.parametrize("role", ("install", "disclosure"))
+@pytest.mark.asyncio
+async def test_delayed_bulk_observation_restores_curated_semantic_focus(
+    tmp_path: Path,
+    role: str,
+) -> None:
+    """Evidence recomposition preserves id-less Install and disclosure focus."""
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    release = __import__("asyncio").Event()
+    calls: list[tuple[ArtifactRef, ...]] = []
+
+    async def observe(references):
+        calls.append(references)
+        await release.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=(("saved", "Guided Settings", "package"),),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(lambda: view._loaded and bool(calls), pilot=pilot)
+        target = (
+            view.query_one(".curated-install", Button)
+            if role == "install"
+            else view.query_one(CollapsibleTitle)
+        )
+        target.focus()
+        release.set()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        assert target is not app.focused
+        assert (
+            view.query_one(".curated-install", Button).has_focus
+            if role == "install"
+            else view.query_one(CollapsibleTitle).has_focus
+        )
+
+    assert calls == [(descriptor.reference,)]
+
+
+@pytest.mark.asyncio
+async def test_newer_bulk_observation_wins_over_delayed_old_generation(
+    tmp_path: Path,
+) -> None:
+    """A cancelled old observer cannot overwrite the newer exact-ref projection."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    old_release = asyncio.Event()
+    old_entered = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        assert references == (descriptor.reference,)
+        if calls == 1:
+            old_entered.set()
+            try:
+                await old_release.wait()
+            except asyncio.CancelledError:
+                await old_release.wait()
+            consumers = (("saved", "Guided Settings", "old-package"),)
+        else:
+            consumers = ()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=consumers,
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(old_entered.is_set, pilot=pilot)
+        view.refresh_observations()
+        assert await _wait_until(
+            lambda: (
+                calls == 2
+                and "Configured: Not configured — exact Settings state checked"
+                in _all_text(app)
+            ),
+            pilot=pilot,
+        )
+        old_release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert "Configured: Saved Settings" not in _all_text(app)
+
+
+@pytest.mark.asyncio
+async def test_observation_refresh_clears_stale_affirmation_while_pending(
+    tmp_path: Path,
+) -> None:
+    """A new generation cannot display the prior generation as current evidence."""
+    import asyncio
+
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+
+    descriptor, sources = audio_cpp_curated_entries()[0]
+    registry = CuratedRegistry()
+    registry.register(descriptor, sources=sources)
+    release_refresh = asyncio.Event()
+    calls = 0
+
+    async def observe(references):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            await release_refresh.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    references[0],
+                    settings_consumers=(
+                        (("saved", "Guided Settings", "package"),) if calls == 1 else ()
+                    ),
+                ),
+            )
+        )
+
+    view = CuratedView(
+        service_factory=lambda: ModelArtifactService(tmp_path / "store"),
+        registry_factory=lambda: registry,
+        observation_provider=observe,
+    )
+    view.set_consumer_filter("audio_cpp")
+    app = _StyledViewApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        assert await _wait_until(
+            lambda: "Configured: Saved Settings" in _all_text(app), pilot=pilot
+        )
+        view.refresh_observations()
+        await pilot.pause()
+        text = _all_text(app)
+        assert "Configured: Saved Settings" not in text
+        assert "Configured: Unknown — Settings state was not checked" in text
+        release_refresh.set()

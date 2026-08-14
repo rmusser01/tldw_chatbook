@@ -300,6 +300,7 @@ from tldw_chatbook.TTS import TTSProfileService
 from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
     AudioCppArtifactLeaseCoordinator,
     AudioCppArtifactRemovalEvidence,
+    AudioCppModelLibraryObservationSnapshot,
     AudioCppManagedConsumerIdentity,
     project_audio_cpp_artifact_removal_evidence,
 )
@@ -9278,6 +9279,13 @@ class TldwCli(
         handler = getattr(self, "_stts_handler", None)
         if handler is not None:
             handler.on_stts_provider_configuration_changed(event)
+        if event.provider_id == "audio_cpp":
+            from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
+
+            current_screen = getattr(self, "screen", None)
+            if current_screen is not None:
+                for window in current_screen.query(LLMManagementWindow):
+                    window.refresh_model_library_observations()
 
     @on(STTSAudioBookGenerateEvent)
     async def handle_stts_audiobook_generate_event(
@@ -9468,11 +9476,22 @@ class TldwCli(
             raise ProfileRepositoryError("unavailable") from None
         return saved, draft, saved_preferences, draft_preferences
 
-    async def _audio_cpp_artifact_removal_evidence(
+    async def _audio_cpp_model_library_observation_snapshot(
         self,
-        reference: "ArtifactRef",
-    ) -> AudioCppArtifactRemovalEvidence:
-        """Collect bounded saved, draft, profile, assignment, and runtime facts."""
+        references: tuple["ArtifactRef", ...],
+    ) -> AudioCppModelLibraryObservationSnapshot:
+        """Collect shared evidence once, then project every exact package ref."""
+
+        from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+        if type(references) is not tuple or any(
+            type(reference) is not ArtifactRef for reference in references
+        ):
+            raise TypeError("references must be a tuple of ArtifactRef values")
+        if len(set(references)) != len(references):
+            raise ValueError("references must be unique")
+        if not references:
+            return AudioCppModelLibraryObservationSnapshot(())
 
         saved, draft, saved_preferences, draft_preferences = (
             self._audio_cpp_removal_settings_inputs()
@@ -9485,8 +9504,6 @@ class TldwCli(
             await profile_service.bounded_profile_assignment_snapshot()
         )
 
-        staged_ids: tuple[str, ...] = ()
-        live_ids: tuple[str, ...] = ()
         try:
             configuration = (
                 await self.tts_service.registry.provider_configuration_snapshot(
@@ -9503,44 +9520,67 @@ class TldwCli(
             )
             supervisor = getattr(self.tts_service, "_audio_cpp_supervisor", None)
             admission = None if supervisor is None else supervisor.admission_snapshot()
-
-            def contains(config: AudioCppSettingsConfig | None) -> bool:
-                if config is None:
-                    return False
-                return any(
-                    package.managed_artifact is not None
-                    and (
-                        package.managed_artifact.artifact_id,
-                        package.managed_artifact.revision,
-                        package.managed_artifact.variant,
-                    )
-                    == (reference.artifact_id, reference.revision, reference.variant)
-                    for package in config.guided_packages
-                )
-
-            if contains(staged_config):
-                staged_ids = (f"settings-generation-{configuration.staged_generation}",)
-            if (
-                contains(applied_config)
-                and admission is not None
-                and admission.state in {"starting", "running", "draining", "stopping"}
-            ):
-                live_ids = (f"process-generation-{admission.process_generation}",)
         except Exception:
             # Runtime evidence is safety-relevant; fail closed without exposing
             # collaborator details through the removal review.
             raise ProfileRepositoryError("unavailable") from None
 
-        return project_audio_cpp_artifact_removal_evidence(
-            reference,
-            saved_settings=saved,
-            draft_settings=draft,
-            saved_preferences=saved_preferences,
-            draft_preferences=draft_preferences,
-            profiles=profiles_with_counts,
-            staged_runtime_ids=staged_ids,
-            live_runtime_ids=live_ids,
+        def contains(
+            config: AudioCppSettingsConfig | None,
+            reference: ArtifactRef,
+        ) -> bool:
+            return config is not None and any(
+                package.managed_artifact is not None
+                and (
+                    package.managed_artifact.artifact_id,
+                    package.managed_artifact.revision,
+                    package.managed_artifact.variant,
+                )
+                == (reference.artifact_id, reference.revision, reference.variant)
+                for package in config.guided_packages
+            )
+
+        live = admission is not None and admission.state in {
+            "starting",
+            "running",
+            "draining",
+            "stopping",
+        }
+        return AudioCppModelLibraryObservationSnapshot(
+            tuple(
+                project_audio_cpp_artifact_removal_evidence(
+                    reference,
+                    saved_settings=saved,
+                    draft_settings=draft,
+                    saved_preferences=saved_preferences,
+                    draft_preferences=draft_preferences,
+                    profiles=profiles_with_counts,
+                    staged_runtime_ids=(
+                        (f"settings-generation-{configuration.staged_generation}",)
+                        if contains(staged_config, reference)
+                        else ()
+                    ),
+                    live_runtime_ids=(
+                        (f"process-generation-{admission.process_generation}",)
+                        if live and contains(applied_config, reference)
+                        else ()
+                    ),
+                )
+                for reference in references
+            )
         )
+
+    async def _audio_cpp_artifact_removal_evidence(
+        self,
+        reference: "ArtifactRef",
+    ) -> AudioCppArtifactRemovalEvidence:
+        """Collect Task 9 removal evidence through the shared bulk snapshot."""
+
+        snapshot = await TldwCli._audio_cpp_model_library_observation_snapshot(
+            self,
+            (reference,),
+        )
+        return snapshot.observations[0]
 
     async def _ensure_tts_voice_bundle_service(
         self,

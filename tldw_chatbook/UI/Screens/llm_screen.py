@@ -84,6 +84,19 @@ class _AudioCppConsentDeclined(Exception):
     """Internal terminal value for a reviewed install the user declined."""
 
 
+def _insufficient_space_recovery(report: object) -> str | None:
+    """Return byte-exact bounded recovery for one ungrantable real plan."""
+
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+
+    if type(report) is not PreflightReport or report.sufficient_space:
+        return None
+    return (
+        f"Insufficient space — {report.required_bytes:,} bytes required; "
+        f"{report.free_bytes:,} bytes free. Free space, then select Retry install."
+    )
+
+
 #: (section title, ((view key, label), ...)) in rail order. The view keys are
 #: exactly LLMManagementWindow.view_mapping's keys.
 MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
@@ -1642,16 +1655,7 @@ class LLMScreen(LabScreen):
         """Start provisioning only after explicit consent."""
         if not confirmed:
             report = self._model_install_pending_report
-            message = None
-            from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
-
-            if isinstance(report, PreflightReport) and not report.sufficient_space:
-                message = (
-                    f"Insufficient space — {report.required_bytes:,} bytes required; "
-                    f"{report.free_bytes:,} bytes free. Free space, then select "
-                    "Retry install."
-                )
-            self._clear_curated_install_state(message)
+            self._clear_curated_install_state(_insufficient_space_recovery(report))
             return
         reference = self._model_install_reference
         if reference is not None:
@@ -1964,7 +1968,9 @@ class LLMScreen(LabScreen):
             return
         if isinstance(error, _AudioCppConsentDeclined):
             self._model_install_worker = None
-            self._clear_curated_install_state()
+            self._clear_curated_install_state(
+                _insufficient_space_recovery(self._model_install_pending_report)
+            )
             return
         if error is not None:
             reference = self._model_install_reference

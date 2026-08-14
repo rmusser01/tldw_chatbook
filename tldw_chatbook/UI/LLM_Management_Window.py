@@ -659,7 +659,9 @@ class LLMManagementWindow(Container):
                 legacy_dir = Path(str(configured)).expanduser()
 
         observation_provider = getattr(
-            self.app_instance, "_audio_cpp_artifact_removal_evidence", None
+            self.app_instance,
+            "_audio_cpp_model_library_observation_snapshot",
+            None,
         )
         await curated.mount(
             CuratedView(
@@ -1936,12 +1938,12 @@ class LLMManagementWindow(Container):
 
                 # Populate help text for specific views
                 self._populate_help_text(new_view, target_view)
-                self._start_view_work(new_view, target_view)
                 if new_view in self._model_library_focus_ids:
                     self.call_after_refresh(
                         self._restore_model_library_focus,
                         new_view,
                     )
+                self._start_view_work(new_view, target_view)
             except QueryError:
                 logger.error(f"Target view #{target_view_id} not found")
 
@@ -2017,7 +2019,30 @@ class LLMManagementWindow(Container):
             except QueryError:
                 logger.debug(f"{view_name.title()} view is unavailable; skipped.")
                 return
+            already_loaded = bool(getattr(managed_view, "_loaded", False))
             managed_view.ensure_loaded()
+            if already_loaded:
+                # Restore the pane's semantic row focus first so the observer
+                # can retain that exact locator across its evidence recompose.
+                self.call_after_refresh(self.refresh_model_library_observations)
+            return
+
+    def refresh_model_library_observations(self) -> None:
+        """Refresh evidence only for the currently visible loaded library pane."""
+
+        view_name = self.active_view
+        if view_name not in {"curated", "installed"}:
+            return
+        try:
+            managed_view = self.query_one(
+                "#curated-models-view"
+                if view_name == "curated"
+                else "#installed-models-view"
+            )
+        except QueryError:
+            return
+        if getattr(managed_view, "_loaded", False):
+            managed_view.refresh_observations()
 
     def _populate_help_text(self, view_name: str, view_widget) -> None:
         """Populate help text for views that have it."""

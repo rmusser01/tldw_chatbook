@@ -2726,10 +2726,11 @@ async def test_installed_audio_cpp_row_separates_package_truth_at_80x24(
         await _wait_until(pilot, lambda: view._loaded)
         text = _rendered_static_text(view)
         for fact in (
-            "Available: Not checked — pinned source was not contacted",
+            "Available: Complete pinned source recorded; live reachability not checked",
             "Installed package: Local record found",
             "Integrity: Not checked this session",
-            "Recipe: Catalog candidate — exact revision not checked",
+            "Recipe: audio-cpp-",
+            "installed scan not checked",
             "Compatibility:",
             "Configured: Unknown — Settings state was not checked",
             "Running: Unknown — supervisor state was not checked",
@@ -2792,6 +2793,53 @@ async def test_corrupt_audio_cpp_row_never_promotes_ready_or_integrity_truth(
     assert "Active" not in text
     assert "Recipe: Matched" not in text
     assert "PRIVATE" not in text
+
+
+@pytest.mark.asyncio
+async def test_install_only_audio_cpp_root_without_readiness_is_not_a_repair_error(
+    tmp_path: Path,
+) -> None:
+    """The real activate=False state is installed, inactive, and unverified."""
+    from Tests.Model_Artifacts.test_acquisition_types import (
+        DictCatalog,
+        make_descriptor,
+    )
+    from tldw_chatbook.Model_Artifacts.acquisition import ArtifactAcquisitionService
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    reference = ArtifactRef("audio-cpp-install-only", "a" * 40, "int8")
+    descriptor = replace(
+        make_descriptor(reference, files_body=b"audio-package"),
+        consumer="audio_cpp",
+        precision=reference.variant,
+    )
+    service = ModelArtifactService(tmp_path / "store")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "model.onnx").write_bytes(b"audio-package")
+    service.install(descriptor, source)
+    acquisition = ArtifactAcquisitionService(
+        service,
+        free_bytes_probe=lambda _path: 1_000_000_000,
+    )
+    catalog = DictCatalog({reference: descriptor})
+    report = await acquisition.preflight(reference, catalog)
+    await acquisition.provision(reference, report.grant(), catalog, activate=False)
+    installed = service.list_installed()[0]
+    assert installed.ready is False
+    assert installed.active is False
+    assert installed.error is None
+
+    view = InstalledView(service_factory=lambda: service, legacy_dir=tmp_path)
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded)
+        text = _rendered_static_text(view)
+
+    assert "Integrity: Not checked this session" in text
+    assert "package record needs Repair" not in text
+    assert "Active" not in text
 
 
 @pytest.mark.parametrize(
@@ -2941,6 +2989,67 @@ async def test_blocked_audio_cpp_removal_paints_recovery_and_restores_delete_foc
         delete = view.query_one(".model-delete", Button)
         assert delete.has_focus
         assert delete in app.screen._compositor.visible_widgets
+
+
+@pytest.mark.asyncio
+async def test_delayed_bulk_observation_restores_installed_delete_focus(
+    tmp_path: Path,
+) -> None:
+    """Evidence recomposition restores the id-less exact-ref Delete button."""
+    import asyncio
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
+    from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
+        AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
+    )
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    descriptor, _sources = audio_cpp_curated_entries()[0]
+    installed = InstalledArtifact(
+        path=tmp_path / "managed-package",
+        descriptor=descriptor,
+        ready=False,
+        active=False,
+        error=None,
+    )
+    service = MagicMock()
+    service.list_installed.return_value = (installed,)
+    service.disk_usage.return_value = ArtifactDiskUsage(1, 0, 64 * 1024 * 1024)
+    release = asyncio.Event()
+    calls: list[tuple[ArtifactRef, ...]] = []
+
+    async def observe(references):
+        calls.append(references)
+        await release.wait()
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=(("saved", "Guided Settings", "package"),),
+                ),
+            )
+        )
+
+    view = InstalledView(
+        service_factory=lambda: service,
+        legacy_dir=tmp_path,
+        observation_provider=observe,
+    )
+    app = _StyledInstalledApp(view)
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded()
+        await _wait_until(pilot, lambda: view._loaded and bool(calls))
+        delete = view.query_one(".model-delete", Button)
+        delete.focus()
+        release.set()
+        await _wait_until(
+            pilot,
+            lambda: "Configured: Saved Settings" in _rendered_static_text(view),
+        )
+        assert delete is not app.focused
+        assert view.query_one(".model-delete", Button).has_focus
+
+    assert calls == [(descriptor.reference,)]
 
 
 def test_curated_progress_tolerates_recompose_gap() -> None:

@@ -731,6 +731,74 @@ async def test_removal_evidence_uses_bounded_profile_snapshot_and_fails_closed(
         )
 
 
+@pytest.mark.asyncio
+async def test_model_library_bulk_observation_collects_shared_evidence_once() -> None:
+    """Many exact refs share one Settings/profile/runtime collection generation."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    calls = {"settings": 0, "profiles": 0, "runtime": 0}
+
+    class Profiles:
+        async def bounded_profile_assignment_snapshot(self):
+            calls["profiles"] += 1
+            return ()
+
+    class Registry:
+        async def provider_configuration_snapshot(self, provider_id: str):
+            calls["runtime"] += 1
+            assert provider_id == "audio_cpp"
+            return SimpleNamespace(
+                staged_config=None,
+                applied_config={},
+                staged_generation=0,
+            )
+
+    def settings_inputs():
+        calls["settings"] += 1
+        return (
+            app_module.AudioCppSettingsConfig(),
+            None,
+            TTSPreferencesSnapshot(
+                provider_id="openai",
+                model_mode="exact",
+                model_id="tts-1",
+                voice_mode="exact",
+                voice_id="alloy",
+                response_format="mp3",
+                speed=1.0,
+            ),
+            None,
+        )
+
+    profiles = Profiles()
+
+    async def ensure_profiles():
+        return profiles
+
+    owner = SimpleNamespace(
+        _audio_cpp_removal_settings_inputs=settings_inputs,
+        _ensure_tts_profile_service=ensure_profiles,
+        tts_service=SimpleNamespace(
+            registry=Registry(),
+            _audio_cpp_supervisor=None,
+        ),
+    )
+    references = tuple(
+        ArtifactRef(f"audio-cpp-model-{index}", chr(97 + index) * 40, "q8_0")
+        for index in range(3)
+    )
+    collect = getattr(TldwCli, "_audio_cpp_model_library_observation_snapshot", None)
+    assert callable(collect)
+
+    snapshot = await collect(owner, references)
+
+    assert type(snapshot).__name__ == "AudioCppModelLibraryObservationSnapshot"
+    assert tuple(item.reference for item in snapshot.observations) == references
+    assert calls == {"settings": 1, "profiles": 1, "runtime": 1}
+    with pytest.raises((AttributeError, TypeError)):
+        snapshot.observations = ()
+
+
 def test_removal_settings_inputs_prefer_exact_detached_typed_draft() -> None:
     """Detached Settings state wins over a stale mounted fallback snapshot."""
 

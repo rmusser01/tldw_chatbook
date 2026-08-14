@@ -1602,34 +1602,156 @@ def test_declining_insufficient_space_persists_exact_required_and_free_bytes():
     )
 
 
+@pytest.mark.asyncio
+async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisions(
+    tmp_path,
+    monkeypatch,
+):
+    """The real 80x24 Lab modal returns to a focused byte-exact Retry action."""
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
+    from tldw_chatbook.Model_Artifacts.acquisition import PreflightReport
+    from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    required = 8_388_608
+    free = 2_097_152
+    provision_calls = []
+
+    class Acquisition:
+        def __init__(self, _service):
+            pass
+
+        async def preflight(self, reference, _registry, *, sources):
+            assert sources
+            return PreflightReport(
+                root=reference,
+                closure_fingerprint="f" * 64,
+                entries=(),
+                download_bytes=8_000_000,
+                already_staged_bytes=0,
+                staging_overhead_bytes=388_608,
+                retained_bytes=0,
+                destination=tmp_path / "managed",
+                free_bytes=free,
+                required_bytes=required,
+                sufficient_space=False,
+                gating_errors=(),
+            )
+
+        async def provision(self, *_args, **_kwargs):
+            provision_calls.append(True)
+            raise AssertionError("insufficient-space admission must not provision")
+
+    monkeypatch.setattr(acquisition_module, "ArtifactAcquisitionService", Acquisition)
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#curated-models-view")), pilot
+        )
+        window = screen.query_one(LLMManagementWindow)
+        curated = window.query_one("#curated-models-view", CuratedView)
+        curated.set_consumer_filter("audio_cpp")
+        window.active_view = "curated"
+        assert await _wait_for(lambda: curated._loaded, pilot)
+        install = curated.query_one(".curated-install", Button)
+        install.press()
+        assert await _wait_for(
+            lambda: (
+                isinstance(app.screen, ModelInstallModal)
+                and bool(app.screen.query("#model-install-confirm"))
+            ),
+            pilot,
+        )
+        modal = app.screen
+        assert modal.query_one("#model-install-confirm", Button).disabled is True
+        modal.query_one("#model-install-cancel", Button).press()
+        assert await _wait_for(lambda: app.screen is screen, pilot)
+        expected = (
+            "Insufficient space — 8,388,608 bytes required; 2,097,152 bytes free. "
+            "Free space, then select Retry install."
+        )
+        assert await _wait_for(
+            lambda: (
+                expected
+                in "\n".join(str(item.renderable) for item in curated.query(Static))
+            ),
+            pilot,
+        )
+        retry = curated.query_one(".curated-install", Button)
+        assert str(retry.label) == "Retry install…"
+        assert retry.has_focus
+        assert retry in app.screen._compositor.visible_widgets
+        assert retry.region.right <= window.query_one("#llm-view-curated").region.right
+        assert (
+            retry.region.bottom <= window.query_one("#llm-view-curated").region.bottom
+        )
+
+    assert provision_calls == []
+
+
 @pytest.mark.parametrize(
-    ("detail", "retryable", "expected"),
+    ("detail", "retryable", "code_name", "expected"),
     (
         (
             "transport error fetching private/source/path",
             True,
+            "SOURCE_UNAVAILABLE",
             "Pinned source unavailable — the app may be offline.",
         ),
         (
             "preverify checksum mismatch at private/source/path",
             False,
+            "VERIFICATION_FAILED",
             "Package verification failed (size or SHA-256). No package was promoted.",
         ),
     ),
 )
 def test_audio_cpp_transfer_failures_map_to_bounded_inline_recovery(
-    detail, retryable, expected
+    detail, retryable, code_name, expected
 ):
     """Typed transfer failures select recovery without leaking collaborator text."""
-    from tldw_chatbook.Model_Artifacts.acquisition import TransferError
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
     from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 
+    code_type = getattr(acquisition_module, "TransferFailureCode", None)
+    assert code_type is not None
     message = install_failure_message(
-        TransferError(detail, retryable=retryable), model_label="audio.cpp package"
+        acquisition_module.TransferError(
+            detail,
+            retryable=retryable,
+            code=getattr(code_type, code_name),
+        ),
+        model_label="audio.cpp package",
     )
 
     assert expected in message
     assert "private/source/path" not in message
+
+
+def test_ambiguous_transfer_text_cannot_promote_a_typed_recovery_claim() -> None:
+    """Unknown code stays generic even when private text contains size/offline words."""
+    from tldw_chatbook.Model_Artifacts import acquisition as acquisition_module
+    from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+
+    code_type = getattr(acquisition_module, "TransferFailureCode", None)
+    assert code_type is not None
+    marker = "PRIVATE source size endpoint is offline /Users/example/model"
+    message = install_failure_message(
+        acquisition_module.TransferError(
+            marker,
+            retryable=True,
+            code=code_type.UNKNOWN,
+        ),
+        model_label="audio.cpp package",
+    )
+
+    assert message == "The download was interrupted. Retry Install to resume."
+    assert "Pinned source unavailable" not in message
+    assert "verification failed" not in message.casefold()
+    assert "not promoted" not in message
+    assert "PRIVATE" not in message
+    assert "/Users" not in message
 
 
 def test_curated_install_requested_refuses_a_second_concurrent_install():
@@ -4752,6 +4874,7 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
     from tldw_chatbook.TTS.audio_cpp_artifact_catalog import audio_cpp_curated_entries
     from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
         AudioCppArtifactRemovalEvidence,
+        AudioCppModelLibraryObservationSnapshot,
     )
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
     from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
@@ -4788,19 +4911,26 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
     registry = CuratedRegistry()
     registry.register(descriptor, sources=sources)
 
-    async def evidence(exact):
-        assert exact == descriptor.reference
-        return AudioCppArtifactRemovalEvidence(
-            exact,
-            settings_consumers=(
-                ("saved", "Guided Settings", "saved-package"),
-                ("draft", "Unsaved Guided Settings", "draft-package"),
-            ),
-            live_runtime_ids=("process-generation-7",),
+    observation_calls = []
+
+    async def evidence(exact_references):
+        observation_calls.append(exact_references)
+        assert exact_references == (descriptor.reference,)
+        return AudioCppModelLibraryObservationSnapshot(
+            (
+                AudioCppArtifactRemovalEvidence(
+                    descriptor.reference,
+                    settings_consumers=(
+                        ("saved", "Guided Settings", "saved-package"),
+                        ("draft", "Unsaved Guided Settings", "draft-package"),
+                    ),
+                    live_runtime_ids=("process-generation-7",),
+                ),
+            )
         )
 
     app = _app()
-    monkeypatch.setattr(app, "_audio_cpp_artifact_removal_evidence", evidence)
+    monkeypatch.setattr(app, "_audio_cpp_model_library_observation_snapshot", evidence)
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await _models_screen(app)
         assert await _wait_for(
@@ -4826,6 +4956,7 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
         assert "Running: Applied supervisor generation is active" in text
         assert "Configured: Unknown" not in text
         assert "Running: Unknown" not in text
+        assert observation_calls == [(descriptor.reference,)]
 
         pane = window.query_one("#llm-view-curated")
         assert pane.region.width < 80
@@ -4846,6 +4977,15 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
         window.active_view = "curated"
         await pilot.pause()
         assert curated.query_one(".curated-install", Button).has_focus
+        assert await _wait_for(lambda: len(observation_calls) == 2, pilot)
+        from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+            STTSProviderConfigurationChanged,
+        )
+
+        app.handle_stts_provider_configuration_changed(
+            STTSProviderConfigurationChanged("audio_cpp", 7)
+        )
+        assert await _wait_for(lambda: len(observation_calls) == 3, pilot)
 
         class InstalledService:
             def list_installed(self):
@@ -4853,8 +4993,8 @@ async def test_real_model_library_projects_exact_settings_and_running_evidence(
                     InstalledArtifact(
                         path=tmp_path / "managed",
                         descriptor=descriptor,
-                        ready=True,
-                        active=True,
+                        ready=False,
+                        active=False,
                         error=None,
                     ),
                 )

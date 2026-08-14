@@ -41,6 +41,7 @@ from tldw_chatbook.Model_Artifacts.service import (
 )
 from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
     AudioCppArtifactRemovalPreview,
+    AudioCppModelLibraryObservationSnapshot,
     build_audio_cpp_artifact_removal_preview,
     is_curated_audio_cpp_artifact_reference,
 )
@@ -56,6 +57,7 @@ from tldw_chatbook.UI.Screens.model_curated_view import (
     AudioCppPackageProjection,
     ModelLibraryFocusLocator,
     audio_cpp_package_projection,
+    clear_audio_cpp_observation,
     model_library_focus_locator,
     project_audio_cpp_observation,
     restore_model_library_focus,
@@ -279,6 +281,7 @@ class InstalledView(Widget):
         self._import_status: str | None = None
         self._import_retry_available = False
         self._restore_header_focus_id: str | None = None
+        self._observation_generation = 0
         super().__init__(id=id)
 
     def _non_import_lifecycle_pending(self) -> bool:
@@ -531,14 +534,14 @@ class InstalledView(Widget):
         )
         return (
             Static(
-                "Available: Not checked — pinned source was not contacted",
+                "Available: Complete pinned source recorded; live reachability not checked",
                 markup=False,
             ),
             Static("Installed package: Local record found", markup=False),
             Static(
-                "Integrity: Not checked this session"
-                if row.ready
-                else "Integrity: Unknown — package record needs Repair",
+                "Integrity: Unknown — package record needs Repair"
+                if row.error is not None
+                else "Integrity: Not checked this session",
                 markup=False,
             ),
             Static(f"Recipe: {projection.recipe}", markup=False),
@@ -632,6 +635,7 @@ class InstalledView(Widget):
             return
         if self._loaded and not force:
             return
+        self._observation_generation += 1
         self._loading = True
         self._load_error = None
         self.refresh(recompose=True)
@@ -700,7 +704,7 @@ class InstalledView(Widget):
         else:
             self.refresh(recompose=True)
             if error is None and self._observation_provider is not None:
-                self._observe_audio_cpp_rows()
+                self.refresh_observations()
             if self._import_status is not None:
                 self.call_after_refresh(self._focus_import_recovery)
             elif self._restore_header_focus_id is not None:
@@ -708,33 +712,86 @@ class InstalledView(Widget):
                 self._restore_header_focus_id = None
                 self.call_after_refresh(self.restore_focus, focus_id)
 
+    def refresh_observations(self) -> None:
+        """Refresh current exact refs without re-reading managed inventory."""
+
+        if self._observation_provider is None:
+            return
+        references = tuple(self._audio_cpp_projections)
+        if not references:
+            return
+        self._observation_generation += 1
+        focused = self.app.focused
+        locator = (
+            self.focus_locator(focused)
+            if focused is not None and self in focused.ancestors_with_self
+            else None
+        )
+        projections = {
+            reference: clear_audio_cpp_observation(projection)
+            for reference, projection in self._audio_cpp_projections.items()
+        }
+        if projections != self._audio_cpp_projections:
+            self._audio_cpp_projections = projections
+            self.refresh(recompose=True)
+            if locator is not None:
+                self.call_after_refresh(self.restore_focus, locator)
+            self.call_after_refresh(
+                self._observe_audio_cpp_rows,
+                self._observation_generation,
+                references,
+                locator,
+            )
+            return
+        self._observe_audio_cpp_rows(
+            self._observation_generation,
+            references,
+            locator,
+        )
+
     @work(group="installed_audio_cpp_observation", exclusive=True, exit_on_error=False)
-    async def _observe_audio_cpp_rows(self) -> None:
-        """Apply exact Settings/runtime evidence without blocking inventory load."""
+    async def _observe_audio_cpp_rows(
+        self,
+        generation: int,
+        references: tuple[ArtifactRef, ...],
+        locator: ModelLibraryFocusLocator | None,
+    ) -> None:
+        """Apply one generation-gated bulk Settings/runtime observation."""
 
         provider = self._observation_provider
         if provider is None:
             return
-        projections = dict(self._audio_cpp_projections)
-        changed = False
-        for reference, projection in tuple(projections.items()):
-            try:
-                evidence = await provider(reference)
-            except Exception:
-                continue
-            from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
-                AudioCppArtifactRemovalEvidence,
+        try:
+            snapshot = await provider(references)
+        except Exception:
+            return
+        if (
+            type(snapshot) is not AudioCppModelLibraryObservationSnapshot
+            or generation != self._observation_generation
+            or not self.is_attached
+            or tuple(self._audio_cpp_projections) != references
+        ):
+            return
+        evidence_by_ref = {item.reference: item for item in snapshot.observations}
+        projections = {
+            reference: project_audio_cpp_observation(
+                projection,
+                reference,
+                evidence_by_ref[reference],
             )
-
-            if type(evidence) is not AudioCppArtifactRemovalEvidence:
-                continue
-            projected = project_audio_cpp_observation(projection, reference, evidence)
-            if projected != projection:
-                projections[reference] = projected
-                changed = True
-        if changed and self.is_attached:
-            self._audio_cpp_projections = projections
-            self.refresh(recompose=True)
+            if reference in evidence_by_ref
+            else projection
+            for reference, projection in self._audio_cpp_projections.items()
+        }
+        if projections == self._audio_cpp_projections:
+            return
+        focused = self.app.focused
+        if focused is not None and self in focused.ancestors_with_self:
+            locator = self.focus_locator(focused) or locator
+        self._audio_cpp_projections = projections
+        await self.recompose()
+        if locator is not None:
+            self.restore_focus(locator)
 
     def _focus_import_recovery(self) -> None:
         """Restore focus to one stable import control after recomposition."""
