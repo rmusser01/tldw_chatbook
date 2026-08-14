@@ -3775,10 +3775,11 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
 
         row = console.query_one(f"#console-message-{message.id}")
         if isinstance(row, ConsoleMarkdownMessage):
-            # TASK-1990 markdown row: the dim role label lives in the header
-            # Static; the body is a separate Markdown widget, which never
-            # inherits the header's dim style (full contrast by construction).
-            rendered = row.query_one(".console-markdown-header", Static).renderable
+            # The dim role label lives inside the stable header; the body is a
+            # separate Markdown widget and keeps full contrast by construction.
+            rendered = row.query_one(
+                ".console-transcript-speaker-label", Static
+            ).renderable
             body_text = _message_row_plain_text(console, message.id)
         else:
             rendered = row.renderable
@@ -3936,8 +3937,7 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    # TASK-1: the row now carries a 9th always-visible action button (speak,
-    # right after copy). ConsoleHarness is a bare App (not TldwCli), so it
+    # ConsoleHarness is a bare App (not TldwCli), so it
     # never loads the app's built CSS bundle -- only widget DEFAULT_CSS (see
     # the note at chat_screen.py:726-728) -- so the bundle's
     # `.console-transcript-action-button { min-width: 5 }` override never
@@ -3978,12 +3978,6 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
             f"#console-message-action-copy-{message.id}", Button
         )
         await _wait_for_focus(console.app, pilot, copy_button)
-
-        await pilot.press("tab")
-        speak_button = console.query_one(
-            f"#console-message-action-speak-{message.id}", Button
-        )
-        await _wait_for_focus(console.app, pilot, speak_button)
 
         await pilot.press("tab")
         edit_button = console.query_one(

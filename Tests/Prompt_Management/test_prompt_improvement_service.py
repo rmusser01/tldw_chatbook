@@ -413,6 +413,31 @@ async def test_successful_rewrite_returns_typed_exact_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_composer_metadata_keeps_snapshot_fingerprint_valid() -> None:
+    composer = ConsoleComposerBar(paste_collapse_threshold=1)
+    composer.insert_pasted_text("First paste block")
+    composer.insert_pasted_text("Second paste block")
+    composer_snapshot = composer.capture_draft_snapshot()
+    projection = composer.project_snapshot_for_model(
+        composer_snapshot,
+        request_nonce="request-1",
+    )
+    snapshot = replace(
+        _snapshot(),
+        composer_snapshot=composer_snapshot,
+        projection=projection,
+    )
+    gateway = FakeAuxiliaryGateway([_rewrite_response(projection.text)])
+
+    outcome = await _service(gateway).improve(snapshot)
+
+    assert any(segment.generated_boundary for segment in composer_snapshot.segments)
+    assert any(segment.paste_block for segment in composer_snapshot.segments)
+    assert outcome.kind == "no_change"
+    assert gateway.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_one_outer_json_fence_is_unwrapped_without_changing_string_bytes() -> (
     None
 ):

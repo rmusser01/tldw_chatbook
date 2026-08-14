@@ -61,7 +61,7 @@ async def _mounted_console(host: ConsoleHarness, pilot):
     return console
 
 
-async def _seed_overflowing_transcript(console):
+async def _seed_overflowing_transcript(console, pilot):
     """Populate enough multi-line rows to exercise transcript scrolling."""
     store = console._ensure_console_chat_store()
     selected_message_id = ""
@@ -78,6 +78,10 @@ async def _seed_overflowing_transcript(console):
         selected_message_id = message.id
     await console._sync_native_console_chat_ui()
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    for _ in range(40):
+        if transcript.max_scroll_y > 0:
+            break
+        await pilot.pause(0.05)
     assert transcript.max_scroll_y > 0
     transcript.select_message(selected_message_id)
     return transcript, selected_message_id
@@ -689,7 +693,7 @@ async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        transcript, selected = await _seed_overflowing_transcript(console)
+        transcript, selected = await _seed_overflowing_transcript(console, pilot)
 
         console._set_console_composer_collapsed(True)
         console._set_console_composer_collapsed(False)
@@ -707,7 +711,7 @@ async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        transcript, selected = await _seed_overflowing_transcript(console)
+        transcript, selected = await _seed_overflowing_transcript(console, pilot)
 
         console._set_console_composer_collapsed(True)
         await pilot.press("escape")
@@ -724,7 +728,7 @@ async def test_anchored_tail_and_selection_survive_collapse_round_trip():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        transcript, selected = await _seed_overflowing_transcript(console)
+        transcript, selected = await _seed_overflowing_transcript(console, pilot)
         transcript.anchor()
         await pilot.pause()
 
@@ -749,7 +753,7 @@ async def test_manual_reading_position_and_selection_survive_collapse_round_trip
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        transcript, selected = await _seed_overflowing_transcript(console)
+        transcript, selected = await _seed_overflowing_transcript(console, pilot)
         await pilot.pause()
         transcript.release_anchor()
         transcript.scroll_to(y=2, animate=False)
