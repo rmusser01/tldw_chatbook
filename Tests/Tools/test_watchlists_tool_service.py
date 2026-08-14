@@ -191,6 +191,25 @@ def test_blank_query_browses_and_nonblank_query_collapses_whitespace(
     ]
 
 
+def test_search_accepts_every_exact_public_maximum(db: SubscriptionsDB) -> None:
+    collection_name = "c" * 256
+    source_name = "s" * 2_048
+    collection_id = _collection(db, collection_name)
+    source_id = _source(db, source_name, url="https://sources.test/max-name")
+    _add_to_collection(db, collection_id, source_id)
+    service = _service(db)
+
+    results = (
+        service.search_items({"query": "q" * 512}),
+        service.search_items({"query": " ".join(f"t{i}" for i in range(32))}),
+        service.search_items({"collection": collection_name}),
+        service.search_items({"source": source_name}),
+        service.search_items({"limit": 50}),
+    )
+
+    assert [_payload(result)["status"] for result in results] == ["ok"] * 5
+
+
 @pytest.mark.parametrize("field", ("source", "collection"))
 @pytest.mark.parametrize(
     "value",
@@ -484,6 +503,23 @@ def test_scope_resolution_precedence_trimming_disambiguation_and_round_trip(
         retried = _payload(service.search_items({"collection": candidate["id"]}))
         assert retried["status"] == "ok"
         assert retried["scope"]["collection"]["id"] == candidate["id"]
+
+
+def test_source_resolution_prefers_exact_raw_url_before_unique_partial_name(
+    db: SubscriptionsDB,
+) -> None:
+    configured_url = "https://exact-url.test/feed"
+    url_owner_id = _source(db, "Configured URL owner", url=configured_url)
+    _source(
+        db,
+        f"Partial alternative for {configured_url}",
+        url="https://sources.test/partial-alternative",
+    )
+
+    result = _payload(_service(db).search_items({"source": f"  {configured_url}  "}))
+
+    assert result["status"] == "ok"
+    assert result["scope"]["source"]["id"] == (f"local:subscription:{url_owner_id}")
 
 
 def test_scope_disambiguation_is_bounded_and_missing_is_nonretryable(
