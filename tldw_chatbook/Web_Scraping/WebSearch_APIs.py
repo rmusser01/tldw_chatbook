@@ -46,7 +46,7 @@ import random
 import re
 import threading
 import time
-from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
+from typing import Optional, Dict, Any, List, Union, Callable, TypedDict, NotRequired
 from urllib.parse import urlparse, urlencode, unquote
 
 #
@@ -71,6 +71,7 @@ except ImportError:
 #
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
+from tldw_chatbook.Web_Scraping import deep_search_citations
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Utils.egress import is_public_http_url
@@ -1427,6 +1428,10 @@ class FinalAnswerDict(TypedDict):
     evidence: List[Dict[str, Any]]
     confidence: float
     chunks: List[Dict[str, Any]]
+    # Present ONLY on the LLM-success branch (task-16319): marker resolution
+    # and quote-check counts from deep_search_citations.verify_citations.
+    # Failure/empty branches omit it rather than fabricating a clean verdict.
+    citation_verification: NotRequired[Dict[str, Any]]
 
 
 def _build_chunk_infos(items: List[str], max_chars: int = 6000) -> List[Dict[str, Any]]:
@@ -1744,13 +1749,34 @@ def aggregate_results(
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
+            # Citation verification (task-16319): resolve the "[n]" markers
+            # against the numbered evidence ids and quote-check quoted spans
+            # against the scraped originals -- pure string work, no network.
+            # Unknown ids are flagged inline ("[n?]") and counted, never
+            # deleted; failure/empty branches below carry no verdict rather
+            # than a fabricated clean one.
+            cv = deep_search_citations.verify_citations(
+                returned_response, evidence_payload
+            )
             success_answer: FinalAnswerDict = {
-                "text": returned_response,
+                "text": cv["annotated_text"],
                 "evidence": evidence_payload,
                 "confidence": _estimate_confidence(
                     len(evidence_payload), len(chunk_infos), failed_chunks, has_llm=True
                 ),
                 "chunks": chunk_metadata,
+                "citation_verification": {
+                    key: cv[key]
+                    for key in (
+                        "markers_total",
+                        "markers_resolved",
+                        "unknown_marker_ids",
+                        "quotes_checked",
+                        "quotes_verified",
+                        "quotes_misquoted",
+                        "uncited_sentences",
+                    )
+                },
             }
             return success_answer
     except Exception as e:
