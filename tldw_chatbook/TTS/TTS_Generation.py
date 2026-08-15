@@ -3211,6 +3211,7 @@ class TTSService:
                                 deepcopy(dict(provider_configs[provider_id]))
                             )
                 transition_failed = False
+                staging_failed_provider_id: str | None = None
                 for provider_id, config in provider_configs.items():
                     try:
                         staged_status = await self._stage_managed_boundary(
@@ -3218,11 +3219,16 @@ class TTSService:
                             config,
                             generation=generation,
                         )
-                        if staged_status is not None:
-                            provider_statuses[provider_id] = staged_status
-                            if staged_status == "pending":
-                                staged_provider_ids.add(provider_id)
-                            continue
+                    except BaseException:
+                        staging_failed_provider_id = provider_id
+                        transition_failed = True
+                        break
+                    if staged_status is not None:
+                        provider_statuses[provider_id] = staged_status
+                        if staged_status == "pending":
+                            staged_provider_ids.add(provider_id)
+                        continue
+                    try:
                         ticket = await self.registry.begin_reconfigure_provider(
                             provider_id,
                             config,
@@ -3234,6 +3240,12 @@ class TTSService:
                         break
 
                 if transition_failed:
+                    if (
+                        staging_failed_provider_id is not None
+                        or tickets
+                        or staged_provider_ids
+                    ):
+                        await self._seal_provider_configs(provider_configs)
                     provider_statuses.update(
                         {provider_id: "unavailable" for provider_id in provider_configs}
                     )
@@ -3246,11 +3258,14 @@ class TTSService:
                         )
                     )
 
-                if publish_preferences and self._preferences_can_activate(
-                    preferences,
-                    generation,
-                    provider_configs,
-                    provider_statuses,
+                if publish_preferences and (
+                    staging_failed_provider_id == preferences.provider_id
+                    or self._preferences_can_activate(
+                        preferences,
+                        generation,
+                        provider_configs,
+                        provider_statuses,
+                    )
                 ):
                     self._request_admission._publish_preferences(
                         preferences,
@@ -3317,7 +3332,10 @@ class TTSService:
         provider_id = preferences.provider_id
         if provider_id not in provider_configs:
             return True
-        if provider_statuses.get(provider_id) not in {"applied", "unchanged"}:
+        provider_status = provider_statuses.get(provider_id)
+        if provider_status == "pending":
+            return True
+        if provider_status not in {"applied", "unchanged"}:
             return False
         return tts_configuration_is_active(self, provider_id, generation)
 
@@ -3520,6 +3538,7 @@ class TTSService:
         try:
             result = await asyncio.shield(ticket.completion)
         except BaseException:
+            await self._seal_provider_configs((provider_id,))
             return "unavailable"
         if result is ReconfigureResult.CHANGED:
             return "applied"
@@ -3530,7 +3549,18 @@ class TTSService:
             > ticket.generation
         ):
             return "superseded"
+        await self._seal_provider_configs((provider_id,))
         return "unavailable"
+
+    async def _seal_provider_configs(
+        self,
+        provider_configs: Mapping[str, object] | tuple[str, ...],
+    ) -> None:
+        for provider_id in reversed(tuple(provider_configs)):
+            try:
+                await self.registry.seal_provider_unavailable(provider_id)
+            except BaseException:
+                pass
 
     def _safe_provider_revisions(
         self,
