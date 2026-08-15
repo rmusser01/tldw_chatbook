@@ -16,6 +16,7 @@ from dataclasses import replace
 import gc
 from io import BytesIO
 from pathlib import Path
+import sqlite3
 from threading import Event, Lock
 import weakref
 
@@ -137,6 +138,17 @@ def _visual_identity_load_snapshot(screen, editor, character_id):
         character_id=character_id,
         screen_generation=screen._character_editor_generation,
         editor_session_token=editor.visual_identity_session_token,
+    )
+
+
+def _assert_visual_identity_unavailable(editor) -> None:
+    host = editor.query_one("#personas-char-editor-visual-identity-host")
+    assert host.display
+    assert not editor.query_one("#personas-char-editor-legacy-expressions").display
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+    assert any(
+        isinstance(child, Static) and str(child.renderable) == "Unavailable"
+        for child in host.children
     )
 
 
@@ -275,6 +287,23 @@ async def test_bound_character_mounts_pack_browser_and_hides_legacy_controls(
         # owning wrapper; children keep their own display value for a later
         # unbound character session.
         assert screen.query_one(f"#char-expression-slot-{state}").display
+
+
+@pytest.mark.asyncio
+async def test_new_character_clears_bound_pack_and_restores_unsaved_legacy_state(
+    personas_editor_with_bound_pack,
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    assert editor.query_one("#personas-char-editor-visual-identity-host").display
+
+    editor.new_character()
+
+    assert editor.query_one("#personas-char-editor-legacy-expressions").display
+    assert not editor.query_one("#personas-char-editor-visual-identity-host").display
+    assert editor.query_one(
+        "#personas-char-editor-expr-thinking-upload", Button
+    ).disabled
 
 
 @pytest.mark.asyncio
@@ -894,6 +923,97 @@ async def test_pack_metadata_read_rejects_changed_live_binding(
 
     assert calls >= 2
     assert not editor.query(PersonasVisualIdentityPackWidget)
+    _assert_visual_identity_unavailable(editor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_call", [1, 2, 3])
+async def test_metadata_identity_mismatch_is_unavailable_at_every_read(
+    personas_editor_with_bound_pack, monkeypatch, changed_call
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    assert graph is not None
+    changed_graph = {
+        **graph,
+        "version": {**graph["version"], "id": int(graph["version"]["id"]) + 1},
+    }
+    calls = 0
+
+    def changing_graph(_self, _kind, _actor_id):
+        nonlocal calls
+        calls += 1
+        return changed_graph if calls == changed_call else graph
+
+    async def no_preview(_snapshot):
+        return None
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", changing_graph
+    )
+    monkeypatch.setattr(screen, "_render_visual_identity_pack_preview", no_preview)
+    editor.load_character(
+        {"id": char_id, "name": "Metadata mismatch"},
+        visual_identity_pending=True,
+    )
+    await asyncio.sleep(0)
+    await screen._configure_character_visual_identity(
+        _visual_identity_load_snapshot(screen, editor, char_id)
+    )
+
+    _assert_visual_identity_unavailable(editor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed_call", "error"),
+    [
+        (1, sqlite3.DatabaseError("private initial database detail")),
+        (2, sqlite3.OperationalError("private live database detail")),
+        (3, sqlite3.OperationalError("private final database detail")),
+    ],
+)
+async def test_metadata_database_error_is_unavailable_at_every_read(
+    personas_editor_with_bound_pack, monkeypatch, failed_call, error
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    calls = 0
+    messages: list[str] = []
+
+    def failing_graph(_self, _kind, _actor_id):
+        nonlocal calls
+        calls += 1
+        if calls == failed_call:
+            raise error
+        return graph
+
+    async def no_preview(_snapshot):
+        return None
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", failing_graph
+    )
+    monkeypatch.setattr(
+        personas_screen_module.logger,
+        "debug",
+        lambda message, *_args, **_kwargs: messages.append(str(message)),
+    )
+    monkeypatch.setattr(screen, "_render_visual_identity_pack_preview", no_preview)
+    editor.load_character(
+        {"id": char_id, "name": "Metadata database failure"},
+        visual_identity_pending=True,
+    )
+    await asyncio.sleep(0)
+    await screen._configure_character_visual_identity(
+        _visual_identity_load_snapshot(screen, editor, char_id)
+    )
+
+    _assert_visual_identity_unavailable(editor)
+    assert any("category=database" in message for message in messages)
+    assert "private" not in " ".join(messages)
 
 
 @pytest.mark.asyncio
@@ -979,6 +1099,7 @@ async def test_pack_browser_mounted_during_binding_change_is_removed(
 
     assert not editor.query(PersonasVisualIdentityPackWidget)
     assert editor.query_one("#personas-char-editor-visual-identity-host").display
+    _assert_visual_identity_unavailable(editor)
 
 
 @pytest.mark.asyncio

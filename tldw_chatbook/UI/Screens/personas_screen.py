@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import dataclasses
 import json
 import re
+import sqlite3
 import weakref
 from datetime import datetime
 from pathlib import Path
@@ -6115,86 +6116,95 @@ class PersonasScreen(BaseAppScreen):
             snapshot
         ):
             return
-        graph = None
-        if snapshot.character_id is not None and snapshot.db is not None:
-            try:
-                graph = await asyncio.to_thread(
-                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
-                    "character",
-                    snapshot.character_id,
-                )
-            except (TypeError, ValueError, OverflowError):
-                logger.opt(exception=True).debug(
-                    "Personas Visual Identity metadata read failed for character {}.",
-                    snapshot.character_id,
-                )
-                await self._show_visual_identity_unavailable(snapshot)
-                return
+        read_ok, graph = await self._read_character_visual_identity_graph(snapshot)
+        if not read_ok:
+            await self._show_visual_identity_unavailable(snapshot)
+            return
         if not self._character_visual_identity_load_is_current(snapshot):
             return
         try:
             metadata = self._visual_identity_pack_metadata(graph)
         except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
             await self._show_visual_identity_unavailable(snapshot)
             return
-        try:
-            live_graph = (
-                await asyncio.to_thread(
-                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
-                    "character",
-                    snapshot.character_id,
-                )
-                if snapshot.character_id is not None and snapshot.db is not None
-                else None
-            )
-        except (TypeError, ValueError, OverflowError):
+        read_ok, live_graph = await self._read_character_visual_identity_graph(snapshot)
+        if not read_ok:
             await self._show_visual_identity_unavailable(snapshot)
             return
         try:
             live_metadata = self._visual_identity_pack_metadata(live_graph)
         except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
             await self._show_visual_identity_unavailable(snapshot)
             return
-        if (
-            not self._character_visual_identity_load_is_current(snapshot)
-            or metadata != live_metadata
-        ):
+        if not self._character_visual_identity_load_is_current(snapshot):
+            return
+        if metadata != live_metadata:
+            await self._show_visual_identity_unavailable(snapshot)
             return
 
         mounted = await editor.show_visual_identity_pack(metadata)
         if not self._character_visual_identity_load_is_current(snapshot):
             await editor.discard_visual_identity_pack(mounted)
             return
-        try:
-            final_graph = (
-                await asyncio.to_thread(
-                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
-                    "character",
-                    snapshot.character_id,
-                )
-                if snapshot.character_id is not None and snapshot.db is not None
-                else None
-            )
-        except (TypeError, ValueError, OverflowError):
+        read_ok, final_graph = await self._read_character_visual_identity_graph(
+            snapshot
+        )
+        if not read_ok:
             await editor.discard_visual_identity_pack(mounted)
             await self._show_visual_identity_unavailable(snapshot)
             return
         try:
             final_metadata = self._visual_identity_pack_metadata(final_graph)
         except (KeyError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
             await editor.discard_visual_identity_pack(mounted)
             await self._show_visual_identity_unavailable(snapshot)
             return
-        if (
-            not self._character_visual_identity_load_is_current(snapshot)
-            or final_metadata != metadata
-        ):
+        if not self._character_visual_identity_load_is_current(snapshot):
             await editor.discard_visual_identity_pack(mounted)
+            return
+        if final_metadata != metadata:
+            await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
             return
         if metadata is None:
             await self._render_all_character_editor_thumbnails(snapshot.character_id)
             if not self._character_visual_identity_load_is_current(snapshot):
                 return
+
+    @staticmethod
+    async def _read_character_visual_identity_graph(
+        snapshot: _CharacterVisualIdentityLoadSnapshot,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Read one graph with fixed-category, privacy-safe failure logging."""
+
+        if snapshot.character_id is None or snapshot.db is None:
+            return True, None
+        try:
+            graph = await asyncio.to_thread(
+                VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                "character",
+                snapshot.character_id,
+            )
+        except sqlite3.Error:
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=database)."
+            )
+            return False, None
+        except (TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Personas Visual Identity metadata unavailable (category=validation)."
+            )
+            return False, None
+        return True, graph
 
     async def _show_visual_identity_unavailable(
         self, snapshot: _CharacterVisualIdentityLoadSnapshot

@@ -735,6 +735,8 @@ class PersonasCharacterEditorWidget(Container):
             self._loading = False
         if visual_identity_pending:
             self._reset_visual_identity_browser()
+        else:
+            self._show_legacy_visual_identity()
         # Re-arm dirty tracking for the new session. The Changed events fired
         # by the programmatic sets above are delivered after this method
         # returns, so the handler compares against this snapshot (taken from
@@ -830,6 +832,17 @@ class PersonasCharacterEditorWidget(Container):
         host.display = True
         host.remove_children()
         host.mount(Static("Loading visual identity…"))
+
+    def _show_legacy_visual_identity(self) -> None:
+        """Clear pack content and restore authoritative legacy controls."""
+
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-char-editor-legacy-expressions").display = True
+        host = self.query_one("#personas-char-editor-visual-identity-host")
+        host.display = False
+        host.remove_children()
+        self._sync_expression_slots_enabled()
 
     def _set_legacy_expression_authoring_enabled(self, enabled: bool) -> None:
         """Enable or disable every legacy expression mutation control."""
