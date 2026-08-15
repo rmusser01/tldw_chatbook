@@ -732,15 +732,17 @@ class _StyledManagerHost(_ManagerHost):
 
 
 class _MutationManagerHost(ConsolidatedCSSApp):
-    def __init__(self, *, failure: Exception | None = None) -> None:
+    def __init__(self, *, failure: BaseException | None = None) -> None:
         super().__init__()
         self.failure = failure
         self.started = asyncio.Event()
+        self.finished = asyncio.Event()
         self.release = asyncio.Event()
         self.create_calls = 0
+        self.results: list[object] = []
 
     def on_mount(self) -> None:
-        self.push_screen(self._modal())
+        self.push_screen(self._modal(), callback=self.results.append)
 
     def _modal(self):
         from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
@@ -760,10 +762,13 @@ class _MutationManagerHost(ConsolidatedCSSApp):
         async def create(_name: str):
             self.create_calls += 1
             self.started.set()
-            if self.failure is not None:
-                raise self.failure
-            await self.release.wait()
-            return await load(query="", offset=0)
+            try:
+                if self.failure is not None:
+                    raise self.failure
+                await self.release.wait()
+                return await load(query="", offset=0)
+            finally:
+                self.finished.set()
 
         async def rename(_collection_id: int, _name: str):
             raise AssertionError("rename was not requested")
@@ -798,7 +803,7 @@ class _GuardedMutationManagerHost(ConsolidatedCSSApp):
         )
         return prompts_state_module.apply_prompt_collection_catalog_page(
             current,
-            _catalog_page(offset=0, total=2),
+            _catalog_page(offset=0, total=207),
             request_token=1,
         )
 
@@ -1616,6 +1621,15 @@ async def test_collection_mutation_close_requests_dispatch_without_queuing(
     async with app.run_test(size=(120, 48)) as pilot:
         await pilot.pause()
         modal = app.screen
+        load_more = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-load-more",
+            lambda widget: widget.display and not widget.disabled,
+            what="Load more was not enabled before the collection mutation",
+        )
+        assert modal._catalog.has_more
+        assert load_more.display and not load_more.disabled
         await _start_guarded_collection_mutation(app, pilot)
         content = modal.query_one("#prompt-collection-manager")
         assert not content.region.contains(0, 0)
@@ -1673,6 +1687,47 @@ async def test_collection_mutation_close_requests_dispatch_without_queuing(
         }
         assert app.create_calls == (2 if action == "retry" else int(action == "create"))
         assert app.rename_calls == int(action == "rename")
+        restored_load_more = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-load-more",
+            lambda widget: widget.display and not widget.disabled,
+            what="Load more was not restored after the collection mutation",
+        )
+        assert modal._catalog.has_more
+        assert restored_load_more.display and not restored_load_more.disabled
+
+
+@pytest.mark.asyncio
+async def test_collection_mutation_cancelled_callback_restores_current_modal_controls():
+    app = _MutationManagerHost(failure=asyncio.CancelledError())
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Cancelled"
+        modal.query_one("#prompt-collection-manager-create", Button).press()
+        await asyncio.wait_for(app.started.wait(), timeout=1.0)
+        await asyncio.wait_for(app.finished.wait(), timeout=1.0)
+        await _wait_for_condition(
+            pilot,
+            lambda: not modal._mutation_in_flight,
+            timeout=1.0,
+            message="cancelled collection mutation did not restore controls",
+        )
+
+        assert app.screen is modal
+        assert app.results == []
+        assert not modal._mutation_in_flight
+        for selector in (
+            "#prompt-collection-manager-search",
+            "#prompt-collection-manager-new-name",
+            "#prompt-collection-manager-create",
+            "#prompt-collection-manager-done",
+            "#prompt-collection-manager-cancel",
+        ):
+            assert not modal.query_one(selector).disabled
 
 
 @pytest.mark.asyncio

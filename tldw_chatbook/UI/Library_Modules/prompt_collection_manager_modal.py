@@ -547,6 +547,12 @@ class PromptCollectionManagerModal(
             else:
                 catalog = await self._rename_collection_callback(collection_id, name)  # type: ignore[arg-type]
         except asyncio.CancelledError:
+            if self._mutation_is_current(
+                mutation_epoch=mutation_epoch, mount_generation=mount_generation
+            ):
+                self._mutation_in_flight = False
+                self._mutation_close_rejected = False
+                self._refresh()
             raise
         except PromptCollectionNameConflictError:
             if not self._mutation_is_current(
