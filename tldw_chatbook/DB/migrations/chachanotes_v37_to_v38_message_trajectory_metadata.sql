@@ -8,7 +8,7 @@
 
 CREATE TABLE IF NOT EXISTS message_trajectory_metadata (
     message_id TEXT NOT NULL,
-    conversation_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     turn_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
     event_kind TEXT NOT NULL,
@@ -22,11 +22,15 @@ CREATE TABLE IF NOT EXISTS message_trajectory_metadata (
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_message_trajectory_conv_seq
+-- Ledger-ordering guarantee: seq is strictly unique per conversation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_message_trajectory_conv_seq
     ON message_trajectory_metadata (conversation_id, seq);
 
 CREATE INDEX IF NOT EXISTS idx_message_trajectory_turn
     ON message_trajectory_metadata (conversation_id, turn_id, seq);
+
+CREATE INDEX IF NOT EXISTS idx_message_trajectory_msg
+    ON message_trajectory_metadata (message_id);
 
 UPDATE db_schema_version
    SET version = 38

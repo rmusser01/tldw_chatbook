@@ -46,10 +46,14 @@ def test_migrates_v37_to_v38_and_creates_table(tmp_path: Path) -> None:
         "PRAGMA table_info(message_trajectory_metadata)"
     )}
     assert TRAJECTORY_COLUMNS <= cols
-    idx = {row["name"] for row in connection.execute(
+    indexes = list(connection.execute(
         "PRAGMA index_list(message_trajectory_metadata)"
-    )}
+    ))
+    idx = {row["name"] for row in indexes}
     assert any("conv_seq" in name for name in idx), idx
+    # Ledger-ordering guarantee: the (conversation_id, seq) index is UNIQUE.
+    conv_seq = next(row for row in indexes if "conv_seq" in row["name"])
+    assert conv_seq["unique"] == 1, conv_seq
     # Local-only: no sync triggers may mention the sidecar table.
     triggers = {
         row[0]

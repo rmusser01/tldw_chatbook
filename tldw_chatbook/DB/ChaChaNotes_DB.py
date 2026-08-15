@@ -9990,9 +9990,12 @@ UPDATE db_schema_version
     def get_next_trajectory_seq(self, conversation_id: str) -> int:
         """Return the next trajectory seq for a conversation (max(seq) + 1).
 
-        Local-only read against the ``message_trajectory_metadata``
-        sidecar; safe to call inside a transaction (uses the caller's
-        connection state via a fresh read on the thread connection).
+        Standalone read against the ``message_trajectory_metadata``
+        sidecar. This opens its own transaction, so it must NOT be called
+        from inside another transaction on this DB instance; code already
+        inside a transaction should use the private
+        :meth:`_next_trajectory_seq` helper instead (as
+        :meth:`upsert_trajectory_rows` does).
         """
         with self.transaction() as conn:
             return self._next_trajectory_seq(conn, conversation_id)
