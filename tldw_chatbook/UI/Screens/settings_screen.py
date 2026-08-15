@@ -17549,6 +17549,23 @@ class SettingsScreen(BaseAppScreen):
             )
             return
 
+        if auth_token:
+            provider = getattr(app, "server_context_provider", None)
+            if provider is not None:
+                try:
+                    provider.store_static_server_credential(server_id, auth_token)
+                except Exception as exc:
+                    logger.warning(
+                        "Server token could not be stored in the OS credential "
+                        "store (exception_category=%s).",
+                        type(exc).__name__,
+                    )
+                    self.app.notify(
+                        "Server activated, but the token could not be saved to "
+                        "the OS keyring; it remains saved in config.toml only.",
+                        severity="warning",
+                    )
+
         sync_scope_service = getattr(app, "sync_scope_service", None)
         prepare = getattr(sync_scope_service, "prepare_sync_v2_profile_mode", None)
         if callable(prepare):

@@ -4536,9 +4536,13 @@ def _maybe_encrypt_setting_value(
         encrypted_value = enc_module.encrypt_value(value, password)
         logger.info(f"Encrypted {key} in config section")
         return encrypted_value
-    except Exception as e:
-        logger.error(f"Failed to encrypt value: {e}")
-        return value
+    except Exception as error:
+        logger.error(
+            "Failed to encrypt config value (key={}, exception_category={}).",
+            key,
+            type(error).__name__,
+        )
+        raise
 
 
 def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[str, Any]:
@@ -5408,15 +5412,24 @@ def apply_settings_mutation_to_cli_config(
                     conflict_reason="identity_changed",
                 )
 
-        deleted_any = _delete_config_keys(config_data, requested_deletes)
-        for section, values in section_values.items():
-            if not values:
-                continue
-            current_level = _target_config_section(config_data, section)
-            for key, value in values.items():
-                current_level[key] = _maybe_encrypt_setting_value(
-                    config_data, key, value
-                )
+        try:
+            deleted_any = _delete_config_keys(config_data, requested_deletes)
+            for section, values in section_values.items():
+                if not values:
+                    continue
+                current_level = _target_config_section(config_data, section)
+                for key, value in values.items():
+                    current_level[key] = _maybe_encrypt_setting_value(
+                        config_data, key, value
+                    )
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
         set_any = any(bool(values) for values in section_values.values())
         if not set_any and not deleted_any:
             return ConfigMutationResult(False, False, None)
@@ -5464,6 +5477,8 @@ def save_settings_to_cli_config(
         section_values,
         delete_keys=delete_keys,
     )
+    if result.conflict:
+        return False
     if result.failure_phase is None and not result.file_replaced:
         return True
     return result.fully_applied
