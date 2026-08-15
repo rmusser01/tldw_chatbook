@@ -7,21 +7,24 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import threading
 import warnings
 import zipfile
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from importlib import resources
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 # Begin pinned server normalization block (byte-for-byte from):
 # tldw_Server_API/app/core/Visual_Identities/expression_slots.py at
@@ -300,6 +303,116 @@ class VisualIdentityResolution:
     fallback_reason: str
     cache_identity: tuple[str, ...]
     image_bytes: bytes | None
+
+
+class VisualIdentityPublicationError(ValueError):
+    """Stable publication failure with an optional profile-relative orphan."""
+
+    def __init__(
+        self, category: str, *, cleanup_candidate_relpath: str | None = None
+    ) -> None:
+        super().__init__(category)
+        self.category = category
+        self.cleanup_candidate_relpath = cleanup_candidate_relpath
+
+
+@dataclass(slots=True)
+class VisualIdentityCandidate:
+    """In-memory edits against one immutable active pack identity."""
+
+    actor_kind: str
+    actor_id: str
+    old_pack_id: int
+    old_version_id: int
+    old_binding_id: int
+    source_kind: str
+    title: str
+    description: str
+    default_expression_key: str
+    source_context: dict[str, Any]
+    assets: tuple[dict[str, Any], ...] = field(repr=False)
+    _replacements: dict[str, tuple[bytes, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _cleared: set[str] = field(default_factory=set, init=False, repr=False)
+    _cancelled: bool = field(default=False, init=False, repr=False)
+    _published: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def replaced_expression_keys(self) -> tuple[str, ...]:
+        """Return replacements in the active version's stable order."""
+
+        return tuple(
+            str(asset["expression_key"])
+            for asset in self.assets
+            if asset["expression_key"] in self._replacements
+        )
+
+    @property
+    def cleared_expression_keys(self) -> tuple[str, ...]:
+        """Return clears in the active version's stable order."""
+
+        return tuple(
+            str(asset["expression_key"])
+            for asset in self.assets
+            if asset["expression_key"] in self._cleared
+        )
+
+    def stage_replacement(
+        self, expression_key: str, data: bytes, *, source: str = "manual"
+    ) -> None:
+        """Stage replacement bytes without touching files or persistence."""
+
+        key = self._existing_expression_key(expression_key)
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("visual_identity_replacement_bytes_invalid")
+        if len(data) > MAX_EXPRESSION_ASSET_BYTES:
+            raise ValueError("visual_identity_budget_exceeded")
+        if source not in {"manual", "upload", "generated"}:
+            raise ValueError("visual_identity_replacement_source_invalid")
+        self._ensure_editable()
+        self._replacements[key] = (data, source)
+        self._cleared.discard(key)
+
+    def stage_clear(self, expression_key: str) -> None:
+        """Stage one omission without changing the active immutable version."""
+
+        key = self._existing_expression_key(expression_key)
+        self._ensure_editable()
+        self._replacements.pop(key, None)
+        self._cleared.add(key)
+
+    def cancel(self) -> None:
+        """Make the candidate permanently unpublished."""
+
+        self._cancelled = True
+
+    def _existing_expression_key(self, value: str) -> str:
+        key = normalize_expression_key(value)
+        if key is None or key not in {
+            str(asset["expression_key"]) for asset in self.assets
+        }:
+            raise ValueError("visual_identity_expression_not_found")
+        return key
+
+    def _ensure_editable(self) -> None:
+        if self._cancelled:
+            raise VisualIdentityPublicationError("visual_identity_candidate_cancelled")
+        if self._published:
+            raise VisualIdentityPublicationError("visual_identity_candidate_published")
+
+
+@dataclass(frozen=True, slots=True)
+class VisualIdentityPublicationResult:
+    """Published actor transition consumed by targeted runtime invalidation."""
+
+    actor_kind: str
+    actor_id: str
+    old_pack_id: int
+    old_version_id: int
+    new_pack_id: int
+    new_version_id: int
+    version_directory: Path
 
 
 _OPERATIONAL_EXPRESSION_KEYS = {
@@ -1598,6 +1711,389 @@ def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
         image.load()
         duration_ms += int(image.info.get("duration") or 0)
     return duration_ms
+
+
+def create_visual_identity_candidate(
+    db: Any, *, actor_kind: str, actor_id: int | str
+) -> VisualIdentityCandidate:
+    """Snapshot one active immutable graph for in-memory copy-on-write edits."""
+
+    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+    if actor_kind != "character":
+        raise ValueError("visual_identity_actor_kind_invalid")
+    graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
+    if graph is None or not graph["assets"]:
+        raise ValueError("visual_identity_active_pack_not_found")
+    pack = graph["pack"]
+    if pack["source_kind"] not in {"builtin", "manual"}:
+        raise ValueError("visual_identity_source_kind_unsupported")
+    try:
+        source_context = json.loads(
+            pack["source_context_json"], parse_constant=_reject_json_constant
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError("visual_identity_source_context_invalid") from None
+    if not isinstance(source_context, dict):
+        raise ValueError("visual_identity_source_context_invalid")
+    return VisualIdentityCandidate(
+        actor_kind=actor_kind,
+        actor_id=str(actor_id),
+        old_pack_id=int(pack["id"]),
+        old_version_id=int(graph["version"]["id"]),
+        old_binding_id=int(graph["binding"]["id"]),
+        source_kind=str(pack["source_kind"]),
+        title=str(pack["title"]),
+        description=str(pack["description"]),
+        default_expression_key=str(graph["version"]["default_expression_key"]),
+        source_context=dict(source_context),
+        assets=tuple(dict(asset) for asset in graph["assets"]),
+    )
+
+
+def publish_visual_identity_candidate(
+    db: Any,
+    candidate: VisualIdentityCandidate,
+    *,
+    user_data_dir: str | Path | None = None,
+    atomic_replace: Callable[
+        [str | os.PathLike[str], str | os.PathLike[str]], None
+    ] = os.replace,
+) -> VisualIdentityPublicationResult:
+    """Publish one complete candidate directory and one immutable DB version."""
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+    if not isinstance(candidate, VisualIdentityCandidate):
+        raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
+    candidate._ensure_editable()
+    if not candidate._replacements and not candidate._cleared:
+        raise VisualIdentityPublicationError("visual_identity_candidate_clean")
+    if not callable(atomic_replace):
+        raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
+
+    repository = VisualIdentityRepository(db)
+    live = repository.get_active_actor_pack(candidate.actor_kind, candidate.actor_id)
+    if live is None or (
+        int(live["binding"]["id"]),
+        int(live["pack"]["id"]),
+        int(live["version"]["id"]),
+    ) != (
+        candidate.old_binding_id,
+        candidate.old_pack_id,
+        candidate.old_version_id,
+    ):
+        raise VisualIdentityPublicationError("visual_identity_binding_changed")
+
+    profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
+    profile_pack_token = _publication_pack_token(candidate)
+    publication_token = uuid4().hex
+    versions_root = assets_root / "packs" / profile_pack_token / "versions"
+    staging_dir = versions_root / f".staging-{publication_token}"
+    final_dir = versions_root / publication_token
+    final_relpath = final_dir.relative_to(assets_root).as_posix()
+    try:
+        for directory in (
+            profile_root,
+            assets_root,
+            assets_root / "packs",
+            versions_root.parent,
+            versions_root,
+            staging_dir,
+        ):
+            if not secure_private_directory(
+                directory, create=True, application_owned=True
+            ).verified_private:
+                raise PermissionError
+
+        assets, manifest = _materialize_visual_identity_candidate(
+            candidate,
+            staging_dir=staging_dir,
+            final_relpath=final_relpath,
+            profile_pack_token=profile_pack_token,
+            user_data_dir=profile_root,
+        )
+        manifest_raw = json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        _write_private_publication_file(staging_dir / "manifest.json", manifest_raw)
+        _verify_materialized_candidate(staging_dir, assets)
+        atomic_replace(staging_dir, final_dir)
+    except VisualIdentityPublicationError:
+        _discard_staging_directory(staging_dir, assets_root)
+        raise
+    except PermissionError:
+        _discard_staging_directory(staging_dir, assets_root)
+        raise VisualIdentityPublicationError(
+            "visual_identity_publication_denied"
+        ) from None
+    except (OSError, TypeError, ValueError, OverflowError):
+        _discard_staging_directory(staging_dir, assets_root)
+        raise VisualIdentityPublicationError(
+            "visual_identity_candidate_invalid"
+        ) from None
+
+    try:
+        if candidate.source_kind == "builtin":
+            graph = repository.activate_pack(
+                pack={
+                    "title": f"{candidate.title} (Profile Copy)",
+                    "description": candidate.description,
+                    "default_expression_key": candidate.default_expression_key,
+                    "source_kind": "manual",
+                    "source_context": {
+                        "profile_pack_id": profile_pack_token,
+                        "forked_from_pack_id": candidate.old_pack_id,
+                        "forked_from_version_id": candidate.old_version_id,
+                    },
+                },
+                manifest=manifest,
+                assets=assets,
+                actor_kind=candidate.actor_kind,
+                actor_id=candidate.actor_id,
+                expected_active_identity=(
+                    candidate.old_pack_id,
+                    candidate.old_version_id,
+                ),
+            )
+        else:
+            graph = repository.publish_version(
+                candidate.old_pack_id,
+                manifest=manifest,
+                assets=assets,
+                actor_kind=candidate.actor_kind,
+                actor_id=candidate.actor_id,
+                default_expression_key=candidate.default_expression_key,
+                expected_active_version_id=candidate.old_version_id,
+            )
+    except (CharactersRAGDBError, OSError, RuntimeError, TypeError, ValueError):
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed",
+            cleanup_candidate_relpath=final_relpath,
+        ) from None
+
+    candidate._published = True
+    return VisualIdentityPublicationResult(
+        actor_kind=candidate.actor_kind,
+        actor_id=candidate.actor_id,
+        old_pack_id=candidate.old_pack_id,
+        old_version_id=candidate.old_version_id,
+        new_pack_id=int(graph["pack"]["id"]),
+        new_version_id=int(graph["version"]["id"]),
+        version_directory=final_dir,
+    )
+
+
+def _visual_identity_publication_roots(
+    user_data_dir: str | Path | None,
+) -> tuple[Path, Path]:
+    try:
+        profile_root = (
+            Path(user_data_dir) if user_data_dir is not None else get_user_data_dir()
+        ).resolve(strict=False)
+        package_resource = resources.files("tldw_chatbook")
+        package_root = (
+            Path(package_resource).resolve(strict=False)
+            if isinstance(package_resource, os.PathLike)
+            else None
+        )
+    except (OSError, RuntimeError, TypeError):
+        raise VisualIdentityPublicationError("visual_identity_path_invalid") from None
+    if package_root is not None and profile_root.is_relative_to(package_root):
+        raise VisualIdentityPublicationError("visual_identity_package_root_immutable")
+    assets_root = (profile_root / "visual_identities").resolve(strict=False)
+    if not assets_root.is_relative_to(profile_root):
+        raise VisualIdentityPublicationError("visual_identity_path_invalid")
+    return profile_root, assets_root
+
+
+def _publication_pack_token(candidate: VisualIdentityCandidate) -> str:
+    if candidate.source_kind == "builtin":
+        return f"profile-{uuid4().hex}"
+    value = candidate.source_context.get("profile_pack_id")
+    if (
+        not isinstance(value, str)
+        or not value.startswith("profile-")
+        or _safe_relative_parts(value) != (value,)
+    ):
+        raise VisualIdentityPublicationError("visual_identity_source_context_invalid")
+    return value
+
+
+def _materialize_visual_identity_candidate(
+    candidate: VisualIdentityCandidate,
+    *,
+    staging_dir: Path,
+    final_relpath: str,
+    profile_pack_token: str,
+    user_data_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    prepared: list[tuple[dict[str, Any], bytes]] = []
+    decoded_pixels = 0
+    for index, stored in enumerate(candidate.assets):
+        expression_key = str(stored["expression_key"])
+        if expression_key in candidate._cleared:
+            continue
+        replacement = candidate._replacements.get(expression_key)
+        if replacement is None:
+            source_asset = _manifest_asset_from_row(stored)
+            loaded = load_visual_identity_asset(
+                source_asset,
+                source_kind=candidate.source_kind,
+                user_data_dir=user_data_dir,
+            )
+            decoded_pixels += _validate_image_bytes(
+                loaded, decoded_pixels_before=decoded_pixels
+            )
+            data = loaded.data
+            content_type = source_asset.content_type
+            width, height = source_asset.width, source_asset.height
+            is_animated = source_asset.is_animated
+            frame_count = source_asset.frame_count
+            duration_ms = source_asset.duration_ms
+            source_context = {"retained_asset_id": int(stored["id"])}
+        else:
+            data, replacement_source = replacement
+            (
+                image_format,
+                (width, height),
+                frame_count,
+                is_animated,
+                duration_ms,
+                pixels,
+            ) = _inspect_image_bytes(data, decoded_pixels_before=decoded_pixels)
+            decoded_pixels += pixels
+            content_type = _IMAGE_CONTENT_TYPES_BY_FORMAT[image_format]
+            source_context = {"publication_source": replacement_source}
+        extension = {
+            "image/gif": "gif",
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+        }[content_type]
+        filename = (
+            f"{index:03d}-{_sanitize_expression_token(str(stored['original_expression_key']))}"
+            f".{extension}"
+        )
+        data_digest = hashlib.sha256(data).hexdigest()
+        storage_relpath = f"{final_relpath}/{filename}"
+        asset = {
+            "expression_key": expression_key,
+            "original_expression_key": str(stored["original_expression_key"]),
+            "display_label": str(stored["display_label"]),
+            "source_filename": filename,
+            "storage_relpath": storage_relpath,
+            "content_type": content_type,
+            "bytes": len(data),
+            "sha256": data_digest,
+            "width": width,
+            "height": height,
+            "source_context": source_context,
+            "is_animated": is_animated,
+            "frame_count": frame_count,
+            "duration_ms": duration_ms,
+        }
+        prepared.append((asset, data))
+
+    manifest = {
+        "schema_id": SAMIRA_MANIFEST_SCHEMA_ID,
+        "pack_id": f"tldw.profile.{profile_pack_token}",
+        "title": candidate.title,
+        "license": SAMIRA_LICENSE,
+        "default_expression_key": candidate.default_expression_key,
+        "source_server_commit": None,
+        "pack_content_sha256": "0" * 64,
+        "assets": [
+            {
+                "expression_key": asset["expression_key"],
+                "original_label": asset["original_expression_key"],
+                "display_label": asset["display_label"],
+                "storage_relpath": asset["storage_relpath"],
+                "content_type": asset["content_type"],
+                "bytes": asset["bytes"],
+                "width": asset["width"],
+                "height": asset["height"],
+                "sha256": asset["sha256"],
+                "is_animated": asset["is_animated"],
+                "frame_count": asset["frame_count"],
+                "duration_ms": asset["duration_ms"],
+            }
+            for asset, _data in prepared
+        ],
+    }
+    manifest["pack_content_sha256"] = compute_pack_content_sha256(manifest)
+    validate_visual_identity_manifest(manifest)
+    for asset, data in prepared:
+        _write_private_publication_file(staging_dir / asset["source_filename"], data)
+    return [asset for asset, _data in prepared], manifest
+
+
+def _manifest_asset_from_row(row: Mapping[str, Any]) -> VisualIdentityManifestAsset:
+    return VisualIdentityManifestAsset(
+        expression_key=str(row["expression_key"]),
+        original_label=str(row["original_expression_key"]),
+        display_label=str(row["display_label"]),
+        storage_relpath=str(row["storage_relpath"]),
+        content_type=str(row["content_type"]),
+        bytes=int(row["bytes"]),
+        width=int(row["width"]),
+        height=int(row["height"]),
+        sha256=str(row["sha256"]),
+        is_animated=bool(row["is_animated"]),
+        frame_count=int(row["frame_count"] or 1),
+        duration_ms=(int(row["duration_ms"]) if row["duration_ms"] else None),
+    )
+
+
+def _write_private_publication_file(path: Path, data: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _verify_materialized_candidate(
+    staging_dir: Path, assets: list[dict[str, Any]]
+) -> None:
+    decoded_pixels = 0
+    for asset in assets:
+        data = (staging_dir / asset["source_filename"]).read_bytes()
+        loaded = LoadedVisualIdentityAsset(
+            asset=_manifest_asset_from_row(asset), data=data
+        )
+        if len(data) != loaded.asset.bytes or hashlib.sha256(data).hexdigest() != (
+            loaded.asset.sha256
+        ):
+            raise ValueError("visual_identity_candidate_invalid")
+        decoded_pixels += _validate_image_bytes(
+            loaded, decoded_pixels_before=decoded_pixels
+        )
+
+
+def _discard_staging_directory(path: Path, assets_root: Path) -> None:
+    try:
+        resolved = path.resolve(strict=False)
+        root = assets_root.resolve(strict=False)
+        if (
+            path.name.startswith(".staging-")
+            and resolved.is_relative_to(root)
+            and resolved.exists()
+        ):
+            shutil.rmtree(resolved)
+    except OSError:
+        pass
 
 
 _SAMIRA_CARD_NAME = "Samira “Sammy” Vadem"

@@ -185,6 +185,7 @@ class VisualIdentityRepository:
         assets: Sequence[Mapping[str, Any]],
         actor_kind: str,
         actor_id: int | str,
+        expected_active_identity: tuple[int, int] | None = None,
     ) -> dict[str, Any]:
         """Atomically create and activate one complete pack graph.
 
@@ -194,6 +195,8 @@ class VisualIdentityRepository:
             assets: Activated asset fields without ``pack_version_id``.
             actor_kind: Actor kind to bind.
             actor_id: Profile-local actor identifier to bind.
+            expected_active_identity: Optional ``(pack_id, version_id)`` that
+                must still own the actor binding before a copy-on-write fork.
 
         Returns:
             Nested plain dictionaries for the activated graph.
@@ -207,6 +210,16 @@ class VisualIdentityRepository:
             raise ValueError("visual_identity_pack_active_version_mismatch")
 
         with self.db.transaction():
+            if expected_active_identity is not None:
+                existing = self._validate_existing_actor_binding(
+                    actor_kind, str(actor_id)
+                )
+                if (
+                    existing is None
+                    or (int(existing["pack_id"]), int(existing["active_version_id"]))
+                    != expected_active_identity
+                ):
+                    raise ValueError("visual_identity_binding_changed")
             pack_id = int(
                 self.db.execute_query(
                     """
@@ -265,6 +278,7 @@ class VisualIdentityRepository:
         actor_kind: str,
         actor_id: int | str,
         default_expression_key: str | None = None,
+        expected_active_version_id: int | None = None,
     ) -> dict[str, Any]:
         """Atomically publish the next immutable version of a user-owned pack.
 
@@ -275,6 +289,8 @@ class VisualIdentityRepository:
             actor_kind: Actor kind whose active binding is updated.
             actor_id: Profile-local actor identifier.
             default_expression_key: Optional replacement default expression.
+            expected_active_version_id: Optional version that must still be
+                active for both pack and actor before appending.
 
         Returns:
             Nested plain dictionaries for the newly active graph.
@@ -302,7 +318,15 @@ class VisualIdentityRepository:
             if pack["source_kind"] == "builtin":
                 raise ValueError("visual_identity_builtin_pack_immutable")
             self._validate_pack_active_version(pack)
-            self._validate_existing_actor_binding(actor_kind, str(actor_id))
+            binding = self._validate_existing_actor_binding(actor_kind, str(actor_id))
+            if expected_active_version_id is not None:
+                if binding is None or int(binding["pack_id"]) != pack_id:
+                    raise ValueError("visual_identity_binding_changed")
+                if (
+                    int(pack["active_version_id"]) != expected_active_version_id
+                    or int(binding["active_version_id"]) != expected_active_version_id
+                ):
+                    raise ValueError("visual_identity_binding_changed")
 
             version_number = int(
                 self.db.execute_query(
