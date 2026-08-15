@@ -86,7 +86,7 @@ _SERVER_PROFILES_POINTER = (
 # choice, not necessarily a fault, so it should read as "blocked" rather
 # than "alarm". `muted` has no color at all (the `dim` attribute only) --
 # used for a "—" no-data placeholder, the same visual weight `$text-muted`
-# gets elsewhere in this module (see `#mcp-perm-legend`'s DEFAULT_CSS rule
+# gets elsewhere in this module (see `#mcp-perm-legend`'s BUNDLED_CSS rule
 # above).
 _STATE_TEXT_STYLES: dict[str, str] = {
     "ready": "green",

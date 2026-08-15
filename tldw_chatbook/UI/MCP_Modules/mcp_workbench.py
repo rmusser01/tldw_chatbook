@@ -311,7 +311,7 @@ _LEGACY_SECTIONS = [
 
 # F-057: terminal-width threshold (cols) below which `#mcp-hub-grid` gets
 # the `.mcp-compact` class and the triad rebalances toward the canvas (see
-# DEFAULT_CSS and its _agentic_terminal.tcss mirror).
+# BUNDLED_CSS and its _agentic_terminal.tcss mirror).
 _COMPACT_WIDTH = 120
 
 # T5: local-profile lifecycle actions this workbench can dispatch, keyed by
@@ -979,7 +979,7 @@ class MCPWorkbench(Container):
     def _sync_compact_class(self) -> None:
         """Toggle `.mcp-compact` on `#mcp-hub-grid` below ~120 cols (F-057).
 
-        The class drives the triad-rebalancing rules in DEFAULT_CSS (and
+        The class drives the triad-rebalancing rules in BUNDLED_CSS (and
         their _agentic_terminal.tcss mirror): narrower rail/inspector
         shares so the canvas keeps its primary columns in-viewport. Width
         0 (pre-layout) means "not compact" -- the full triad renders first

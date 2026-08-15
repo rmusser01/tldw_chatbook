@@ -276,7 +276,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     Select-width lesson (`#mcp-tools-filter-server-slot Select`,
     mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
     `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own DEFAULT_CSS
+    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
     once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
     regardless of selector specificity) -- so styling
     `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
@@ -693,7 +693,7 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     def _apply_subview_display(self) -> None:
         """Toggle the Executions/Findings pane visibility and the sub-view
         Buttons' `is-active` marker from `self._sub_view` -- the single
-        source of truth (see the DEFAULT_CSS comment above
+        source of truth (see the BUNDLED_CSS comment above
         `#mcp-audit-executions-view`/`#mcp-audit-findings-view` for why
         this isn't split across a CSS default too)."""
         executions_active = self._sub_view == "executions"

@@ -137,7 +137,7 @@ class MCPToolsMode(DataTableClickSelectMixin, Vertical):
     #mcp-tools-filter-server-slot Select {
         width: 28;
     }
-    /* T7 (P3 UX batch): same fix as MCPServersMode.DEFAULT_CSS's
+    /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
