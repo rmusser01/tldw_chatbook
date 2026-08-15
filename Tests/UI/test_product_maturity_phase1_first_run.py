@@ -92,13 +92,10 @@ def _prepare_clean_environment(
     for env_var, path in paths.items():
         path.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(env_var, str(path))
-    # ADR-020 amendment: these full-app tests exercise first-run flows, not
-    # the one-time model-catalog consent dialog; suppress it so it can't
-    # interleave with the screens under test. Consent gating has dedicated
-    # unit tests in test_app_model_catalog_wiring.py.
-    monkeypatch.setattr(
-        TldwCli, "_push_model_catalog_consent_modal", lambda self: None
-    )
+    # ADR-020 amendment: the consent dialog self-suppresses in headless
+    # runs (see _push_model_catalog_consent_modal), so full-app tests here
+    # never see it; consent gating has dedicated unit tests in
+    # test_app_model_catalog_wiring.py.
     return {env_var: str(path) for env_var, path in paths.items()}
 
 

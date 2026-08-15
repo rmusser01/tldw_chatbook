@@ -10116,6 +10116,11 @@ class TldwCli(
 
     def _push_model_catalog_consent_modal(self) -> None:
         """Show the one-time consent dialog for online model-list checks."""
+        if self.is_headless:
+            # Headless/embedded runs have no user to answer a modal; stay
+            # unconsented (no refresh) rather than blocking startup behind
+            # an unanswerable dialog.
+            return
         try:
             from tldw_chatbook.UI.Screens.model_catalog_consent import (
                 ModelCatalogConsentModal,

@@ -1,7 +1,5 @@
 """ModelCatalogConsentModal dismisses with the user's allow/deny choice."""
 
-from unittest.mock import MagicMock
-
 import pytest
 from textual.app import App
 
@@ -47,19 +45,19 @@ async def test_escape_dismisses_false():
 
 
 @pytest.mark.asyncio
-async def test_app_push_wires_modal_onto_screen_stack():
+async def test_app_push_suppresses_modal_in_headless_runs():
+    """run_test() is headless: no user can answer, so nothing is pushed.
+
+    This is the guard that keeps full-app UI tests (GGUF source modes,
+    first-run flows, ...) free of an interleaved consent dialog.
+    """
     from tldw_chatbook.app import TldwCli
 
     class HostApp(App):
-        # The push wires the real TldwCli consent handler as the dismiss
-        # callback; borrow it plus the seams it touches (never invoked —
-        # the test only asserts the modal lands on the screen stack).
-        _handle_model_catalog_consent = TldwCli._handle_model_catalog_consent
-        _refresh_model_catalogs = TldwCli._refresh_model_catalogs
-        run_worker = MagicMock()
+        pass
 
     app = HostApp()
     async with app.run_test() as pilot:
         TldwCli._push_model_catalog_consent_modal(app)
         await pilot.pause()
-        assert isinstance(app.screen, ModelCatalogConsentModal)
+        assert not isinstance(app.screen, ModelCatalogConsentModal)
