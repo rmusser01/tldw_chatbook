@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -130,3 +131,24 @@ def test_message_video_actions_are_wired_directly_to_video_controller() -> None:
     assert "screen._video._save_console_video_copy" in wiring
     assert "screen._video._regenerate_console_video_message" in wiring
     assert "regenerate_console_video_message:" in message
+
+
+@pytest.mark.unit
+def test_shared_message_stub_accepts_video_action_dependencies() -> None:
+    """The shared bare-screen stub exposes every video-action seam."""
+    screen = SimpleNamespace()
+    play = AsyncMock()
+    save = AsyncMock()
+    regenerate = AsyncMock()
+
+    controller = stub_message_controller(
+        screen,
+        app_instance=NO_APP,
+        play_console_video=play,
+        save_console_video_copy=save,
+        regenerate_console_video_message=regenerate,
+    )
+
+    assert controller._play_console_video is play
+    assert controller._save_console_video_copy is save
+    assert controller._regenerate_console_video_message is regenerate

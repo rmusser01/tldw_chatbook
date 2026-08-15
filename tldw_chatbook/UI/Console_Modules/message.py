@@ -327,10 +327,12 @@ class ConsoleMessageController:
                 cluster's cache invalidator (already a named callable on
                 `session.py`), used only by `handle_console_message_
                 action`'s delete branch.
-            play_console_video: `ChatScreen._play_console_video`, used by
-                the video play action.
-            save_console_video_copy: `ChatScreen._save_console_video_copy`,
-                used by the video save action.
+            play_console_video: `ConsoleVideoController._play_console_video`,
+                used by the video play action.
+            save_console_video_copy: `ConsoleVideoController._save_console_
+                video_copy`, used by the video save action.
+            regenerate_console_video_message: `ConsoleVideoController._regenerate_
+                console_video_message`, used by the video regenerate action.
         """
         self._screen = screen
         self.app_instance = app_instance

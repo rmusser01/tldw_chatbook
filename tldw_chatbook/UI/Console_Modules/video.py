@@ -38,7 +38,11 @@ from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
 
 class ConsoleVideoController:
-    """Own generated-video state, publication, and orchestration."""
+    """Own generated-video state, publication, and orchestration.
+
+    The controller keeps video policy independent from Textual DOM access;
+    screen-owned behavior is supplied through constructor callbacks.
+    """
 
     def __init__(
         self,
@@ -53,6 +57,20 @@ class ConsoleVideoController:
         console_composer_or_none: Callable[[], Any | None],
         clear_console_composer_draft: Callable[[], None],
     ) -> None:
+        """Build the generated-video controller.
+
+        Args:
+            app_instance: Application object used for settings and the shared
+                generated-video store.
+            sync_native_console_chat_ui: Refresh the native Console transcript.
+            ensure_console_chat_store: Return the active Console chat store.
+            wait_for_console_screen_result: Await or return a pushed-screen result.
+            open_video_with_os: Present a generated video with the host OS.
+            append_native_console_system_message: Append a system transcript row.
+            default_console_session_settings: Return default session settings.
+            console_composer_or_none: Return the mounted composer when available.
+            clear_console_composer_draft: Clear the current composer draft.
+        """
         self.app_instance = app_instance
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._ensure_console_chat_store_fn = ensure_console_chat_store

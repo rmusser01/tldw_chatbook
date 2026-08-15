@@ -44,6 +44,9 @@ MESSAGE_CONTROLLER_CALLABLES = (
     "keep_console_generation_variant",
     "handle_console_toggle_image_view",
     "invalidate_console_persisted_rows_cache",
+    "play_console_video",
+    "save_console_video_copy",
+    "regenerate_console_video_message",
 )
 
 IMAGE_CONTROLLER_CALLABLES = (
