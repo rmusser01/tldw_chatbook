@@ -193,8 +193,8 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
                             yield Label("Voice Override:")
                             yield Select(
                                 options=[
-                                    ("narrator", "Use Narrator Voice"),
-                                    ("custom", "Custom Voice"),
+                                    ("Use Narrator Voice", "narrator"),
+                                    ("Custom Voice", "custom"),
                                 ],
                                 id="chapter-voice-select",
                             )

@@ -51,6 +51,12 @@ Selects in this file are composed with `(id, label)` — the reverse:
       called directly)
 - [x] `_initialize_audiobook_defaults` no longer logs an illegal-select-value
       warning on a fresh STTS window mount (test asserts no such log line)
+- [x] (added during review round 2) every other backwards-order Select
+      found by a full sweep of the STTS surface (`#chapter-voice-select` in
+      `chapter_editor_widget.py`; `#character-voice-select`/
+      `#bulk-voice-select`'s dynamic voice list and `#voice-style-select` in
+      `character_voice_widget.py`) is also fixed to `(label, value)`, with
+      born-red evidence and consumer-side correctness verified for each
 
 ## Implementation Plan
 
@@ -87,95 +93,164 @@ Selects in this file are composed with `(id, label)` — the reverse:
 
 ## Implementation Notes
 
-Full sweep of every `Select(` construction under the STTS surface
-(`UI/STTS_Window.py`, `UI/stts_profile_library.py`,
-`UI/stts_playground_catalog.py`, `UI/Screens/stts_screen.py`,
-`Widgets/TTS/chapter_editor_widget.py`,
-`Widgets/TTS/character_voice_widget.py`) found six `Select(` construction
-sites total. Three were backwards exactly as the task described:
-`#import-source-select`, `#audiobook-provider-select`,
-`#audiobook-format-select` (all in `AudioBookGenerationWidget.compose`,
-`UI/STTS_Window.py`). The other three were already correct
-`(label, value)`: `#narrator-voice-select` (same compose method, e.g.
-`("Alloy", "alloy")`), `#stts-bundle-review-choice`
-(`stts_profile_library.py`, built from a `{choice_id: "Display text"}`
-dict then swapped to `(display, choice_id)`), and the two dynamic
-`Select`s in `Widgets/TTS/chapter_editor_widget.py` /
-`character_voice_widget.py`.
+**This section was corrected after an external review (round 2) found the
+first pass's sweep-completeness claim false and one test fix flake-prone.
+Both are fixed below; the sweep table and file list are now the complete,
+reconciled picture, not the original round-1 claim.**
 
-Consumer-side sweep (every `.query_one("#import-source-select"/
-"#audiobook-provider-select"/"#audiobook-format-select", Select).value`
-read, plus the `Select.Changed` handlers and the `costs_per_1k` /
-`_get_model_for_provider` id-keyed dict lookups) showed every consumer was
-already written assuming `.value` returns the id ("openai", "file", "mp3",
-...) -- the backwards compose call was the *only* bug. No consumer code
-needed touching; fixing the three `options=` lists made the existing
-comparisons correct for the first time.
+### Full sweep table (every Select-shaped construct found, both rounds)
 
-Born-red evidence (captured before the fix, see commit history): a probe
-script confirmed `provider_select.value = "openai"` and
-`import_select.value = "file"` both raised
-`InvalidSelectValueError` against the pre-fix tuples (the real values were
-the labels, e.g. `"OpenAI"`/`"Text File"`). The new test file
-`Tests/UI/test_stts_select_tuple_order.py` encodes this as permanent
-regression coverage: compose-shape assertions for all three Selects, a
-Select-driven (button-press, not direct `_import_content()` call) dispatch
-test per import branch with `_import_from_file`/`_import_from_paste`
-mocked directly and `_import_from_notes`/`_import_from_conversation`
-mocked at the method boundary (task-16471, not this task, owns making
-those two dialogs' underlying DB imports real), and a log-capture test
-proving `_initialize_audiobook_defaults` no longer emits
-"Could not set audiobook provider/format" debug lines and lands both
-selects on their intended default value.
+| Select / backing list | File | Pre-fix order | Status |
+|---|---|---|---|
+| `#import-source-select` | `UI/STTS_Window.py` | backwards `(id, label)` | **FIXED** (round 1) |
+| `#audiobook-provider-select` | `UI/STTS_Window.py` | backwards | **FIXED** (round 1) |
+| `#audiobook-format-select` | `UI/STTS_Window.py` | backwards | **FIXED** (round 1) |
+| `#narrator-voice-select` | `UI/STTS_Window.py` | already `(label, value)` | unchanged |
+| `#stts-bundle-review-choice` | `UI/stts_profile_library.py` | already correct | unchanged |
+| `#chapter-voice-select` | `Widgets/TTS/chapter_editor_widget.py` | backwards | **FIXED** (round 2); zero consumers anywhere in the repo -- dead UI, fixed for uniformity only |
+| `#character-voice-select` (options built dynamically in `_update_voice_options`, not at the `Select(...)` call site) | `Widgets/TTS/character_voice_widget.py` | backwards | **FIXED** (round 2) |
+| `#bulk-voice-select` (shares the same dynamic list) | `Widgets/TTS/character_voice_widget.py` | backwards | **FIXED** (round 2) |
+| `#voice-style-select` | `Widgets/TTS/character_voice_widget.py` | backwards | **FIXED** (round 2) |
+| `UI/Speech/*.py` (`speech_axis_row.py`, `speech_settings_pane.py`, `speech_settings_group.py`, `speech_settings_mixin.py`, `speech_catalog_mixin.py`, `speech_profile_mixin.py`) -- `Select(`/`PruneSafeSelect(`/`.set_options(` sites | `UI/Speech/` | already correct (spot-checked, not every line) | unchanged |
 
-Residual dependency: selecting "Notes" or "Conversation" from
-`#import-source-select` and pressing "Import Content" now correctly calls
-`_import_from_notes`/`_import_from_conversation` (this task's fix), but
-those two methods still import four nonexistent `ChaChaNotes_DB` helpers
-and will raise `ImportError` before either dialog opens, until task-16471
-lands. That import failure happens *outside* the `try/except Exception`
-block in both methods (it is a top-of-function import, not inside the
-`try:`), so it propagates rather than being toasted -- also task-16471's
-concern, not touched here. Verified live (probe script, not just static
-reading): calling `_import_from_notes()` directly raises
+**Round 1 undercounted this.** The original sweep only grepped for literal
+`Select(` construction call sites and missed `character_voice_widget.py`'s
+`#character-voice-select`/`#bulk-voice-select`: both are `compose()`d empty
+(`options=[]`) and populated later via `voice_select.set_options(self.
+voice_options)`, where `self.voice_options` (`_update_voice_options`) was
+itself built backwards -- e.g. `("alloy", "Alloy")` instead of
+`("Alloy", "alloy")`. A `grep -n "Select("` sweep cannot see a bug that
+lives in a `.set_options()` argument built elsewhere. Round 1 also
+mis-stated its own tally ("six sites... three correct" does not reconcile
+with its own four-item "other three" list) and missed the backwards, if
+dead, `#chapter-voice-select`. Six Select-shaped constructs were backwards
+in total across both rounds; all six are now fixed.
+
+### Consumer-side fixes (round 2)
+
+`character_voice_widget.py`'s `self.voice_options` list is read by two
+internal helpers besides being fed to `Select.set_options()`:
+`_get_voice_label` (unpacked as `for vid, label in ...`) and
+`detect_characters_from_text`'s auto-assign path (`voice_id, _ =
+self.voice_options[i + 1]`). Both assumed the *old* `(id, label)` shape.
+Flipping `self.voice_options` to `(label, value)` for `Select` without
+updating these two would have swapped the bug from "Select can't hold the
+value" to "the widget's own label lookups return ids and vice versa" --
+so both were updated in the same commit to unpack `(label, vid)` /
+`(_, voice_id)` respectively. `#voice-style-select`'s only consumer
+(`_get_current_voice_settings`'s `settings["style"] = style_select.value`)
+needed no change: like the three round-1 Selects, it was already written
+assuming `.value` is the id -- only the compose order was backwards.
+
+### Live-reproduced bugs from round 2
+
+`_update_assignment_ui` (fires via `watch_selected_character_index`, i.e.
+every character-row click in the Voice Assignment panel) did
+`voice_select.value = assigned_voice` where `assigned_voice` is a real id
+("narrator", "ash", ...), wrapped in `except Exception as e:
+logger.debug(f"Some UI elements not ready: {e}")` -- the identical
+crash-swallowed-into-debug-log pattern `_initialize_audiobook_defaults` had
+before round 1's fix. Reproduced live via
+`Tests/Widgets/test_character_voice_widget.py::
+test_selecting_a_character_row_lands_the_assigned_voice_without_swallowing_an_exception`:
+pre-fix it failed with the captured log line
+`Some UI elements not ready: Illegal select value 'ash'.`; post-fix the
+dropdown actually reflects the assigned voice and no such log line appears.
+This is mounted right next to `#narrator-voice-select` (both inside
+`AudioBookGenerationWidget`'s "🎭 Voice Assignment" section) -- the sibling
+widget that round 1 fixed, with the same bug shape, one file over.
+
+### Born-red evidence (round 2)
+
+`Tests/UI/test_stts_select_tuple_order.py` (round 1, 10 tests),
+`Tests/Widgets/test_character_voice_widget.py` (6 new tests added to the
+existing file, on top of its 3 pre-existing ones), and the new
+`Tests/Widgets/test_chapter_editor_widget_select_tuple_order.py` (1 test)
+were all confirmed to fail against the pre-round-2 code before the fix,
+with `InvalidSelectValueError`/shape-mismatch failures matching the table
+above -- run and captured before any round-2 source edit landed.
+
+### Deterministic settle instead of a fixed sleep (round 2)
+
+The round-1 fix to `test_audiobook_kokoro_blend_group_is_not_a_keyboard_
+select_option` used `await pilot.pause(0.15)` to let the mount-time
+`set_timer(0.1, ...)` settle before the test's own kokoro setup. Review
+round 2 flagged this as a flake seed: `pilot.pause(delay)` and Textual's
+`Timer._run` are both real wall-clock sleeps, and the margin between the
+two hardcoded deadlines (0.15 - 0.1 = 0.05s) has to additionally cover a
+message-pump round trip and a two-handler `Select.Changed` reactive
+cascade -- comfortable under normal load, a genuine risk under a contended
+runner. Replaced with a bounded poll on the actual condition
+(`provider_select.value == "openai"`, up to 100 `pilot.pause()` iterations,
+raising loudly if it never settles) instead of assuming a fixed margin.
+Reran the affected test 5x in a row post-fix: passed every time, and
+faster (~1.1-1.2s vs the fixed 0.15s+ floor).
+
+### Residual dependency (task-16471, not this task)
+
+Selecting "Notes" or "Conversation" from `#import-source-select` and
+pressing "Import Content" now correctly calls
+`_import_from_notes`/`_import_from_conversation` (round 1's fix), but those
+two methods still import four nonexistent `ChaChaNotes_DB` helpers and
+raise `ImportError` before either dialog opens, until task-16471 lands.
+Verified live: calling `_import_from_notes()` directly raises
 `ImportError: cannot import name 'fetch_all_notes' from
-'tldw_chatbook.DB.ChaChaNotes_DB'`.
+'tldw_chatbook.DB.ChaChaNotes_DB'`. That import sits outside both methods'
+own `try/except`, so it propagates rather than being toasted.
 
-Fixing `#audiobook-provider-select` surfaced one genuine regression in an
-existing test, not a new bug: `_initialize_audiobook_defaults`'s
-`provider_select.value = "openai"` now actually succeeds (previously
-silently swallowed), so it fires a real `Select.Changed` on mount that
-cascades into `_update_voice_options("openai")`. Before the fix, the STTS
-window's on-mount default provider selection was a complete no-op, so
-existing tests never had to account for that mount-time cascade.
-`Tests/UI/test_stts_profile_library.py::
-test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option` set up
-kokoro voice options with a direct `_update_voice_options("kokoro")` call
-immediately after mount, then used `pilot.press(...)` (which advances the
-clock) to drive keyboard selection -- letting the still-armed 0.1s mount
-timer fire in between and overwrite its kokoro setup back to OpenAI's
-voice list. Fixed by adding `await pilot.pause(0.15)` before the test's
-own setup, so the mount-time default settles first, matching what a real
-user experiences (they cannot interact with the widget before it finishes
-mounting). Full `Tests/UI/test_stts_profile_library.py` and
-`Tests/UI/test_speech_audiobook_chapter_detection.py` reruns (162 and 10
-tests respectively) are green with this fix; two failures in
-`Tests/UI/test_stts_capability_state.py`
-(`test_speech_rail_exposes_and_opens_voice_profiles`,
+### Test counts and an unrelated pre-existing flake (corrected)
+
+Round 1's notes said "162" and "10" tests for
+`Tests/UI/test_stts_profile_library.py` and
+`Tests/UI/test_speech_audiobook_chapter_detection.py`; the actual counts
+are **163** and **8** respectively (confirmed via `pytest -q` and
+`--collect-only`).
+
+`Tests/UI/test_stts_profile_library.py` (163 tests) has a pre-existing,
+non-deterministic flake unrelated to this task: on repeated full-file runs,
+either `test_reference_export_defaults_sanitized_and_bundle_requires_ack`
+or `test_windows_clone_export_keeps_sanitized_default_and_disables_bundle`
+(different victim each run, same exact test order -- no reordering plugin
+is installed) intermittently fails; neither test touches Select, the
+audiobook widgets, or anything this task modified. Confirmed pre-existing
+and independent of this task's diff by copying the pristine
+pre-task-15772 `Tests/UI/test_stts_profile_library.py`
+(`git show 8727a2861:...`) over the working file (Edit-based restore
+immediately after) and rerunning against current source: the same flake
+(`test_reference_export_defaults_sanitized_and_bundle_requires_ack`) still
+failed with zero task-15772 test changes present. Left untouched -- not
+this task's bug to fix. `Tests/UI/test_stts_capability_state.py`'s two
+failures (`test_speech_rail_exposes_and_opens_voice_profiles`,
 `test_speech_capability_summary_stays_visible_at_minimum_terminal`) were
-confirmed pre-existing at baseline (same failures with this task's diff
-reverted) and unrelated to Select tuple order -- left untouched.
+separately confirmed pre-existing in round 1 (same failures with the whole
+task-15772 diff reverted) and are likewise untouched.
 
-Also swept `UI/Speech/*.py` (imported directly by `STTS_Window.py`:
-`speech_effects_pane`, `speech_playground_pane`, `speech_profile_mixin`,
-etc.) for the same bug class, since the task's "and its modules" scope
-covers anything STTS_Window pulls in. Every `Select(`/`PruneSafeSelect(`/
-`.set_options(` call site there already uses correct `(label, value)`
-tuples; `speech_settings_group.py`'s `SELECT_OPTIONS` dict even carries an
-in-code comment describing an earlier, already-fixed instance of this
-exact bug ("Illegal select value 'openai'"). Nothing further to fix there.
+### `UI/Speech/*.py` sweep (round 1, re-confirmed)
 
-Modified files: `tldw_chatbook/UI/STTS_Window.py` (three `options=` tuple
-orders); `Tests/UI/test_stts_select_tuple_order.py` (new, 10 tests);
-`Tests/UI/test_stts_profile_library.py` (one test given a settle-pause to
-stay correct against the newly-working mount-time default).
+Spot-checked `speech_axis_row.py`, `speech_settings_pane.py`,
+`speech_settings_group.py` (all `Select(`/`PruneSafeSelect(` call sites),
+plus representative `.set_options(` sites in `speech_settings_mixin.py`
+and `speech_catalog_mixin.py`/`speech_profile_mixin.py` -- all already
+correct `(label, value)`; `speech_settings_group.py`'s `SELECT_OPTIONS`
+dict even carries an in-code comment describing an earlier, already-fixed
+instance of this exact bug ("Illegal select value 'openai'"). This was
+*not* an exhaustive read of every remaining `.set_options(` line in that
+directory (~20 sites total); the sample covered the highest-traffic ones.
+
+### Modified files
+
+- `tldw_chatbook/UI/STTS_Window.py` -- three `options=` tuple orders (round 1)
+- `tldw_chatbook/Widgets/TTS/character_voice_widget.py` -- `_update_voice_options`'s
+  four voice-list branches + narrator insert, `_get_voice_label`'s unpacking,
+  `detect_characters_from_text`'s unpacking, `#voice-style-select`'s
+  `options=` (round 2)
+- `tldw_chatbook/Widgets/TTS/chapter_editor_widget.py` -- `#chapter-voice-select`'s
+  `options=` (round 2)
+- `Tests/UI/test_stts_select_tuple_order.py` -- new, 10 tests (round 1)
+- `Tests/Widgets/test_character_voice_widget.py` -- 6 new tests appended to
+  the existing 3 (round 2)
+- `Tests/Widgets/test_chapter_editor_widget_select_tuple_order.py` -- new,
+  1 test (round 2)
+- `Tests/UI/test_stts_profile_library.py` -- one test's mount-settle wait
+  swapped from a fixed `pilot.pause(0.15)` to a bounded deterministic poll
+  (round 2)
