@@ -1399,7 +1399,40 @@ class ConsoleChatController:
         #: a single session's Stop must never deny another session's
         #: unrelated approval round; only real process teardown (the one
         #: case where every session's run legitimately ends at once) does.
+        #:
+        #: task-15860 (the lifetime landing): this Event is now
+        #: **PER-VISIT**, not per-instance. Its old "never reset" contract
+        #: rested on one premise, stated verbatim in ``shutdown``'s
+        #: docstring -- "``ChatScreen`` never reuses an instance after
+        #: unmounting it". An app-owned runtime falsifies that premise: the
+        #: SAME controller now serves visit after visit. So ``leave_console
+        #: ()`` sets THIS Event (denying every round armed during the visit
+        #: that is ending, and keeping ``_attempt``'s wake gate refusing
+        #: while nothing is mounted), and the NEXT ``attach_view`` calls
+        #: ``begin_visit()``, which REPLACES the attribute with a fresh,
+        #: unset Event. ``shutdown()``/``begin_shutdown()`` keep the old
+        #: permanent meaning and additionally set ``_disposed``, after
+        #: which ``begin_visit`` refuses to install anything.
+        #:
+        #: **Because the attribute is replaced, every poll site must have
+        #: captured the Event it answers to at ARM time.** A site that
+        #: re-read ``self._shutdown_requested`` on each poll would see the
+        #: NEXT visit's fresh, unset Event and resurrect a round the
+        #: previous visit's teardown already denied. See
+        #: ``_bind_visit_cancel_signal``.
         self._shutdown_requested = threading.Event()
+        #: True once this controller has been torn down for good
+        #: (``begin_shutdown``). Blocks ``begin_visit`` from ever handing
+        #: a disposed controller a fresh, unset cancellation Event.
+        self._disposed = False
+        #: Sessions running an ``AGENT_WAKE`` turn right now. ``leave_
+        #: console()`` skips them: the owner ruled that cancelling an
+        #: in-flight wake turn re-creates the exact "only completes if you
+        #: stay" gap this arc exists to close, and a wake turn is
+        #: structurally the same class of work as the fleet survivor AC#2
+        #: already keeps running. ``shutdown()`` (app exit) still takes
+        #: everything.
+        self._agent_wake_turn_sessions: set[str] = set()
         # Rebase note (dev citation-repair vs. Task 3b): dev added this as a
         # singular slot (no per-session awareness); rescoped here the same
         # way as the two maps above -- keyed by the run's OWNING session id,
@@ -3174,6 +3207,11 @@ class ConsoleChatController:
             if citation_repair_contract is not None
             else None
         )
+        # task-15860: a wake turn in flight is exempt from `leave_console()`
+        # (owner ruling -- see that method). Registered here, released in
+        # the `finally` below, so the exemption cannot outlive the turn.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            self._agent_wake_turn_sessions.add(session.id)
         try:
             assistant = self.store.append_message(
                 session.id,
@@ -3205,6 +3243,8 @@ class ConsoleChatController:
                 committed_context_epoch=committed_context_epoch,
             )
         finally:
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+                self._agent_wake_turn_sessions.discard(session.id)
             if assistant is not None:
                 self.store.clear_terminal_citation_state(assistant.id)
             del terminal_citation_finalizer
@@ -3693,8 +3733,39 @@ class ConsoleChatController:
             return None
         return self._active_cancel_events.get(session_id)
 
+    def _bind_visit_cancel_signal(self) -> threading.Event:
+        """Capture THIS visit's teardown Event, ONCE, at ARM time.
+
+        task-15860 (the lifetime landing). ``_shutdown_requested`` used to
+        be per-instance and never reset, so reading it live on every poll
+        was safe. It is now per-VISIT: ``leave_console()`` sets it and the
+        next ``attach_view`` REPLACES the attribute with a fresh, unset
+        Event.
+
+        A poll site that re-read ``self._shutdown_requested`` would
+        therefore answer with the NEXT visit's Event and **resurrect a
+        round the previous visit's teardown already denied** -- a round
+        armed on visit 1, still polling while the user is on visit 2,
+        would silently un-deny itself and go on to approve or execute a
+        tool call for a UI that no longer exists. Same discipline, same
+        reason, as ``_bind_round_cancel_signal``'s arm-time binding of the
+        per-run cancel event.
+
+        Every site fails CLOSED today: an armed round observes its
+        captured Event set and denies. Nothing here can make a round
+        fail open.
+
+        Returns:
+            The Event this visit's teardown will set.
+        """
+        return self._shutdown_requested
+
     def _is_session_cancelled(
-        self, session_id: str | None, *, cancel_event: threading.Event | None
+        self,
+        session_id: str | None,
+        *,
+        cancel_event: threading.Event | None,
+        visit_event: threading.Event,
     ) -> bool:
         """Cancellation check for the three worker-thread approval/confirm
         bridges below, scoped to the round's OWN cancel event
@@ -3796,14 +3867,19 @@ class ConsoleChatController:
         this branch's checks unset.
         """
         if session_id is not None:
-            if self._shutdown_requested.is_set():
+            # task-15860: `visit_event`, NOT a fresh read of
+            # `self._shutdown_requested` -- that attribute is replaced by
+            # the next visit's `begin_visit()`, and re-reading it here
+            # would resurrect a round this visit's teardown already denied.
+            # See `_bind_visit_cancel_signal`.
+            if visit_event.is_set():
                 return True
             # PR3a-1 Task 6b (audit F4): the ARM-TIME binding, not a fresh
             # `self._active_cancel_events.get(session_id)` per poll. See
             # `_bind_round_cancel_signal` for the two silent cross-turn
             # failures that re-read produced.
             return cancel_event is not None and cancel_event.is_set()
-        return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
+        return visit_event.is_set() or self._is_active_session_cancelled()
 
     # -- MCP batch-approval bridge (task-5) ----------------------------------
 
@@ -3917,6 +3993,10 @@ class ConsoleChatController:
         # to, resolved once, HERE, and passed to every poll below. See
         # `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
         # PR2a Task 7: which RUN armed this round. Read from the
         # `run_context` ContextVar, which `AgentService` binds around both
         # arming paths -- the per-turn review hook (`build_tool_review_
@@ -4026,7 +4106,9 @@ class ConsoleChatController:
                 self._marshal_pending_approval(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                 if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
+                    session_id,
+                    cancel_event=round_cancel_event,
+                    visit_event=visit_cancel_event,
                 ):
                     # Finding I3: a stop/unmount that resolves THIS round
                     # denies every still-undecided call, but
@@ -5020,6 +5102,10 @@ class ConsoleChatController:
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
                 "event": event,
@@ -5068,7 +5154,9 @@ class ConsoleChatController:
                 self._marshal_pending_skill_install(payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                 if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
+                    session_id,
+                    cancel_event=round_cancel_event,
+                    visit_event=visit_cancel_event,
                 ):
                     break
                 if time.monotonic() >= deadline:
@@ -5315,6 +5403,10 @@ class ConsoleChatController:
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
         # PR2a Task 7 (review M1): same run-ownership stamp
         # `request_mcp_approvals` carries, and for a WIDER hazard --
         # `run_skill_script` is all-agents scope (no agent_kind gate in
@@ -5365,7 +5457,9 @@ class ConsoleChatController:
                 self._marshal_pending_skill_script(card_payload)
             while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                 if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
+                    session_id,
+                    cancel_event=round_cancel_event,
+                    visit_event=visit_cancel_event,
                 ):
                     break
                 if time.monotonic() >= deadline:
@@ -5735,10 +5829,119 @@ class ConsoleChatController:
                 self._active_cancel_events.pop(session_id, None)
 
     def begin_shutdown(self) -> None:
-        """Tombstone future queue work before any teardown cancellation."""
+        """Tombstone future queue work before any teardown cancellation.
 
+        The PERMANENT form (app exit / `prepare_for_quit`). `_disposed`
+        is what stops a later `begin_visit()` from handing this instance a
+        fresh, unset cancellation Event.
+        """
+
+        self._disposed = True
         self.prompt_queue_coordinator.shutdown()
         self._shutdown_requested.set()
+
+    def begin_visit(self) -> None:
+        """Open a new Console visit on a controller that survived the last.
+
+        task-15860. Called by `ConsoleRuntime.attach_view` when a NEW view
+        claims the runtime. Two things reset, and only two:
+
+        1. A **fresh** `_shutdown_requested` Event. The previous visit's
+           Event stays set forever, so every round that captured it at arm
+           time stays denied (`_bind_visit_cancel_signal`), while this
+           visit's sends, approvals and wake attempts start clean.
+        2. Prompt-queue **admission re-opens**. `leave_console()`
+           tombstones the visit's chains through the coordinator's
+           `shutdown()`, which is a permanent `_shutting_down` latch --
+           without this the queue would be dead for the rest of the app's
+           life after the first navigation away.
+
+        A disposed controller (app exit) is never re-opened.
+        """
+
+        if self._disposed:
+            return
+        self._shutdown_requested = threading.Event()
+        self._stop_requested = False
+        reopen = getattr(self.prompt_queue_coordinator, "reopen", None)
+        if callable(reopen):
+            reopen()
+
+    async def leave_console(self) -> None:
+        """End ONE Console visit. This controller SURVIVES it.
+
+        The nav-away half of the teardown split (task-15860). Everything
+        AC#2 names as screen-scoped still happens:
+
+        - this visit's queue chains are tombstoned, before any
+          cancellation, exactly as `begin_shutdown` did it;
+        - this visit's cancellation Event is set, which denies every parked
+          approval/confirm round armed during the visit (each captured the
+          Event at arm time) and keeps `ConsoleFleetWakeCoordinator.
+          _attempt`'s gate refusing while nothing is mounted;
+        - this visit's in-flight USER turns are signalled, cancelled and
+          awaited, with `cancel_reason="shutdown"` stamped on each one's
+          in-flight citation repair -- the same stamp `shutdown()` makes,
+          for the same reason (`commit_canceled()` needs to know it was not
+          the user who stopped it);
+        - cross-turn fleet SURVIVORS keep running, untouched, as they
+          already did.
+
+        What does NOT happen, by owner ruling: an in-flight `AGENT_WAKE`
+        turn is not cancelled. Cancelling it would re-create the exact
+        "only completes if you stay" gap this arc exists to close, and a
+        wake turn is structurally the same class of work as the survivor
+        AC#2 keeps running. AC#2 names USER turns only.
+
+        The provider gateway is NOT closed here -- it is app-owned now and
+        a surviving turn still needs it. `ConsoleRuntime.dispose` closes it
+        at exit.
+        """
+
+        # Tombstone first: `begin_shutdown`'s ordering contract ("before any
+        # teardown cancellation"), unchanged.
+        self.prompt_queue_coordinator.shutdown()
+        self._shutdown_requested.set()
+        for message_id in tuple(self._original_attempts):
+            self.clear_original_attempt(message_id)
+        wake_sessions = set(self._agent_wake_turn_sessions)
+        tasks = {
+            session_id: task
+            for session_id, task in self._active_stream_tasks.items()
+            if session_id not in wake_sessions
+        }
+        if not tasks:
+            return
+        current = asyncio.current_task()
+        for session_id in tasks:
+            repair_session = self._active_citation_repair_sessions.get(session_id)
+            if (
+                repair_session is not None
+                and not repair_session.selection_committed
+                and repair_session.phase in {"checking", "repair_streaming"}
+            ):
+                repair_session.cancel_reason = "shutdown"
+            self._signal_stop(session_id=session_id)
+        for task in tasks.values():
+            if task is not current:
+                task.cancel()
+        for task in tasks.values():
+            if task is current:
+                # Left running from inside its own task, exactly as
+                # `shutdown()` does: its own `finally` still fires.
+                continue
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - teardown never crashes on a stale task
+                pass
+        self._stop_requested = False
+        for session_id, task in tasks.items():
+            if self._active_stream_tasks.get(session_id) is task:
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""

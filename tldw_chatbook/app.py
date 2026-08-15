@@ -182,7 +182,7 @@ from tldw_chatbook.Chat.console_live_work import (
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -5410,15 +5410,16 @@ class TldwCli(
         self.app_config = load_settings()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
-        # task-15860 (headless wake, Task 1): the Console runtime -- chat
-        # store, provider gateway, agent bridge, chat controller -- is
-        # constructed by the APP, not by `ChatScreen`. Screens are never
-        # cached (`_create_navigation_screen`), so anything that must
-        # eventually outlive a navigation cannot be built on one. Task 1 is
-        # a PURE ownership move: `ChatScreen.on_unmount` still disposes this
-        # (`dispose_console_runtime`), so a second Console visit still gets
-        # a brand-new store/gateway/bridge/controller, exactly as before.
+        # task-15860 (headless wake): the Console runtime -- chat store,
+        # provider gateway, agent bridge, chat controller -- is constructed
+        # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
+        # screen. Screens are never cached (`_create_navigation_screen`), so
+        # anything that must survive a navigation cannot be built on one.
+        # `ChatScreen.on_unmount` now ends one VISIT
+        # (`leave_console_runtime`); the runtime itself is destroyed once,
+        # here, at exit (`_shutdown_console_runtime`).
         self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+        self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
@@ -11284,6 +11285,25 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_runtime(self) -> None:
+        """Destroy the app-owned Console runtime exactly once, at exit.
+
+        task-15860: the runtime survives every navigation away from
+        Console, so the unmount Textual performs at exit is no longer what
+        ends it -- this is. `ConsoleRuntime.dispose` runs the permanent
+        teardown in the order `ChatScreen.on_unmount` used to:
+        `controller.shutdown()`, then `gateway.aclose()`. Idempotent: the
+        runtime detaches itself from the app on the way out.
+        """
+        task = self._console_runtime_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                dispose_console_runtime(self),
+                name="shutdown_console_runtime",
+            )
+            self._console_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
@@ -11291,6 +11311,7 @@ class TldwCli(
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
+        await self._shutdown_console_runtime()
         await self._shutdown_file_notes_session_owner()
 
     async def _shutdown(self) -> None:

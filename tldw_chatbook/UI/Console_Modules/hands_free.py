@@ -357,6 +357,11 @@ class ConsoleHandsFreeController:
         #: itself is a lazily-created singleton for this screen instance
         #: (`_ensure_console_chat_store`), so this only ever needs doing once.
         self._console_hands_free_store_tap_installed = False
+        #: `(store, {seam: (had_own_attr, original)}, {seam: wrapper})` while
+        #: this screen's tap is installed -- see
+        #: `uninstall_console_hands_free_store_tap`. The store OUTLIVES the
+        #: screen since task-15860, so the tap has to come back off.
+        self._console_hands_free_store_tap_undo: Any | None = None
         #: Set once (per app run) by a `VoiceVadUnavailable` event, via
         #: dictation's injected `set_hands_free_vad_degraded` callable. Read
         #: by `_enter_console_hands_free_pipeline_loop`, which shows a
@@ -884,8 +889,10 @@ class ConsoleHandsFreeController:
         every wrapper calls the original method FIRST and returns its
         result unchanged; the tap only observes. Idempotent -- installed at
         most once per screen instance, and stays installed across loop
-        exit/re-entry (uninstalling would need to reach back into a store
-        that outlives any one loop session). `append_message` is the
+        exit/re-entry. task-15860: it is now REMOVED at `on_unmount`
+        (`uninstall_console_hands_free_store_tap`), because the store
+        outlives the screen and an un-removed tap would both strand a dead
+        screen and re-wrap once per Console visit. `append_message` is the
         EARLIEST of the five seams -- it fires the instant the assistant
         row is created, before any streaming (task-5 final review I3).
         """
@@ -940,12 +947,55 @@ class ConsoleHandsFreeController:
             )
             return result
 
-        store.append_message = _append_message
-        store.append_stream_chunk = _append_stream_chunk
-        store.mark_message_complete = _mark_message_complete
-        store.mark_message_failed = _mark_message_failed
-        store.mark_message_stopped = _mark_message_stopped
+        wrappers = {
+            "append_message": _append_message,
+            "append_stream_chunk": _append_stream_chunk,
+            "mark_message_complete": _mark_message_complete,
+            "mark_message_failed": _mark_message_failed,
+            "mark_message_stopped": _mark_message_stopped,
+        }
+        # task-15860: remember what to put back. The store is app-owned and
+        # now OUTLIVES this screen, so a tap left installed would (a) keep a
+        # dead screen alive through five closures and (b) be wrapped AGAIN
+        # by the next visit's controller -- one nesting level per Console
+        # visit, forever. `on_unmount` calls
+        # `uninstall_console_hands_free_store_tap`.
+        self._console_hands_free_store_tap_undo = (
+            store,
+            {
+                name: (name in store.__dict__, getattr(store, name))
+                for name in wrappers
+            },
+            wrappers,
+        )
+        for name, wrapper in wrappers.items():
+            setattr(store, name, wrapper)
         self._console_hands_free_store_tap_installed = True
+
+    def uninstall_console_hands_free_store_tap(self) -> None:
+        """Restore the five store seams this screen wrapped, if it wrapped them.
+
+        Idempotent, and conservative: a seam that no longer holds THIS
+        screen's wrapper (something else re-wrapped it afterwards) is left
+        exactly as it is rather than clobbered.
+        """
+        undo = getattr(self, "_console_hands_free_store_tap_undo", None)
+        self._console_hands_free_store_tap_undo = None
+        self._console_hands_free_store_tap_installed = False
+        if undo is None:
+            return
+        store, originals, wrappers = undo
+        for name, wrapper in wrappers.items():
+            if store.__dict__.get(name) is not wrapper:
+                continue
+            had_own, original = originals[name]
+            if had_own:
+                setattr(store, name, original)
+            else:
+                try:
+                    delattr(store, name)
+                except AttributeError:  # pragma: no cover - already gone
+                    pass
 
     def _console_hands_free_marshal(
         self, callback: Callable[..., None], *args: Any

@@ -92,7 +92,7 @@ from ..Console_Modules.session import (
 )
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import ConsoleChatController
-from ...Chat.console_runtime import dispose_console_runtime, ensure_console_runtime
+from ...Chat.console_runtime import ensure_console_runtime, leave_console_runtime
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
 )
@@ -3375,7 +3375,12 @@ class ChatScreen(BaseAppScreen):
         self._console_library_rag_source_types: tuple[str, ...] = (
             CONSOLE_LIBRARY_RAG_SOURCE_SCOPE
         )
-        self._console_chat_store: ConsoleChatStore | None = None
+        # `_console_chat_store` is a PROPERTY over the app-owned runtime
+        # (task-15860 lifetime landing) -- it deliberately has no `__init__`
+        # slot any more. Assigning `None` here would clear the store a
+        # surviving runtime is still using the instant a fresh ChatScreen is
+        # constructed, which `_complete_screen_navigation` does BEFORE the
+        # outgoing screen unmounts.
         self._last_console_roleplay_refresh_key: tuple[str, str] | None = None
         self._console_roleplay_persistence_task: asyncio.Task[None] | None = None
         self._console_roleplay_writer_task: (
@@ -3506,8 +3511,9 @@ class ChatScreen(BaseAppScreen):
         #: sink, or None. Retained only so `on_unmount` can wait for it --
         #: see `_teardown_console_realtime_loop`.
         self._console_realtime_close_worker: Any | None = None
-        self._console_provider_gateway: Any | None = None
-        self._console_chat_controller: ConsoleChatController | None = None
+        # `_console_provider_gateway`/`_console_chat_controller`: properties
+        # over the app-owned runtime, no `__init__` slot -- see the note at
+        # `_console_chat_store`'s old slot.
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
@@ -5106,20 +5112,68 @@ class ChatScreen(BaseAppScreen):
             )
         return effective_settings, readiness
 
+    def _console_runtime(self) -> Any:
+        """Return the `ConsoleRuntime` this screen is the view of, memoised.
+
+        task-15860 lifetime landing: the runtime OUTLIVES this screen, so
+        the four handles below are properties over it rather than instance
+        attributes. A fresh `ChatScreen`'s own `None` would otherwise
+        SHADOW a live store/gateway/controller until `_ensure_*` happened
+        to run -- and `_complete_screen_navigation` constructs (and
+        `restore_state`s) the incoming screen BEFORE the outgoing one
+        unmounts, so both screens are briefly alive and both legitimately
+        reach these handles.
+
+        **Memoised on purpose, and resolved exactly once.** Reading a
+        handle must never re-claim: a screen that is already superseded
+        (the overlapping window above) reads its OWN runtime here and can
+        never reach through to the successor's.
+        """
+        runtime = getattr(self, "_console_runtime_ref", None)
+        if runtime is None:
+            runtime = ensure_console_runtime(
+                getattr(self, "app_instance", None), view=self
+            )
+            self._console_runtime_ref = runtime
+        return runtime
+
+    @property
+    def _console_chat_store(self) -> ConsoleChatStore | None:
+        """The runtime's Console store, or `None` if none is built yet."""
+        return self._console_runtime().chat_store
+
+    @_console_chat_store.setter
+    def _console_chat_store(self, value: ConsoleChatStore | None) -> None:
+        self._console_runtime().set_chat_store(value)
+
+    @property
+    def _console_provider_gateway(self) -> Any | None:
+        """The runtime's provider gateway, or `None`."""
+        return self._console_runtime().provider_gateway
+
+    @_console_provider_gateway.setter
+    def _console_provider_gateway(self, value: Any | None) -> None:
+        self._console_runtime().set_provider_gateway(value)
+
+    @property
+    def _console_chat_controller(self) -> "ConsoleChatController | None":
+        """The runtime's Console chat controller, or `None`."""
+        return self._console_runtime().chat_controller
+
+    @_console_chat_controller.setter
+    def _console_chat_controller(self, value: "ConsoleChatController | None") -> None:
+        self._console_runtime().set_chat_controller(value)
+
     def _ensure_console_chat_store(self) -> ConsoleChatStore:
         """Return the native Console chat store, creating it lazily.
 
-        task-15860 Task 1 (pure ownership move): CONSTRUCTED by the
-        app-owned `ConsoleRuntime` (`Chat/console_runtime.py`, whose
-        docstring states what Task 1 deliberately does not change). Name,
-        laziness, return type and patchability are unchanged, and the
-        runtime is disposed at `on_unmount`, so a second Console visit
-        still gets a fresh store.
+        task-15860: CONSTRUCTED and OWNED by the app-owned `ConsoleRuntime`
+        (`Chat/console_runtime.py`). Name, laziness, return type and
+        patchability are unchanged; the store now survives this screen's
+        unmount, so a second Console visit re-uses it.
         """
         if self._console_chat_store is None:
-            self._console_chat_store = ensure_console_runtime(
-                self.app_instance, view=self
-            ).ensure_chat_store(
+            self._console_runtime().ensure_chat_store(
                 workspace_context=self._workspace._current_console_workspace_context(),
                 on_scope_flushed=self._on_console_scope_flushed,
             )
@@ -5210,14 +5264,14 @@ class ChatScreen(BaseAppScreen):
     def _ensure_console_provider_gateway(self) -> Any:
         """Return the native Console provider gateway with a test injection seam.
 
-        task-15860 Task 1: constructed by the app-owned `ConsoleRuntime`,
+        task-15860: constructed and OWNED by the app-owned `ConsoleRuntime`,
         which also reads the app's `console_provider_gateway_factory`
-        injection seam. Name, laziness and behaviour are unchanged.
+        injection seam. Name, laziness and behaviour are unchanged; the
+        gateway is now closed at app exit (`ConsoleRuntime.dispose`) rather
+        than on every navigation away.
         """
         if self._console_provider_gateway is None:
-            self._console_provider_gateway = ensure_console_runtime(
-                self.app_instance, view=self
-            ).ensure_provider_gateway(
+            self._console_runtime().ensure_provider_gateway(
                 # Fresh-config source: the gateway re-resolves readiness at
                 # send time and must see Settings saves made after boot.
                 config_provider=self._provider_readiness_app_config,
@@ -5288,9 +5342,7 @@ class ChatScreen(BaseAppScreen):
         """
         if self._console_chat_controller is None:
             selection = self._build_console_provider_selection()
-            self._console_chat_controller = ensure_console_runtime(
-                self.app_instance, view=self
-            ).ensure_chat_controller(
+            self._console_runtime().ensure_chat_controller(
                 store=self._ensure_console_chat_store(),
                 provider_gateway=self._ensure_console_provider_gateway(),
                 provider=selection.provider,
@@ -5325,79 +5377,101 @@ class ChatScreen(BaseAppScreen):
                     self._session._build_console_turn_execution_context
                 ),
             )
-        self._console_chat_controller.on_submission_accepted = (
-            self._on_console_submission_accepted
-        )
-        # TASK-1364: accepted sends are recorded to the shared prompt
-        # history (inside `submit_draft`, past every block/refusal gate).
-        self._console_chat_controller.prompt_history = (
-            self._ensure_console_prompt_history()
-        )
+        # task-15860: every screen-owned slot on the controller, the store
+        # and the wake coordinator is (re)bound HERE, through the single
+        # enumerated `CONSOLE_VIEW_HOOK_SLOTS` list, so that the same list
+        # can clear all of them at detach. This block used to assign each
+        # one by hand and had no counterpart anywhere.
+        self._console_runtime().attach_view(self)
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
-        # on the agent bridge's worker thread and needs both a
-        # `call_from_thread`-capable App handle and a UI-thread hook that
-        # pushes/clears the pending batch into this screen's task-resume
-        # state. `self.app_instance` IS the running `TldwCli` (an `App`
-        # subclass), so it already has `call_from_thread`.
+        # on the agent bridge's worker thread and needs a
+        # `call_from_thread`-capable App handle. Deliberately NOT a
+        # view-hook slot: this is the APP, which outlives every view, and
+        # clearing it at detach would break the bridge a surviving turn
+        # still needs.
         self._console_chat_controller.app = self.app_instance
-        self._console_chat_controller.set_pending_approval = (
-            self._set_console_pending_approval
-        )
-        # Task 9 (parked background approvals): UI-thread bridge target for
-        # a NON-active session's approval round -- badge + one toast,
-        # never the mounted-card path above.
-        self._console_chat_controller.park_pending_approval = (
-            self._park_console_approval
-        )
-        # Task 10 (background completion toasts): UI-thread bridge target
-        # for a NON-active session's run finishing/failing -- the one-per-
-        # run toast, invoked directly (never via call_from_thread) from
-        # `_set_run_state`'s once-guarded non-active terminal branch.
-        self._console_chat_controller.notify_run_outcome = (
-            self._notify_console_run_outcome
-        )
-        # task-2154.16 (FB-05): UI-thread bridge target for the ACTIVE
-        # session's own run failing -- one error toast carrying the run's
-        # visible copy, invoked directly from `_set_run_state`'s
-        # once-guarded active-session FAILED branch.
-        self._console_chat_controller.notify_run_failure = (
-            self._notify_console_run_failure
-        )
-        self._console_chat_controller.set_pending_skill_install = (
-            self._set_console_pending_skill_install
-        )
-        self._console_chat_controller.set_pending_skill_script = (
-            self._set_console_pending_skill_script
-        )
         # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
-        # seam + marks reads) and the user-wins-ties probe. getattr-guarded
-        # because several UI tests swap in hand-built controller doubles
-        # before re-running this wiring block.
+        # seam + marks reads). getattr-guarded because several UI tests
+        # swap in hand-built controller doubles before re-running this
+        # wiring block. `delivery_ui_hook` is a view-hook slot and is
+        # bound by `attach_view` above.
         wake = getattr(self._console_chat_controller, "fleet_wake", None)
         if wake is not None:
             wake.wire(app=self.app_instance)
+        self._sync_console_chat_core_state()
+        return self._console_chat_controller
+
+    def console_view_hooks(self) -> dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+
+        Keys must match `CONSOLE_VIEW_HOOK_SLOTS` exactly; a test asserts
+        the two sets are equal, which is what stops a slot being bound
+        here and never cleared (or cleared and never bound).
+
+        Returns:
+            dict[str, Any]: slot name -> this view's value.
+        """
+        session = getattr(self, "_session", None)
+        prompts = getattr(self, "_prompts", None)
+        return {
+            # constructor-supplied callables
+            "_chat_dictionary_applier": self._console_chat_dictionary_applier,
+            "_world_info_applier": self._console_world_info_applier,
+            "_rag_capture_provider": self._capture_console_staged_rag,
+            "_default_session_settings": getattr(
+                session, "_default_console_session_settings", None
+            ),
+            "_library_provider_factory": self._console_library_provider_factory,
+            "_global_user_display_name": self._global_chat_display_name,
+            "_turn_context_provider": getattr(
+                session, "_build_console_turn_execution_context", None
+            ),
+            # post-construction UI bridges
+            "on_submission_accepted": self._on_console_submission_accepted,
+            # TASK-1364: accepted sends are recorded to the shared prompt
+            # history (inside `submit_draft`, past every block/refusal gate).
+            "prompt_history": (
+                self._ensure_console_prompt_history() if prompts is not None else None
+            ),
+            "set_pending_approval": self._set_console_pending_approval,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": self._set_console_pending_skill_install,
+            "set_pending_skill_script": self._set_console_pending_skill_script,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": self._console_wake_conversation_in_view,
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
             # task-15862: a wake turn enters through the coordinator, never
             # the user-send worker that arms the 0.2s transcript poll --
             # without this hook nothing repaints the wake turn's streamed
-            # reply, its terminal tab glyph, or the composer state (the
-            # live 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
-            wake.delivery_ui_hook = self._on_console_wake_delivery_started
-        self._console_chat_controller.wake_user_priority_probe = (
-            self._console_wake_user_priority
-        )
-        # task-15971: the delivery COMMIT's visibility probe -- a wake
-        # completing while this conversation is not displayed-and-active
-        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
-        # learns an off-view delivery landed).
-        # task-15971: the delivery COMMIT's visibility probe -- a wake
-        # completing while this conversation is not displayed-and-active
-        # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
-        # learns an off-view delivery landed).
-        self._console_chat_controller.wake_conversation_in_view = (
-            self._console_wake_conversation_in_view
-        )
-        self._sync_console_chat_core_state()
-        return self._console_chat_controller
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._on_console_wake_delivery_started,
+        }
 
     async def _capture_console_staged_rag(
         self,
@@ -14421,45 +14495,43 @@ class ChatScreen(BaseAppScreen):
         # keeps this method one line per subsystem.
         await self._dictation.teardown()
         self._console_original_attempt_previews.clear()
+        self._hands_free.uninstall_console_hands_free_store_tap()
         controller = self._console_chat_controller
         if controller is not None:
             await self._record_console_fleet_teardown(controller)
-        gateway = self._console_provider_gateway
-        close = getattr(gateway, "aclose", None)
-        if callable(close):
-            result = close()
-            if inspect.isawaitable(result):
-                await result
-        self._console_provider_gateway = None
-        self._console_chat_controller = None
-        # task-15860 Task 1: the runtime moved to the app, its LIFETIME did
-        # not. Disposing here -- AFTER the fleet-teardown notice, the
-        # `controller.shutdown()` and the gateway close above, in that same
-        # order -- is what keeps "a second Console visit gets a brand-new
-        # store/gateway/bridge/controller" true; Task 2 removes this call.
-        # `view=self` so an already-superseded screen (both are briefly
-        # alive when a navigation lands back on Console) cannot tear down
-        # the runtime its successor is using.
-        dispose_console_runtime(self.app_instance, view=self)
+        else:
+            # No controller was ever built, but the view still has to let
+            # go: `detach_view` clears the store's `on_scope_flushed` and
+            # drops the claim.
+            await leave_console_runtime(self.app_instance, view=self)
         super().on_unmount()
 
     async def _record_console_fleet_teardown(self, controller: Any) -> None:
-        """Snapshot this teardown's true fates, shut down, stage the notice.
+        """Snapshot this teardown's true fates, LEAVE, stage the notice.
 
-        TASK-1143 (F5) + PR3a-2 Task 4: snapshot BEFORE ``shutdown()``,
+        TASK-1143 (F5) + PR3a-2 Task 4: snapshot BEFORE the teardown,
         using ``fleet_teardown_split()`` -- the same union
         ``busy_fleet_session_count`` (and the pre-navigate confirm) has
         always counted, partitioned by what actually happens next.
         Sessions with an in-flight turn or pending approval are killed by
-        the shutdown below; sessions whose only work is a cross-turn
+        the teardown below; sessions whose only work is a cross-turn
         survivor KEEP RUNNING through it (Task 1 A1, executed) and their
         results/spend land after the screen is gone. The app (not this
         doomed screen) holds both counts so the NEXT Console mount -- a
         fresh instance; screens are never cached -- reports each
         truthfully via ``_notify_console_fleet_teardown_if_any``.
+
+        task-15860: the teardown is now ``leave_console_runtime`` -- this
+        VISIT ends, the runtime does not. The provider gateway is no longer
+        closed here either; it is app-owned and closes at
+        ``ConsoleRuntime.dispose``. An in-flight ``AGENT_WAKE`` turn is
+        exempt from the cancellation (owner ruling), so the ``killed``
+        count can over-report by one in the rare case a wake turn is
+        mid-flight at nav-away; ``fleet_teardown_split``'s own contract is
+        deliberately left untouched.
         """
         killed, surviving = controller.fleet_teardown_split()
-        await controller.shutdown()
+        await leave_console_runtime(self.app_instance, view=self)
         if killed:
             self.app_instance._console_fleet_teardown_notice = killed
         if surviving:

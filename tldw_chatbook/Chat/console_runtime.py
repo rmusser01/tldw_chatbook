@@ -25,24 +25,39 @@ Each is built lazily, on first `ensure_*` call, from parameters the
 calling view supplies — the same parameters, in the same order, the
 screen's own `_ensure_*` methods passed before this module existed.
 
-## What it deliberately does NOT change (Task 1's whole discipline)
+## The lifetime landing (this file's second half)
 
-- **Lifetime.** `ChatScreen.on_unmount` still records the fleet-teardown
-  notice and still `await`s `controller.shutdown()`, and then the runtime
-  is DISPOSED (`dispose_console_runtime`). A second Console visit
-  therefore still gets a brand-new store/gateway/bridge/controller —
-  exactly as today. Making the runtime *survive* teardown is Task 2, and
-  `Tests/Chat/test_console_runtime_ownership.py` pins today's behaviour so
-  that change lands as a visible diff to a test rather than a diff to
-  nothing.
-- **Hook binding.** The controller and store are still handed
-  screen-bound callables (`on_scope_flushed`, the dictionary/world-info
-  appliers, the wake probes, …). Task 0's P3 found all five slots a
-  viewless wake turn touches still pointing at a DEAD screen; rebinding
-  them is Task 4, not this task.
-- **The `_shutdown_requested` gate** in `ConsoleFleetWakeCoordinator.
-  _attempt` — Task 0's P2 proved it is the single line refusing a headless
-  wake — is untouched here.
+The runtime now **survives the screen's unmount**, and teardown is split
+in two:
+
+| Call | When | What it does |
+|---|---|---|
+| `leave_console_runtime` | every navigation AWAY from Console | ends ONE visit: clears the view's hook slots, cancels+awaits this visit's USER stream tasks, denies its parked approval rounds, tombstones its queue chains |
+| `dispose_console_runtime` | app exit (`_shutdown_app_owned_lifecycles`) | the permanent form — `controller.shutdown()` then `gateway.aclose()`, exactly the order `on_unmount` used to run |
+
+An `AGENT_WAKE` turn is deliberately NOT cancelled by `leave_console`
+(owner ruling): cancelling it would re-create the "only completes if you
+stay" gap this whole arc exists to close, and a wake turn is structurally
+the same class of work as the fleet survivor AC#2 keeps running. AC#2
+names USER turns only.
+
+## The view seam
+
+`attach_view` / `detach_view` are the ONE place a screen's callables meet
+the runtime, over the single enumerated `CONSOLE_VIEW_HOOK_SLOTS` list —
+set on attach, restored to viewless defaults on detach, same list both
+ways. They **replace** Task 1's `ConsoleRuntime.view` stand-in, which
+"protected" the overlapping-screens window by building a second runtime
+(i.e. by reproducing dispose-at-unmount). The real ordering is now
+explicit: `_complete_screen_navigation` constructs and `restore_state`s
+the INCOMING screen before `switch_screen` unmounts the outgoing one, so
+the incoming screen's `attach_view` runs FIRST and claims the runtime, and
+the outgoing screen's later `detach_view`/`leave_console` finds a
+different claimant and does nothing at all.
+
+Screen-owned TIMERS (transcript sync, fleet survivor tick, cost TTL) are
+not runtime state and are not in that list: they stay screen-owned and
+stay stopped at unmount.
 
 ## Why an app attribute rather than a global
 
@@ -53,18 +68,24 @@ re-created lazily by the screen when a test's app object never had one
 are never cached (`app.py` `_create_navigation_screen`), so anything that
 must outlive a navigation cannot live on one.
 
-It deliberately does NOT join `_shutdown_app_owned_lifecycles`, unlike the
-image-edit registry: that hook runs *before* Textual closes screen state,
-and `dispose()` is a reference drop with no durable work to settle, so
-disposing there would only reorder Console's quit path for no gain. The
-unmount that Textual performs at exit already disposes it. When Task 2
-gives the runtime real cross-navigation lifetime, an exit-time settle
-becomes worth adding — and it should be added deliberately, with the quit
-ordering re-verified, not inherited from this task.
+## Still deliberately unchanged
+
+- **`_attempt`'s `_shutdown_requested` gate** (`console_fleet_wake.py`).
+  It is not relaxed here — and it does not need to be touched to keep
+  refusing, because `leave_console` still SETS that Event and only
+  `begin_visit` (i.e. the next `attach_view`) replaces it with a fresh
+  one. Between visits the flag is set exactly as it was before this
+  landing, so a wake still does not fire headless. Making it fire is the
+  next task.
+- **Continuity.** Console message state still travels through
+  `ScreenStateStore.native_console_state`; the app-owned store is not yet
+  the continuity owner (plan Task 3, blocked on an owner call).
 """
 
 from __future__ import annotations
 
+import inspect
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
@@ -77,12 +98,106 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: test can assert on the protocol rather than on a string literal.
 CONSOLE_RUNTIME_ATTR = "console_runtime"
 
+#: Where a runtime hides when the app object cannot hold one (a `None` app,
+#: or a read-only double). Never the production path — `TldwCli.__init__`
+#: always takes `CONSOLE_RUNTIME_ATTR`.
+_VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
+
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
+    "CONSOLE_VIEW_HOOK_SLOTS",
     "ConsoleRuntime",
+    "ConsoleViewHookSlot",
     "dispose_console_runtime",
     "ensure_console_runtime",
+    "leave_console_runtime",
+    "viewless_user_display_name",
 ]
+
+
+def viewless_user_display_name() -> str:
+    """The display name a runtime with no view uses.
+
+    `ConsoleChatController.__init__` does `global_user_display_name or
+    (lambda: "User")`, so `None` is NOT this slot's viewless default —
+    clearing it to `None` would turn every read into a `TypeError`.
+    """
+    return "User"
+
+
+@dataclass(frozen=True)
+class ConsoleViewHookSlot:
+    """One runtime-object attribute a mounted Console view owns.
+
+    Args:
+        name: The attribute name on the target object.
+        target: Which runtime object holds it — ``"controller"``,
+            ``"store"`` or ``"wake"`` (the controller's
+            ``fleet_wake`` coordinator).
+        viewless_default: What `detach_view` restores. Almost always
+            `None`, which is every one of these slots' documented
+            "no UI wired" value.
+    """
+
+    name: str
+    target: str
+    viewless_default: Any = None
+
+
+#: **The one enumerated list of screen-owned hook slots.** `attach_view`
+#: sets every entry from the view's `console_view_hooks()` map and
+#: `detach_view` restores every entry's `viewless_default` — the same list
+#: in both directions, so a slot cannot be bound without being cleared.
+#:
+#: Task 0's P3 measured that a VIEWLESS wake turn touches five of these
+#: (`delivery_ui_hook`, `wake_conversation_in_view`,
+#: `wake_user_priority_probe`, `_chat_dictionary_applier`,
+#: `_world_info_applier`) — and that all five were still bound to a DEAD
+#: `ChatScreen` and none raised. A silent wrong answer is worse than a
+#: raise: `wake_conversation_in_view` decides whether the unseen ◈ mark
+#: survives (task-15971) and `wake_user_priority_probe` decides whether the
+#: user wins a tie.
+#:
+#: Four entries here were NOT in P3's list of fifteen, because P3 only
+#: wrapped callables that were `ChatScreen` methods:
+#: `_default_session_settings` and `_turn_context_provider` are bound to
+#: the screen's `ConsoleSessionController`, `prompt_history` is a value
+#: built by the screen's prompts controller, and `on_scope_flushed` lives
+#: on the STORE, not the controller. Each still holds the dead screen
+#: transitively.
+#:
+#: `controller.app` is deliberately absent: it is the APP, which outlives
+#: every view, and clearing it would break the `call_from_thread` bridge a
+#: surviving turn still needs.
+CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
+    # -- constructor-supplied callables (read at construction only, so with
+    #    a surviving runtime they would otherwise stay bound to visit 1's
+    #    screen for the whole app's life) -----------------------------------
+    ConsoleViewHookSlot("_chat_dictionary_applier", "controller"),
+    ConsoleViewHookSlot("_world_info_applier", "controller"),
+    ConsoleViewHookSlot("_rag_capture_provider", "controller"),
+    ConsoleViewHookSlot("_default_session_settings", "controller"),
+    ConsoleViewHookSlot("_library_provider_factory", "controller"),
+    ConsoleViewHookSlot(
+        "_global_user_display_name", "controller", viewless_user_display_name
+    ),
+    ConsoleViewHookSlot("_turn_context_provider", "controller"),
+    # -- post-construction UI bridges -------------------------------------
+    ConsoleViewHookSlot("on_submission_accepted", "controller"),
+    ConsoleViewHookSlot("prompt_history", "controller"),
+    ConsoleViewHookSlot("set_pending_approval", "controller"),
+    ConsoleViewHookSlot("park_pending_approval", "controller"),
+    ConsoleViewHookSlot("notify_run_outcome", "controller"),
+    ConsoleViewHookSlot("notify_run_failure", "controller"),
+    ConsoleViewHookSlot("set_pending_skill_install", "controller"),
+    ConsoleViewHookSlot("set_pending_skill_script", "controller"),
+    ConsoleViewHookSlot("wake_user_priority_probe", "controller"),
+    ConsoleViewHookSlot("wake_conversation_in_view", "controller"),
+    # -- the store's one screen-owned callback ----------------------------
+    ConsoleViewHookSlot("on_scope_flushed", "store"),
+    # -- the wake coordinator's repaint hook ------------------------------
+    ConsoleViewHookSlot("delivery_ui_hook", "wake"),
+)
 
 
 class ConsoleRuntime:
@@ -112,26 +227,36 @@ class ConsoleRuntime:
                 mutated.
         """
         self._app = app
+        # -- setters, for the screen handles that now READ THROUGH here ----
+        # `ChatScreen._console_chat_store`/`_console_provider_gateway`/
+        # `_console_chat_controller` (and `ConsoleAgentController.
+        # _console_agent_bridge`) are properties over these slots since the
+        # runtime started outliving the screen: a fresh screen's own `None`
+        # would otherwise SHADOW a live runtime object until `_ensure_*`
+        # ran. See `set_chat_store` and friends.
         self._chat_store: Any | None = None
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
         self._chat_controller: Any | None = None
-        #: The view (a `ChatScreen`) that claimed this runtime, or `None`
-        #: while unclaimed. **Task 1's lifetime-preservation device, and
-        #: nothing more** -- it is NOT the attach/detach seam Task 2 builds.
+        #: The view (a `ChatScreen`) currently attached, or `None` while the
+        #: runtime is VIEWLESS -- which is now a real, supported state, not
+        #: a transient. Written only by `attach_view`/`detach_view`.
         #:
         #: Two `ChatScreen`s are briefly alive at once whenever a navigation
         #: lands back on Console: `_complete_screen_navigation` constructs
         #: and `restore_state`s the incoming screen BEFORE `switch_screen`
         #: unmounts the outgoing one (`app.py`), and `restore_state` reaches
-        #: `_ensure_console_chat_store`. Without a claim the incoming screen
-        #: would adopt the outgoing screen's controller and then watch
-        #: `on_unmount` shut it down underneath it. Today each screen builds
-        #: its own runtime, so a claim by a different view means "build a
-        #: fresh one" -- which is exactly what `ensure_console_runtime` does.
+        #: `ensure_chat_store`. The incoming screen therefore attaches
+        #: first and this attribute names it; the outgoing screen's later
+        #: detach sees a different claimant and does nothing.
         self.view: Any | None = None
-        #: Bumped by every `dispose()`. Task 1's new-runtime-per-visit pin
-        #: reads it; Task 2 will make it stop moving on a navigation.
+        #: Latched by `dispose()` (app exit). Every `ensure_*` returns what
+        #: it already holds afterwards and builds nothing new -- see
+        #: `dispose` for why a rebuild during quit is the hazard.
+        self._disposed: bool = False
+        #: Bumped by every `dispose()` -- i.e. once per app run, not once
+        #: per navigation. `Tests/UI/test_console_runtime_ownership.py`
+        #: reads it to prove the runtime survived a visit.
         self.generation: int = 0
 
     # -- non-constructing accessors ---------------------------------------
@@ -162,6 +287,24 @@ class ConsoleRuntime:
         """The built chat controller, or `None`."""
         return self._chat_controller
 
+    # -- handle writes (the screen's properties, and 59 test sites) --------
+
+    def set_chat_store(self, value: Any) -> None:
+        """Replace the store handle (a test double, or `None` to rebuild)."""
+        self._chat_store = value
+
+    def set_provider_gateway(self, value: Any) -> None:
+        """Replace the provider-gateway handle."""
+        self._provider_gateway = value
+
+    def set_agent_bridge(self, value: Any) -> None:
+        """Replace the agent-bridge handle."""
+        self._agent_bridge = value
+
+    def set_chat_controller(self, value: Any) -> None:
+        """Replace the chat-controller handle."""
+        self._chat_controller = value
+
     # -- construction ------------------------------------------------------
 
     def ensure_chat_store(
@@ -186,7 +329,7 @@ class ConsoleRuntime:
         Returns:
             ConsoleChatStore: The runtime's store.
         """
-        if self._chat_store is not None:
+        if self._chat_store is not None or self._disposed:
             return self._chat_store
         from tldw_chatbook.Chat.chat_persistence_service import (
             ChatPersistenceService,
@@ -220,6 +363,7 @@ class ConsoleRuntime:
             workspace_context=workspace_context,
             on_scope_flushed=on_scope_flushed,
         )
+        self._bind_view_hooks()
         return self._chat_store
 
     def ensure_provider_gateway(
@@ -242,7 +386,7 @@ class ConsoleRuntime:
         Returns:
             Any: The runtime's provider gateway.
         """
-        if self._provider_gateway is not None:
+        if self._provider_gateway is not None or self._disposed:
             return self._provider_gateway
         factory = getattr(self._app, "console_provider_gateway_factory", None)
         if callable(factory):
@@ -293,7 +437,7 @@ class ConsoleRuntime:
             Any: The `ConsoleAgentBridge`, or `None` when there is no
             durable ChaChaNotes DB to key the sibling `AgentRunsDB` off.
         """
-        if self._agent_bridge is not None:
+        if self._agent_bridge is not None or self._disposed:
             return self._agent_bridge
         db = getattr(self._app, "chachanotes_db", None)
         db_path = getattr(db, "db_path", None) if db is not None else None
@@ -349,32 +493,181 @@ class ConsoleRuntime:
         Returns:
             ConsoleChatController: The runtime's controller.
         """
-        if self._chat_controller is not None:
+        if self._chat_controller is not None or self._disposed:
             return self._chat_controller
         from tldw_chatbook.Chat.console_chat_controller import (
             ConsoleChatController,
         )
 
         self._chat_controller = ConsoleChatController(**kwargs)
+        self._bind_view_hooks()
         return self._chat_controller
+
+    # -- the view seam -----------------------------------------------------
+
+    def _hook_target(self, kind: str) -> Any | None:
+        """Resolve one slot's owning object, or `None` if unbuilt."""
+        if kind == "controller":
+            return self._chat_controller
+        if kind == "store":
+            return self._chat_store
+        if kind == "wake":
+            controller = self._chat_controller
+            return (
+                getattr(controller, "fleet_wake", None)
+                if controller is not None
+                else None
+            )
+        return None
+
+    def _bind_view_hooks(self) -> None:
+        """Point every slot in `CONSOLE_VIEW_HOOK_SLOTS` at the current view.
+
+        Called on attach AND at the end of each `ensure_*`, because a view
+        can claim the runtime before the object owning a slot exists —
+        `_restore_native_console_state` reaches `ensure_chat_store` long
+        before anything asks for a controller.
+        """
+        view = self.view
+        if view is None:
+            return
+        provider = getattr(view, "console_view_hooks", None)
+        hooks = provider() if callable(provider) else {}
+        for slot in CONSOLE_VIEW_HOOK_SLOTS:
+            target = self._hook_target(slot.target)
+            if target is None:
+                continue
+            setattr(target, slot.name, hooks.get(slot.name, slot.viewless_default))
+
+    def _clear_view_hooks(self) -> None:
+        """Restore every slot's viewless default. The mirror of the above."""
+        for slot in CONSOLE_VIEW_HOOK_SLOTS:
+            target = self._hook_target(slot.target)
+            if target is None:
+                continue
+            setattr(target, slot.name, slot.viewless_default)
+
+    def attach_view(self, view: Any) -> None:
+        """Claim this runtime for `view` and open a new Console visit.
+
+        **This replaces Task 1's `ConsoleRuntime.view` stand-in.** That
+        device kept a runtime claimed by a different view from being shared
+        — it simply built a second runtime, which was only ever a way of
+        reproducing dispose-at-unmount semantics. Now there is one runtime
+        and the claim is real: whoever attached LAST owns it, and a
+        superseded view's `detach_view` is a no-op (see there).
+
+        A NEW claim (the view changed) also opens a visit on the surviving
+        controller: a fresh per-visit cancellation Event and re-opened
+        prompt-queue admission. Re-attaching the SAME view only re-binds
+        hooks, so `_ensure_console_chat_controller` staying idempotent
+        costs nothing.
+        """
+        previous = self.view
+        self.view = view
+        if previous is not view:
+            controller = self._chat_controller
+            begin_visit = (
+                getattr(controller, "begin_visit", None)
+                if controller is not None
+                else None
+            )
+            if callable(begin_visit):
+                begin_visit()
+        self._bind_view_hooks()
+
+    def detach_view(self, view: Any | None = None) -> bool:
+        """Clear every screen-owned slot; the runtime itself survives.
+
+        Args:
+            view: The view detaching. When another view has already
+                claimed this runtime — the overlapping window where
+                `_complete_screen_navigation` has constructed and
+                `restore_state`d the INCOMING screen before `switch_screen`
+                unmounts the outgoing one — this is a **no-op**: a
+                superseded screen may not clear a hook its successor just
+                bound. `None` detaches unconditionally (app exit).
+
+        Returns:
+            True when the detach actually ran.
+        """
+        if view is not None and self.view is not view:
+            return False
+        self._clear_view_hooks()
+        self.view = None
+        return True
 
     # -- teardown ----------------------------------------------------------
 
-    def dispose(self) -> None:
-        """Drop every built object so the next `ensure_*` builds a fresh one.
+    async def leave_console(self, view: Any | None = None) -> bool:
+        """End ONE Console visit. The runtime survives.
 
-        Reference-drop ONLY. It does not shut the controller down and does
-        not close the gateway: `ChatScreen.on_unmount` still owns both of
-        those steps in Task 1, in the order it always ran them
-        (`fleet_teardown_split` snapshot -> `await controller.shutdown()`
-        -> `await gateway.aclose()`), and this is called after them.
+        The order matters and is asserted: hooks are cleared FIRST, then
+        the controller's per-visit teardown runs. Cancelling a turn drives
+        it to a terminal run state, and a terminal state fires
+        `notify_run_outcome`/`notify_run_failure` — into the screen that is
+        being torn down if the slots were still bound.
+
+        Args:
+            view: The unmounting view. A superseded view leaves nothing
+                (`detach_view`'s no-op), because the successor is still
+                using this runtime's turns.
+
+        Returns:
+            True when this visit was actually ended.
         """
-        self._chat_controller = None
-        self._agent_bridge = None
-        self._provider_gateway = None
-        self._chat_store = None
-        self.view = None
+        if not self.detach_view(view):
+            return False
+        controller = self._chat_controller
+        leave = getattr(controller, "leave_console", None) if controller else None
+        if callable(leave):
+            result = leave()
+            if inspect.isawaitable(result):
+                await result
+        return True
+
+    async def dispose(self) -> None:
+        """Destroy the runtime. The permanent, app-exit form.
+
+        Keeps the pre-15860 `ChatScreen.on_unmount` order exactly:
+        `await controller.shutdown()` (which tombstones the queue, sets the
+        cancellation Event permanently, and cancels/awaits EVERY session's
+        stream task) and then `await gateway.aclose()`. Reached from
+        `TldwCli._shutdown_app_owned_lifecycles`.
+
+        **The built objects are NOT dropped, and `_disposed` latches.**
+        `_shutdown_app_owned_lifecycles` runs BEFORE Textual closes screen
+        state, so a Console screen -- and its timers -- can still be live
+        while this runs, and there are ~75 `_ensure_console_chat_*` call
+        sites reachable from those. Dropping the references would let one
+        of them BUILD A FRESH CONTROLLER during quit, which nothing would
+        ever shut down; returning `None` instead would crash a tick that
+        has never had to handle it. Keeping the torn-down objects is the
+        only option that does neither: a shut-down controller already
+        refuses work through its permanently-set cancellation Event, which
+        is exactly the right answer at exit.
+        """
+        self._disposed = True
+        self.detach_view(None)
+        controller, gateway = self._chat_controller, self._provider_gateway
         self.generation += 1
+        if controller is not None:
+            try:
+                await controller.shutdown()
+            except Exception:  # noqa: BLE001 - quit must not die on teardown
+                logger.opt(exception=True).warning(
+                    "Console runtime: controller shutdown failed at dispose."
+                )
+        close = getattr(gateway, "aclose", None)
+        if callable(close):
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:  # noqa: BLE001 - same
+                logger.opt(exception=True).warning(
+                    "Console runtime: provider gateway close failed at dispose."
+                )
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
@@ -403,47 +696,75 @@ def ensure_console_runtime(app: Any, *, view: Any | None = None) -> ConsoleRunti
             tolerated — a detached runtime is returned rather than raising,
             because the screen's own accessors are reached from bare
             `ChatScreen.__new__` fixtures.
-        view: The `ChatScreen` asking. A runtime already claimed by a
-            DIFFERENT view is replaced with a fresh one rather than shared,
-            which is what keeps Task 1's per-screen lifetime exact — see
-            `ConsoleRuntime.view`.
+        view: The `ChatScreen` asking. The SAME runtime is shared across
+            views now (it outlives every one of them); a new view simply
+            claims it through `attach_view`, which opens a fresh visit.
 
     Returns:
         ConsoleRuntime: The runtime `view` should use.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
-    if isinstance(runtime, ConsoleRuntime) and (
-        view is None or runtime.view is None or runtime.view is view
-    ):
-        if view is not None:
-            runtime.view = view
-        return runtime
-    runtime = ConsoleRuntime(app)
-    runtime.view = view
-    _attach(app, runtime)
+    if not isinstance(runtime, ConsoleRuntime) and view is not None:
+        # An app object that cannot hold the attribute (`None`, or a
+        # read-only double) would otherwise hand every caller a BRAND-NEW
+        # runtime, so a write through `ChatScreen._console_chat_store`'s
+        # setter would be invisible to the very next read. Bare
+        # `ChatScreen.__new__` fixtures reach the handles exactly that way.
+        runtime = getattr(view, _VIEW_RUNTIME_FALLBACK_ATTR, None)
+    if not isinstance(runtime, ConsoleRuntime):
+        runtime = ConsoleRuntime(app)
+        _attach(app, runtime)
+        if view is not None and getattr(app, CONSOLE_RUNTIME_ATTR, None) is not runtime:
+            try:
+                setattr(view, _VIEW_RUNTIME_FALLBACK_ATTR, runtime)
+            except Exception:  # noqa: BLE001 - a read-only view double is fine
+                logger.debug("Console runtime: could not hold a fallback on the view.")
+    if view is not None and runtime.view is not view:
+        runtime.attach_view(view)
     return runtime
 
 
-def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
-    """Dispose `app`'s Console runtime and detach it.
+async def leave_console_runtime(app: Any, *, view: Any | None = None) -> bool:
+    """End one Console visit on `app`'s runtime, which SURVIVES.
 
-    Task 1 semantics: the next Console mount builds a brand-new runtime,
-    exactly as every navigation built a brand-new store/controller before
-    this module existed. **This call is what Task 2 removes.**
+    The nav-away counterpart to `dispose_console_runtime`. Cancels this
+    visit's user turns, denies its parked approval rounds and tombstones
+    its queue chains — and leaves the store, gateway, bridge and controller
+    alive for the next visit (and for a survivor that outlives the screen).
+
+    Args:
+        app: The app object holding the runtime.
+        view: The `ChatScreen` unmounting. A superseded view leaves
+            nothing — see `ConsoleRuntime.detach_view`.
+
+    Returns:
+        True when this visit was actually ended.
+    """
+    runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
+    if not isinstance(runtime, ConsoleRuntime) and view is not None:
+        runtime = getattr(view, _VIEW_RUNTIME_FALLBACK_ATTR, None)
+    if not isinstance(runtime, ConsoleRuntime):
+        return False
+    return await runtime.leave_console(view)
+
+
+async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
+    """Destroy `app`'s Console runtime and detach it. **App exit only.**
+
+    Registered in `TldwCli._shutdown_app_owned_lifecycles`. Ordinary
+    navigation away from Console goes through `leave_console_runtime`
+    instead — that is the whole teardown split.
 
     Args:
         app: The app object holding the runtime. A missing or foreign
             attribute is a no-op.
-        view: The `ChatScreen` unmounting. When the attached runtime was
-            claimed by a different, still-live view (the overlapping-screens
-            window described on `ConsoleRuntime.view`), this is a no-op:
-            a dying screen must not tear down the runtime its successor is
-            already using.
+        view: Present for symmetry; a runtime claimed by a different,
+            still-live view is not disposed by a dying screen.
     """
     runtime = getattr(app, CONSOLE_RUNTIME_ATTR, None)
     if not isinstance(runtime, ConsoleRuntime):
         return
     if view is not None and runtime.view is not None and runtime.view is not view:
         return
-    runtime.dispose()
+    await runtime.dispose()
     _attach(app, None)
