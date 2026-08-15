@@ -248,6 +248,9 @@ from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
     PersonasConversationsController,
 )
+from ..Persona_Modules.personas_preview_coordinator import (
+    get_personas_preview_coordinator,
+)
 from ...Character_Chat.character_generation import CharacterGenerationError
 from ...Character_Chat.world_book_import import format_imported_lorebook_note
 from ...Character_Chat.character_generation_controller import (
@@ -451,6 +454,17 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#personas-mode-placeholder",
     "#personas-characters-empty",
 )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterVisualIdentityLoadSnapshot:
+    """Authority captured before an editor pack-metadata worker starts."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    db: object | None
+    character_id: int | None
+    screen_generation: int
+    editor_session_token: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -731,7 +745,6 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
-        self._visual_identity_preview_lock = asyncio.Lock()
         # Image-gen P3 Task 3: (character_id, state) pairs with an expression
         # generation worker currently in flight - refuses a re-entrant
         # generate click for the same slot rather than racing two writes.
@@ -6070,10 +6083,16 @@ class PersonasScreen(BaseAppScreen):
         # Read only active-pack metadata first. Bound characters mount the
         # lazy pack browser; unbound characters take the legacy three-slot
         # path byte-for-behavior. DB work stays off the message pump.
-        token = self._character_editor_generation
         character_id = editor.expression_character_id()
+        snapshot = _CharacterVisualIdentityLoadSnapshot(
+            editor_ref=weakref.ref(editor),
+            db=getattr(self.app_instance, "chachanotes_db", None),
+            character_id=character_id,
+            screen_generation=self._character_editor_generation,
+            editor_session_token=editor.visual_identity_session_token,
+        )
         self.run_worker(
-            self._configure_character_visual_identity(editor, character_id, token),
+            self._configure_character_visual_identity(snapshot),
             group="personas-visual-identity-load",
             exit_on_error=False,
             exclusive=True,
@@ -6087,41 +6106,108 @@ class PersonasScreen(BaseAppScreen):
 
     async def _configure_character_visual_identity(
         self,
-        editor: PersonasCharacterEditorWidget,
-        character_id: int | None,
-        token: int,
+        snapshot: _CharacterVisualIdentityLoadSnapshot,
     ) -> None:
         """Mount pack metadata or preserve the legacy expression controls."""
 
-        db = getattr(self.app_instance, "chachanotes_db", None)
+        editor = snapshot.editor_ref()
+        if editor is None or not self._character_visual_identity_load_is_current(
+            snapshot
+        ):
+            return
         graph = None
-        if character_id is not None and db is not None:
+        if snapshot.character_id is not None and snapshot.db is not None:
             try:
                 graph = await asyncio.to_thread(
-                    VisualIdentityRepository(db).get_active_actor_pack,
+                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
                     "character",
-                    character_id,
+                    snapshot.character_id,
                 )
             except (TypeError, ValueError, OverflowError):
                 logger.opt(exception=True).debug(
                     "Personas Visual Identity metadata read failed for character {}.",
-                    character_id,
+                    snapshot.character_id,
                 )
-        if (
-            token != self._character_editor_generation
-            or not self.is_mounted
-            or editor.expression_character_id() != character_id
-            or getattr(self.app_instance, "chachanotes_db", None) is not db
+        if not self._character_visual_identity_load_is_current(snapshot):
+            return
+        try:
+            live_graph = (
+                await asyncio.to_thread(
+                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                    "character",
+                    snapshot.character_id,
+                )
+                if snapshot.character_id is not None and snapshot.db is not None
+                else None
+            )
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not self._character_visual_identity_load_is_current(
+            snapshot
+        ) or self._visual_identity_pack_metadata(graph) != (
+            self._visual_identity_pack_metadata(live_graph)
         ):
             return
-        if graph is None:
-            await editor.show_visual_identity_pack(None)
-            await self._render_all_character_editor_thumbnails(character_id)
+
+        metadata = self._visual_identity_pack_metadata(graph)
+        mounted = await editor.show_visual_identity_pack(metadata)
+        if not self._character_visual_identity_load_is_current(snapshot):
+            await editor.discard_visual_identity_pack(mounted)
             return
+        try:
+            final_graph = (
+                await asyncio.to_thread(
+                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                    "character",
+                    snapshot.character_id,
+                )
+                if snapshot.character_id is not None and snapshot.db is not None
+                else None
+            )
+        except (TypeError, ValueError, OverflowError):
+            await editor.discard_visual_identity_pack(mounted)
+            return
+        if (
+            not self._character_visual_identity_load_is_current(snapshot)
+            or self._visual_identity_pack_metadata(final_graph) != metadata
+        ):
+            await editor.discard_visual_identity_pack(mounted)
+            return
+        if metadata is None:
+            await self._render_all_character_editor_thumbnails(snapshot.character_id)
+            if not self._character_visual_identity_load_is_current(snapshot):
+                return
+
+    def _character_visual_identity_load_is_current(
+        self, snapshot: _CharacterVisualIdentityLoadSnapshot
+    ) -> bool:
+        """Check the complete editor authority captured before metadata I/O."""
+
+        editor = snapshot.editor_ref()
+        return bool(
+            editor is not None
+            and self.is_mounted
+            and self.state.active_mode == "characters"
+            and self._character_editor_generation == snapshot.screen_generation
+            and getattr(self.app_instance, "chachanotes_db", None) is snapshot.db
+            and editor.display
+            and editor.expression_character_id() == snapshot.character_id
+            and editor.visual_identity_session_token == snapshot.editor_session_token
+            and self._editor_or_none() is editor
+        )
+
+    @staticmethod
+    def _visual_identity_pack_metadata(
+        graph: dict[str, Any] | None,
+    ) -> VisualIdentityPackMetadata | None:
+        """Build the complete path-free identity used for live graph checks."""
+
+        if graph is None:
+            return None
 
         pack_row = graph["pack"]
         version_row = graph["version"]
-        metadata = VisualIdentityPackMetadata(
+        return VisualIdentityPackMetadata(
             binding_id=int(graph["binding"]["id"]),
             pack_id=int(pack_row["id"]),
             pack_version_id=int(version_row["id"]),
@@ -6140,7 +6226,6 @@ class PersonasScreen(BaseAppScreen):
                 for asset in graph["assets"]
             ),
         )
-        await editor.show_visual_identity_pack(metadata)
 
     @on(EditorContentChanged)
     def _handle_editor_content_changed(self, message: EditorContentChanged) -> None:
@@ -6874,36 +6959,18 @@ class PersonasScreen(BaseAppScreen):
             resolution.cache_identity,
         )
 
-    @staticmethod
-    async def _drain_visual_identity_stage(function: Callable, *args, **kwargs):
-        """Keep a cancelled ``to_thread`` stage owned until its thread exits."""
-
-        stage = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
-        try:
-            return await asyncio.shield(stage)
-        except asyncio.CancelledError:
-            while not stage.done():
-                try:
-                    await asyncio.shield(stage)
-                except asyncio.CancelledError:
-                    continue
-            try:
-                stage.result()
-            except Exception:
-                pass
-            raise
-
     async def _render_visual_identity_pack_preview(
         self,
         snapshot: _VisualIdentityPreviewSnapshot,
     ) -> None:
         """Resolve and decode one selected preview without exposing paths."""
 
-        async with self._visual_identity_preview_lock:
+        coordinator = get_personas_preview_coordinator(self.app_instance)
+        async with coordinator.serialize():
             if not self._visual_identity_snapshot_is_current(snapshot):
                 return
             try:
-                resolution = await self._drain_visual_identity_stage(
+                resolution = await coordinator.run_sync(
                     resolve_visual_identity,
                     snapshot.db,
                     actor_kind="character",
@@ -6934,7 +7001,7 @@ class PersonasScreen(BaseAppScreen):
                 f"{snapshot.asset.asset_id}-{hash(resolution.cache_identity)}"
             )
             try:
-                ok = await self._drain_visual_identity_stage(
+                ok = await coordinator.run_sync(
                     cache.prepare, cache_key, bytes(resolution.image_bytes)
                 )
             except Exception:
@@ -6947,7 +7014,7 @@ class PersonasScreen(BaseAppScreen):
             ):
                 return
             try:
-                graph = await self._drain_visual_identity_stage(
+                graph = await coordinator.run_sync(
                     VisualIdentityRepository(snapshot.db).get_active_actor_pack,
                     "character",
                     snapshot.character_id,
@@ -6959,7 +7026,7 @@ class PersonasScreen(BaseAppScreen):
             ) or not self._visual_identity_graph_matches_snapshot(snapshot, graph):
                 return
             try:
-                latest = await self._drain_visual_identity_stage(
+                latest = await coordinator.run_sync(
                     resolve_visual_identity,
                     snapshot.db,
                     actor_kind="character",

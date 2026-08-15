@@ -827,7 +827,7 @@ class PersonasCharacterEditorWidget(Container):
 
     async def show_visual_identity_pack(
         self, pack: VisualIdentityPackMetadata | None
-    ) -> None:
+    ) -> PersonasVisualIdentityPackWidget | None:
         """Mount a bound metadata browser, or preserve the legacy controls."""
 
         legacy = self.query_one("#personas-char-editor-legacy-expressions")
@@ -835,8 +835,25 @@ class PersonasCharacterEditorWidget(Container):
         await host.remove_children()
         legacy.display = pack is None
         host.display = pack is not None
-        if pack is not None:
-            await host.mount(PersonasVisualIdentityPackWidget(pack))
+        if pack is None:
+            return None
+        browser = PersonasVisualIdentityPackWidget(pack)
+        await host.mount(browser)
+        return browser
+
+    async def discard_visual_identity_pack(
+        self, browser: PersonasVisualIdentityPackWidget | None
+    ) -> None:
+        """Remove one stale mount without disturbing a newer editor session."""
+
+        if browser is None:
+            return
+        host = self.query_one("#personas-char-editor-visual-identity-host", Container)
+        if browser.parent is host:
+            await browser.remove()
+        if not host.children:
+            self.query_one("#personas-char-editor-legacy-expressions").display = True
+            host.display = False
 
     def set_avatar_image(self, image_data: bytes) -> None:
         """Stage avatar image bytes for persistence on the next Save.

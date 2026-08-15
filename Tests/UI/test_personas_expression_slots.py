@@ -13,9 +13,11 @@ open-editor boilerplate per test.
 
 import asyncio
 from dataclasses import replace
+import gc
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
+import weakref
 
 import pytest
 import pytest_asyncio
@@ -29,6 +31,11 @@ from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.UI.Persona_Modules.personas_preview_coordinator import (
+    PersonasPreviewCoordinator,
+    get_personas_preview_coordinator,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Utils.paths import get_user_data_dir
@@ -120,6 +127,16 @@ def _pack_asset(label: str, index: int) -> dict:
         "is_animated": False,
         "frame_count": 1,
     }
+
+
+def _visual_identity_load_snapshot(screen, editor, character_id):
+    return personas_screen_module._CharacterVisualIdentityLoadSnapshot(
+        editor_ref=weakref.ref(editor),
+        db=getattr(screen.app_instance, "chachanotes_db", None),
+        character_id=character_id,
+        screen_generation=screen._character_editor_generation,
+        editor_session_token=editor.visual_identity_session_token,
+    )
 
 
 @pytest_asyncio.fixture
@@ -336,6 +353,128 @@ async def test_rapid_preview_selection_never_overlaps_sync_resolution(
 
 
 @pytest.mark.asyncio
+async def test_fresh_personas_screen_reentry_never_overlaps_sync_resolution(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, first_screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    first_browser = first_screen.query_one(PersonasVisualIdentityPackWidget)
+    second_screen = PersonasScreen(app)
+    await app.push_screen(second_screen)
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if second_screen.query("#personas-character-editor-tts #label"):
+            break
+    else:
+        pytest.fail("second PersonasScreen descendants never finished mounting")
+    await second_screen._select_character(str(char_id), "Packed")
+    second_screen._handle_edit_requested(EditCharacterRequested(str(char_id)))
+    await app.workers.wait_for_complete()
+    second_browser = second_screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    guard = Lock()
+    first_started = Event()
+    release = Event()
+    overlap_seen = Event()
+    active = 0
+    peak = 0
+
+    def blocked_resolve(*args, **kwargs):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+            if active > 1:
+                overlap_seen.set()
+        first_started.set()
+        try:
+            assert release.wait(3)
+            return original_resolve(*args, **kwargs)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", blocked_resolve
+    )
+
+    first_browser.apply_filter("joy")
+    assert await asyncio.to_thread(first_started.wait, 2)
+    second_browser.apply_filter("fear")
+    overlapped = await asyncio.to_thread(overlap_seen.wait, 1.5)
+    release.set()
+    await asyncio.sleep(0.5)
+
+    assert not overlapped
+    assert peak == 1
+
+
+@pytest.mark.asyncio
+async def test_distinct_apps_have_independent_preview_coordinators():
+    class AppOwner:
+        pass
+
+    first_app = AppOwner()
+    second_app = AppOwner()
+    first = get_personas_preview_coordinator(first_app)
+    second = get_personas_preview_coordinator(second_app)
+    assert first is get_personas_preview_coordinator(first_app)
+    assert first is not second
+
+    guard = Lock()
+    both_active = Event()
+    release = Event()
+    active = 0
+
+    def blocked_stage():
+        nonlocal active
+        with guard:
+            active += 1
+            if active == 2:
+                both_active.set()
+        try:
+            assert release.wait(2)
+        finally:
+            with guard:
+                active -= 1
+
+    async def run(coordinator):
+        async with coordinator.serialize():
+            await coordinator.run_sync(blocked_stage)
+
+    tasks = [asyncio.create_task(run(first)), asyncio.create_task(run(second))]
+    assert await asyncio.to_thread(both_active.wait, 1)
+    release.set()
+    await asyncio.gather(*tasks)
+
+
+def test_preview_coordinator_rebinds_after_drained_sequential_event_loops():
+    coordinator = PersonasPreviewCoordinator()
+    calls: list[str] = []
+
+    async def run_once(value):
+        async with coordinator.serialize():
+            await coordinator.run_sync(calls.append, value)
+
+    asyncio.run(run_once("first"))
+    asyncio.run(run_once("second"))
+
+    assert calls == ["first", "second"]
+
+
+def test_preview_coordinator_does_not_retain_its_app_owner():
+    class AppOwner:
+        pass
+
+    owner = AppOwner()
+    owner_ref = weakref.ref(owner)
+    get_personas_preview_coordinator(owner)
+    del owner
+    gc.collect()
+
+    assert owner_ref() is None
+
+
+@pytest.mark.asyncio
 async def test_late_preview_cannot_paint_a_newer_editor_session(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -546,9 +685,10 @@ async def test_late_pack_metadata_cannot_remount_over_a_newer_character(
     monkeypatch.setattr(
         VisualIdentityRepository, "get_active_actor_pack", delayed_graph
     )
-    token = screen._character_editor_generation
     task = asyncio.create_task(
-        screen._configure_character_visual_identity(editor, char_id, token)
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
     )
     assert await asyncio.to_thread(started.wait, 2)
     screen._character_editor_generation += 1
@@ -560,6 +700,207 @@ async def test_late_pack_metadata_cannot_remount_over_a_newer_character(
     await asyncio.sleep(0.1)
 
     assert not editor.query(PersonasVisualIdentityPackWidget)
+
+
+@pytest.mark.asyncio
+async def test_pack_metadata_read_cannot_mount_after_character_mode_exit(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    started = Event()
+    release = Event()
+
+    def delayed_graph(_self, _kind, _actor_id):
+        started.set()
+        assert release.wait(2)
+        return graph
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", delayed_graph
+    )
+    editor._reset_visual_identity_browser()
+    await editor.query_one(
+        "#personas-char-editor-visual-identity-host"
+    ).remove_children()
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    screen.state.active_mode = "personas"
+    screen._show_center("#ccp-persona-card-view")
+    release.set()
+    await task
+
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+
+
+@pytest.mark.asyncio
+async def test_pack_metadata_read_cannot_mount_after_same_character_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    started = Event()
+    release = Event()
+
+    def delayed_graph(_self, _kind, _actor_id):
+        started.set()
+        assert release.wait(2)
+        return graph
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", delayed_graph
+    )
+    editor._reset_visual_identity_browser()
+    await editor.query_one(
+        "#personas-char-editor-visual-identity-host"
+    ).remove_children()
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    editor.load_character({"id": char_id, "name": "Reloaded same character"})
+    release.set()
+    await task
+
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+
+
+@pytest.mark.asyncio
+async def test_pack_metadata_read_rejects_changed_live_binding(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    assert graph is not None
+    changed_graph = {
+        **graph,
+        "binding": {**graph["binding"], "id": int(graph["binding"]["id"]) + 1},
+    }
+    started = Event()
+    release = Event()
+    calls = 0
+
+    def changing_graph(_self, _kind, _actor_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert release.wait(2)
+            return graph
+        return changed_graph
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", changing_graph
+    )
+    editor._reset_visual_identity_browser()
+    await editor.query_one(
+        "#personas-char-editor-visual-identity-host"
+    ).remove_children()
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    release.set()
+    await task
+
+    assert calls >= 2
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+
+
+@pytest.mark.asyncio
+async def test_pack_browser_mounted_during_mode_exit_is_removed(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    original_show = editor.show_visual_identity_pack
+    mounted = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_show(pack):
+        browser = await original_show(pack)
+        mounted.set()
+        await release.wait()
+        return browser
+
+    monkeypatch.setattr(editor, "show_visual_identity_pack", delayed_show)
+    editor._reset_visual_identity_browser()
+    await editor.query_one(
+        "#personas-char-editor-visual-identity-host"
+    ).remove_children()
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    await asyncio.wait_for(mounted.wait(), 2)
+    screen.state.active_mode = "personas"
+    screen._show_center("#ccp-persona-card-view")
+    release.set()
+    await task
+
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+    assert not editor.query_one("#personas-char-editor-visual-identity-host").display
+
+
+@pytest.mark.asyncio
+async def test_pack_browser_mounted_during_binding_change_is_removed(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    assert graph is not None
+    changed_graph = {
+        **graph,
+        "version": {**graph["version"], "id": int(graph["version"]["id"]) + 1},
+    }
+    binding_changed = False
+
+    def changing_graph(_self, _kind, _actor_id):
+        return changed_graph if binding_changed else graph
+
+    original_show = editor.show_visual_identity_pack
+    mounted = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_show(pack):
+        browser = await original_show(pack)
+        mounted.set()
+        await release.wait()
+        return browser
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", changing_graph
+    )
+    monkeypatch.setattr(editor, "show_visual_identity_pack", delayed_show)
+    editor._reset_visual_identity_browser()
+    await editor.query_one(
+        "#personas-char-editor-visual-identity-host"
+    ).remove_children()
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    await asyncio.wait_for(mounted.wait(), 2)
+    binding_changed = True
+    release.set()
+    await task
+
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+    assert not editor.query_one("#personas-char-editor-visual-identity-host").display
 
 
 @pytest.mark.asyncio
