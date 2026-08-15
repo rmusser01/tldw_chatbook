@@ -563,15 +563,13 @@ class GenerationActionRowHarness(ConsolidatedCSSApp):
 
 
 class SpeakActionRowHarness(ConsolidatedCSSApp):
-    """Mount one selected message, optionally marked as the Console TTS
-    "speaking" message (task-559 unit 2).
+    """Mount one selected message with its persistent Console TTS header.
 
     ``on_mount`` stamps ``_console_speaking_message_id`` directly onto
     ``self.screen`` (mirrors ``GenerationActionRowHarness``'s
     ``_generation_browse`` stamping above -- ``ConsoleTranscript`` only ever
     reads the attribute via ``getattr``, so any screen-like object works)
-    BEFORE selecting the message, so the very first action-row build already
-    reflects it.
+    before selecting the message, so the first refreshed header reflects it.
     """
 
     def __init__(
@@ -1472,7 +1470,7 @@ async def test_console_transcript_single_variant_generation_message_hides_nav_an
     assert len(keep_buttons) == 0
 
 
-# --- task-559 unit 2: Console TTS stop toggle in the mounted action row ---
+# --- task-559 unit 2: Console TTS stop toggle in the persistent message header ---
 
 
 @pytest.mark.asyncio
@@ -1483,10 +1481,16 @@ async def test_console_transcript_action_row_shows_speak_when_not_speaking():
     app = SpeakActionRowHarness(message, speaking_message_id=None)
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await _wait_for_selector(app, pilot, "#console-message-action-speak-m1")
-        stop_buttons = app.query("#console-message-action-speak-stop-m1")
+        await _wait_for_selector(app, pilot, "#console-message-speech-action-m1")
+        speak_button = app.query_one("#console-message-speech-action-m1", Button)
+        row_speak_buttons = app.query("#console-message-action-speak-m1")
+        row_stop_buttons = app.query("#console-message-action-speak-stop-m1")
 
-    assert len(stop_buttons) == 0
+    assert speak_button.console_action_id == "speak"
+    assert str(speak_button.label) == "🔊"
+    assert "text-to-speech" in str(speak_button.tooltip)
+    assert len(row_speak_buttons) == 0
+    assert len(row_stop_buttons) == 0
 
 
 @pytest.mark.asyncio
@@ -1497,13 +1501,19 @@ async def test_console_transcript_action_row_swaps_to_stop_for_speaking_message(
     app = SpeakActionRowHarness(message, speaking_message_id="m1")
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await _wait_for_selector(app, pilot, "#console-message-action-speak-stop-m1")
-        speak_buttons = app.query("#console-message-action-speak-m1")
-        stop_button = app.query_one("#console-message-action-speak-stop-m1")
+        await _wait_for_selector(app, pilot, "#console-message-speech-action-m1")
+        stop_button = app.query_one("#console-message-speech-action-m1", Button)
+        status = app.query_one("#console-message-speech-status-m1", Static)
+        row_speak_buttons = app.query("#console-message-action-speak-m1")
+        row_stop_buttons = app.query("#console-message-action-speak-stop-m1")
 
-    assert len(speak_buttons) == 0
+    assert stop_button.console_action_id == "speak-stop"
     assert str(stop_button.label) == "⏹"
     assert stop_button.disabled is False
+    assert str(status.renderable) == "Playing"
+    assert "stop" in str(stop_button.tooltip).lower()
+    assert len(row_speak_buttons) == 0
+    assert len(row_stop_buttons) == 0
 
 
 @pytest.mark.asyncio
@@ -1514,10 +1524,15 @@ async def test_console_transcript_action_row_unaffected_by_other_message_speakin
     app = SpeakActionRowHarness(message, speaking_message_id="some-other-message")
 
     async with app.run_test(size=(100, 32)) as pilot:
-        await _wait_for_selector(app, pilot, "#console-message-action-speak-m1")
-        stop_buttons = app.query("#console-message-action-speak-stop-m1")
+        await _wait_for_selector(app, pilot, "#console-message-speech-action-m1")
+        speak_button = app.query_one("#console-message-speech-action-m1", Button)
+        row_speak_buttons = app.query("#console-message-action-speak-m1")
+        row_stop_buttons = app.query("#console-message-action-speak-stop-m1")
 
-    assert len(stop_buttons) == 0
+    assert speak_button.console_action_id == "speak"
+    assert str(speak_button.label) == "🔊"
+    assert len(row_speak_buttons) == 0
+    assert len(row_stop_buttons) == 0
 
 
 @pytest.mark.asyncio
