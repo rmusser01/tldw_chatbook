@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
-from collections.abc import Iterable
+import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid5
@@ -26,6 +28,7 @@ from tldw_chatbook.Notes.note_folder_repository import (
 from tldw_chatbook.Notes.note_import_execution_models import (
     ApprovedNoteImportPlan,
     ImportEffectState,
+    ImportExecutionProgress,
     ImportExecutionReceipt,
     ImportItemOutcome,
     ImportSessionState,
@@ -45,6 +48,7 @@ from tldw_chatbook.Notes.note_import_receipts import (
     ImportEffectCategory,
     ImportEffectRecord,
     ImportReceiptTransitionError,
+    ImportSessionSnapshot,
     NoteImportReceiptRepository,
     _folder_path_digest,
 )
@@ -899,19 +903,44 @@ class NoteImportExecutor:
     def __repr__(self) -> str:
         return "NoteImportExecutor(<private>)"
 
-    def execute(self, approved: ApprovedNoteImportPlan) -> ImportExecutionReceipt:
+    def execute(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None = None,
+        _recovering_interruption: bool | None = None,
+    ) -> ImportExecutionReceipt:
         """Execute one freshly approved plan and return its durable receipt."""
         if type(approved) is not ApprovedNoteImportPlan:
             raise TypeError("approved must be an ApprovedNoteImportPlan.")
+        if cancel_event is not None and type(cancel_event) is not threading.Event:
+            raise TypeError("cancel_event must be a threading.Event when provided.")
+        if progress_callback is not None and not callable(progress_callback):
+            raise TypeError("progress_callback must be callable when provided.")
         snapshot = self._receipts.begin(approved, batch_size=self._batch_size)
-        if snapshot.state is not ImportSessionState.PENDING:
-            raise ImportReceiptTransitionError(
-                "Task 4 execution requires a fresh pending receipt session."
-            )
-        self._receipts.transition_session(
-            approved.approval_id,
-            ImportSessionState.RUNNING,
+        recovering_interruption = (
+            snapshot.state is ImportSessionState.RUNNING
+            if _recovering_interruption is None
+            else _recovering_interruption
         )
+        if snapshot.state is ImportSessionState.COMPLETED:
+            receipt = self._receipts.aggregate_receipt(approved.approval_id)
+            _publish_receipt_progress(receipt, progress_callback)
+            return receipt
+        if snapshot.state is ImportSessionState.PENDING:
+            self._receipts.transition_session(
+                approved.approval_id,
+                ImportSessionState.RUNNING,
+            )
+            snapshot = self._receipts.load_session_snapshot(approved.approval_id)
+        elif snapshot.state is not ImportSessionState.RUNNING:
+            raise ImportReceiptTransitionError(
+                "Execution requires a pending or interrupted running receipt session."
+            )
+        self._publish_progress(approved.approval_id, progress_callback)
+        if cancel_event is not None and cancel_event.is_set():
+            return self._cancel(approved.approval_id, progress_callback)
 
         folder_bindings, folder_failures = self._execute_folders(
             approved,
@@ -933,17 +962,31 @@ class NoteImportExecutor:
                     "Membership receipt authority does not match the approved plan."
                 )
             membership_effects_by_item.setdefault(effect.item_id, []).append(effect)
-        for item in approved.plan.items:
-            self._execute_item(
-                approved,
-                item=item,
-                payload_effects=payload_effects_by_item.get(item.item_id, {}),
-                membership_effects=tuple(
-                    membership_effects_by_item.get(item.item_id, ())
-                ),
-                folder_bindings=folder_bindings,
-                folder_failures=folder_failures,
-            )
+        items_by_id = {item.item_id: item for item in snapshot.items}
+        items = approved.plan.items
+        for batch_start in range(0, len(items), self._batch_size):
+            if cancel_event is not None and cancel_event.is_set():
+                return self._cancel(approved.approval_id, progress_callback)
+            for item in items[batch_start : batch_start + self._batch_size]:
+                durable_item = items_by_id.get(item.item_id)
+                if durable_item is None:
+                    raise ImportReceiptTransitionError(
+                        "Item receipt authority does not match the approved plan."
+                    )
+                if durable_item.outcome is not ImportItemOutcome.PENDING:
+                    continue
+                self._execute_item(
+                    approved,
+                    item=item,
+                    payload_effects=payload_effects_by_item.get(item.item_id, {}),
+                    membership_effects=tuple(
+                        membership_effects_by_item.get(item.item_id, ())
+                    ),
+                    folder_bindings=folder_bindings,
+                    folder_failures=folder_failures,
+                    recovering_interruption=recovering_interruption,
+                )
+            self._publish_progress(approved.approval_id, progress_callback)
 
         running_receipt = self._receipts.aggregate_receipt(approved.approval_id)
         final_state = (
@@ -952,7 +995,127 @@ class NoteImportExecutor:
             else ImportSessionState.COMPLETED
         )
         self._receipts.transition_session(approved.approval_id, final_state)
-        return self._receipts.aggregate_receipt(approved.approval_id)
+        receipt = self._receipts.aggregate_receipt(approved.approval_id)
+        _publish_receipt_progress(receipt, progress_callback)
+        return receipt
+
+    async def execute_async(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None = None,
+    ) -> ImportExecutionReceipt:
+        """Run the complete synchronous executor away from the caller's event loop."""
+        loop = asyncio.get_running_loop()
+
+        def publish(progress: ImportExecutionProgress) -> None:
+            if progress_callback is not None:
+                loop.call_soon_threadsafe(progress_callback, progress)
+
+        return await asyncio.to_thread(
+            self.execute,
+            approved,
+            cancel_event=cancel_event,
+            progress_callback=publish,
+        )
+
+    def retry_failed(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        cancel_event: threading.Event | None = None,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None = None,
+    ) -> ImportExecutionReceipt:
+        """Retry only unfinished or explicitly retryable work in one session."""
+        if type(approved) is not ApprovedNoteImportPlan:
+            raise TypeError("approved must be an ApprovedNoteImportPlan.")
+        snapshot = self._receipts.begin(approved, batch_size=self._batch_size)
+        recovering_interruption = snapshot.state is ImportSessionState.RUNNING
+        if snapshot.state is ImportSessionState.CANCELLED:
+            self._receipts.resume_cancelled(
+                approved,
+                batch_size=self._batch_size,
+            )
+        elif snapshot.state is ImportSessionState.NEEDS_ATTENTION:
+            self._reset_retryable_rows(approved.approval_id, snapshot)
+            self._receipts.transition_session(
+                approved.approval_id,
+                ImportSessionState.RUNNING,
+            )
+        elif snapshot.state not in {
+            ImportSessionState.PENDING,
+            ImportSessionState.RUNNING,
+            ImportSessionState.COMPLETED,
+        }:
+            raise ImportReceiptTransitionError(
+                "The receipt session cannot be retried from its current state."
+            )
+        return self.execute(
+            approved,
+            cancel_event=cancel_event,
+            progress_callback=progress_callback,
+            _recovering_interruption=recovering_interruption,
+        )
+
+    def _reset_retryable_rows(
+        self,
+        approval_id: str,
+        snapshot: ImportSessionSnapshot,
+    ) -> None:
+        for item in snapshot.items:
+            if item.outcome is ImportItemOutcome.FAILED and item.retryable:
+                self._receipts.reset_retryable_item(
+                    approval_id,
+                    item_id=item.item_id,
+                )
+        refreshed = self._receipts.load_session_snapshot(approval_id)
+        pending_item_ids = {
+            item.item_id
+            for item in refreshed.items
+            if item.outcome is ImportItemOutcome.PENDING
+        }
+        for effect in (*refreshed.payload_effects, *refreshed.membership_effects):
+            if (
+                effect.item_id in pending_item_ids
+                and effect.state is ImportEffectState.FAILED
+                and effect.retryable
+            ):
+                self._receipts.reset_retryable_effect(
+                    approval_id,
+                    category=effect.category,
+                    effect_id=effect.effect_id,
+                )
+        refreshed = self._receipts.load_session_snapshot(approval_id)
+        for effect in reversed(refreshed.folder_effects):
+            if effect.state is ImportEffectState.FAILED and effect.retryable:
+                self._receipts.reset_retryable_effect(
+                    approval_id,
+                    category=effect.category,
+                    effect_id=effect.effect_id,
+                )
+
+    def _cancel(
+        self,
+        approval_id: str,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None,
+    ) -> ImportExecutionReceipt:
+        self._receipts.transition_session(approval_id, ImportSessionState.CANCELLED)
+        receipt = self._receipts.aggregate_receipt(approval_id)
+        _publish_receipt_progress(receipt, progress_callback)
+        return receipt
+
+    def _publish_progress(
+        self,
+        approval_id: str,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        _publish_receipt_progress(
+            self._receipts.aggregate_receipt(approval_id),
+            progress_callback,
+        )
 
     def _execute_folders(
         self,
@@ -988,6 +1151,18 @@ class NoteImportExecutor:
             if normalized_path in normalized_owners:
                 failure = _ExecutionFailure("folder_conflict", False)
                 self._fail_effect(approved.approval_id, effect, failure)
+                failures[path] = failure
+                continue
+            if effect.state is ImportEffectState.APPLIED:
+                if effect.target_folder_id is None:
+                    raise ImportReceiptTransitionError(
+                        "Applied folder receipt is missing its target identity."
+                    )
+                bindings[_folder_path_digest(path)] = effect.target_folder_id
+                normalized_owners[normalized_path] = path
+                continue
+            if effect.state is ImportEffectState.FAILED:
+                failure = _failure_from_effect(effect)
                 failures[path] = failure
                 continue
             deterministic_id = _deterministic_folder_id(
@@ -1031,6 +1206,7 @@ class NoteImportExecutor:
         membership_effects: tuple[ImportEffectRecord, ...],
         folder_bindings: dict[str, str],
         folder_failures: dict[tuple[str, ...], _ExecutionFailure],
+        recovering_interruption: bool,
     ) -> None:
         if item.selected_action is ImportAction.SKIP:
             self._receipts.transition_item(
@@ -1069,6 +1245,9 @@ class NoteImportExecutor:
                     payload_index,
                 )
                 unit_memberships = tuple(memberships_by_payload.get(payload_index, ()))
+                if effect.state is ImportEffectState.FAILED:
+                    failures.append(_failure_from_effect(effect))
+                    continue
                 blocked = _membership_folder_failure(unit_memberships, folder_failures)
                 if blocked is not None:
                     transitions = [
@@ -1095,26 +1274,64 @@ class NoteImportExecutor:
                     )
                     failures.append(blocked)
                     continue
-                try:
-                    note = self._target.create_note(note_id=note_id, payload=payload)
-                except ImportTargetInternalError:
-                    raise
-                except ImportTargetError as error:
-                    failure = _failure_for_target_error(error, folder=False)
-                    self._fail_effect(
+                if effect.state is ImportEffectState.APPLIED:
+                    if effect.reason_code == "note_conflict":
+                        failure = self._record_applied_payload_conflict(
+                            approved,
+                            effect=effect,
+                            note_id=note_id,
+                            memberships=unit_memberships,
+                            folder_bindings=folder_bindings,
+                        )
+                        failures.append(failure)
+                        continue
+                    if effect.reason_code is not None or effect.retryable:
+                        raise ImportReceiptTransitionError(
+                            "Applied payload reconciliation metadata is invalid."
+                        )
+                    note = self._target.read_note(note_id=note_id)
+                    if (
+                        note is None
+                        or effect.target_note_id != note_id
+                        or note.version != effect.observed_version
+                        or not _note_matches(note, payload)
+                    ):
+                        failure = self._record_applied_payload_conflict(
+                            approved,
+                            effect=effect,
+                            note_id=note_id,
+                            memberships=unit_memberships,
+                            folder_bindings=folder_bindings,
+                        )
+                        failures.append(failure)
+                        continue
+                else:
+                    try:
+                        note = self._target.create_note(
+                            note_id=note_id, payload=payload
+                        )
+                    except ImportTargetInternalError:
+                        raise
+                    except ImportTargetError as error:
+                        failure = _failure_for_target_error(
+                            error,
+                            folder=False,
+                            create=True,
+                        )
+                        self._fail_effect(
+                            approved.approval_id,
+                            effect,
+                            failure,
+                            target_note_id=note_id,
+                        )
+                        failures.append(failure)
+                        continue
+                    self._apply_payload_effect(
                         approved.approval_id,
                         effect,
-                        failure,
-                        target_note_id=note_id,
+                        note_id=note.note_id,
+                        observed_version=note.version,
                     )
-                    failures.append(failure)
-                    continue
-                self._apply_payload_effect(
-                    approved.approval_id,
-                    effect,
-                    note_id=note.note_id,
-                    observed_version=note.version,
-                )
                 membership_failure = self._execute_memberships(
                     approved,
                     note_id=note.note_id,
@@ -1158,27 +1375,75 @@ class NoteImportExecutor:
                         raise ImportReceiptTransitionError(
                             "Payload receipt authority does not match the approved plan."
                         )
-                    note = self._target.replace_note(
-                        note_id=note_id,
-                        expected_version=item.match.note_version,
-                        payload=item.payloads[0],
-                    )
-                    self._apply_payload_effect(
-                        approved.approval_id,
-                        effect,
-                        note_id=note.note_id,
-                        observed_version=note.version,
-                    )
+                    if effect.state is ImportEffectState.FAILED:
+                        failures.append(_failure_from_effect(effect))
+                        note_operation_failed = True
+                        note = None
+                    elif effect.state is ImportEffectState.APPLIED:
+                        if effect.reason_code == "note_conflict":
+                            failure = self._record_applied_payload_conflict(
+                                approved,
+                                effect=effect,
+                                note_id=note_id,
+                                memberships=tuple(executable_memberships),
+                                folder_bindings=folder_bindings,
+                            )
+                            failures.append(failure)
+                            note_operation_failed = True
+                            note = None
+                        elif effect.reason_code is not None or effect.retryable:
+                            raise ImportReceiptTransitionError(
+                                "Applied payload reconciliation metadata is invalid."
+                            )
+                        else:
+                            note = self._target.read_note(note_id=note_id)
+                            if (
+                                note is None
+                                or effect.target_note_id != note_id
+                                or note.version != effect.observed_version
+                                or not _note_matches(note, item.payloads[0])
+                            ):
+                                failure = self._record_applied_payload_conflict(
+                                    approved,
+                                    effect=effect,
+                                    note_id=note_id,
+                                    memberships=tuple(executable_memberships),
+                                    folder_bindings=folder_bindings,
+                                )
+                                failures.append(failure)
+                                note_operation_failed = True
+                                note = None
+                    else:
+                        note = self._target.replace_note(
+                            note_id=note_id,
+                            expected_version=item.match.note_version,
+                            payload=item.payloads[0],
+                        )
+                        self._apply_payload_effect(
+                            approved.approval_id,
+                            effect,
+                            note_id=note.note_id,
+                            observed_version=note.version,
+                        )
                 else:
                     note = self._target.read_note(note_id=note_id)
                     if note is None or note.version != item.match.note_version:
                         raise ImportTargetConflictError
-                observed_version = note.version
+                if note is not None:
+                    observed_version = note.version
             except ImportTargetInternalError:
                 raise
             except ImportTargetError as error:
                 note_operation_failed = True
-                failure = _failure_for_target_error(error, folder=False)
+                failure = (
+                    _ExecutionFailure("note_conflict", False)
+                    if (
+                        recovering_interruption
+                        and item.replace_content
+                        and isinstance(error, ImportTargetConflictError)
+                    )
+                    else _failure_for_target_error(error, folder=False)
+                )
                 effect = payload_effects.get(0)
                 if effect is not None:
                     self._fail_effect(
@@ -1240,6 +1505,51 @@ class NoteImportExecutor:
             ),
         )
 
+    def _record_applied_payload_conflict(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        effect: ImportEffectRecord,
+        note_id: str,
+        memberships: tuple[tuple[ProposedFolderMembership, ImportEffectRecord], ...],
+        folder_bindings: dict[str, str],
+    ) -> _ExecutionFailure:
+        failure = _ExecutionFailure("note_conflict", False)
+        if effect.reason_code is None:
+            self._receipts.annotate_applied_payload_reconciliation_conflict(
+                approved.approval_id,
+                effect_id=effect.effect_id,
+            )
+        elif effect.reason_code != "note_conflict" or effect.retryable:
+            raise ImportReceiptTransitionError(
+                "Applied payload reconciliation metadata is invalid."
+            )
+        transitions: list[EffectTransition] = []
+        for membership, membership_effect in memberships:
+            if membership_effect.state is not ImportEffectState.PENDING:
+                continue
+            folder_id = folder_bindings.get(
+                _folder_path_digest(tuple(membership.folder_segments))
+            )
+            if folder_id is None:
+                raise ImportReceiptTransitionError(
+                    "Membership folder authority is not durably applied."
+                )
+            transitions.append(
+                _failed_effect_transition(
+                    membership_effect,
+                    failure,
+                    target_note_id=note_id,
+                    target_folder_id=folder_id,
+                )
+            )
+        if transitions:
+            self._receipts.transition_effects(
+                approved.approval_id,
+                tuple(transitions),
+            )
+        return failure
+
     def _execute_memberships(
         self,
         approved: ApprovedNoteImportPlan,
@@ -1256,6 +1566,18 @@ class NoteImportExecutor:
                 raise ImportReceiptTransitionError(
                     "Membership folder authority is not durably applied."
                 )
+            if effect.state is ImportEffectState.APPLIED:
+                if (
+                    effect.target_note_id != note_id
+                    or effect.target_folder_id != folder_id
+                ):
+                    raise ImportReceiptTransitionError(
+                        "Applied membership receipt has conflicting authority."
+                    )
+                continue
+            if effect.state is ImportEffectState.FAILED:
+                failures.append(_failure_from_effect(effect))
+                continue
             try:
                 self._target.attach_membership(folder_id=folder_id, note_id=note_id)
             except ImportTargetInternalError:
@@ -1441,17 +1763,53 @@ def _failure_for_target_error(
     error: ImportTargetError,
     *,
     folder: bool,
+    create: bool = False,
 ) -> _ExecutionFailure:
     if isinstance(error, ImportTargetRetryableError):
         return _ExecutionFailure("database_busy", True)
     if isinstance(error, ImportTargetConflictError):
         return _ExecutionFailure(
-            "folder_conflict" if folder else "version_conflict",
+            (
+                "folder_conflict"
+                if folder
+                else "note_conflict"
+                if create
+                else "version_conflict"
+            ),
             False,
         )
     if isinstance(error, ImportTargetPermanentError):
         return _ExecutionFailure("target_invalid", False)
     return _ExecutionFailure("target_failure", False)
+
+
+def _failure_from_effect(effect: ImportEffectRecord) -> _ExecutionFailure:
+    if effect.state is not ImportEffectState.FAILED or effect.reason_code is None:
+        raise ImportReceiptTransitionError(
+            "Failed effect receipt is missing its bounded failure metadata."
+        )
+    return _ExecutionFailure(effect.reason_code, effect.retryable)
+
+
+def _publish_receipt_progress(
+    receipt: ImportExecutionReceipt,
+    callback: Callable[[ImportExecutionProgress], None] | None,
+) -> None:
+    if callback is None:
+        return
+    callback(
+        ImportExecutionProgress(
+            state=receipt.state,
+            total=receipt.total,
+            completed=receipt.completed,
+            imported=receipt.imported,
+            updated=receipt.updated,
+            skipped=receipt.skipped,
+            failed=receipt.failed,
+            retryable=receipt.retryable,
+            reason_code=receipt.reason_code,
+        )
+    )
 
 
 __all__ = [

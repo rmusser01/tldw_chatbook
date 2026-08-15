@@ -2639,6 +2639,121 @@ def test_terminal_item_summary_inconsistent_with_effects_fails_closed(
     assert reopened.items[0].outcome is ImportItemOutcome.PENDING
 
 
+def _apply_complete_update_effects(
+    repository: NoteImportReceiptRepository,
+) -> None:
+    snapshot = repository.load_session_snapshot(_APPROVAL_ID)
+    repository.transition_effects(
+        _APPROVAL_ID,
+        tuple(_applied_transition(effect) for effect in snapshot.folder_effects)
+        + (
+            EffectTransition(
+                category=snapshot.payload_effects[0].category,
+                effect_id=snapshot.payload_effects[0].effect_id,
+                state=ImportEffectState.APPLIED,
+                target_note_id="opaque-note-7",
+                observed_version=8,
+            ),
+            _applied_transition(
+                snapshot.membership_effects[0],
+                note_id="opaque-note-7",
+            ),
+        ),
+    )
+
+
+def test_applied_update_can_end_in_permanent_item_reconciliation_conflict(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    _apply_complete_update_effects(repository)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+    annotated = repository.annotate_applied_payload_reconciliation_conflict(
+        _APPROVAL_ID,
+        effect_id=payload.effect_id,
+    )
+
+    item = repository.transition_item(
+        _APPROVAL_ID,
+        "item-1",
+        ImportItemOutcome.FAILED,
+        reason_code="note_conflict",
+        retryable=False,
+    )
+
+    receipt = repository.aggregate_receipt(_APPROVAL_ID)
+    durable = repository.load_session_snapshot(_APPROVAL_ID)
+    assert item.outcome is ImportItemOutcome.FAILED
+    assert (receipt.updated, receipt.failed, receipt.retryable) == (0, 1, 0)
+    assert annotated.state is ImportEffectState.APPLIED
+    assert annotated.reason_code == "note_conflict"
+    assert annotated.retryable is False
+    assert durable.payload_effects[0].state is ImportEffectState.APPLIED
+    assert durable.payload_effects[0].reason_code == "note_conflict"
+
+
+def test_ordinary_effect_transition_cannot_annotate_applied_payload(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    payload = repository.load_session_snapshot(_APPROVAL_ID).payload_effects[0]
+
+    with pytest.raises(ValueError, match="Only failed rows"):
+        repository.transition_effects(
+            _APPROVAL_ID,
+            (
+                EffectTransition(
+                    category=payload.category,
+                    effect_id=payload.effect_id,
+                    state=ImportEffectState.APPLIED,
+                    target_note_id="opaque-note-7",
+                    observed_version=8,
+                    reason_code="note_conflict",
+                ),
+            ),
+        )
+    with pytest.raises(ImportReceiptTransitionError, match="exact applied payload"):
+        repository.annotate_applied_payload_reconciliation_conflict(
+            _APPROVAL_ID,
+            effect_id=payload.effect_id,
+        )
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "retryable"),
+    [
+        ("database_busy", False),
+        ("note_conflict", True),
+    ],
+)
+def test_applied_update_rejects_other_item_failure_shapes(
+    tmp_path: Path,
+    reason_code: str,
+    retryable: bool,
+) -> None:
+    repository = _repository(tmp_path)
+    repository.begin(_approved(), batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.RUNNING)
+    _apply_complete_update_effects(repository)
+
+    with pytest.raises(ImportReceiptError, match="inconsistent"):
+        repository.transition_item(
+            _APPROVAL_ID,
+            "item-1",
+            ImportItemOutcome.FAILED,
+            reason_code=reason_code,
+            retryable=retryable,
+        )
+
+    durable = _repository(tmp_path).load_session_snapshot(_APPROVAL_ID)
+    assert durable.items[0].outcome is ImportItemOutcome.PENDING
+    assert durable.payload_effects[0].state is ImportEffectState.APPLIED
+
+
 def test_exact_state_transition_allowlists_are_closed_and_immutable() -> None:
     assert SESSION_STATE_TRANSITIONS == {
         ImportSessionState.PENDING: frozenset(
@@ -2797,6 +2912,33 @@ def test_cancelled_session_rejects_item_effect_and_retry_mutations_durably(
         1,
         0,
     )
+
+
+def test_cancelled_resume_requires_exact_authority_and_preserves_the_session(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    approved = _approved()
+    original = repository.begin(approved, batch_size=25)
+    repository.transition_session(_APPROVAL_ID, ImportSessionState.CANCELLED)
+    changed = approve_note_import_plan(
+        _plan(content="Different private authority"),
+        approval_id=_APPROVAL_ID,
+    )
+
+    with pytest.raises(ImportReceiptConflictError):
+        repository.resume_cancelled(changed, batch_size=25)
+    assert (
+        _repository(tmp_path).load_session_snapshot(_APPROVAL_ID).state
+        is ImportSessionState.CANCELLED
+    )
+
+    resumed = _repository(tmp_path).resume_cancelled(approved, batch_size=25)
+
+    assert resumed.session_id == original.session_id
+    assert resumed.state is ImportSessionState.RUNNING
+    assert resumed.items[0].outcome is ImportItemOutcome.PENDING
+    assert resumed.payload_effects[0].state is ImportEffectState.PENDING
 
 
 @pytest.mark.parametrize(

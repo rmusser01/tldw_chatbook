@@ -30,7 +30,14 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     _private_source_locator_digest,
     _validate_reason_code,
 )
-from tldw_chatbook.Notes.note_import_plan_models import MAX_IMPORT_ENTRIES, ImportAction
+from tldw_chatbook.Notes.note_import_plan_models import (
+    MAX_IMPORT_ENTRIES,
+    ImportAction,
+    ImportMatchKind,
+    ImportPreviewItem,
+    NoteImportPlan,
+)
+from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 
 _SCHEMA_VERSION = 1
 _MIN_BATCH_SIZE = 1
@@ -221,6 +228,13 @@ class ImportBatchResult:
             f"ImportBatchResult(items={len(self.items)!r}, "
             f"effects={len(self.effects)!r})"
         )
+
+
+class _PrivatePriorImportObservation(PriorImportObservation):
+    """Planner-compatible prior observation with an opaque representation."""
+
+    def __repr__(self) -> str:
+        return "PriorImportObservation(<private>)"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1354,6 +1368,63 @@ class NoteImportReceiptRepository:
         finally:
             connection.close()
 
+    def resume_cancelled(
+        self,
+        approved: ApprovedNoteImportPlan,
+        *,
+        batch_size: int,
+    ) -> ImportSessionSnapshot:
+        """Resume cancelled pending work under the exact original authority."""
+
+        validated_batch_size = _validate_batch_size(batch_size)
+        if type(approved) is not ApprovedNoteImportPlan:
+            raise TypeError("approved must be an ApprovedNoteImportPlan.")
+        plan_digest = approved._private_plan_digest()
+        if _DIGEST_PATTERN.fullmatch(plan_digest) is None:
+            raise ValueError("The approved plan digest is invalid.")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._initialize_schema(connection)
+            row = connection.execute(
+                """
+                SELECT plan_digest, batch_size, state FROM import_sessions
+                WHERE approval_id = ?
+                """,
+                (approved.approval_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Import receipt session was not found.")
+            if row[:2] != (plan_digest, validated_batch_size):
+                raise ImportReceiptConflictError(
+                    "The approval is bound to different receipt authority."
+                )
+            if ImportSessionState(row[2]) is not ImportSessionState.CANCELLED:
+                raise ImportReceiptTransitionError(
+                    "Only a cancelled receipt session may use cancelled resume."
+                )
+            connection.execute(
+                """
+                UPDATE import_sessions
+                SET state = ?, reason_code = NULL, updated_at = ?
+                WHERE approval_id = ? AND state = ?
+                """,
+                (
+                    ImportSessionState.RUNNING.value,
+                    _now(),
+                    approved.approval_id,
+                    ImportSessionState.CANCELLED.value,
+                ),
+            )
+            snapshot = self._load_snapshot(connection, approved.approval_id)
+            connection.commit()
+            return snapshot
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     @staticmethod
     def _validate_completion(
         connection: sqlite3.Connection,
@@ -1876,6 +1947,87 @@ class NoteImportReceiptRepository:
             raise ImportReceiptError("The reset receipt row category is inconsistent.")
         return record
 
+    def annotate_applied_payload_reconciliation_conflict(
+        self,
+        approval_id: str,
+        *,
+        effect_id: str,
+    ) -> ImportEffectRecord:
+        """Record later target divergence without rewriting the applied mutation."""
+
+        _validate_id(approval_id, field_name="approval_id")
+        _validate_id(effect_id, field_name="effect_id")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._initialize_schema(connection)
+            session_row = connection.execute(
+                "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+            if session_row is None:
+                raise KeyError("Import receipt session was not found.")
+            session_id = session_row[0]
+            if ImportSessionState(session_row[1]) is not ImportSessionState.RUNNING:
+                raise ImportReceiptTransitionError(
+                    "Payload reconciliation annotations require a running session."
+                )
+            row = connection.execute(
+                """
+                SELECT state, target_note_id, observed_version, reason_code, retryable
+                FROM import_payload_effects
+                WHERE session_id = ? AND effect_id = ?
+                """,
+                (session_id, effect_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Import receipt effect was not found.")
+            state = ImportEffectState(row[0])
+            target_note_id = row[1]
+            observed_version = row[2]
+            reason_code = row[3]
+            retryable = row[4]
+            if (
+                state is not ImportEffectState.APPLIED
+                or _SAFE_ID_PATTERN.fullmatch(target_note_id or "") is None
+                or isinstance(observed_version, bool)
+                or not isinstance(observed_version, int)
+                or observed_version < 1
+                or retryable != 0
+                or reason_code not in {None, "note_conflict"}
+            ):
+                raise ImportReceiptTransitionError(
+                    "Only an exact applied payload may record reconciliation conflict."
+                )
+            connection.execute(
+                """
+                UPDATE import_payload_effects
+                SET reason_code = ?, updated_at = ?
+                WHERE session_id = ? AND effect_id = ? AND state = ?
+                """,
+                (
+                    "note_conflict",
+                    _now(),
+                    session_id,
+                    effect_id,
+                    ImportEffectState.APPLIED.value,
+                ),
+            )
+            record = self._load_effect_record(
+                connection,
+                table=_PAYLOAD_TABLE,
+                session_id=session_id,
+                effect_id=effect_id,
+            )
+            self._derive_receipt_counts(self._load_snapshot(connection, approval_id))
+            connection.commit()
+            return record
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _reset_retryable(
         self,
         approval_id: str,
@@ -2185,6 +2337,119 @@ class NoteImportReceiptRepository:
         finally:
             connection.close()
 
+    def prior_observations_for_plan(
+        self,
+        plan: NoteImportPlan,
+    ) -> tuple[PriorImportObservation, ...]:
+        """Return latest exact single-note observations for current plan sources."""
+
+        if type(plan) is not NoteImportPlan:
+            raise TypeError("plan must be a NoteImportPlan.")
+        try:
+            digest_items: dict[str, list[ImportPreviewItem]] = {}
+            for item in plan.items:
+                digest = _private_source_locator_digest(item)
+                digest_items.setdefault(digest, []).append(item)
+        except Exception:  # noqa: BLE001 - source locator material is private
+            raise ImportReceiptError(
+                "Prior import observations could not be matched safely."
+            ) from None
+        if not digest_items:
+            return ()
+
+        latest: dict[str, tuple[object, ...]] = {}
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN")
+            self._initialize_schema(connection)
+            digests = tuple(digest_items)
+            for offset in range(0, len(digests), _SQL_PARAMETER_CHUNK):
+                chunk = digests[offset : offset + _SQL_PARAMETER_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = connection.execute(
+                    f"""
+                    SELECT item.source_locator_digest, item.outcome_count,
+                           item.outcome,
+                           (SELECT COUNT(*) FROM import_payload_effects AS counted
+                            WHERE counted.session_id = item.session_id
+                              AND counted.item_id = item.item_id) AS payload_count,
+                           payload.payload_digest, payload.target_note_id,
+                           payload.observed_version, payload.state,
+                           payload.reason_code, payload.retryable,
+                           session.updated_at, session.rowid, item.rowid
+                    FROM import_items AS item
+                    JOIN import_sessions AS session
+                      ON session.session_id = item.session_id
+                    LEFT JOIN import_payload_effects AS payload
+                      ON payload.session_id = item.session_id
+                     AND payload.item_id = item.item_id
+                     AND payload.payload_index = 0
+                    WHERE item.source_locator_digest IN ({placeholders})
+                      AND session.state = ?
+                    ORDER BY session.updated_at DESC, session.rowid DESC,
+                             item.rowid DESC
+                    """,
+                    (*chunk, ImportSessionState.COMPLETED.value),
+                ).fetchall()
+                for row in rows:
+                    latest.setdefault(row[0], tuple(row))
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+        observations: list[PriorImportObservation] = []
+        for digest, items in digest_items.items():
+            if len(items) != 1:
+                continue
+            row = latest.get(digest)
+            if row is None:
+                continue
+            (
+                _source_digest,
+                outcome_count,
+                outcome,
+                payload_count,
+                payload_digest,
+                target_note_id,
+                observed_version,
+                payload_state,
+                payload_reason_code,
+                payload_retryable,
+                *_ordering,
+            ) = row
+            if (
+                outcome_count != 1
+                or outcome
+                not in {
+                    ImportItemOutcome.IMPORTED.value,
+                    ImportItemOutcome.UPDATED.value,
+                }
+                or payload_count != 1
+                or payload_state != ImportEffectState.APPLIED.value
+                or payload_reason_code is not None
+                or payload_retryable != 0
+                or _DIGEST_PATTERN.fullmatch(payload_digest or "") is None
+                or _SAFE_ID_PATTERN.fullmatch(target_note_id or "") is None
+                or isinstance(observed_version, bool)
+                or not isinstance(observed_version, int)
+                or observed_version < 1
+            ):
+                continue
+            item = items[0]
+            observations.append(
+                _PrivatePriorImportObservation(
+                    display_path=item.source.display_path,
+                    match_kind=ImportMatchKind.EXACT,
+                    note_id=target_note_id,
+                    note_version=observed_version,
+                    payload_fingerprint=payload_digest,
+                )
+            )
+        return tuple(observations)
+
     @staticmethod
     def _validate_create_note_identities(snapshot: ImportSessionSnapshot) -> None:
         create_items = tuple(
@@ -2463,6 +2728,41 @@ class NoteImportReceiptRepository:
         item: ImportItemRecord,
         include_item_retryable: bool,
     ) -> tuple[ImportItemOutcome, bool]:
+        malformed_applied_metadata = any(
+            effect.state is ImportEffectState.APPLIED
+            and (
+                effect.retryable
+                or (
+                    effect.reason_code is not None
+                    and not (
+                        effect.category is ImportEffectCategory.PAYLOAD
+                        and effect.reason_code == "note_conflict"
+                    )
+                )
+            )
+            for effect in required_effects
+        )
+        if malformed_applied_metadata:
+            raise ImportReceiptError(
+                "Applied effect reconciliation metadata is inconsistent."
+            )
+        conflict_payloads = tuple(
+            effect
+            for effect in required_effects
+            if effect.category is ImportEffectCategory.PAYLOAD
+            and effect.state is ImportEffectState.APPLIED
+            and effect.reason_code == "note_conflict"
+        )
+        if conflict_payloads:
+            if len(conflict_payloads) != 1:
+                raise ImportReceiptError(
+                    "A note unit has inconsistent reconciliation conflicts."
+                )
+            if any(
+                effect.state is ImportEffectState.PENDING for effect in required_effects
+            ):
+                return ImportItemOutcome.PENDING, False
+            return ImportItemOutcome.FAILED, False
         failed_effects = tuple(
             effect
             for effect in required_effects
