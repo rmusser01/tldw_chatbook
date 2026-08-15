@@ -344,12 +344,19 @@ class TrajectoryScreen(ModalScreen[None]):
             turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
         }
         # Feed the strip the same data the ledger renders. set_snapshot
-        # resets the widget's brush/selection WITHOUT posting, so mirror
-        # the brush clear here -- the ledger's time filter can never
-        # outlive the visual brush. (Follow still scrolls to the tail;
-        # the brush only ever filtered, so nothing fights it.)
+        # resets the widget's brush/selection WITHOUT posting, so keep an
+        # active brush alive across the swap (a 0.5s revision tick must
+        # not destroy it): re-apply it iff it still intersects the new
+        # domain (appends only grow it), else clear both sides so the
+        # ledger's time filter can never outlive the visual brush.
         self._timeline.set_snapshot(snapshot)
-        self._brush_range = None
+        if self._brush_range is not None:
+            lo, hi = self._brush_range
+            domain = self._timeline.model.domain
+            if domain is not None and lo <= domain[1] and hi >= domain[0]:
+                self._timeline.apply_brush(self._brush_range)
+            else:
+                self._brush_range = None
         # Keep collapsed turns and the search query; never shrink the window.
         self._visible_count = max(
             self._visible_count, min(self._total_records, PAGE_SIZE)

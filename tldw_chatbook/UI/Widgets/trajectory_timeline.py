@@ -20,7 +20,7 @@ integration with ``TrajectoryScreen`` yet.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from itertools import groupby
 from typing import Sequence
 
@@ -89,8 +89,13 @@ _CAPTION_STYLE = Style(color="grey62")
 
 
 def _fmt_clock(t: float) -> str:
-    """Format a unix timestamp as HH:MM:SS (UTC)."""
-    return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%H:%M:%S")
+    """Format a unix timestamp as local ``HH:MM:SS``.
+
+    Local time on purpose: the trajectory ledger's Start/Done columns
+    format local time, so the strip's axis and brush caption must match
+    the rows they select.
+    """
+    return datetime.fromtimestamp(t).strftime("%H:%M:%S")
 
 
 class TimelineModel:
@@ -456,6 +461,17 @@ class TrajectoryTimeline(Widget):
         self._brush = brush
         self.refresh()
         self.post_message(self.TrajectoryBrushChanged(brush))
+
+    def apply_brush(self, brush_range: tuple[float, float] | None) -> None:
+        """Public re-brush seam for hosts (``None`` clears).
+
+        ``set_snapshot`` resets the brush without posting; a host that
+        swaps in a new snapshot (e.g. a live-refreshed trajectory
+        screen) uses this to re-apply a brush that is still relevant,
+        keeping its own filters in sync via the posted
+        :class:`TrajectoryBrushChanged`.
+        """
+        self._set_brush(brush_range)
 
     def record_at(self, x: int, y: int) -> TrajectoryRecord | None:
         """The record whose rendered bar covers column ``x`` on row ``y``."""

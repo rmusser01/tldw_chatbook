@@ -14,6 +14,8 @@ standalone widget behaviour live in ``test_trajectory_timeline.py``):
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from textual.widgets import DataTable, Input
 
@@ -41,6 +43,27 @@ def untimed_snapshot():
     rows = [
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
+    ]
+    return derive_trajectory(messages, {}, rows, [], [])
+
+
+def disjoint_snapshot():
+    """All timing far beyond base_snapshot's domain (a full snapshot swap)."""
+    base = _T0 + 100_000.0
+    messages = [
+        msg("u1", "user", content="later hello", ts=base),
+        msg("a1", "assistant", content="later answer", ts=base + 1.0, parent="u1"),
+    ]
+    rows = [
+        TrajRow("u1", turn_id="t1", seq=1, event_kind="user", step_started_at=base),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=2,
+            event_kind="assistant",
+            step_started_at=base,
+            completed_at=base + 2.0,
+        ),
     ]
     return derive_trajectory(messages, {}, rows, [], [])
 
@@ -283,7 +306,13 @@ async def test_ledger_cursor_move_highlights_timeline_bar() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_refresh_feeds_timeline_and_clears_brush() -> None:
+async def test_live_refresh_feeds_timeline_and_preserves_brush() -> None:
+    """A revision tick must not destroy an active brush.
+
+    The grown snapshot extends the domain (appends); a brush still
+    intersecting it survives on BOTH sides and keeps filtering the
+    rebuilt ledger.
+    """
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
         timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
@@ -293,7 +322,36 @@ async def test_live_refresh_feeds_timeline_and_clears_brush() -> None:
         await pilot.pause()
         # The strip renders the new snapshot's records...
         assert len(timeline.model.timed_records) == 6
-        # ...and the widget-side brush reset is mirrored by the screen.
+        # ...and the brush survives: widget, screen state and ledger
+        # filter all still agree (grown seqs 1/2 are the turn-1 records).
+        assert timeline.brush == (_T0 - 1.0, _T0 + 6.0)
+        assert screen._brush_range == (_T0 - 1.0, _T0 + 6.0)
+        assert table.row_count == 3  # turn:t1 header + records 1, 2
+
+
+@pytest.mark.asyncio
+async def test_live_refresh_clears_brush_outside_new_domain() -> None:
+    """A brush disjoint from the swapped-in domain clears cleanly."""
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await _brush(pilot, timeline, _T0 - 1.0, _T0 + 6.0)
+        assert table.row_count == 5
+        screen._apply_live_snapshot(disjoint_snapshot())
+        await pilot.pause()
         assert screen._brush_range is None
         assert timeline.brush is None
-        assert table.row_count == 9  # 3 turn headers + 6 records
+        assert table.row_count == 3  # unfiltered: header + 2 records
+
+
+# ---------------------------------------------------------------------------
+# Brush caption clock matches the ledger's local-time columns
+# ---------------------------------------------------------------------------
+
+
+def test_widget_clock_formats_local_time_like_ledger() -> None:
+    from tldw_chatbook.UI.Widgets.trajectory_timeline import _fmt_clock as strip_clock
+    from tldw_chatbook.UI.Screens.trajectory_screen import _fmt_clock as ledger_clock
+
+    assert strip_clock(_T0) == ledger_clock(_T0)
+    assert strip_clock(_T0) == datetime.fromtimestamp(_T0).strftime("%H:%M:%S")
