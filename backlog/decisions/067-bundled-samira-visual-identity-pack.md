@@ -25,17 +25,23 @@ assistant or default Persona in this decision.
 The local implementation follows the Shared Visual Identity Expression Pack
 contract in `tldw_server` development commit
 `385afa951922c8a9dc2002c675bb6cad65e4ac23`. Chatbook will use the server's exact
-expression-key normalization rules and the exact core column/constraint shapes for
-packs, immutable versions, assets, and actor bindings. It will not port server
-drafts, jobs, idempotency, APIs, or authenticated ownership in this tranche.
-Chatbook's profile-local database uses a documented local owner sentinel; local
-primary keys are not server IDs.
+expression-key normalization rules and a four-table semantic subset that preserves
+the server's field names and vocabulary for packs, immutable versions, version-bound
+assets, and actor bindings. The local asset table requires `pack_version_id` and
+omits the server's draft-only `draft_id` column and foreign key; the local schema is
+therefore intentionally not byte-for-byte identical to the server schema. It will
+not port server drafts, jobs, idempotency, APIs, or authenticated ownership in this
+tranche. Chatbook's profile-local database uses a documented local owner sentinel;
+local primary keys are not server IDs, and future sync must translate this subset
+through an explicit adapter.
 
 The installed package is immutable under ADR-032. Built-in reaction assets are
 read from explicit package resources and are not copied into every profile. A user
 edit never writes beneath the package root: the first edit forks the built-in pack
-into profile-owned storage resolved through `get_user_data_dir()`, after which a
-single staged save creates one new immutable version and updates the binding.
+into profile-owned storage resolved through `get_user_data_dir()`. Staging occurs
+inside that private destination filesystem so publication can use an atomic replace;
+package reads use `importlib.resources` rather than source-tree path assumptions.
+A single staged save then creates one new immutable version and updates the binding.
 
 Samira is seeded by stable provenance rather than display name. The V2 card carries
 `tldw/builtin_id: samira`; the pack carries a stable built-in identifier and content
@@ -43,6 +49,16 @@ digest in `source_context_json`. Seeding is create-only and restart-safe. It nev
 overwrites an existing card or pack, never restores a tombstone, and never changes a
 renamed or customized card. A same-name user card causes a deterministic
 “(Built-in)” disambiguation instead of replacement.
+
+A valid active binding from Samira to a profile-owned fork is a terminal customized
+state for startup seeding. It is preserved without package revalidation, rebinding,
+or warning; the seed must not mistake intentional copy-on-write authoring for an
+incomplete built-in installation.
+
+Soft-deleting the Samira character does not delete or tombstone its binding. The
+binding becomes dormant because resolvers reject unavailable actors, so an explicit
+character restore naturally reactivates the prior relationship. Explicit pack or
+binding deletion remains a tombstone and startup never recreates it.
 
 The existing `character_expression_images` table remains the legacy operational
 fallback. The new resolver returns a structured result and resolves, in order:
@@ -94,6 +110,7 @@ previous public-release decision.
 | --- | --- |
 | Expand `character_expression_images` to 31 state BLOBs | It preserves a character-specific legacy table, duplicates large immutable assets per profile, and moves away from the server's shared pack/version/binding model. |
 | Port the complete server Visual Identity subsystem | Draft jobs, APIs, authenticated ownership, idempotency, animation, and VN integration are not needed to demonstrate a bundled local pack. |
+| Reproduce only the server's four public tables byte-for-byte | The server asset table references its draft table even when an asset is version-bound; omitting drafts while retaining that foreign key produces an invalid local schema. A documented semantic subset preserves the sync seam honestly. |
 | Reuse Persona Visual Packs | Their operational runtime-state contract is distinct and the server still treats unification as future work. |
 | Store every reaction inside the V2 card extension | It would create a large non-standard card blob, weaken independent asset validation, and provide no immutable version or actor-binding boundary. |
 | Copy bundled assets into every profile | It wastes storage and creates an avoidable package-to-user-data installation transaction. Immutable package reads plus copy-on-write edits are simpler. |
