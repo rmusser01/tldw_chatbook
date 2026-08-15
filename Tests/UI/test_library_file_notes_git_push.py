@@ -1295,8 +1295,9 @@ async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
 
 
 @pytest.mark.asyncio
-async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
+async def test_workspace_push_review_adopts_operations_and_restores_endpoint_details_focus_once(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Using returned waiters as identity or bypassing authorization must fail."""
     owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
@@ -1318,6 +1319,16 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
     preflight_result = PushPreflightResult("review", handle, review)
     service.plan_push_operation("local_proof", local_result, local_release)
     service.plan_push_operation("preflight", preflight_result, preflight_release)
+    details_focus_calls = 0
+    original_focus = Button.focus
+
+    def count_details_focus(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal details_focus_calls
+        if self.id == "file-notes-git-push-review-details":
+            details_focus_calls += 1
+        return original_focus(self, *args, **kwargs)
+
+    monkeypatch.setattr(Button, "focus", count_details_focus)
 
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _until(
@@ -1408,9 +1419,11 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
             ),
             "review endpoint details did not open",
         )
+        details_focus_calls = 0
         await pilot.press("escape")
         await pilot.pause()
         assert details.has_focus
+        assert details_focus_calls == 1
 
         service.cancel_push_result = True
         workspace.query_one("#file-notes-git-push-back", Button).press()

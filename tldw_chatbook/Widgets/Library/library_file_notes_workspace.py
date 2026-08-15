@@ -5172,22 +5172,7 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             return
         self.app.push_screen(
-            PushEndpointDetailsDialog(projection.review.destination),
-            callback=partial(
-                self._restore_push_review_details_focus,
-                operation_id,
-            ),
-        )
-
-    def _restore_push_review_details_focus(
-        self,
-        operation_id: int,
-        _result: None,
-    ) -> None:
-        self._git_panel_widget.restore_push_focus(
-            "review",
-            operation_id,
-            "#file-notes-git-push-review-details",
+            PushEndpointDetailsDialog(projection.review.destination)
         )
 
     def _session_git_back_from_push_review(self, operation_id: int) -> None:
@@ -6651,18 +6636,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 "session changed. Draft preserved; open Compare again."
             )
             return
-        opener = event.button
-
-        def restore_opener(_: None = None) -> None:
-            if opener.is_mounted and opener.display and not opener.disabled:
-                opener.focus()
-
         await self.app.push_screen(
             FileNotesConflictCompareDialog(
                 opened.relative_path,
                 comparison,
-            ),
-            callback=restore_opener,
+            )
         )
 
     @on(Button.Pressed, "#file-notes-reload-cancel")
