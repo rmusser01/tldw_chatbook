@@ -200,7 +200,7 @@ def _record_message_count(record: Mapping[str, Any]) -> int | None:
     # Mirrors `LibraryScreen._conversation_message_count_label` key handling.
     for key in _MESSAGE_COUNT_KEYS:
         value = record.get(key)
-        if isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
         if isinstance(value, str) and value.strip().isdigit():
             return int(value.strip())

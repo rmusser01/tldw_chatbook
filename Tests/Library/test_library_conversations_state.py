@@ -427,6 +427,29 @@ def test_secondary_fallback_is_conversation_when_no_message_count():
     assert row.secondary == "conversation"
 
 
+@pytest.mark.parametrize(
+    ("message_count", "secondary"),
+    [
+        (True, "conversation"),
+        (False, "conversation"),
+        (-1, "conversation"),
+        (0, "0 messages"),
+        ("7", "7 messages"),
+    ],
+)
+def test_invalid_message_counts_use_harmless_fallback(
+    message_count: object,
+    secondary: str,
+):
+    state = build_library_conversations_state(
+        [{"id": "conv-a", "message_count": message_count}],
+        total_count=1,
+        now=NOW,
+    )
+
+    assert state.rows[0].secondary == secondary
+
+
 def test_valid_identified_record_preserves_harmless_field_fallbacks():
     records = [
         {
