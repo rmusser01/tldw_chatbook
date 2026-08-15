@@ -1075,16 +1075,25 @@ class ConsoleWorkspaceController:
             self._console_persisted_rows_cache_token,
         )
         if self._console_persisted_rows_refresh_key != refresh_key:
-            self._console_persisted_rows_refresh_key = refresh_key
-            self.run_worker(
-                self._refresh_console_persisted_rows_cache(
-                    query,
-                    current_conversation_id=current_conversation_id,
-                    refresh_key=refresh_key,
-                ),
-                group="console-persisted-browser-cache",
-                exclusive=True,
-            )
+            # task-15791: this sync derivation is called from state BUILDERS,
+            # which the suite's bare-screen convention runs on an unmounted
+            # ChatScreen (no active app) -- and `run_worker` on such a node
+            # raises NoActiveAppError (520b1ec12 introduced the spawn here).
+            # The refresh is best-effort by design ("without service or
+            # database access"), so skip scheduling when the pump is not
+            # running; the mounted app always is, and the guard also avoids
+            # minting a coroutine that can never be awaited.
+            if self._screen.is_running:
+                self._console_persisted_rows_refresh_key = refresh_key
+                self.run_worker(
+                    self._refresh_console_persisted_rows_cache(
+                        query,
+                        current_conversation_id=current_conversation_id,
+                        refresh_key=refresh_key,
+                    ),
+                    group="console-persisted-browser-cache",
+                    exclusive=True,
+                )
         return [], None, ""
 
     async def _refresh_console_persisted_rows_cache(
