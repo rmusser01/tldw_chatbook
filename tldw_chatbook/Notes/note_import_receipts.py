@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import islice
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes.note_import_execution_models import (
+    MAX_RECEIPT_LEDGER_ROWS,
     ApprovedNoteImportPlan,
     ImportEffectState,
     ImportExecutionReceipt,
@@ -28,6 +30,7 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     _canonical_json_digest,
     _private_payload_fingerprint,
     _private_source_locator_digest,
+    _receipt_ledger_row_count,
     _validate_reason_code,
 )
 from tldw_chatbook.Notes.note_import_plan_models import (
@@ -43,7 +46,6 @@ _SCHEMA_VERSION = 1
 _MIN_BATCH_SIZE = 1
 _MAX_BATCH_SIZE = 100
 _MAX_TRANSITIONS = MAX_IMPORT_ENTRIES
-_MAX_LEDGER_ROWS = MAX_IMPORT_ENTRIES
 _SQL_PARAMETER_CHUNK = 32
 _PRIOR_OBSERVATION_CHUNK_CAP = 900
 _SQLITE_VARIABLE_LIMIT_FALLBACK = 999
@@ -612,6 +614,36 @@ class NoteImportReceiptRepository:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    @contextmanager
+    def transaction(
+        self,
+        *,
+        immediate: bool = False,
+    ) -> Iterator[sqlite3.Connection]:
+        """Run receipt-ledger work in one standardized transaction.
+
+        Args:
+            immediate: Reserve SQLite's writer slot before yielding when true.
+
+        Yields:
+            The active private receipt-ledger connection.
+
+        Raises:
+            Exception: Re-raises operation errors after rolling back.
+        """
+
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            self._initialize_schema(connection)
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     @staticmethod
     def _initialize_schema(connection: sqlite3.Connection) -> None:
         current_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -636,7 +668,22 @@ class NoteImportReceiptRepository:
         *,
         batch_size: int,
     ) -> ImportSessionSnapshot:
-        """Create or durably reopen one exact approved import session."""
+        """Create or durably reopen one exact approved import session.
+
+        Args:
+            approved: Opaque authority for the exact plan to seed or reopen.
+            batch_size: Bounded number of effects processed per executor batch.
+
+        Returns:
+            The durable snapshot bound to the approval and batch size.
+
+        Raises:
+            ImportReceiptConflictError: If the approval is already bound to
+                different receipt authority.
+            ImportReceiptError: If the approved plan cannot be seeded safely.
+            TypeError: If an argument has the wrong type.
+            ValueError: If an argument violates a bounded value contract.
+        """
 
         validated_batch_size = _validate_batch_size(batch_size)
         if type(approved) is not ApprovedNoteImportPlan:
@@ -651,10 +698,7 @@ class NoteImportReceiptRepository:
             plan_digest=plan_digest,
         )
 
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             existing = connection.execute(
                 "SELECT plan_digest, batch_size FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
@@ -673,12 +717,6 @@ class NoteImportReceiptRepository:
                     raise ImportReceiptError(
                         "The approved import receipt could not be seeded safely."
                     ) from None
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
         return self.get_session(approval_id)
 
     @staticmethod
@@ -702,8 +740,6 @@ class NoteImportReceiptRepository:
             raise ImportReceiptError("The approved import folder plan is ambiguous.")
 
         required_folder_paths: set[tuple[str, ...]] = set()
-        payload_effect_count = 0
-        membership_effect_count = 0
         for item in plan.items:
             if len(item.payloads) > bounds.max_notes_per_file:
                 raise ImportReceiptError("The approved import plan exceeds its bounds.")
@@ -712,14 +748,8 @@ class NoteImportReceiptRepository:
                 for payload in item.payloads
             ):
                 raise ImportReceiptError("The approved import plan exceeds its bounds.")
-            if item.selected_action is ImportAction.CREATE_NEW or (
-                item.selected_action is ImportAction.UPDATE_EXISTING
-                and item.replace_content
-            ):
-                payload_effect_count += len(item.payloads)
             if item.selected_action is ImportAction.SKIP or not item.add_membership:
                 continue
-            membership_effect_count += len(item.memberships)
             if len(item.memberships) > bounds.max_entries:
                 raise ImportReceiptError("The approved import plan exceeds its bounds.")
             for membership in item.memberships:
@@ -740,14 +770,8 @@ class NoteImportReceiptRepository:
             required_folder_paths,
             key=lambda path: (len(path), proposed_ordinals[path]),
         )
-        ledger_rows = (
-            1
-            + len(plan.items)
-            + payload_effect_count
-            + len(ordered_folders)
-            + membership_effect_count
-        )
-        if ledger_rows > _MAX_LEDGER_ROWS:
+        ledger_rows = _receipt_ledger_row_count(plan)
+        if ledger_rows > MAX_RECEIPT_LEDGER_ROWS:
             raise ImportReceiptError(
                 "The approved import receipt exceeds its ledger ceiling."
             )
@@ -957,18 +981,8 @@ class NoteImportReceiptRepository:
         """Return the durable frozen snapshot for one approval."""
 
         _validate_id(approval_id, field_name="approval_id")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN")
-            self._initialize_schema(connection)
-            snapshot = self._load_snapshot(connection, approval_id)
-            connection.commit()
-            return snapshot
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        with self.transaction() as connection:
+            return self._load_snapshot(connection, approval_id)
 
     def load_session_snapshot(self, approval_id: str) -> ImportSessionSnapshot:
         """Return one complete durable session snapshot."""
@@ -1354,10 +1368,7 @@ class NoteImportReceiptRepository:
         if type(state) is not ImportSessionState:
             raise TypeError("state must be an ImportSessionState.")
         validated_reason = _validate_reason_code(reason_code)
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             row = connection.execute(
                 "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
@@ -1379,14 +1390,7 @@ class NoteImportReceiptRepository:
                 """,
                 (state.value, validated_reason, _now(), approval_id),
             )
-            snapshot = self._load_snapshot(connection, approval_id)
-            connection.commit()
-            return snapshot
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+            return self._load_snapshot(connection, approval_id)
 
     def resume_cancelled(
         self,
@@ -1402,10 +1406,7 @@ class NoteImportReceiptRepository:
         plan_digest = approved._private_plan_digest()
         if _DIGEST_PATTERN.fullmatch(plan_digest) is None:
             raise ValueError("The approved plan digest is invalid.")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             row = connection.execute(
                 """
                 SELECT plan_digest, batch_size, state FROM import_sessions
@@ -1436,14 +1437,7 @@ class NoteImportReceiptRepository:
                     ImportSessionState.CANCELLED.value,
                 ),
             )
-            snapshot = self._load_snapshot(connection, approved.approval_id)
-            connection.commit()
-            return snapshot
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+            return self._load_snapshot(connection, approved.approval_id)
 
     @staticmethod
     def _validate_completion(
@@ -1570,10 +1564,7 @@ class NoteImportReceiptRepository:
             raise ValueError("At least one transition is required.")
         if len(items) + len(effects) > _MAX_TRANSITIONS:
             raise ValueError("The combined transition collection exceeds the ceiling.")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             session_row = connection.execute(
                 "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
@@ -1653,13 +1644,7 @@ class NoteImportReceiptRepository:
                     if (effect.category, effect.effect_id) in changed_effect_keys
                 ),
             )
-            connection.commit()
             return result
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
     @staticmethod
     def _validate_item_transitions(
@@ -1977,10 +1962,7 @@ class NoteImportReceiptRepository:
 
         _validate_id(approval_id, field_name="approval_id")
         _validate_id(effect_id, field_name="effect_id")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             session_row = connection.execute(
                 "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
@@ -2040,13 +2022,7 @@ class NoteImportReceiptRepository:
                 effect_id=effect_id,
             )
             self._derive_receipt_counts(self._load_snapshot(connection, approval_id))
-            connection.commit()
             return record
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
     def _reset_retryable(
         self,
@@ -2056,10 +2032,7 @@ class NoteImportReceiptRepository:
         key_value: str,
     ) -> ImportItemRecord | ImportEffectRecord:
         _validate_id(approval_id, field_name="approval_id")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            self._initialize_schema(connection)
+        with self.transaction(immediate=True) as connection:
             session_row = connection.execute(
                 "SELECT session_id, state FROM import_sessions WHERE approval_id = ?",
                 (approval_id,),
@@ -2131,13 +2104,7 @@ class NoteImportReceiptRepository:
                     session_id=session_id,
                     effect_id=key_value,
                 )
-            connection.commit()
             return record
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
     @staticmethod
     def _folder_has_failed_dependents(
@@ -2333,10 +2300,7 @@ class NoteImportReceiptRepository:
         """Aggregate one session into the existing immutable receipt model."""
 
         _validate_id(approval_id, field_name="approval_id")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN")
-            self._initialize_schema(connection)
+        with self.transaction() as connection:
             snapshot = self._load_snapshot(connection, approval_id)
             payload_digests = tuple(
                 row[0]
@@ -2348,14 +2312,7 @@ class NoteImportReceiptRepository:
                     (snapshot.session_id,),
                 ).fetchall()
             )
-            receipt = self._build_receipt(snapshot, payload_digests)
-            connection.commit()
-            return receipt
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+            return self._build_receipt(snapshot, payload_digests)
 
     def prior_observations_for_plan(
         self,
@@ -2381,10 +2338,7 @@ class NoteImportReceiptRepository:
             str,
             tuple[tuple[int, int], str, list[tuple[object, ...]]],
         ] = {}
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN")
-            self._initialize_schema(connection)
+        with self.transaction() as connection:
             digests = tuple(digest_items)
             chunk_size = _prior_observation_chunk_size(connection)
             for offset in range(0, len(digests), chunk_size):
@@ -2428,12 +2382,6 @@ class NoteImportReceiptRepository:
                         latest[digest] = (ordering, session_id, [tuple(row)])
                     elif ordering == existing[0] and existing[1] == session_id:
                         existing[2].append(tuple(row))
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
         observations: list[PriorImportObservation] = []
         for digest, items in digest_items.items():
@@ -3083,10 +3031,7 @@ class NoteImportReceiptRepository:
     def _test_schema_snapshot(self) -> ReceiptSchemaSnapshot:
         """Return an immutable schema census for privacy contract tests."""
 
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN")
-            self._initialize_schema(connection)
+        with self.transaction() as connection:
             user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             tables = tuple(
                 row[0]
@@ -3114,17 +3059,11 @@ class NoteImportReceiptRepository:
                         (table,),
                     ).fetchall()
                 )
-            connection.commit()
             return ReceiptSchemaSnapshot(
                 user_version=user_version,
                 tables=tables,
                 columns=MappingProxyType(columns),
             )
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
 
 __all__ = [

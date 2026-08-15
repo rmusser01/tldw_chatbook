@@ -184,7 +184,22 @@ class LocalNoteImportTarget:
         folder_id: str,
         allow_existing: bool,
     ) -> LocalTargetFolder:
-        """Ensure one exact folder path has an approved identity or reuse policy."""
+        """Ensure one exact folder path has an approved identity or reuse policy.
+
+        Args:
+            segments: Ordered folder names from the selected root to the leaf.
+            folder_id: Deterministic approved identity for a newly created path.
+            allow_existing: Whether an existing path may be reused safely.
+
+        Returns:
+            The reconciled existing folder or newly created folder projection.
+
+        Raises:
+            ImportTargetConflictError: If the approved identity or reuse policy
+                conflicts with current folder state.
+            ImportTargetError: If target validation or persistence fails.
+            ImportTargetInternalError: If an unexpected target failure occurs.
+        """
         translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             validate_deterministic_folder_id(folder_id)

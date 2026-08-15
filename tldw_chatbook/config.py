@@ -6218,7 +6218,11 @@ def get_tts_profiles_db_path() -> Path:
 
 
 def get_notes_sync_state_db_path() -> Path:
-    """Return the device-private Notes import/sync state database path."""
+    """Return the device-private Notes import/sync state database path.
+
+    Returns:
+        The profile-local path for Notes import receipts and sync state.
+    """
 
     return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
 

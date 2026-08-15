@@ -170,6 +170,23 @@ def test_approval_rejects_an_unresolved_root_collision() -> None:
     assert str(_SOURCE_PATH) not in str(caught.value)
 
 
+def test_approval_rejects_a_plan_that_exceeds_the_receipt_ledger_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        note_import_execution_models,
+        "MAX_RECEIPT_LEDGER_ROWS",
+        5,
+        raising=False,
+    )
+
+    with pytest.raises(ImportApprovalError, match="receipt ledger") as caught:
+        approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
+
+    assert _SECRET_BODY not in str(caught.value)
+    assert str(_SOURCE_PATH) not in str(caught.value)
+
+
 def test_approved_plan_is_opaque_and_bound_to_exact_effects() -> None:
     approved = approve_note_import_plan(_plan(), approval_id=_APPROVAL_ID)
 

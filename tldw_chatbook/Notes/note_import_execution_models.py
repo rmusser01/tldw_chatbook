@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_ENTRIES,
+    ImportAction,
     ImportPreviewItem,
     NoteImportPlan,
     ParsedNotePayload,
@@ -29,6 +30,9 @@ MAX_IMPORT_REASON_CODE_LENGTH = 64
 
 MAX_PRIVATE_IMPORT_COLLECTION_ITEMS = MAX_IMPORT_ENTRIES
 """Absolute item ceiling for each private execution receipt collection."""
+
+MAX_RECEIPT_LEDGER_ROWS = MAX_IMPORT_ENTRIES
+"""Absolute row ceiling for one durable import receipt ledger session."""
 
 _MAX_PRIVATE_IMPORT_ID_LENGTH = 256
 _MAX_PRIVATE_IMPORT_ERROR_LENGTH = 4_096
@@ -228,7 +232,40 @@ def _validate_note_import_plan_for_approval(plan: object) -> NoteImportPlan:
         raise ImportApprovalError(
             "Every colliding import root must be explicitly resolved before approval."
         )
+    if _receipt_ledger_row_count(plan) > MAX_RECEIPT_LEDGER_ROWS:
+        raise ImportApprovalError(
+            "The import plan exceeds the durable receipt ledger ceiling."
+        )
     return plan
+
+
+def _receipt_ledger_row_count(plan: NoteImportPlan) -> int:
+    """Return the exact durable row count required to seed one plan."""
+
+    required_folder_paths: set[tuple[str, ...]] = set()
+    payload_effect_count = 0
+    membership_effect_count = 0
+    for item in plan.items:
+        if item.selected_action is ImportAction.CREATE_NEW or (
+            item.selected_action is ImportAction.UPDATE_EXISTING
+            and item.replace_content
+        ):
+            payload_effect_count += len(item.payloads)
+        if item.selected_action is ImportAction.SKIP or not item.add_membership:
+            continue
+        membership_effect_count += len(item.memberships)
+        for membership in item.memberships:
+            path = tuple(membership.folder_segments)
+            required_folder_paths.update(
+                path[:depth] for depth in range(1, len(path) + 1)
+            )
+    return (
+        1
+        + len(plan.items)
+        + payload_effect_count
+        + len(required_folder_paths)
+        + membership_effect_count
+    )
 
 
 def _create_approved_note_import_plan(

@@ -68,6 +68,14 @@ def test_public_effect_api_exposes_semantic_categories_and_lightweight_batch_res
     assert "ImportBatchResult" in receipt_module.__all__
 
 
+def test_begin_uses_the_repository_transaction_context() -> None:
+    source = inspect.getsource(NoteImportReceiptRepository.begin)
+
+    assert "with self.transaction(immediate=True) as connection:" in source
+    assert ".commit()" not in source
+    assert ".rollback()" not in source
+
+
 def test_effect_transition_public_signature_uses_category_not_table_name() -> None:
     parameters = inspect.signature(EffectTransition).parameters
 
@@ -928,7 +936,7 @@ def test_begin_enforces_absolute_ledger_row_ceiling_before_database_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "notes-sync.sqlite3"
-    monkeypatch.setattr(receipt_module, "_MAX_LEDGER_ROWS", 5)
+    monkeypatch.setattr(receipt_module, "MAX_RECEIPT_LEDGER_ROWS", 5)
 
     with pytest.raises(ImportReceiptError, match="ledger"):
         NoteImportReceiptRepository(database).begin(_approved(), batch_size=25)
