@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from textual import on
+from textual.app import ComposeResult
 from textual.containers import HorizontalGroup, VerticalGroup
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
@@ -54,7 +55,8 @@ class ModelCatalogConsentModal(ModalScreen[bool]):
     }
     """
 
-    def compose(self):
+    def compose(self) -> ComposeResult:
+        """Build the dialog: title, explanatory copy, and action buttons."""
         with VerticalGroup(id="model-catalog-consent-dialog"):
             yield Static(
                 "Check model lists online?",

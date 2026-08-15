@@ -225,6 +225,23 @@ async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("junk", ["yes", 1, "true"])
+async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
+    """Only the boolean True counts as consent, mirroring the parser."""
+    saved = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config", saved
+    )
+    host = _ConsentHost()
+
+    await TldwCli._handle_model_catalog_consent(host, junk)
+
+    # Deny shape: consent recorded with the check disabled, no refresh.
+    assert saved.call_args.args[0]["model_catalog"]["auto_refresh_enabled"] is False
+    host.run_worker.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_consent_allow_still_refreshes_when_persist_fails(monkeypatch):
     saved = MagicMock(return_value=False)
     monkeypatch.setattr(

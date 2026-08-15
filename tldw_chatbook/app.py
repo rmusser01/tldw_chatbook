@@ -10094,7 +10094,9 @@ class TldwCli(
             catalog_settings = load_model_catalog_settings(load_settings())
         except Exception as exc:
             logger.error(
-                f"Failed to load model catalog settings: {type(exc).__name__}"
+                "Failed to load model catalog settings for startup refresh "
+                f"scheduling (after_setup_completion={after_setup_completion}): "
+                f"{type(exc).__name__}"
             )
             return False
         if catalog_settings.auto_refresh_enabled and (
@@ -10120,14 +10122,18 @@ class TldwCli(
             )
         except Exception as exc:
             logger.error(
-                f"Failed to load model catalog consent modal: {type(exc).__name__}"
+                "Failed to import the model catalog consent modal "
+                f"(screen=model_catalog_consent): {type(exc).__name__}"
             )
             return
         self.push_screen(ModelCatalogConsentModal(), self._handle_model_catalog_consent)
 
     async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
         """Persist the consent answer; on allow, run the startup refresh."""
-        allowed = bool(allowed)
+        # Only the boolean singleton True counts as consent — truthy garbage
+        # (e.g. a non-bool reaching this callback) falls through to the deny
+        # path, mirroring the settings parser's strict validator.
+        allowed = allowed is True
         try:
             from tldw_chatbook.config import save_settings_to_cli_config
 
@@ -10140,7 +10146,11 @@ class TldwCli(
         except Exception as exc:
             # No traceback: the log file sink runs with diagnose=True, which
             # would dump frame locals (including the app's config) into the log.
-            logger.error(f"Failed to persist model catalog consent: {type(exc).__name__}")
+            logger.error(
+                "Failed to persist model catalog consent "
+                f"(allowed={allowed!r}, section=model_catalog): "
+                f"{type(exc).__name__}"
+            )
             saved = False
         if allowed:
             if not saved:
