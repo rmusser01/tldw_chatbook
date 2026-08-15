@@ -162,17 +162,11 @@ def build_console_controllers(
         clear_console_composer_draft=lambda: screen._clear_console_composer_draft(),
     )
 
-    #: Workspace policy context, lifecycle, and resume-flow state and
-    #: behaviour moved to `ConsoleWorkspaceController` (wave-2 console
-    #: decomposition, task 2) -- the largest cluster in wave 2.
-    #: `self._console_workspace_conversation_query`/`_search_timer`/
-    #: `_search_token`/`_search_rows`/`_search_total`/`_search_error`
-    #: stay readable/writable via the six proxy properties defined near
-    #: `_console_composer_or_none`, so `on_console_workspace_
-    #: conversation_search_changed` (a sibling conversation-browser
-    #: handler that only mirrors three of them) and `on_button_pressed`'s
-    #: workspace-search branches needed no change. See `workspace.py`'s
-    #: module docstring for the full map of what moved and why.
+    #: Workspace policy, lifecycle, resume, scope, and conversation-browser
+    #: behavior have one owner. The controller keeps canonical rich browser
+    #: state and projects legacy Workspace rows through compatibility aliases.
+    #: Its browser inputs are explicit late-bound callables; the screen keeps
+    #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
         app_instance=screen.app_instance,
@@ -188,13 +182,6 @@ def build_console_controllers(
         ),
         native_session_rows_accessor=(
             lambda state: screen._session._with_native_console_session_rows(state)
-        ),
-        conversation_browser_state_accessor=(
-            lambda state, current_conversation_id: (
-                screen._with_console_conversation_browser_state(
-                    state, current_conversation_id=current_conversation_id
-                )
-            )
         ),
         capture_draft_switch_snapshot=(
             lambda: screen._session._capture_console_draft_switch_snapshot()
@@ -253,16 +240,38 @@ def build_console_controllers(
         conversation_section_config_accessor=(
             lambda: screen._console_conversation_section_config()
         ),
-        # The grouped browser's collapse preferences live in the screen's
-        # own `app_config` accessors (alongside rail-state and search
-        # preferences that are not this cluster's), so the write stays
-        # there and the two toggle branches moved in wave-4 task 2 reach
-        # it by name.
+        # Supply the screen-owned preference tree late-bound; Workspace owns
+        # the grouped-browser collapse transition that mutates it.
         conversation_browser_config=(
             lambda: screen._console_conversation_browser_config()
         ),
         focus_conversation_search=(
             lambda: screen._focus_console_workspace_conversation_search()
+        ),
+        schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
+        current_chat_controller_accessor=lambda: screen._console_chat_controller,
+        fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
+        run_marker_with_unseen=(
+            lambda controller, session, unseen_ids: (
+                screen._console_run_marker_with_unseen(
+                    controller,
+                    session,
+                    unseen_ids,
+                )
+            )
+        ),
+        broken_conversation_ids_accessor=(
+            lambda: getattr(screen, "_console_broken_conversation_ids", set())
+        ),
+        ensure_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
+        subagent_counts_for_rows=(
+            lambda bridge, rows: screen._agent._console_subagent_counts_for_rows(
+                bridge,
+                rows,
+            )
+        ),
+        conversation_browser_collapse_preferences=(
+            lambda: screen._console_conversation_browser_collapse_preferences()
         ),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
@@ -312,7 +321,7 @@ def build_console_controllers(
             lambda **kwargs: screen._focus_console_composer_if_needed(**kwargs)
         ),
         invalidate_persisted_rows_cache=(
-            lambda: screen._invalidate_console_persisted_rows_cache()
+            lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
         mark_conversation_row_broken=(
             lambda conversation_id: screen._mark_console_conversation_row_broken(
@@ -574,7 +583,7 @@ def build_console_controllers(
             )
         ),
         invalidate_console_persisted_rows_cache=(
-            lambda: screen._invalidate_console_persisted_rows_cache()
+            lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
         play_console_video=(
             lambda message_id: screen._video._play_console_video(message_id)
@@ -617,10 +626,12 @@ def build_console_controllers(
                 or screen._console_realtime is not None
             )
         ),
-        sync_controls=lambda enabled, paused, retry_available: screen._sync_console_auto_speak_controls(
-            enabled,
-            paused,
-            retry_available,
+        sync_controls=lambda enabled, paused, retry_available: (
+            screen._sync_console_auto_speak_controls(
+                enabled,
+                paused,
+                retry_available,
+            )
         ),
         notify=lambda copy, severity: screen.app_instance.notify(
             copy,

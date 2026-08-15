@@ -1,116 +1,38 @@
-"""Console workspace controller.
+"""Workspace and conversation-browser ownership for the Console.
 
-Extracted out of `ChatScreen` (wave-2 console decomposition, task 2): the
-largest single cluster in wave 2 -- 35 moved methods, ~1,341 lines of method
-bodies -- covering workspace policy context, the workspace switcher/rename/
-archive/create lifecycle, the workspace RAG-scope picker, workspace-scoped
-Console session activation, resuming a persisted conversation into a native
-Console session, and the (largely legacy, still-tested) workspace
-conversation search rows.
+`ConsoleWorkspaceController` owns 56 non-DOM methods covering Workspace
+policy and lifecycle, scope selection, persisted-conversation resume, and the
+grouped conversation browser. Browser query, timer, token, rich rows, totals,
+errors, and persisted-row cache have one canonical home here. Legacy
+Workspace row and scalar names are compatibility aliases: reads project from
+the rich rows and writes convert back into canonical rich state.
 
-This module follows the SAME binding rule wave 1's `ConsoleDictationController`
-established (see that module's own docstring for the canonical statement):
-
-1. **Framework services** (`run_worker`, `push_screen`, `call_after_refresh`)
-   live-read from the screen via `@property` on every access -- never
-   snapshotted, because a bound method captured once at construction goes
-   stale the instant a test replaces the attribute on the SCREEN INSTANCE
-   afterward.
-2. **Sibling clusters' own state/entry points, not yet given a named-
-   accessor home** are the same live-`@property`-through-`screen` shape, for
-   the same staleness reason, but are a disclosed, temporary exception, not
-   a controller dependency: `_pending_console_launch_context` (the staged-
-   evidence cluster's own attribute) and `_console_agent_drilldown_run_id`
-   (the sub-agent drill-in cluster's own attribute, read+write).
-3. **Everything else this cluster genuinely depends on that is not its own
-   state** is a NAMED constructor dependency, matching the design spec's
-   rule that "a controller's dependencies are its signature". Each is a
-   zero-arg (or narrowly-typed) callable the CALLER constructs to close over
-   the screen's own attribute lookup at CALL time (a late-binding lambda,
-   never a bound method passed directly -- see `ChatScreen.__init__`'s
-   wiring for why). The controller's own property of the SAME NAME as the
-   original `ChatScreen` method/attribute is a thin wrapper around the
-   stored callable, so every moved method body below is a byte-for-byte
-   copy of the pre-extraction source: no internal line needed to change,
-   because every name a body references still resolves.
-
-   This cluster adds ONE variant kind 3 wave 1 did not need: two of this
-   cluster's OWN original members -- `_sync_console_workspace_context` and
-   `_focus_console_workspace_conversation_search` -- read/write the DOM
-   (`query_one`/`query`/`mount`), so per the "zero DOM in the controller"
-   rule they stay behind on `ChatScreen` as real implementations. The
-   controller still reaches them, but as ordinary named constructor
-   callables (`sync_workspace_context`/`focus_conversation_search`) rather
-   than as screen properties -- they are not a sibling cluster's business,
-   they are this cluster's own DOM-shaped edge, staying behind for a
-   documented reason.
-
-   A second variant: where the ORIGINAL name was a plain attribute read
-   (`self._console_chat_store`, `self._pending_console_launch_context`),
-   not a method call, the wrapper property CALLS the stored accessor (or
-   the screen attribute) immediately and returns the value, rather than
-   returning the callable itself -- matching the bare-read call shape the
-   moved body uses.
-
-`app_instance` is the one plain-attribute exception to all three rules
-above, exactly as in `ConsoleDictationController`: it does not change
-identity over the controller's life, and the pre-extraction methods already
-read it as a plain attribute, never as a call.
-
-Moved: every `ChatScreen` method matching `*workspace*` whose body touched
-only `_console_workspace_conversation_*` state (or one of its sibling
-attributes) and the callables above -- 35 methods in total. Thirty of the
-35 bodies are byte-identical to their pre-move source; the other five carry
-one mechanical edit each, all inert: four swap `self.app.push_screen(` for
-`self.push_screen(` (this class's own framework-service property, same
-call), and one requotes a type annotation to dodge an import cycle. Stated
-precisely because "verbatim" is the claim a later reader will lean on when
-deciding whether a behaviour change could have slipped in here. `Chat
-Screen` keeps SIX get/set proxy properties for this cluster's state
-(`_console_workspace_conversation_query`/`_search_timer`/`_search_token`/
-`_search_rows`/`_search_total`/`_search_error` -- NOT `_workspace_id`, which
-is read and written only inside `_with_console_workspace_conversation_
-section`, itself moved, so it never needed a proxy) under the ORIGINAL
-attribute names, each routing straight through to `self._workspace`, so
-`on_console_workspace_conversation_search_changed` (a sibling
-conversation-browser handler that only mirrors THREE of these six fields --
-see that handler's own docstring) and `on_button_pressed`'s workspace-search
-branches (the giant screen-level button dispatcher, staying on the screen
-for the same reason wave 1's dictation branches stayed there) needed zero
-changes.
-
-`ChatScreen` also keeps ten methods this cluster's name pattern matches but
-whose bodies do not belong here:
-
-- Five ``@on``/``action_*`` one-line delegations Textual's own dispatch
-  requires to live on the class that receives the event/command:
-  `on_console_change_workspace`, `action_open_console_workspace_switcher`,
-  `on_console_new_workspace`, `action_new_console_workspace`,
-  `on_console_workspace_rag_scope_open`.
-- `on_console_workspace_conversation_search_changed` (see above).
-- Three DOM-touching methods (`_sync_console_workspace_context`,
-  `_sync_console_legacy_workspace_context_aliases`,
-  `_on_console_workspace_context_relabeled`) -- the "zero DOM in the
-  controller" rule; the first two are reached via the named accessors
-  described above, the third needed no change (it already only calls
-  `run_worker`+the second, both screen-owned either way).
-- `_focus_console_workspace_conversation_search` (DOM; see above).
+The Textual screen retains only framework and DOM edges. Its bounded search
+handler extracts plain query/disabled values and delegates the transition;
+the Clear button delegates the complete clear transition. Browser services
+and sibling-owned data enter through explicit late-bound constructor
+callables so replacements remain observable and moved methods never query the
+DOM or reach through sibling controllers.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
+from functools import partial
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import inspect
+import time
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_RUN_MARKER_GLYPHS,
     DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleRunMarker,
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
@@ -118,8 +40,8 @@ from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_roleplay_metadata import parse_console_roleplay_context
 from ...Chat.rag_scope import RagScope
-from ...Workspaces.models import DEFAULT_WORKSPACE_ID
 from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceRenameModal,
@@ -127,9 +49,13 @@ from ...Widgets.Console import (
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
     DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
+    build_console_conversation_browser_state,
+    console_persisted_row_updated_sort,
 )
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
@@ -152,19 +78,16 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="ChatScreen")
 
+CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+
 
 class ConsoleWorkspaceController:
-    """Owns the Console shell's workspace policy context, lifecycle, and
-    the workspace-scoped conversation search/resume flows.
+    """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
-    Wave 2's largest cluster. Holds every attribute the pre-extraction
-    `ChatScreen` named `_console_workspace_conversation_*` (six of the
-    seven -- see the module docstring for why `_workspace_id` needed no
-    proxy), plus the 35 methods whose bodies touched only that state and
-    the constructor-supplied callables below. `ChatScreen` constructs
-    exactly one of these, in `__init__`, and keeps a `self._workspace`
-    reference plus the ten stay-behind methods described in the module
-    docstring.
+    The controller holds the canonical rich browser state and exposes the
+    legacy Workspace search shape only as a compatibility projection. Its 56
+    owned methods use explicit late-bound dependencies for non-Workspace
+    services; Textual event binding, focus, and rendering remain on the screen.
     """
 
     def __init__(
@@ -177,9 +100,6 @@ class ConsoleWorkspaceController:
         current_conversation_id_accessor: Callable[[], str | None],
         native_session_rows_accessor: Callable[
             [ConsoleWorkspaceContextState], ConsoleWorkspaceContextState
-        ],
-        conversation_browser_state_accessor: Callable[
-            ..., ConsoleWorkspaceContextState
         ],
         capture_draft_switch_snapshot: Callable[[], None],
         sync_chat_core_state: Callable[[], None],
@@ -201,106 +121,23 @@ class ConsoleWorkspaceController:
         conversation_browser_config: Callable[[], dict[str, Any]],
         focus_conversation_search: Callable[[], None],
         sync_workspace_context: Callable[[], None],
+        schedule_timer: Callable[[float, Callable[[], None]], Any],
+        current_chat_controller_accessor: Callable[[], Any],
+        fleet_unseen_ids_accessor: Callable[[], frozenset[str]],
+        run_marker_with_unseen: Callable[[Any, Any, frozenset[str]], Any],
+        broken_conversation_ids_accessor: Callable[[], set[str]],
+        ensure_agent_bridge: Callable[[], Any],
+        subagent_counts_for_rows: Callable[[Any, Iterable[Any]], dict[str, int]],
+        conversation_browser_collapse_preferences: Callable[[], dict[str, bool]],
         wake_retry_poke: Callable[[], None] | None = None,
     ) -> None:
-        """Build the controller and bind everything its moved bodies need.
+        """Bind canonical Workspace state and its late-bound dependencies.
 
-        Every one of the 35 method bodies below is a byte-for-byte copy of
-        the pre-extraction `ChatScreen` method. That is possible because
-        this constructor binds every name those bodies reference that is
-        not this controller's own state, under the SAME name the original
-        method/attribute used -- see the module docstring for the three
-        (plus one cluster-specific variant) binding kinds this follows.
-
-        Args:
-            screen: The Console screen. Used ONLY for the framework
-                services (`run_worker`, `push_screen`, `call_after_
-                refresh`) and the two disclosed, temporary sibling-cluster
-                reach-backs (`_pending_console_launch_context`,
-                `_console_agent_drilldown_run_id`). Zero `query_one`/
-                `query` traffic reaches through `screen` here -- this
-                cluster's two DOM-touching members stayed on `ChatScreen`
-                and are reached via the named accessors below instead.
-            app_instance: For `notify()` and the workspace/scope-service
-                registry lookups every lifecycle method makes -- unchanged
-                from how the pre-extraction methods used
-                `self.app_instance`. Snapshotted as a plain attribute, not
-                a property: it does not change identity over the
-                controller's life, and the pre-extraction methods never
-                called it, only read it.
-            chat_store_accessor: `ChatScreen._ensure_console_chat_store`
-                (lazily creates the store) -- used where the original body
-                called it as a method (`self._ensure_console_chat_store()`).
-            current_chat_store_accessor: A DIFFERENT accessor for the SAME
-                store, `lambda: self._console_chat_store` -- a bare
-                attribute read that must NOT create the store as a side
-                effect (several moved bodies branch on it still being
-                `None`). Kept distinct from `chat_store_accessor` on
-                purpose: collapsing them would change behavior (an
-                eager-create side effect where the original had none).
-            current_conversation_id_accessor: `ChatScreen._current_console_
-                conversation_id`, a general screen helper.
-            native_session_rows_accessor: `ChatScreen._with_native_console_
-                session_rows`, the sibling conversation-browser cluster's
-                own state builder (native, unpersisted sessions).
-            conversation_browser_state_accessor: `ChatScreen._with_console_
-                conversation_browser_state`, same sibling cluster.
-            capture_draft_switch_snapshot: `ChatScreen._capture_console_
-                draft_switch_snapshot`, the composer's own pre-switch
-                snapshot hook.
-            sync_chat_core_state: `ChatScreen._sync_console_chat_core_
-                state`.
-            sync_native_console_chat_ui: `ChatScreen._sync_native_console_
-                chat_ui` -- a coroutine FUNCTION, called (not awaited
-                directly) by every moved body exactly as the original did,
-                either wrapped in `self.run_worker(...)` or `await`ed.
-            sync_temporary_chip: `ChatScreen._sync_console_temporary_chip`.
-            default_session_settings_accessor: `ChatScreen._default_
-                console_session_settings`.
-            scope_picker_listers_accessor: `ChatScreen._console_scope_
-                picker_listers`, shared with the non-workspace retrieval-
-                scope picker too, so it stays screen-owned.
-            active_native_session_accessor: `ChatScreen._active_native_
-                console_session`.
-            refresh_effective_scope_and_sync: `ChatScreen._refresh_console_
-                effective_scope_and_sync`, async.
-            messages_from_conversation_tree_accessor: `ChatScreen._console_
-                messages_from_conversation_tree`, the resume flow's tree
-                flattener.
-            session_settings_for_resume_accessor: `ChatScreen._console_
-                session_settings_for_resume`.
-            resolve_resumed_character_name: `ChatScreen._resolve_resumed_
-                character_name`, async.
-            inject_resume_agent_markers_accessor: `ChatScreen._inject_
-                resume_agent_markers`.
-            resolve_effective_scope_state: `ChatScreen._resolve_console_
-                effective_scope_state`, async.
-            sync_retrieval_scope_row: `ChatScreen._sync_console_retrieval_
-                scope_row`.
-            note_follow_intent: `ChatScreen._note_console_follow_intent`.
-            focus_composer_if_needed: `ChatScreen._focus_console_composer_
-                if_needed`; the moved resume body calls it with
-                `force=True` exactly as before -- the stored callable
-                accepts the same keyword, not a value baked in here.
-            conversation_section_config_accessor: `ChatScreen._console_
-                conversation_section_config`.
-            conversation_browser_config: `ChatScreen._console_conversation_
-                browser_config`, the mutable grouped-browser preference
-                tree. The tree stays on the screen (it also holds
-                rail-state and search preferences this cluster does not
-                own); the collapse WRITE lives here, because no screen
-                code calls it.
-
-            focus_conversation_search: `ChatScreen._focus_console_
-                workspace_conversation_search` -- stays on the screen (DOM:
-                `query_one`), reached as a named callable rather than a
-                screen property because it belongs to THIS cluster (see
-                the module docstring), not a sibling one.
-            sync_workspace_context: `ChatScreen._sync_console_workspace_
-                context` -- stays on the screen for the same DOM reason;
-                the single most-called external dependency in this
-                cluster (every lifecycle mutation ends by pushing a
-                refresh through it).
+        Framework services are read from ``screen`` when used. Browser data,
+        configuration, scheduling, markers, sub-agent counts, focus, and final
+        Workspace synchronization are supplied as named callables, keeping
+        controller ownership explicit without snapshotting replaceable screen
+        collaborators.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -308,9 +145,6 @@ class ConsoleWorkspaceController:
         self._current_chat_store_accessor = current_chat_store_accessor
         self._current_conversation_id_accessor = current_conversation_id_accessor
         self._native_session_rows_accessor = native_session_rows_accessor
-        self._conversation_browser_state_accessor = (
-            conversation_browser_state_accessor
-        )
         self._capture_draft_switch_snapshot_fn = capture_draft_switch_snapshot
         self._sync_chat_core_state_fn = sync_chat_core_state
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
@@ -339,27 +173,115 @@ class ConsoleWorkspaceController:
         self._conversation_browser_config_fn = conversation_browser_config
         self._focus_conversation_search_fn = focus_conversation_search
         self._sync_workspace_context_fn = sync_workspace_context
+        self._schedule_timer_fn = schedule_timer
+        self._current_chat_controller_accessor = current_chat_controller_accessor
+        self._fleet_unseen_ids_accessor = fleet_unseen_ids_accessor
+        self._run_marker_with_unseen_fn = run_marker_with_unseen
+        self._broken_conversation_ids_accessor = broken_conversation_ids_accessor
+        self._ensure_agent_bridge_fn = ensure_agent_bridge
+        self._subagent_counts_for_rows_fn = subagent_counts_for_rows
+        self._conversation_browser_collapse_preferences_fn = (
+            conversation_browser_collapse_preferences
+        )
         #: task-15864 AC#2: `ChatScreen._poke_console_wake_retry` -- resume
         #: is the one loader of persisted conversations into sessions, so
         #: session-open becomes a wake retry trigger here. Optional so the
         #: pre-existing direct-construction tests need no new kwarg.
         self._wake_retry_poke_fn = wake_retry_poke
 
-        # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
-        self._console_workspace_conversation_query = ""
-        self._console_workspace_conversation_search_timer: Any | None = None
-        self._console_workspace_conversation_search_token = 0
-        self._console_workspace_conversation_search_rows: tuple[
-            ConsoleWorkspaceConversationRow, ...
+        # Canonical grouped-browser state. Legacy workspace-search names below
+        # are aliases/projections, never a second writer or backing row store.
+        self._console_persisted_rows_cache = None
+        self._console_persisted_rows_cache_key = None
+        self._console_persisted_rows_cache_at = 0.0
+        self._console_conversation_browser_query = ""
+        self._console_conversation_browser_search_timer = None
+        self._console_conversation_browser_search_token = 0
+        self._console_conversation_browser_rows: tuple[
+            ConsoleConversationBrowserInputRow, ...
         ] = ()
-        self._console_workspace_conversation_search_total: int | None = None
-        self._console_workspace_conversation_search_error = ""
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
         self._console_workspace_conversation_workspace_id: str | None = None
         # task-15471: serializes star toggles now that the durable write
         # runs off the loop -- two rapid presses must queue (each resolving
         # current truth before toggling), never race two pool threads into
         # a stale double-star.
         self._console_star_toggle_lock = asyncio.Lock()
+
+    @property
+    def _console_workspace_conversation_query(self) -> str:
+        return self._console_conversation_browser_query
+
+    @_console_workspace_conversation_query.setter
+    def _console_workspace_conversation_query(self, value: str) -> None:
+        self._console_conversation_browser_query = value
+
+    @property
+    def _console_workspace_conversation_search_timer(self) -> Any:
+        return self._console_conversation_browser_search_timer
+
+    @_console_workspace_conversation_search_timer.setter
+    def _console_workspace_conversation_search_timer(self, value: Any) -> None:
+        self._console_conversation_browser_search_timer = value
+
+    @property
+    def _console_workspace_conversation_search_token(self) -> int:
+        return self._console_conversation_browser_search_token
+
+    @_console_workspace_conversation_search_token.setter
+    def _console_workspace_conversation_search_token(self, value: int) -> None:
+        self._console_conversation_browser_search_token = value
+
+    @property
+    def _console_workspace_conversation_search_rows(
+        self,
+    ) -> tuple[ConsoleWorkspaceConversationRow, ...]:
+        return tuple(
+            ConsoleWorkspaceConversationRow(
+                conversation_id=str(row.conversation_id or ""),
+                title=row.title,
+                status=row.status,
+                selected=row.selected,
+            )
+            for row in self._console_conversation_browser_rows
+        )
+
+    @_console_workspace_conversation_search_rows.setter
+    def _console_workspace_conversation_search_rows(
+        self, value: Iterable[ConsoleWorkspaceConversationRow]
+    ) -> None:
+        self._console_conversation_browser_rows = tuple(
+            ConsoleConversationBrowserInputRow(
+                row_key=row.conversation_id,
+                conversation_id=row.conversation_id,
+                native_session_id=None,
+                title=row.title,
+                scope_type="workspace",
+                workspace_id=DEFAULT_WORKSPACE_ID,
+                workspace_label="Chats",
+                status=row.status,
+                selected=row.selected,
+                source_kind="persisted",
+            )
+            for row in value
+        )
+
+    @property
+    def _console_workspace_conversation_search_total(self) -> int | None:
+        return self._console_conversation_browser_total
+
+    @_console_workspace_conversation_search_total.setter
+    def _console_workspace_conversation_search_total(self, value: int | None) -> None:
+        self._console_conversation_browser_total = value
+
+    @property
+    def _console_workspace_conversation_search_error(self) -> str:
+        return self._console_conversation_browser_error
+
+    @_console_workspace_conversation_search_error.setter
+    def _console_workspace_conversation_search_error(self, value: str) -> None:
+        self._console_conversation_browser_error = value
 
     # -- Framework services (kind 1: live-read via `@property`) ------------
 
@@ -429,10 +351,6 @@ class ConsoleWorkspaceController:
     @property
     def _with_native_console_session_rows(self) -> Any:
         return self._native_session_rows_accessor
-
-    @property
-    def _with_console_conversation_browser_state(self) -> Any:
-        return self._conversation_browser_state_accessor
 
     @property
     def _capture_console_draft_switch_snapshot(self) -> Any:
@@ -544,6 +462,874 @@ class ConsoleWorkspaceController:
         docstring."""
         return self._sync_workspace_context_fn
 
+    @property
+    def _schedule_console_browser_timer(self) -> Any:
+        return self._schedule_timer_fn
+
+    @property
+    def _console_chat_controller(self) -> Any:
+        return self._current_chat_controller_accessor()
+
+    @property
+    def _console_fleet_unseen_ids(self) -> Any:
+        return self._fleet_unseen_ids_accessor
+
+    @property
+    def _console_run_marker_with_unseen(self) -> Any:
+        return self._run_marker_with_unseen_fn
+
+    @property
+    def _console_broken_conversation_ids(self) -> set[str]:
+        return self._broken_conversation_ids_accessor()
+
+    @property
+    def _ensure_console_agent_bridge(self) -> Any:
+        return self._ensure_agent_bridge_fn
+
+    @property
+    def _console_subagent_counts_for_rows(self) -> Any:
+        return self._subagent_counts_for_rows_fn
+
+    @property
+    def _console_conversation_browser_collapse_preferences(self) -> Any:
+        return self._conversation_browser_collapse_preferences_fn
+
+    def transition_browser_search(self, query: str, disabled: bool) -> None:
+        """Apply one input change and schedule its canonical browser refresh."""
+        if disabled or query == self._console_conversation_browser_query:
+            return
+        self._console_conversation_browser_query = query
+        self._console_conversation_browser_search_token += 1
+        token = self._console_conversation_browser_search_token
+        if self._console_conversation_browser_search_timer is not None:
+            self._console_conversation_browser_search_timer.stop()
+            self._console_conversation_browser_search_timer = None
+        self._console_conversation_browser_rows = (
+            self._filter_console_browser_rows_for_query(
+                self._console_conversation_browser_rows,
+                query,
+            )
+        )
+        self._console_conversation_browser_search_timer = (
+            self._schedule_console_browser_timer(
+                0.2,
+                partial(
+                    self._start_console_conversation_browser_search,
+                    query,
+                    token,
+                ),
+            )
+        )
+
+    def clear_console_conversation_browser_search(self) -> None:
+        """Clear canonical browser search state and restore search focus."""
+        if self._console_conversation_browser_search_timer is not None:
+            self._console_conversation_browser_search_timer.stop()
+            self._console_conversation_browser_search_timer = None
+        self._console_conversation_browser_search_token += 1
+        self._console_conversation_browser_query = ""
+        self._console_conversation_browser_rows = ()
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+    def _start_console_conversation_browser_search(
+        self,
+        query: str,
+        token: int,
+    ) -> None:
+        """Run the debounced half of a rail conversation-search keystroke."""
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        self._invalidate_console_persisted_rows_cache()
+        if not query.strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        self._console_conversation_browser_rows = (
+            self._filter_console_browser_rows_for_query(
+                self._merge_console_browser_rows(
+                    self._native_console_browser_rows(),
+                    self._membership_console_browser_rows(),
+                ),
+                query,
+            )
+        )
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
+        self._sync_console_workspace_context()
+        self.run_worker(
+            self._refresh_console_conversation_browser_search(query, token),
+            group="console-workspace-conversation-search",
+            exclusive=True,
+        )
+
+    @staticmethod
+    def _console_browser_row_key(row: ConsoleConversationBrowserInputRow) -> str:
+        return str(row.row_key or row.conversation_id or "").strip()
+
+    @staticmethod
+    def _console_browser_row_scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
+        if row.scope_type == "global":
+            return "global chats"
+        if row.workspace_id == DEFAULT_WORKSPACE_ID:
+            return "default workspace chats"
+        if row.workspace_id:
+            return f"workspace {row.workspace_label}"
+        return "chats"
+
+    @staticmethod
+    def _console_browser_row_matches_query(
+        row: ConsoleConversationBrowserInputRow,
+        normalized_query: str,
+    ) -> bool:
+        haystack = " ".join(
+            (
+                str(row.title or ""),
+                str(row.workspace_label or ""),
+                str(row.status or ""),
+                ConsoleWorkspaceController._console_browser_row_scope_copy(row),
+            )
+        ).lower()
+        return normalized_query in haystack
+
+    def _filter_console_browser_rows_for_query(
+        self,
+        rows: Iterable[ConsoleConversationBrowserInputRow],
+        query: str,
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Return rows matching ``query`` without service or database access."""
+        normalized_query = str(query or "").strip().lower()
+        row_tuple = tuple(rows)
+        if not normalized_query:
+            return row_tuple
+        return tuple(
+            row
+            for row in row_tuple
+            if self._console_browser_row_matches_query(row, normalized_query)
+        )
+
+    def _find_console_browser_row(
+        self,
+        row_key: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> ConsoleConversationBrowserRow | None:
+        """Return the current grouped browser row for a rendered row key."""
+        target_row_key = str(row_key or "").strip()
+        target_conversation_id = str(conversation_id or "").strip()
+        if not target_row_key and not target_conversation_id:
+            return None
+        state = self._build_console_workspace_context_state()
+        browser = state.conversation_browser
+        if browser is None:
+            return None
+        allow_conversation_fallback = not target_row_key
+        fallback: ConsoleConversationBrowserRow | None = None
+        for section in browser.sections:
+            for row in section.rows:
+                if target_row_key and row.row_key == target_row_key:
+                    return row
+                if (
+                    allow_conversation_fallback
+                    and fallback is None
+                    and target_conversation_id
+                    and row.conversation_id == target_conversation_id
+                ):
+                    fallback = row
+            for group in section.groups:
+                for row in group.rows:
+                    if target_row_key and row.row_key == target_row_key:
+                        return row
+                    if (
+                        allow_conversation_fallback
+                        and fallback is None
+                        and target_conversation_id
+                        and row.conversation_id == target_conversation_id
+                    ):
+                        fallback = row
+        return fallback
+
+    @staticmethod
+    def _console_browser_display_identity(
+        row: ConsoleConversationBrowserInputRow,
+    ) -> tuple[str, str, str, str] | tuple[str, str]:
+        """Return the display identity used to dedupe grouped browser rows."""
+        conversation_id = str(row.conversation_id or "").strip()
+        if conversation_id:
+            scope_type = str(row.scope_type or "").strip() or "workspace"
+            workspace_id = (
+                "" if scope_type == "global" else str(row.workspace_id or "").strip()
+            )
+            return ("conversation", scope_type, workspace_id, conversation_id)
+        return (
+            "row",
+            ConsoleWorkspaceController._console_browser_row_key(row),
+        )
+
+    def _starred_console_conversation_ids(self) -> set[str]:
+        """Return locally starred durable conversation ids."""
+        service = getattr(self.app_instance, "conversation_local_marks_service", None)
+        list_marked = getattr(service, "list_marked_conversation_ids", None)
+        if not callable(list_marked):
+            return set()
+        try:
+            return {str(conversation_id) for conversation_id in list_marked()}
+        except Exception:
+            logger.opt(exception=True).debug("Unable to read local conversation stars")
+            return set()
+
+    def _apply_console_browser_star_state(
+        self,
+        row: ConsoleConversationBrowserInputRow,
+        starred_ids: set[str] | None = None,
+    ) -> ConsoleConversationBrowserInputRow:
+        """Apply local star state and star eligibility to one browser row."""
+        conversation_id = str(row.conversation_id or "").strip()
+        ids = (
+            starred_ids
+            if starred_ids is not None
+            else self._starred_console_conversation_ids()
+        )
+        star_enabled = bool(conversation_id) and not str(row.row_key or "").startswith(
+            "native:"
+        )
+        return replace(
+            row,
+            conversation_id=conversation_id or None,
+            starred=bool(conversation_id and conversation_id in ids),
+            star_enabled=bool(star_enabled),
+        )
+
+    def _native_console_browser_rows(
+        self,
+        current_conversation_id: str | None = None,
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Return open native Console sessions across all workspaces."""
+        store = self._console_chat_store
+        if store is None:
+            return []
+        labels = self._console_browser_workspace_labels()
+        starred_ids = self._starred_console_conversation_ids()
+        active_session_id = store.active_session_id
+        controller = self._console_chat_controller
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            scope_type = (
+                "global"
+                if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+                else "workspace"
+            )
+            workspace_id = None if scope_type == "global" else session_workspace_id
+            persisted_id = (
+                str(session.persisted_conversation_id).strip()
+                if session.persisted_conversation_id
+                else ""
+            )
+            row_key = persisted_id or f"native:{session.id}"
+            selected = session.id == active_session_id
+            run_marker = (
+                resolve_glyph(
+                    CONSOLE_RUN_MARKER_GLYPHS.get(
+                        self._console_run_marker_with_unseen(
+                            controller, session, self._console_fleet_unseen_ids()
+                        ),
+                        "",
+                    )
+                )
+                if controller is not None
+                else ""
+            )
+            queued_count = (
+                controller.activity_for(session.id).queued_count
+                if controller is not None
+                else 0
+            )
+            row = ConsoleConversationBrowserInputRow(
+                row_key=row_key,
+                conversation_id=persisted_id or None,
+                native_session_id=session.id,
+                title=str(session.title or "Untitled conversation"),
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+                workspace_label=self._console_browser_workspace_label(
+                    workspace_id, labels
+                ),
+                status="active session" if selected else "open session",
+                selected=selected,
+                source_kind="native",
+                updated_sort=str(session.updated_at or ""),
+                run_marker=run_marker,
+                queued_count=queued_count,
+            )
+            rows.append(self._apply_console_browser_star_state(row, starred_ids))
+        return rows
+
+    def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
+        """Return the unseen glyph for a marked sessionless conversation."""
+        conversation_key = str(conversation_id or "").strip()
+        if not conversation_key:
+            return ""
+        if conversation_key not in self._console_fleet_unseen_ids():
+            return ""
+        return resolve_glyph(
+            CONSOLE_RUN_MARKER_GLYPHS.get(ConsoleRunMarker.SUBAGENT_UNSEEN, "")
+        )
+
+    def _membership_console_browser_rows(
+        self,
+        current_conversation_id: str | None = None,
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Return conversation membership rows across every local workspace."""
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        list_conversations = getattr(service, "list_workspace_conversations", None)
+        if not callable(list_conversations):
+            return []
+        labels = self._console_browser_workspace_labels()
+        starred_ids = self._starred_console_conversation_ids()
+        current_conversation = (
+            current_conversation_id or self._current_console_conversation_id()
+        )
+        active_session = self._active_native_console_session()
+        active_workspace_id = (
+            str(active_session.workspace_id or "").strip()
+            if active_session is not None
+            else str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        )
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for record in self._console_browser_workspace_records():
+            workspace_id = str(record.workspace_id or "").strip()
+            if not workspace_id:
+                continue
+            try:
+                memberships = list_conversations(workspace_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Unable to list Console browser workspace conversations "
+                    "workspace_id={}",
+                    workspace_id,
+                )
+                continue
+            for membership in memberships:
+                conversation_id = str(getattr(membership, "item_id", "") or "").strip()
+                if not conversation_id:
+                    continue
+                title = str(getattr(membership, "title", "") or conversation_id)
+                row = ConsoleConversationBrowserInputRow(
+                    row_key=f"workspace:{workspace_id}:conversation:{conversation_id}",
+                    conversation_id=conversation_id,
+                    native_session_id=None,
+                    title=title,
+                    scope_type="workspace",
+                    workspace_id=workspace_id,
+                    workspace_label=self._console_browser_workspace_label(
+                        workspace_id, labels
+                    ),
+                    status=str(getattr(membership, "role", "") or "workspace-thread"),
+                    selected=bool(
+                        current_conversation
+                        and current_conversation == conversation_id
+                        and active_workspace_id == workspace_id
+                    ),
+                    source_kind="membership",
+                    updated_sort=str(getattr(membership, "created_at", "") or ""),
+                    run_marker=self._console_browser_unseen_marker(conversation_id),
+                    openable=(
+                        conversation_id not in self._console_broken_conversation_ids
+                    ),
+                )
+                rows.append(self._apply_console_browser_star_state(row, starred_ids))
+        return rows
+
+    async def _persisted_console_browser_rows(
+        self,
+        query: str = "",
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Return persisted global/workspace rows for grouped browser search."""
+        services: list[tuple[Any, bool]] = []
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        local_service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+
+        def add_service(candidate: Any, *, include_mode: bool) -> None:
+            if candidate is None:
+                return
+            if any(candidate is existing for existing, _include_mode in services):
+                return
+            services.append((candidate, include_mode))
+
+        add_service(scope_service, include_mode=True)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(local_service, include_mode=False)
+        if not services:
+            return [], None, ""
+
+        labels = self._console_browser_workspace_labels()
+        scopes: list[tuple[str, str | None]] = [("global", None)]
+        scopes.extend(
+            ("workspace", str(record.workspace_id))
+            for record in self._console_browser_workspace_records()
+            if str(record.workspace_id or "").strip()
+        )
+        last_error = ""
+        for service, include_mode in services:
+            list_conversations = getattr(service, "list_conversations", None)
+            if not callable(list_conversations):
+                continue
+            rows: list[ConsoleConversationBrowserInputRow] = []
+            total_count = 0
+            saw_total = False
+            saw_result = False
+            current_conversation = self._current_console_conversation_id()
+            starred_ids = self._starred_console_conversation_ids()
+            for scope_type, workspace_id in scopes:
+                list_kwargs: dict[str, Any] = {
+                    "query": query,
+                    "scope_type": scope_type,
+                    "workspace_id": workspace_id,
+                    "limit": 25,
+                    "offset": 0,
+                }
+                if include_mode:
+                    list_kwargs["mode"] = "local"
+                try:
+                    if include_mode:
+                        result = list_conversations(**list_kwargs)
+                        result = await result if inspect.isawaitable(result) else result
+                    else:
+                        db = getattr(service, "db", None)
+                        if bool(getattr(db, "is_memory_db", False)):
+                            result = list_conversations(**list_kwargs)
+                        else:
+                            result = await asyncio.to_thread(
+                                list_conversations, **list_kwargs
+                            )
+                except Exception as exc:
+                    if (
+                        isinstance(exc, ValueError)
+                        and "service is unavailable" in str(exc).lower()
+                    ):
+                        logger.debug(
+                            "Local persisted conversation service is unavailable"
+                        )
+                        last_error = ""
+                        break
+                    logger.exception(
+                        "Unable to search Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
+                    return (
+                        rows,
+                        None if not saw_total else total_count,
+                        "Workspace conversation search is unavailable.",
+                    )
+                saw_result = True
+                if not isinstance(result, dict):
+                    continue
+                items = result.get("items")
+                if not isinstance(items, list):
+                    items = []
+                total = result.get("total")
+                if total is None:
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict):
+                        total = pagination.get("total")
+                try:
+                    total_count += int(total)
+                    saw_total = True
+                except (TypeError, ValueError):
+                    total_count += len(items)
+                    saw_total = True
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    conversation_id = str(item.get("id") or "").strip()
+                    if not conversation_id:
+                        continue
+                    item_scope_type = str(
+                        item.get("scope_type") or scope_type or "workspace"
+                    )
+                    item_workspace_id = item.get("workspace_id", workspace_id)
+                    normalized_workspace_id = (
+                        None
+                        if item_scope_type == "global"
+                        else str(item_workspace_id or workspace_id or "").strip()
+                    )
+                    row = ConsoleConversationBrowserInputRow(
+                        row_key=conversation_id,
+                        conversation_id=conversation_id,
+                        native_session_id=None,
+                        title=str(item.get("title") or "Untitled conversation"),
+                        scope_type=item_scope_type,
+                        workspace_id=normalized_workspace_id,
+                        workspace_label=self._console_browser_workspace_label(
+                            normalized_workspace_id,
+                            labels,
+                        ),
+                        status=str(item.get("state") or "workspace-thread"),
+                        selected=bool(
+                            current_conversation
+                            and current_conversation == conversation_id
+                        ),
+                        source_kind="persisted",
+                        updated_sort=console_persisted_row_updated_sort(item),
+                        run_marker=self._console_browser_unseen_marker(conversation_id),
+                    )
+                    rows.append(
+                        self._apply_console_browser_star_state(row, starred_ids)
+                    )
+            if saw_result:
+                return rows, total_count if saw_total else None, last_error
+        return [], None, last_error
+
+    def _invalidate_console_persisted_rows_cache(self) -> None:
+        """Clear the TTL-cached persisted conversation-browser rows."""
+        self._console_persisted_rows_cache = None
+        self._console_persisted_rows_cache_key = None
+        self._console_persisted_rows_cache_at = 0.0
+
+    def _sync_persisted_console_browser_rows(
+        self,
+        query: str = "",
+        current_conversation_id: str | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Return persisted rows when the local listing seam is synchronous."""
+        cache_key = (query, current_conversation_id)
+        if (
+            self._console_persisted_rows_cache is not None
+            and self._console_persisted_rows_cache_key == cache_key
+            and (time.monotonic() - self._console_persisted_rows_cache_at)
+            < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
+        ):
+            return self._console_persisted_rows_cache
+        result = self._compute_persisted_console_browser_rows(
+            query,
+            current_conversation_id,
+        )
+        self._console_persisted_rows_cache = result
+        self._console_persisted_rows_cache_key = cache_key
+        self._console_persisted_rows_cache_at = time.monotonic()
+        return result
+
+    def _compute_persisted_console_browser_rows(
+        self,
+        query: str = "",
+        current_conversation_id: str | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Uncached implementation behind persisted browser-row sync."""
+        services: list[tuple[Any, bool]] = []
+        local_service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+
+        def add_service(candidate: Any, *, include_mode: bool) -> None:
+            if candidate is None:
+                return
+            if any(candidate is existing for existing, _include_mode in services):
+                return
+            services.append((candidate, include_mode))
+
+        add_service(local_service, include_mode=False)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(scope_service, include_mode=True)
+        if not services:
+            return [], None, ""
+
+        labels = self._console_browser_workspace_labels()
+        scopes: list[tuple[str, str | None]] = [("global", None)]
+        scopes.extend(
+            ("workspace", str(record.workspace_id))
+            for record in self._console_browser_workspace_records()
+            if str(record.workspace_id or "").strip()
+        )
+        last_error = ""
+        for service, include_mode in services:
+            list_conversations = getattr(service, "list_conversations", None)
+            if not callable(list_conversations):
+                continue
+            rows: list[ConsoleConversationBrowserInputRow] = []
+            total_count = 0
+            saw_total = False
+            saw_sync_result = False
+            current_conversation = (
+                current_conversation_id or self._current_console_conversation_id()
+            )
+            starred_ids = self._starred_console_conversation_ids()
+            for scope_type, workspace_id in scopes:
+                list_kwargs: dict[str, Any] = {
+                    "query": query,
+                    "scope_type": scope_type,
+                    "workspace_id": workspace_id,
+                    "limit": 25,
+                    "offset": 0,
+                }
+                if include_mode:
+                    list_kwargs["mode"] = "local"
+                try:
+                    result = list_conversations(**list_kwargs)
+                except Exception as exc:
+                    if (
+                        isinstance(exc, ValueError)
+                        and "service is unavailable" in str(exc).lower()
+                    ):
+                        logger.debug(
+                            "Local persisted conversation service is unavailable"
+                        )
+                        last_error = ""
+                        break
+                    logger.exception(
+                        "Unable to list Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
+                    return (
+                        rows,
+                        None if not saw_total else total_count,
+                        "Workspace conversation search is unavailable.",
+                    )
+                if inspect.isawaitable(result):
+                    try:
+                        result.close()
+                    except AttributeError:
+                        pass
+                    continue
+                saw_sync_result = True
+                if not isinstance(result, dict):
+                    continue
+                items = result.get("items")
+                if not isinstance(items, list):
+                    items = []
+                total = result.get("total")
+                if total is None:
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict):
+                        total = pagination.get("total")
+                try:
+                    total_count += int(total)
+                    saw_total = True
+                except (TypeError, ValueError):
+                    total_count += len(items)
+                    saw_total = True
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    conversation_id = str(item.get("id") or "").strip()
+                    if not conversation_id:
+                        continue
+                    item_scope_type = str(
+                        item.get("scope_type") or scope_type or "workspace"
+                    )
+                    item_workspace_id = item.get("workspace_id", workspace_id)
+                    normalized_workspace_id = (
+                        None
+                        if item_scope_type == "global"
+                        else str(item_workspace_id or workspace_id or "").strip()
+                    )
+                    row = ConsoleConversationBrowserInputRow(
+                        row_key=conversation_id,
+                        conversation_id=conversation_id,
+                        native_session_id=None,
+                        title=str(item.get("title") or "Untitled conversation"),
+                        scope_type=item_scope_type,
+                        workspace_id=normalized_workspace_id,
+                        workspace_label=self._console_browser_workspace_label(
+                            normalized_workspace_id,
+                            labels,
+                        ),
+                        status=str(item.get("state") or "workspace-thread"),
+                        selected=bool(
+                            current_conversation
+                            and current_conversation == conversation_id
+                        ),
+                        source_kind="persisted",
+                        updated_sort=console_persisted_row_updated_sort(item),
+                        run_marker=self._console_browser_unseen_marker(conversation_id),
+                    )
+                    rows.append(
+                        self._apply_console_browser_star_state(row, starred_ids)
+                    )
+            if saw_sync_result:
+                return rows, total_count if saw_total else None, last_error
+        return [], None, last_error
+
+    def _merge_console_browser_rows(
+        self,
+        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Merge browser rows with native, membership, then persisted precedence."""
+        merged: list[ConsoleConversationBrowserInputRow] = []
+        seen: set[tuple[str, ...]] = set()
+        starred_ids = self._starred_console_conversation_ids()
+        for group in row_groups:
+            for raw_row in group:
+                row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                identity = self._console_browser_display_identity(row)
+                if not identity[-1] or identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(row)
+        return tuple(merged)
+
+    def _current_console_browser_rows(
+        self,
+        query: str,
+        current_conversation_id: str | None = None,
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
+        """Return current grouped browser rows plus optional search metadata."""
+        local_rows = self._merge_console_browser_rows(
+            self._native_console_browser_rows(current_conversation_id),
+            self._membership_console_browser_rows(current_conversation_id),
+        )
+        persisted_rows, persisted_total, sync_error = (
+            self._sync_persisted_console_browser_rows(
+                query,
+                current_conversation_id=current_conversation_id,
+            )
+        )
+        cached_rows = self._console_conversation_browser_rows
+        rows = self._merge_console_browser_rows(local_rows, persisted_rows, cached_rows)
+        if str(query or "").strip():
+            total = (
+                self._console_conversation_browser_total
+                if self._console_conversation_browser_total is not None
+                else persisted_total
+            )
+        else:
+            total = None
+        return rows, total, self._console_conversation_browser_error or sync_error
+
+    async def _refresh_console_conversation_browser_search(
+        self,
+        query: str,
+        token: int,
+    ) -> None:
+        """Refresh grouped browser search rows if query and token are current."""
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        if not str(query or "").strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+
+        local_rows = self._filter_console_browser_rows_for_query(
+            self._merge_console_browser_rows(
+                self._native_console_browser_rows(),
+                self._membership_console_browser_rows(),
+            ),
+            query,
+        )
+        self._console_conversation_browser_rows = local_rows
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+        (
+            persisted_rows,
+            persisted_total,
+            error_copy,
+        ) = await self._persisted_console_browser_rows(query)
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        merged = self._merge_console_browser_rows(local_rows, persisted_rows)
+        result_total = persisted_total
+        if result_total is None or result_total < len(merged):
+            result_total = len(merged)
+        self._console_conversation_browser_rows = merged
+        self._console_conversation_browser_total = result_total
+        self._console_conversation_browser_error = error_copy
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+    async def _refresh_console_conversation_browser_after_selection(self) -> None:
+        """Refresh grouped browser rows after selection or star changes."""
+        query = self._console_conversation_browser_query
+        if not query.strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            return
+        if self._console_conversation_browser_search_timer is not None:
+            self._console_conversation_browser_search_timer.stop()
+            self._console_conversation_browser_search_timer = None
+        self._console_conversation_browser_search_token += 1
+        token = self._console_conversation_browser_search_token
+        await self._refresh_console_conversation_browser_search(query, token)
+
+    def _with_console_conversation_browser_state(
+        self,
+        state: ConsoleWorkspaceContextState,
+        current_conversation_id: str | None = None,
+    ) -> ConsoleWorkspaceContextState:
+        """Attach grouped all-workspaces conversation browser state."""
+        legacy_state = self._with_console_workspace_conversation_section(state)
+        marks_service = getattr(
+            self.app_instance,
+            "conversation_local_marks_service",
+            None,
+        )
+        query = self._console_conversation_browser_query
+        rows, total, error_copy = self._current_console_browser_rows(
+            query,
+            current_conversation_id=current_conversation_id,
+        )
+        bridge = self._ensure_console_agent_bridge()
+        subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
+        browser = build_console_conversation_browser_state(
+            rows=rows,
+            active_workspace_id=(
+                self._current_console_workspace_context().active_workspace_id
+            ),
+            group_collapse_preferences=(
+                self._console_conversation_browser_collapse_preferences()
+            ),
+            query=query,
+            marks_available=marks_service is not None,
+            error_copy=error_copy or self._console_conversation_browser_error,
+            result_total_count=total,
+            result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+            subagent_counts=subagent_counts,
+        )
+        return replace(
+            state,
+            conversation_browser=browser,
+            conversation_section=legacy_state.conversation_section,
+        )
+
     # -- Workspace policy context -------------------------------------------
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
@@ -577,9 +1363,7 @@ class ConsoleWorkspaceController:
         if pending_launch is not None:
             payload = pending_launch.payload
             source_workspace = payload.get("workspace_id")
-            launch_workspace_id = (
-                str(source_workspace) if source_workspace else None
-            )
+            launch_workspace_id = str(source_workspace) if source_workspace else None
             # RAG UX v2 PR-4: this builder is the SINGLE seam feeding both
             # the Inspector rail badge ("{n} staged") and the settings
             # context estimate, and it used to append exactly ONE staged
@@ -1352,13 +2136,9 @@ class ConsoleWorkspaceController:
             assistant_authority_id=assistant_authority_id,
             character_id=character_id,
         )
-        roleplay_context = parse_console_roleplay_context(
-            conversation.get("metadata")
-        )
+        roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
         session.user_display_name_override = roleplay_context.user_name_override
-        session.character_system_template = (
-            roleplay_context.character_system_template
-        )
+        session.character_system_template = roleplay_context.character_system_template
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;
         # the next tree mutation's recompute rebuilds the view from live nodes
@@ -1743,85 +2523,6 @@ class ConsoleWorkspaceController:
             )
         return rows, total_count, ""
 
-    async def _refresh_console_workspace_conversation_search(
-        self,
-        workspace_id: str,
-        query: str,
-        token: int,
-    ) -> None:
-        """Refresh search results only if workspace and query are still current."""
-        if token != self._console_workspace_conversation_search_token:
-            return
-        if workspace_id != self._active_console_workspace_id_for_conversation_search():
-            return
-        if query != self._console_workspace_conversation_query:
-            return
-        if not str(query or "").strip():
-            self._console_workspace_conversation_search_rows = ()
-            self._console_workspace_conversation_search_total = None
-            self._console_workspace_conversation_search_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-            return
-        native_rows = self._native_console_rows_for_workspace_search(
-            workspace_id,
-            query,
-        )
-        membership_rows = self._membership_console_rows_for_workspace_search(
-            workspace_id,
-            query,
-        )
-        local_rows = self._merge_console_workspace_rows(native_rows, membership_rows)
-        self._console_workspace_conversation_search_rows = tuple(local_rows)
-        self._console_workspace_conversation_search_total = len(local_rows)
-        self._console_workspace_conversation_search_error = ""
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-        (
-            persisted_rows,
-            persisted_total,
-            error_copy,
-        ) = await self._persisted_console_rows_for_workspace_search(
-            workspace_id,
-            query,
-        )
-        if token != self._console_workspace_conversation_search_token:
-            return
-        if workspace_id != self._active_console_workspace_id_for_conversation_search():
-            return
-        if query != self._console_workspace_conversation_query:
-            return
-        merged = self._merge_console_workspace_rows(
-            local_rows,
-            persisted_rows,
-        )
-        result_total = persisted_total
-        if result_total is None or result_total < len(merged):
-            result_total = len(merged)
-        self._console_workspace_conversation_search_rows = tuple(merged)
-        self._console_workspace_conversation_search_total = result_total
-        self._console_workspace_conversation_search_error = error_copy
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-
-    async def _refresh_console_workspace_conversation_search_after_selection(
-        self,
-    ) -> None:
-        """Refresh active search rows after a conversation row changes selection."""
-        query = self._console_workspace_conversation_query
-        if not query.strip():
-            return
-        if self._console_workspace_conversation_search_timer is not None:
-            self._console_workspace_conversation_search_timer.stop()
-            self._console_workspace_conversation_search_timer = None
-        self._console_workspace_conversation_search_token += 1
-        token = self._console_workspace_conversation_search_token
-        await self._refresh_console_workspace_conversation_search(
-            self._active_console_workspace_id_for_conversation_search(),
-            query,
-            token,
-        )
-
     def _with_console_workspace_conversation_section(
         self,
         state: ConsoleWorkspaceContextState,
@@ -1842,6 +2543,9 @@ class ConsoleWorkspaceController:
                 workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
 
         if self._console_workspace_conversation_workspace_id != workspace_id:
+            if self._console_workspace_conversation_search_timer is not None:
+                self._console_workspace_conversation_search_timer.stop()
+                self._console_workspace_conversation_search_timer = None
             self._console_workspace_conversation_query = ""
             self._console_workspace_conversation_search_token += 1
             self._console_workspace_conversation_search_rows = ()

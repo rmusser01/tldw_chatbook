@@ -110,7 +110,7 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
 
         # Start from a known-clean cache regardless of what mount-time syncs
         # already did.
-        console._invalidate_console_persisted_rows_cache()
+        console._workspace._invalidate_console_persisted_rows_cache()
         baseline = len(service.list_calls)
 
         await console._sync_native_console_chat_ui()
@@ -131,7 +131,7 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
         )
 
         # Explicit invalidation forces exactly one more fresh query.
-        console._invalidate_console_persisted_rows_cache()
+        console._workspace._invalidate_console_persisted_rows_cache()
         await console._sync_native_console_chat_ui()
         after_invalidate = len(service.list_calls)
         assert after_invalidate > after_third, (
@@ -296,7 +296,9 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
         with (
             patch.object(console, "run_worker", counting_run_worker),
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
         ):
             console._sync_console_workspace_context()
@@ -441,7 +443,9 @@ async def test_console_workspace_context_tray_not_recomposed_when_state_unchange
         )
         with (
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):
@@ -483,7 +487,9 @@ async def test_console_workspace_context_fresh_tray_still_synced_mid_run():
         )
         with (
             patch.object(
-                console._workspace, "_build_console_workspace_context_state", pinned_build
+                console._workspace,
+                "_build_console_workspace_context_state",
+                pinned_build,
             ),
             patch.object(ConsoleWorkspaceContextTray, "refresh", counting_refresh),
         ):
