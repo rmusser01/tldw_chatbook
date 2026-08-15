@@ -60,6 +60,7 @@ class AudioCppRuntimeCardProjection:
     endpoint_copy: str
     capability_copy: str
     catalog_copy: str
+    artifact_privacy_copy: str
     primary_action: AudioCppRuntimeAction
     restart_action: AudioCppRuntimeAction
     shutdown_action: AudioCppRuntimeAction
@@ -415,6 +416,21 @@ def _configuration_copy(
     )
 
 
+def _artifact_privacy_copy(posture: str) -> str:
+    detail = {
+        "windows_account_protected": (
+            "Account protected · administrators and SYSTEM retain access · "
+            "plaintext, not encryption"
+        ),
+        "posix_owner_only": ("Owner-only filesystem mode · plaintext, not encryption"),
+        "unverified": "Not verified — review required",
+        "not_applicable": (
+            "Not active · protection is applied only for a Guided start"
+        ),
+    }.get(posture, "Not verified — review required")
+    return f"Generated launch privacy: {detail}"
+
+
 def project_audio_cpp_runtime_card(
     observation: AudioCppRuntimeObservation | AudioCppRuntimeCardObservation,
 ) -> AudioCppRuntimeCardProjection:
@@ -465,6 +481,9 @@ def project_audio_cpp_runtime_card(
             f"TTS capability: {runtime.tts_capability.replace('_', ' ').title()}"
         ),
         catalog_copy=catalog_copy,
+        artifact_privacy_copy=_artifact_privacy_copy(
+            process.generated_artifact_privacy_posture
+        ),
         primary_action=primary,
         restart_action=restart,
         shutdown_action=shutdown,
@@ -565,6 +584,11 @@ class AudioCppRuntimeCard(Vertical):
                 "Catalog: Not checked", id="audio-cpp-runtime-catalog", markup=False
             ),
             Static(
+                "Generated launch privacy: Not active",
+                id="audio-cpp-runtime-artifact-privacy",
+                markup=False,
+            ),
+            Static(
                 "Saved binary: None", id="audio-cpp-runtime-saved-binary", markup=False
             ),
             Static(
@@ -654,6 +678,7 @@ class AudioCppRuntimeCard(Vertical):
             "#audio-cpp-runtime-endpoint": projection.endpoint_copy,
             "#audio-cpp-runtime-capability": projection.capability_copy,
             "#audio-cpp-runtime-catalog": projection.catalog_copy,
+            "#audio-cpp-runtime-artifact-privacy": (projection.artifact_privacy_copy),
             "#audio-cpp-runtime-saved-binary": (
                 f"Saved binary: {projection.saved_binary_path or 'None'}"
             ),
