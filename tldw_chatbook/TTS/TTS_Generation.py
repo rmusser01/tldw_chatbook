@@ -1126,6 +1126,10 @@ class TTSService:
         self._settings_persisted_provider_generations: dict[str, int] = {}
         self._settings_persisted_provider_configs: dict[str, dict[str, Any]] = {}
         self._settings_admission_fences: dict[str, int] = {}
+        self._settings_staged_preferences: dict[
+            str,
+            tuple[int, TTSPreferencesSnapshot],
+        ] = {}
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
@@ -1217,6 +1221,7 @@ class TTSService:
                             action=self._stop_audio_cpp_for_transition,
                             apply_staged=True,
                         )
+                        self._publish_staged_preferences_if_applied("audio_cpp")
                     continue
                 if configuration.staged_config is not None and admission.state in {
                     "stopped",
@@ -2951,6 +2956,7 @@ class TTSService:
                         action=self._stop_audio_cpp_for_transition,
                         apply_staged=True,
                     )
+                    self._publish_staged_preferences_if_applied("audio_cpp")
                     configuration = await self.registry.provider_configuration_snapshot(
                         "audio_cpp"
                     )
@@ -2998,12 +3004,14 @@ class TTSService:
             raise RuntimeError("Managed audio.cpp lifecycle is unavailable")
         async with self._request_admission._publication_lock:
             async with self._request_admission._gate.write():
-                return await self.registry.run_exclusive_provider_transition(
+                result = await self.registry.run_exclusive_provider_transition(
                     "audio_cpp",
                     on_draining=supervisor.begin_draining,
                     action=self._stop_audio_cpp_for_transition,
                     apply_staged=apply_staged,
                 )
+                self._publish_staged_preferences_if_applied("audio_cpp")
+                return result
 
     async def _stop_audio_cpp_for_transition(self) -> None:
         """Stop a transition under the outer shutdown deadline, if active."""
@@ -3233,7 +3241,6 @@ class TTSService:
                         provider_statuses[provider_id] = staged_status
                         if staged_status == "pending":
                             staged_provider_ids.add(provider_id)
-                            admission_fenced_provider_ids.add(provider_id)
                         continue
                     try:
                         ticket = await self.registry.begin_reconfigure_provider(
@@ -3283,10 +3290,20 @@ class TTSService:
                             preferences,
                             generation,
                         )
+                        if preferences.provider_id in provider_configs:
+                            self._discard_staged_preferences_through(
+                                preferences.provider_id,
+                                generation,
+                            )
                     elif provider_statuses.get(preferences.provider_id) == "pending":
-                        self._settings_admission_fences[preferences.provider_id] = (
-                            generation
-                        )
+                        if preferences.provider_id in staged_provider_ids:
+                            self._settings_staged_preferences[
+                                preferences.provider_id
+                            ] = (generation, preferences)
+                        else:
+                            self._settings_admission_fences[preferences.provider_id] = (
+                                generation
+                            )
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
                 )
@@ -3326,6 +3343,11 @@ class TTSService:
                         preferences,
                         generation,
                     )
+                    if preferences.provider_id in provider_configs:
+                        self._discard_staged_preferences_through(
+                            preferences.provider_id,
+                            generation,
+                        )
                 self._clear_settings_admission_fence(
                     preferences.provider_id,
                     generation,
@@ -3377,6 +3399,28 @@ class TTSService:
         fenced_generation = self._settings_admission_fences.get(provider_id)
         if fenced_generation == generation:
             self._settings_admission_fences.pop(provider_id, None)
+
+    def _discard_staged_preferences_through(
+        self,
+        provider_id: str,
+        generation: int,
+    ) -> None:
+        pending = self._settings_staged_preferences.get(provider_id)
+        if pending is not None and pending[0] <= generation:
+            self._settings_staged_preferences.pop(provider_id, None)
+
+    def _publish_staged_preferences_if_applied(self, provider_id: str) -> None:
+        pending = self._settings_staged_preferences.get(provider_id)
+        if pending is None:
+            return
+        generation, preferences = pending
+        applied_generation = self.registry.configuration_generation(provider_id)
+        if applied_generation < generation:
+            return
+        if applied_generation == generation:
+            self._request_admission._publish_preferences(preferences, generation)
+        self._settings_staged_preferences.pop(provider_id, None)
+        self._clear_settings_admission_fence(provider_id, generation)
 
     async def commit_voice_setup_default(
         self,

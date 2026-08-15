@@ -3390,6 +3390,122 @@ async def test_pending_nonexclusive_publication_never_mixes_adapter_generations(
 
 
 @pytest.mark.asyncio
+async def test_staged_managed_publication_keeps_preferences_with_applied_adapter() -> (
+    None
+):
+    adapters: list[_CapturingAdapter] = []
+
+    class ManagedSupervisor:
+        def __init__(self) -> None:
+            self.state = "running"
+
+        def admission_snapshot(self) -> Any:
+            return generation_module.AudioCppProcessAdmissionSnapshot(
+                lifecycle_epoch=1,
+                process_generation=1,
+                state=self.state,
+                stage_application_eligible=self.state == "stopped",
+            )
+
+        def snapshot(self) -> Any:
+            return generation_module.AudioCppProcessSnapshot(
+                state=self.state,
+                process_generation=1,
+                observation_version=1,
+                endpoint=("http://127.0.0.1:8080" if self.state == "running" else None),
+                tts_capability=("available" if self.state == "running" else "unknown"),
+                consecutive_health_failures=0,
+                last_failure=None,
+                diagnostics=(),
+                dropped_diagnostic_lines=0,
+            )
+
+        async def begin_draining(self) -> None:
+            self.state = "draining"
+
+        async def stop(self) -> None:
+            self.state = "stopped"
+
+        async def close(self) -> None:
+            self.state = "stopped"
+
+        async def wait_closed(self) -> None:
+            return None
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = _CapturingAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    managed_a = {"mode": "managed", "generation": "A"}
+    managed_b = {"mode": "managed", "generation": "B"}
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config=managed_a,
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    supervisor = ManagedSupervisor()
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(model_id="Model/A"),
+        audio_cpp_supervisor=supervisor,
+    )
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    response: TTSAudioResponse | None = None
+
+    try:
+        response = await _wait_bounded(service.synthesize_default(text="Applied A"))
+        await _wait_bounded(response.aclose())
+        response = None
+        publication = service.begin_preferences_publication(
+            _snapshot(model_id="Model/B"),
+            {"audio_cpp": managed_b},
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=0,
+        )
+        staged = await _wait_bounded(publication.completion)
+        configuration = await registry.provider_configuration_snapshot("audio_cpp")
+
+        assert staged.provider_statuses == {"audio_cpp": "pending"}
+        assert configuration.applied_generation == 0
+        assert configuration.staged_generation == publication.generation
+        response = await _wait_bounded(
+            service.synthesize_default(text="Still applied A")
+        )
+        assert adapters[0].generation == "A"
+        assert adapters[0].requests[-1].model_id == "Model/A"
+        await _wait_bounded(response.aclose())
+        response = None
+
+        await _wait_bounded(service.shutdown_audio_cpp())
+        response = await _wait_bounded(service.synthesize_default(text="Applied B"))
+        assert adapters[1].generation == "B"
+        assert adapters[1].requests[-1].model_id == "Model/B"
+        assert service.preferences_snapshot().model_id == "Model/B"
+        assert registry.configuration_generation("audio_cpp") == (
+            publication.generation
+        )
+    finally:
+        if response is not None:
+            await _wait_bounded(response.aclose())
+        await _wait_bounded(service.close())
+        await _wait_bounded(service.wait_closed())
+
+
+@pytest.mark.asyncio
 async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
     adapter = _CapturingAdapter("audio_cpp", generation="one")
     old_snapshot = _snapshot(model_id="Model/One")
