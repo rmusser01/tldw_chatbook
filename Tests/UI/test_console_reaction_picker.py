@@ -26,6 +26,10 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.reaction_preview import (
+    ConsoleReactionPreviewCoordinator,
+    get_console_reaction_preview_coordinator,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
@@ -868,6 +872,87 @@ def test_actor_replacement_clears_only_the_old_actor_override() -> None:
     }
 
 
+class _BlockedOptionsByDb:
+    def __init__(self, options_by_db: dict[object, tuple[ReactionOption, ...]]) -> None:
+        self.options_by_db = options_by_db
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def __call__(self, db, _scope):
+        self.calls += 1
+        if self.calls == 1:
+            self.started.set()
+            assert self.release.wait(timeout=5)
+        return self.options_by_db[db]
+
+
+def _db_fence_controller(db_state: dict[str, object]) -> ConsoleSessionController:
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    scope = ("session-a", "character", "7")
+    controller._screen = SimpleNamespace(
+        app=SimpleNamespace(push_screen=lambda _modal: None)
+    )
+    controller.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+    controller._manual_reaction_overrides = {}
+    controller._visual_identity_request_context = lambda: (scope, "idle", None)
+    controller._visual_identity_db_accessor = lambda: db_state["value"]
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_picker_open_discards_inventory_from_a_replaced_profile_db(
+    monkeypatch,
+) -> None:
+    first_db = object()
+    second_db = object()
+    first = ReactionOption("custom:alarm", "Alarm A", "image/webp", False)
+    second = ReactionOption("custom:relief", "Relief B", "image/webp", False)
+    barrier = _BlockedOptionsByDb({first_db: (first,), second_db: (second,)})
+    db_state = {"value": first_db}
+    controller = _db_fence_controller(db_state)
+    launched: list[ConsoleReactionPickerModal] = []
+    controller._screen.app.push_screen = launched.append
+    monkeypatch.setattr(session_module, "_visual_identity_options_for_db", barrier)
+
+    stale_open = asyncio.create_task(controller._open_console_reaction_picker())
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    db_state["value"] = second_db
+    barrier.release.set()
+    await stale_open
+
+    assert launched == []
+    await controller._open_console_reaction_picker()
+    assert len(launched) == 1
+    assert launched[0]._options == (second,)
+
+
+@pytest.mark.asyncio
+async def test_reaction_selection_discards_validation_from_a_replaced_profile_db(
+    monkeypatch,
+) -> None:
+    first_db = object()
+    second_db = object()
+    first = ReactionOption("custom:alarm", "Alarm A", "image/webp", False)
+    second = ReactionOption("custom:relief", "Relief B", "image/webp", False)
+    barrier = _BlockedOptionsByDb({first_db: (first,), second_db: (second,)})
+    db_state = {"value": first_db}
+    controller = _db_fence_controller(db_state)
+    monkeypatch.setattr(session_module, "_visual_identity_options_for_db", barrier)
+
+    stale_select = asyncio.create_task(controller._select_console_reaction(first))
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    db_state["value"] = second_db
+    barrier.release.set()
+
+    assert await stale_select is False
+    assert controller._manual_reaction_overrides == {}
+    assert await controller._select_console_reaction(second) is True
+    assert controller._manual_reaction_overrides == {
+        ("session-a", "character", "7"): second.expression_key
+    }
+
+
 @pytest.mark.asyncio
 async def test_preview_inventory_result_is_discarded_after_context_changes(
     monkeypatch,
@@ -898,8 +983,10 @@ async def test_preview_inventory_result_is_discarded_after_context_changes(
         },
     )()
     controller._reaction_preview_generation = 1
-    controller._reaction_preview_sync_lock = asyncio.Lock()
-    controller._visual_identity_db_accessor = object
+    coordinator = ConsoleReactionPreviewCoordinator()
+    controller._reaction_preview_coordinator_accessor = lambda: coordinator
+    db = object()
+    controller._visual_identity_db_accessor = lambda: db
     monkeypatch.setattr(
         session_module,
         "_visual_identity_options_for_db",
@@ -991,17 +1078,24 @@ def _preview_controller(
     monkeypatch,
     options: tuple[ReactionOption, ...],
     barrier: _BlockedPreviewDecode,
+    *,
+    db_state: dict[str, object] | None = None,
+    coordinator_accessor: Callable[[], ConsoleReactionPreviewCoordinator] | None = None,
 ) -> tuple[ConsoleSessionController, _PreviewWorkerScreen]:
     screen = _PreviewWorkerScreen()
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller._screen = screen
     controller._reaction_preview_generation = 0
-    controller._reaction_preview_sync_lock = asyncio.Lock()
     controller._reaction_preview_worker = None
     controller._reaction_preview_target_ref = None
+    coordinator = ConsoleReactionPreviewCoordinator()
+    controller._reaction_preview_coordinator_accessor = coordinator_accessor or (
+        lambda: coordinator
+    )
     scope = ("session-a", "character", "7")
     controller._visual_identity_request_context = lambda: (scope, "idle", None)
-    controller._visual_identity_db_accessor = object
+    stable_db_state = db_state or {"value": object()}
+    controller._visual_identity_db_accessor = lambda: stable_db_state["value"]
     controller._ensure_console_image_view_fn = lambda: (
         None,
         SimpleNamespace(
@@ -1022,6 +1116,111 @@ def _preview_controller(
         ),
     )
     return controller, screen
+
+
+@pytest.mark.asyncio
+async def test_preview_discards_pixels_decoded_from_a_replaced_profile_db(
+    monkeypatch,
+) -> None:
+    option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    barrier = _BlockedPreviewDecode()
+    first_db = object()
+    second_db = object()
+    db_state = {"value": first_db}
+    controller, screen = _preview_controller(
+        monkeypatch, (option,), barrier, db_state=db_state
+    )
+    picker = _PreviewSink(option.expression_key)
+
+    controller._dispatch_console_reaction_preview(option, picker)
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    db_state["value"] = second_db
+    barrier.release.set()
+    await screen.drain()
+
+    assert picker.updates == []
+    controller._dispatch_console_reaction_preview(option, picker)
+    await screen.drain()
+    assert picker.updates == [(option.expression_key, "decoded preview")]
+
+
+@pytest.mark.asyncio
+async def test_new_screen_waits_for_cancelled_old_screen_preview_to_drain(
+    monkeypatch,
+) -> None:
+    option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    barrier = _BlockedPreviewDecode()
+    app = SimpleNamespace()
+    coordinator_accessor = lambda: get_console_reaction_preview_coordinator(app)
+    first, first_screen = _preview_controller(
+        monkeypatch,
+        (option,),
+        barrier,
+        coordinator_accessor=coordinator_accessor,
+    )
+    first_picker = _PreviewSink(option.expression_key)
+
+    first._dispatch_console_reaction_preview(option, first_picker)
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    first_screen.unmount()
+
+    second, second_screen = _preview_controller(
+        monkeypatch,
+        (option,),
+        barrier,
+        coordinator_accessor=coordinator_accessor,
+    )
+    second_picker = _PreviewSink(option.expression_key)
+    second._dispatch_console_reaction_preview(option, second_picker)
+
+    assert not await asyncio.to_thread(barrier.second_started.wait, 0.05)
+    assert barrier.max_active == 1
+    barrier.release.set()
+    await first_screen.drain()
+    await second_screen.drain()
+
+    assert barrier.max_active == 1
+    assert first_picker.updates == []
+    assert second_picker.updates == [(option.expression_key, "decoded preview")]
+
+
+def test_app_preview_coordinator_rebinds_only_after_sequential_loop_drain() -> None:
+    app = SimpleNamespace()
+    coordinator = get_console_reaction_preview_coordinator(app)
+    calls: list[str] = []
+
+    async def exercise_bound_lock(label: str) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def block() -> None:
+            started.set()
+            assert release.wait(timeout=5)
+            calls.append(f"{label} first")
+
+        first = asyncio.create_task(coordinator.run_sync(block))
+        assert await asyncio.to_thread(started.wait, 5)
+        second = asyncio.create_task(
+            coordinator.run_sync(calls.append, f"{label} second")
+        )
+        await asyncio.sleep(0)
+        assert not second.done()
+        release.set()
+        await asyncio.gather(first, second)
+
+    asyncio.run(exercise_bound_lock("first loop"))
+    asyncio.run(exercise_bound_lock("second loop"))
+
+    assert get_console_reaction_preview_coordinator(app) is coordinator
+    assert (
+        get_console_reaction_preview_coordinator(SimpleNamespace()) is not coordinator
+    )
+    assert calls == [
+        "first loop first",
+        "first loop second",
+        "second loop first",
+        "second loop second",
+    ]
 
 
 @pytest.mark.asyncio

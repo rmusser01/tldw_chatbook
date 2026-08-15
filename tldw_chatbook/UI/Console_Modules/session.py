@@ -174,6 +174,7 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
 )
+from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -498,6 +499,9 @@ class ConsoleSessionController:
         session_id_for_workspace_conversation: Callable[[str], str | None],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
         visual_identity_db_accessor: Callable[[], Any | None],
+        reaction_preview_coordinator_accessor: Callable[
+            [], ConsoleReactionPreviewCoordinator
+        ],
         refresh_character_avatar: Callable[..., Any],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
@@ -608,6 +612,9 @@ class ConsoleSessionController:
                 the zero-DOM rule is untouched.
             visual_identity_db_accessor: Current profile-local character DB.
                 Late-bound so tests and profile switches are observed.
+            reaction_preview_coordinator_accessor: Current app's shared reaction
+                preview single-flight coordinator. Late-bound so replacement
+                Console screens cannot escape an older screen's draining work.
             refresh_character_avatar: Late-bound forced avatar refresh after
                 a validated manual reaction change.
         """
@@ -642,6 +649,9 @@ class ConsoleSessionController:
         )
         self._ensure_console_image_view_fn = ensure_console_image_view
         self._visual_identity_db_accessor = visual_identity_db_accessor
+        self._reaction_preview_coordinator_accessor = (
+            reaction_preview_coordinator_accessor
+        )
         self._refresh_character_avatar_fn = refresh_character_avatar
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
@@ -651,7 +661,6 @@ class ConsoleSessionController:
         self._closing_session_requests: set[str] = set()
         self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
         self._reaction_preview_generation = 0
-        self._reaction_preview_sync_lock = asyncio.Lock()
         self._reaction_preview_worker: Any | None = None
         self._reaction_preview_target_ref: (
             weakref.ReferenceType[ConsoleReactionPickerModal] | None
@@ -929,8 +938,17 @@ class ConsoleSessionController:
                 severity="warning",
             )
             return
-        options = await asyncio.to_thread(self._visual_identity_options, scope)
-        if self._visual_identity_request_context() != context:
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            options = ()
+        else:
+            options = await asyncio.to_thread(
+                _visual_identity_options_for_db, db, scope
+            )
+        if (
+            self._visual_identity_db_accessor() is not db
+            or self._visual_identity_request_context() != context
+        ):
             return
         if not options:
             self.app_instance.notify(
@@ -1007,8 +1025,14 @@ class ConsoleSessionController:
         scope = context[0]
         if scope is None:
             return False
-        options = await asyncio.to_thread(self._visual_identity_options, scope)
-        if self._visual_identity_request_context() != context:
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return False
+        options = await asyncio.to_thread(_visual_identity_options_for_db, db, scope)
+        if (
+            self._visual_identity_db_accessor() is not db
+            or self._visual_identity_request_context() != context
+        ):
             return False
         if option.expression_key not in {
             candidate.expression_key for candidate in options
@@ -1032,38 +1056,25 @@ class ConsoleSessionController:
     async def _run_serialized_preview_sync(
         self, function: Callable[..., Any], *args: Any
     ) -> Any:
-        """Run one sync stage and drain its thread before releasing the lock."""
+        """Delegate sync work to the current app's shared single-flight."""
 
-        lock = getattr(self, "_reaction_preview_sync_lock", None)
-        if lock is None:
-            lock = self._reaction_preview_sync_lock = asyncio.Lock()
-        async with lock:
-            underlying = asyncio.create_task(asyncio.to_thread(function, *args))
-            try:
-                return await asyncio.shield(underlying)
-            except asyncio.CancelledError:
-                while not underlying.done():
-                    try:
-                        await asyncio.shield(underlying)
-                    except asyncio.CancelledError:
-                        continue
-                    except Exception:  # noqa: BLE001 -- drain any sync stage failure.
-                        break
-                if underlying.done() and not underlying.cancelled():
-                    underlying.exception()
-                raise
+        return await self._reaction_preview_coordinator_accessor().run_sync(
+            function, *args
+        )
 
     def _preview_request_is_current(
         self,
         *,
         generation: int,
         context: tuple[tuple[str, str, str] | None, str, str | None],
+        db: object,
         expression_key: str,
         picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
     ) -> bool:
         picker = picker_ref()
         return (
             generation == getattr(self, "_reaction_preview_generation", 0)
+            and self._visual_identity_db_accessor() is db
             and self._visual_identity_request_context() == context
             and picker is not None
             and picker.is_preview_current(expression_key)
@@ -1089,15 +1100,18 @@ class ConsoleSessionController:
 
         context = self._visual_identity_request_context()
         scope, state, _manual = context
-        if scope is None or not self._preview_request_is_current(
-            generation=generation,
-            context=context,
-            expression_key=option.expression_key,
-            picker_ref=picker_ref,
-        ):
-            return
         db = self._visual_identity_db_accessor()
-        if db is None:
+        if (
+            scope is None
+            or db is None
+            or not self._preview_request_is_current(
+                generation=generation,
+                context=context,
+                db=db,
+                expression_key=option.expression_key,
+                picker_ref=picker_ref,
+            )
+        ):
             return
 
         options = await self._run_serialized_preview_sync(
@@ -1106,6 +1120,7 @@ class ConsoleSessionController:
         if not self._preview_request_is_current(
             generation=generation,
             context=context,
+            db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
         ):
@@ -1128,6 +1143,7 @@ class ConsoleSessionController:
         if not self._preview_request_is_current(
             generation=generation,
             context=context,
+            db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
         ):
@@ -1151,6 +1167,7 @@ class ConsoleSessionController:
         if not self._preview_request_is_current(
             generation=generation,
             context=context,
+            db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
         ):
@@ -1167,6 +1184,7 @@ class ConsoleSessionController:
         if not self._preview_request_is_current(
             generation=generation,
             context=context,
+            db=db,
             expression_key=option.expression_key,
             picker_ref=picker_ref,
         ):
@@ -1182,6 +1200,7 @@ class ConsoleSessionController:
             not self._preview_request_is_current(
                 generation=generation,
                 context=context,
+                db=db,
                 expression_key=option.expression_key,
                 picker_ref=picker_ref,
             )

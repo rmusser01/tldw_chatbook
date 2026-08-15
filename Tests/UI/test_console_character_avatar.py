@@ -24,6 +24,8 @@ from PIL import Image as PILImage
 from textual.app import ComposeResult
 from textual.widgets import Static
 
+import tldw_chatbook.UI.Console_Modules.session as session_module
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -1174,7 +1176,9 @@ async def test_console_reaction_picker_selects_and_clears_session_override(
     _set_active_console_character(screen, character_id, "Samira")
     option = ReactionOption("custom:relief", "Relief", "image/webp", False)
     monkeypatch.setattr(
-        screen._session, "_visual_identity_options", lambda _scope: (option,)
+        session_module,
+        "_visual_identity_options_for_db",
+        lambda _db, _scope: (option,),
     )
     await screen.recompose()
 
@@ -1255,9 +1259,11 @@ async def test_invalid_reaction_selection_preserves_prior_override_and_reports_e
     assert actor_scope is not None
     screen._session._set_manual_reaction(actor_scope, "custom:relief")
     monkeypatch.setattr(
-        screen._session,
-        "_visual_identity_options",
-        lambda _scope: (ReactionOption("neutral", "Neutral", "image/webp", False),),
+        session_module,
+        "_visual_identity_options_for_db",
+        lambda _db, _scope: (
+            ReactionOption("neutral", "Neutral", "image/webp", False),
+        ),
     )
     notifications: list[tuple[str, str | None]] = []
     monkeypatch.setattr(

@@ -63,6 +63,7 @@ from .prompt_queue import (
     commit_queued_draft_transaction,
 )
 from .prompts import ConsolePromptsController
+from .reaction_preview import get_console_reaction_preview_coordinator
 from .session import ConsoleSessionController
 from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
@@ -407,6 +408,9 @@ def build_console_controllers(
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         visual_identity_db_accessor=(
             lambda: getattr(screen.app_instance, "chachanotes_db", None)
+        ),
+        reaction_preview_coordinator_accessor=(
+            lambda: get_console_reaction_preview_coordinator(screen.app_instance)
         ),
         refresh_character_avatar=(
             lambda **kwargs: (
