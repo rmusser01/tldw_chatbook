@@ -17,6 +17,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.events import Click, Key
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button
 
 
@@ -63,6 +64,11 @@ class ConsoleSelectionMenu(Vertical):
         super().__init__(id="console-selection-menu", classes="console-selection-menu")
         self._anchor = (local_x, local_y)
         self._has_add_to_chat = has_add_to_chat
+        #: Widget holding focus before the menu grabbed it (captured in
+        #: ``on_mount`` BEFORE ``self.focus()``); ``None`` = nothing was
+        #: focused (or the capture raced teardown), so unmount falls back
+        #: to the composer.
+        self._previous_focus: Widget | None = None
 
     def compose(self):
         if self._has_add_to_chat:
@@ -71,6 +77,13 @@ class ConsoleSelectionMenu(Vertical):
     def on_mount(self) -> None:
         x, y = self._anchor
         self.styles.offset = (x, y)
+        # Capture the pre-mount focus holder BEFORE self.focus(): a drag
+        # that started from a focused transcript must return focus there
+        # on dismissal, not be pulled into the composer (final review).
+        try:
+            self._previous_focus = self.screen.focused
+        except Exception:  # noqa: BLE001 - capture is best-effort during odd teardown
+            self._previous_focus = None
         self.focus()
         # The transcript pre-clamps the anchor with a small fixed margin, but
         # only this widget knows its real extent (border + padding + button);
@@ -125,21 +138,34 @@ class ConsoleSelectionMenu(Vertical):
         event.stop()  # clicks inside the menu must not clear anything
 
     def _on_unmount(self) -> None:
-        self._restore_composer_focus()
+        self._restore_previous_focus()
 
-    def _restore_composer_focus(self) -> None:
-        """Return focus to the console composer after the menu goes away.
+    def _restore_previous_focus(self) -> None:
+        """Return focus to the widget that held it before the menu mounted.
 
-        The menu grabs focus on mount; every dismissal path (escape,
-        click-outside, add-to-chat cleanup) funnels through removal, so
-        unmount is the single restore seam. Skips quietly when no composer
-        is mounted (bare transcript/test harnesses) or when the screen is
-        already gone during teardown (``self.screen`` raises NoScreen).
+        ``on_mount`` captured ``screen.focused`` before the menu grabbed
+        focus; every dismissal path (escape, click-outside, add-to-chat
+        cleanup) funnels through removal, so unmount is the single restore
+        seam. The captured widget is restored when it is still mounted on
+        the same screen -- a drag that started from a focused transcript
+        must return focus there on Escape, not be pulled into the
+        composer. Otherwise focus falls back to the console composer.
+        Skips quietly when the fallback finds no composer (bare
+        transcript/test harnesses) or when the screen is already gone
+        during teardown (``self.screen`` raises NoScreen).
         """
         try:
-            matches = self.screen.query("#console-native-composer")
+            screen = self.screen
         except Exception:  # noqa: BLE001 - focus restore is best-effort during teardown
             return
-        for composer in matches:
+        previous = self._previous_focus
+        if previous is not None and previous is not self and previous.is_mounted:
+            try:
+                if previous.screen is screen:
+                    previous.focus()
+                    return
+            except Exception:  # noqa: BLE001, S110 - previous detached during teardown
+                pass
+        for composer in screen.query("#console-native-composer"):
             composer.focus()
             return

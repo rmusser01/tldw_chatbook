@@ -96,10 +96,13 @@ across the stack.
   cells map to source lines by distributing the body-local row evenly
   across the source lines with a nearest-line clamp, because the
   `Markdown` widget does not expose per-source-line layout — the
-  whole-line snap bounds the quoting error of that approximation.
+  whole-line snap bounds the quoting error of that approximation. A
+  streaming append that grows the markdown source re-snaps the stored
+  line range, so a selection touching the last line intentionally GROWS
+  with the stream, while plain rows hold their last stable range.
 
 ## Links
 
 - [Console Text Selection, Selection Menu, Side Chat, and Annotations — Design](../../Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md)
 - [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md) — no new keybindings in phase 1
-- [TASK-16311](../tasks/task-16311%20-%20Console%20text%20selection%20phase%201.md)
+- [TASK-16311](../tasks/task-16311%20-%20Console-text-selection-phase-1.md)

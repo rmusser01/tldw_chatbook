@@ -3362,6 +3362,23 @@ class ConsoleTranscript(VerticalScroll):
 
     def on_mouse_down(self, event: MouseDown) -> None:
         """Arm a text-selection drag on a left press over a selectable row."""
+        # Click-outside dismissal, row-body half (final review): rows stop
+        # their own Clicks (the message-selection toggle), so with a menu
+        # open a press on another row's body never reaches this
+        # transcript's ``on_click`` removal -- the menu used to stay
+        # mounted while the user toggled selections elsewhere. Dismiss
+        # mounted menus here, before arming the new drag, EXCEPT when the
+        # press originates inside a ``ConsoleSelectionMenu``: the
+        # Add-to-chat button's MouseDown precedes its Click, so removing
+        # the menu on the press would unmount the button before its Click
+        # can activate it.
+        press_node: Widget | None = event.control
+        while press_node is not None and not isinstance(
+            press_node, ConsoleSelectionMenu
+        ):
+            press_node = press_node.parent
+        if press_node is None:
+            self._remove_selection_menu()
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).

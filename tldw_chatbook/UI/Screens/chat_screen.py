@@ -19802,6 +19802,13 @@ class ChatScreen(BaseAppScreen):
         if composer is None:
             return
         composer.insert_quote(event.quote)
+        if not event.quote.strip():
+            # The row range was cleared while the menu was open (streaming
+            # replace, reconciliation): ``insert_quote`` is a no-op on
+            # blank input, and notifying "Added selection to composer"
+            # for an insert that never happened would be a lie (final
+            # review).
+            return
         self.notify("Added selection to composer")
 
     def _recover_stuck_console_send_stash(

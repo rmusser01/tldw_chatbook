@@ -22,8 +22,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Widgets.Console.console_selection import TextSelection
+from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSelectionMenu
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
+    ConsoleTranscriptActionButton,
     ConsoleTranscriptMessage,
 )
 
@@ -504,3 +506,69 @@ async def test_mid_drag_row_removal_releases_capture():
 
         assert transcript.selection_manager.state.active is False
         assert pilot.app.mouse_captured is None
+
+
+@pytest.mark.asyncio
+async def test_menu_open_row_body_click_dismisses_menu_and_toggles():
+    """Regression (final review): a row-body click must dismiss an open menu.
+
+    Rows stop their own Clicks (the message-selection toggle), so with a
+    menu open the press on another row's body never reached the
+    transcript's ``on_click`` removal -- the menu stayed mounted while
+    the user toggled selections elsewhere. ``on_mouse_down`` now folds
+    mounted menus on any press that does not originate inside a menu,
+    before arming the new drag; the clicked row's toggle must keep
+    working.
+    """
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, row, start_x=3, end_x=11)
+        assert len(app.query(ConsoleSelectionMenu)) == 1  # menu open at release
+
+        # Click ANOTHER row's body (pilot.click = down+up+click). The
+        # second wrapped line's leftmost cell is clear of the docked menu.
+        other_body = app.query_one("#console-message-m2 .console-transcript-message-body")
+        await pilot.click(other_body, offset=(0, 1))
+        await pilot.pause()
+
+        assert not app.query(ConsoleSelectionMenu)  # folded by the press
+        assert transcript.selected_message_id == "m2"  # toggle still works
+
+
+@pytest.mark.asyncio
+async def test_menu_open_protected_action_press_dismisses_menu_no_drag():
+    """Deferred gap (final review): press a REAL protected in-row control.
+
+    A selected message mounts its action row (protected click class) with
+    live buttons inside the transcript. With a menu open, pressing an
+    action button must fold the menu (press-outside dismissal) and never
+    arm a text-selection drag over the protected row.
+    """
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "m1")
+        # Select m1 so its action row with real buttons mounts.
+        await pilot.click("#console-message-m1")
+        await pilot.pause()
+        await pilot.pause()
+        buttons = [
+            button
+            for button in transcript.query(ConsoleTranscriptActionButton)
+            if button.display
+        ]
+        assert buttons  # the action row really mounted
+        button = next((b for b in buttons if not b.disabled), buttons[0])
+
+        # Drag over m2's body (below m1's action row) to open the menu.
+        row2 = app.query_one("#console-message-m2", ConsoleTranscriptMessage)
+        await _drag_over_body(pilot, row2, start_x=3, end_x=11)
+        assert len(app.query(ConsoleSelectionMenu)) == 1
+
+        await pilot.mouse_down(button, offset=(1, 0))
+        await pilot.pause()
+
+        assert not app.query(ConsoleSelectionMenu)  # folded by the press
+        assert transcript.selection_manager.state.active is False  # no drag armed

@@ -95,6 +95,35 @@ async def test_screen_routes_quote_request_into_composer():
 
 
 @pytest.mark.asyncio
+async def test_empty_quote_request_notifies_nothing():
+    """A cleared row range quotes nothing -- and toasts nothing (final review).
+
+    If the row range was cleared while the menu was open (streaming
+    replace, reconciliation), Add to chat posts an empty quote:
+    ``insert_quote`` already no-ops, and the screen must not claim
+    "Added selection to composer" for an insert that never happened.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        notifications: list[str] = []
+        pilot.app.notify = lambda message, **kwargs: notifications.append(str(message))
+        draft_before = composer.draft_text()
+
+        screen.post_message(ConsoleSelectionQuoteRequested(quote=""))
+        await pilot.pause()
+
+        assert composer.draft_text() == draft_before
+        assert notifications == []
+
+        # Control: a real selection still inserts and still notifies.
+        screen.post_message(ConsoleSelectionQuoteRequested(quote="real text"))
+        await pilot.pause()
+        assert "> real text" in composer.draft_text()
+        assert notifications == ["Added selection to composer"]
+
+
+@pytest.mark.asyncio
 async def test_click_outside_transcript_dismisses_selection_menu():
     """A click on a non-transcript widget (the composer) folds the menu."""
     async with make_console_pilot() as pilot:

@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
@@ -370,3 +371,93 @@ def _markdown_mouse(event_cls, body: Markdown, *, dy: int, dx: int = 2):
         screen_x=screen_x,
         screen_y=screen_y,
     )
+
+
+@pytest.mark.asyncio
+async def test_add_to_chat_press_does_not_remove_menu_prematurely():
+    """Regression (final review): the button's MouseDown must not fold the menu.
+
+    ``ConsoleTranscript.on_mouse_down`` now dismisses mounted menus on any
+    press, but a press that originates INSIDE the menu is skipped: the
+    Add-to-chat button's MouseDown precedes its Click, so removing the
+    menu on the press would unmount the button before its Click can
+    activate it.
+    """
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        assert app.query_one(ConsoleSelectionMenu)
+
+        # The press itself must leave the menu mounted (the button is
+        # still alive to receive its Click).
+        await pilot.mouse_down("#console-selection-add-to-chat")
+        await pilot.pause()
+        assert app.query_one(ConsoleSelectionMenu)
+        await pilot.mouse_up("#console-selection-add-to-chat")
+        await pilot.pause()
+
+        # The full click lands: the quote still reaches the composer seam.
+        await pilot.click("#console-selection-add-to-chat")
+        await pilot.pause()
+        assert len(app.quote_requests) == 1
+        assert app.quote_requests[0].quote == "hello"
+
+
+class _FocusTranscriptMenuApp(App[None]):
+    """Transcript + composer so focus restore has both destinations."""
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="hello selectable world", id="m1"
+                )
+            ]
+        )
+        yield transcript
+        yield ConsoleComposerBar(id="console-native-composer")
+
+
+@pytest.mark.asyncio
+async def test_escape_returns_focus_to_previously_focused_transcript():
+    """Regression (final review): dismissal must not steal focus into the composer.
+
+    The menu captures ``screen.focused`` on mount (before its own
+    ``focus()``); when the transcript held focus before the drag,
+    Escape-dismiss must return it there instead of pulling it into the
+    composer.
+    """
+    app = _FocusTranscriptMenuApp()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.focus()
+        await pilot.pause()
+        await _finish_drag_selection(pilot)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert app.focused is menu  # the menu grabbed focus on mount
+        assert menu._previous_focus is transcript  # captured before the grab
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not app.query(ConsoleSelectionMenu)
+        assert app.focused is transcript  # NOT the composer
+
+
+@pytest.mark.asyncio
+async def test_escape_with_composer_focus_still_restores_composer():
+    """The composer-focused case keeps the composer-focused outcome."""
+    app = _FocusTranscriptMenuApp()
+    async with app.run_test() as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause()
+        await _finish_drag_selection(pilot)
+        assert app.query_one(ConsoleSelectionMenu)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not app.query(ConsoleSelectionMenu)
+        assert app.focused is composer
