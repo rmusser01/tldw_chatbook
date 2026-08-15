@@ -269,12 +269,15 @@ def test_selected_runtime_load_verifies_size_and_hash(
         load_visual_identity_asset(manifest.assets[0], source_kind="builtin")
 
 
-def test_unsupported_source_kind_fails_closed_without_path_details() -> None:
+@pytest.mark.parametrize("source_kind", ["remote", "profile"])
+def test_unsupported_source_kind_fails_closed_without_path_details(
+    source_kind: str,
+) -> None:
     image_bytes = _image_bytes()
     manifest = _manifest_for_bytes(image_bytes)
 
     with pytest.raises(ValueError) as error:
-        load_visual_identity_asset(manifest.assets[0], source_kind="remote")
+        load_visual_identity_asset(manifest.assets[0], source_kind=source_kind)
 
     assert str(error.value) == "visual_identity_source_kind_unsupported"
     assert manifest.assets[0].storage_relpath not in str(error.value)
@@ -288,6 +291,22 @@ def test_complete_validation_checks_webp_format(
     manifest = _manifest_for_bytes(png_bytes)
     package_root = tmp_path / "package"
     _write_builtin_asset(package_root, manifest.assets[0].storage_relpath, png_bytes)
+    monkeypatch.setattr(
+        visual_identity.resources, "files", lambda package: package_root
+    )
+
+    with pytest.raises(ValueError, match="^visual_identity_asset_format_mismatch$"):
+        validate_visual_identity_assets(manifest, source_kind="builtin")
+
+
+def test_complete_validation_rejects_unsupported_but_decodable_mime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_bytes = _image_bytes()
+    manifest = _manifest_for_bytes(image_bytes)
+    object.__setattr__(manifest.assets[0], "content_type", "image/x-webp")
+    package_root = tmp_path / "package"
+    _write_builtin_asset(package_root, manifest.assets[0].storage_relpath, image_bytes)
     monkeypatch.setattr(
         visual_identity.resources, "files", lambda package: package_root
     )
@@ -342,7 +361,7 @@ def test_complete_validation_returns_every_verified_candidate(
 
     loaded = validate_visual_identity_assets(
         manifest,
-        source_kind="profile",
+        source_kind="manual",
         user_data_dir=user_data_dir,
         directory_bytes=len(image_bytes),
     )

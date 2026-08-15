@@ -153,21 +153,39 @@ SAMIRA_REACTION_LABELS = (
     "error",
 )
 
-SAMIRA_EXPRESSION_KEYS = {label: f"custom:{label}" for label in SAMIRA_REACTION_LABELS}
-SAMIRA_EXPRESSION_KEYS.update(
-    {
-        "anger": "angry",
-        "confusion": "confused",
-        "excitement": "excited",
-        "joy": "happy",
-        "neutral": "neutral",
-        "sadness": "sad",
-        "surprise": "surprised",
-        "thinking": "thinking",
-        "speaking": "custom:speaking",
-        "error": "custom:error",
-    }
-)
+SAMIRA_EXPRESSION_KEYS = {
+    "admiration": "custom:admiration",
+    "amusement": "custom:amusement",
+    "anger": "angry",
+    "annoyance": "custom:annoyance",
+    "approval": "custom:approval",
+    "caring": "custom:caring",
+    "confusion": "confused",
+    "curiosity": "custom:curiosity",
+    "desire": "custom:desire",
+    "disappointment": "custom:disappointment",
+    "disapproval": "custom:disapproval",
+    "disgust": "custom:disgust",
+    "embarrassment": "custom:embarrassment",
+    "excitement": "excited",
+    "fear": "custom:fear",
+    "gratitude": "custom:gratitude",
+    "grief": "custom:grief",
+    "joy": "happy",
+    "love": "custom:love",
+    "nervousness": "custom:nervousness",
+    "neutral": "neutral",
+    "optimism": "custom:optimism",
+    "pride": "custom:pride",
+    "realization": "custom:realization",
+    "relief": "custom:relief",
+    "remorse": "custom:remorse",
+    "sadness": "sad",
+    "surprise": "surprised",
+    "thinking": "thinking",
+    "speaking": "custom:speaking",
+    "error": "custom:error",
+}
 
 SAMIRA_PACK_ID = "tldw.builtin.samira.reactions"
 SAMIRA_MANIFEST_SCHEMA_ID = "tldw.visual_identity_pack/v1"
@@ -187,7 +205,7 @@ _EXPECTED_IMAGE_FORMATS = {
     "image/png": "PNG",
     "image/webp": "WEBP",
 }
-_USER_SOURCE_KINDS = frozenset({"manual", "profile"})
+_USER_SOURCE_KINDS = frozenset({"manual"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,8 +391,8 @@ def load_visual_identity_asset(
 
     Args:
         asset: Validated asset metadata.
-        source_kind: Owning pack source, either ``builtin`` or a profile-owned
-            ``manual``/``profile`` source.
+        source_kind: Owning pack source, either ``builtin`` or profile-owned
+            ``manual``.
         user_data_dir: Injectable profile data root for user-owned sources.
 
     Returns:
@@ -533,9 +551,7 @@ def _validate_manifest_asset(data: Any) -> VisualIdentityManifestAsset:
     storage_relpath = _nonempty_string(storage_value)
     _safe_relative_parts(storage_relpath)
     content_type = _nonempty_string(data.get("content_type"))
-    if not content_type.startswith("image/") or any(
-        char.isspace() for char in content_type
-    ):
+    if content_type not in _EXPECTED_IMAGE_FORMATS:
         raise ValueError
     byte_count = _positive_int(data.get("bytes"))
     width = _positive_int(data.get("width"))
@@ -650,8 +666,11 @@ def _validate_image_bytes(loaded: LoadedVisualIdentityAsset) -> None:
     except (OSError, UnidentifiedImageError, ValueError):
         raise ValueError("visual_identity_asset_decode_invalid") from None
 
-    expected_format = _EXPECTED_IMAGE_FORMATS.get(asset.content_type)
-    if expected_format is not None and image_format != expected_format:
+    try:
+        expected_format = _EXPECTED_IMAGE_FORMATS[asset.content_type]
+    except KeyError:
+        raise ValueError("visual_identity_asset_format_mismatch") from None
+    if image_format != expected_format:
         raise ValueError("visual_identity_asset_format_mismatch")
     if image_size != (asset.width, asset.height):
         raise ValueError("visual_identity_asset_dimensions_mismatch")

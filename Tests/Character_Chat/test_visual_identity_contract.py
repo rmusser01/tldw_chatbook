@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import FrozenInstanceError
+import inspect
 import math
 
 import pytest
@@ -291,6 +293,22 @@ def test_samira_inventory_mapping_and_contract_constants_are_exact() -> None:
     assert SAMIRA_SERVER_COMMIT == "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 
 
+def test_samira_mapping_is_one_explicit_31_entry_literal() -> None:
+    module = ast.parse(inspect.getsource(visual_identity))
+    assignment = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "SAMIRA_EXPRESSION_KEYS"
+            for target in node.targets
+        )
+    )
+
+    assert isinstance(assignment.value, ast.Dict)
+    assert len(assignment.value.keys) == len(EXPECTED_SAMIRA_KEYS) == 31
+
+
 def test_content_digest_uses_the_frozen_literal_payload() -> None:
     data = _manifest_data(
         [
@@ -393,6 +411,10 @@ def test_general_manifest_accepts_a_validated_user_subset() -> None:
         ),
         (
             lambda data: data["assets"][0].update(content_type="text/plain"),
+            "visual_identity_manifest_invalid",
+        ),
+        (
+            lambda data: data["assets"][0].update(content_type="image/x-webp"),
             "visual_identity_manifest_invalid",
         ),
         (
