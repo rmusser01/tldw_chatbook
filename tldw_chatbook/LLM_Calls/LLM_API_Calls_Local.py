@@ -18,6 +18,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatBadRequestError,
     ChatConfigurationError,
 )
+from tldw_chatbook.Chat.console_provider_support import (
+    build_local_thinking_payload_fields,
+)
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -126,6 +129,9 @@ def _chat_with_openai_compatible_local_server(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     user_identifier: Optional[str] = None,  # maps to 'user' in OpenAI spec
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
+    thinking_wire_key: Optional[str] = None,
     provider_name: str = "Local OpenAI-Compatible Server",
     timeout: int = 120,
     api_retries: int = 1,
@@ -218,6 +224,18 @@ def _chat_with_openai_compatible_local_server(
             )
     if user_identifier is not None:
         payload["user"] = user_identifier
+
+    # ADR-066: merge the provider-specific thinking-control wire fields
+    # (chat_template_kwargs / reasoning_budget / reasoning_effort) selected
+    # by the caller's execution key.
+    if thinking_wire_key and (
+        reasoning_effort is not None or thinking_budget_tokens is not None
+    ):
+        payload.update(
+            build_local_thinking_payload_fields(
+                thinking_wire_key, reasoning_effort, thinking_budget_tokens
+            )
+        )
 
     # Construct full API URL for chat completions
     base_url = api_base_url.rstrip("/")
@@ -525,6 +543,8 @@ def chat_with_local_llm(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -621,6 +641,9 @@ def chat_with_local_llm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="local-llm",
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
         timeout=timeout,
@@ -663,6 +686,8 @@ def chat_with_llama(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -791,6 +816,9 @@ def chat_with_llama(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         # tools, tool_choice, user_identifier could be added if llama.cpp supports them via OpenAI compat layer
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "llama_cpp",
         provider_name="Llama.cpp",
         timeout=timeout,
         api_retries=api_retries,
@@ -1358,6 +1386,8 @@ def chat_with_vllm(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
@@ -1456,6 +1486,9 @@ def chat_with_vllm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "vllm",
         provider_name="vLLM",
         timeout=timeout,
         api_retries=api_retries,
@@ -1812,6 +1845,8 @@ def chat_with_custom_openai(
     frequency_penalty: Optional[float] = None,
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     api_base_url: Optional[str] = None,
     *,
     api_key_resolved: bool | None = None,
@@ -1935,6 +1970,9 @@ def chat_with_custom_openai(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="custom-openai-api",
         # `cfg` is the settings dict — calling .capitalize() on it raised
         # AttributeError on EVERY call, making this provider unusable
         # (pre-existing; surfaced by the task-243 native-tools live gate).
@@ -1969,6 +2007,8 @@ def chat_with_custom_openai_2(
     top_logprobs: Optional[int] = None,
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     api_base_url: Optional[str] = None,
     *,
     api_key_resolved: bool | None = None,
@@ -2090,6 +2130,9 @@ def chat_with_custom_openai_2(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="custom-openai-api-2",
         provider_name=cfg_section.capitalize(),
         timeout=timeout,
         api_retries=api_retries,
@@ -2135,6 +2178,8 @@ def chat_with_mlx_lm(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     **kwargs: Any,  # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
@@ -2244,6 +2289,9 @@ def chat_with_mlx_lm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "local_mlx_lm",
         provider_name=provider_name,
         timeout=timeout,
         api_retries=api_retries,

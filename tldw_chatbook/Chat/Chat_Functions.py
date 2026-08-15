@@ -410,6 +410,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "koboldcpp": {
         "api_key": "api_key",
@@ -481,6 +483,8 @@ PROVIDER_PARAM_MAP = {
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local-llm": {
         "messages_payload": "input_data",
@@ -494,6 +498,8 @@ PROVIDER_PARAM_MAP = {
         "max_tokens": "max_tokens",
         "seed": "seed",
         "stop": "stop",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "ollama": {  # api_url consideration
         "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
@@ -556,6 +562,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "custom-openai-api-2": {
         "api_key": "api_key",
@@ -578,6 +586,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "mlx_lm": {
         "api_key": "api_key",  # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
@@ -626,6 +636,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_llamafile": {
         "api_key": "api_key",
@@ -645,6 +657,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_ollama": {
         "api_key": "api_key",
@@ -682,6 +696,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_mlx_lm": {
         "api_key": "api_key",
@@ -706,6 +722,8 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "tools": "tools",
         "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "moonshot": {
         "api_key": "api_key",
