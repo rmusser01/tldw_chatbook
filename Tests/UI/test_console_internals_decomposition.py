@@ -4776,3 +4776,83 @@ def test_console_f1_help_documents_the_macos_alt_caveat():
     assert "Option is not Meta" in rendered
     assert "Ctrl+P" in rendered
     assert "Ctrl+K" in rendered
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_section_headers_all_visible_without_scrolling():
+    """task-15110 (owner ruling: cap sections, scroll inside).
+
+    With every section expanded, the rail's virtual height used to run ~3x
+    its viewport and Conversations started ~20 rows below the fold with no
+    scroll cue -- and after the OutOfBounds test repairs scrolled first,
+    NOTHING failed if the rail grew further. This is that missing
+    reachability guard: every default-open section HEADER must sit inside
+    the rail body's visible viewport with no scrolling, at the size the
+    defect was measured at (160x48), and each expanded body must respect
+    its height budget so the section after it stays on-screen.
+
+    Runs on the REAL app CSS stack (screen css + bundle), not the
+    bundle-less ConsoleHarness: the rail's vertical geometry -- header
+    min-heights, the workspace grid's height -- lives in the bundle, and a
+    geometry contract measured without it is not measured (the
+    task-14822/15790 lesson).
+    """
+    from pathlib import Path as _Path
+
+    from tldw_chatbook.css import build_css as _build_css
+
+    css_dir = _Path(_build_css.__file__).parent
+    screen_self, screen_scoped = _build_css.screen_css_paths(css_dir)
+
+    class _BundledConsoleHarness(ConsoleHarness):
+        CSS_PATH = [
+            str(screen_self),
+            str(css_dir / "tldw_cli_modular.tcss"),
+            str(screen_scoped),
+        ]
+
+    app = _build_test_app()
+    host = _BundledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        body = console.query_one("#console-left-rail-body")
+
+        default_open = ("session", "workspace", "conversations", "model")
+        previous: tuple[tuple[int, int], ...] | None = None
+        for _ in range(40):
+            current = tuple(
+                (header.region.y, header.region.height)
+                for name in default_open
+                for header in (
+                    console.query_one(f"#console-rail-section-header-{name}"),
+                )
+            )
+            if current == previous and all(h > 0 for _y, h in current):
+                break
+            previous = current
+            await pilot.pause()
+
+        assert body.scroll_offset.y == 0
+        viewport_bottom = body.region.y + body.region.height
+        for name in default_open:
+            header = console.query_one(f"#console-rail-section-header-{name}")
+            assert header.region.height >= 1, f"{name} header not rendered"
+            assert body.region.y <= header.region.y < viewport_bottom, (
+                f"the {name} section header sits outside the rail viewport "
+                f"(header y={header.region.y}, viewport "
+                f"[{body.region.y}, {viewport_bottom})) -- the rail has "
+                "outgrown its budget again (task-15110)"
+            )
+
+        # The budget itself: no expanded section body may exceed its share
+        # (20% + 1 row of tolerance for rounding) of the rail viewport.
+        budget = body.region.height // 5 + 1
+        for section_body in console.query(".console-rail-section-body"):
+            if not section_body.display:
+                continue
+            assert section_body.region.height <= budget, (
+                f"{section_body.id} height {section_body.region.height} "
+                f"exceeds the per-section budget {budget}"
+            )
