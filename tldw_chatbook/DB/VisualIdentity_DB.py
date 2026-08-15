@@ -38,6 +38,9 @@ class VisualIdentityRepository:
 
         Returns:
             The first matching pack row as a plain dictionary, or ``None``.
+
+        Raises:
+            ValueError: If selected built-in metadata or its active version is invalid.
         """
         rows = self.db.execute_query(
             """
@@ -54,9 +57,12 @@ class VisualIdentityRepository:
             pack = dict(row)
             try:
                 context = json.loads(pack["source_context_json"])
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(context, dict) and context.get("source_id") == source_id:
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("visual_identity_source_context_invalid") from exc
+            if not isinstance(context, dict):
+                raise ValueError("visual_identity_source_context_invalid")
+            if context.get("source_id") == source_id:
+                self._validate_pack_active_version(pack)
                 return pack
         return None
 
@@ -348,7 +354,7 @@ class VisualIdentityRepository:
             Updated pack row.
 
         Raises:
-            ValueError: If no non-deleted local pack matches.
+            ValueError: If no eligible pack matches or its active version is invalid.
         """
         return self._set_pack_status(pack_id, "archived", include_deleted=False)
 
@@ -362,7 +368,7 @@ class VisualIdentityRepository:
             Updated pack tombstone.
 
         Raises:
-            ValueError: If no local pack matches.
+            ValueError: If no local pack matches or its active version is invalid.
         """
         return self._set_pack_status(pack_id, "deleted", include_deleted=True)
 
@@ -379,12 +385,12 @@ class VisualIdentityRepository:
             Updated binding tombstone.
 
         Raises:
-            ValueError: If the actor has no active local binding.
+            ValueError: If the active binding is absent or references another pack.
         """
         with self.db.transaction():
             row = self.db.execute_query(
                 """
-                SELECT id
+                SELECT *
                   FROM visual_identity_bindings
                  WHERE owner_user_id = ?
                    AND actor_kind = ?
@@ -395,7 +401,9 @@ class VisualIdentityRepository:
             ).fetchone()
             if row is None:
                 raise ValueError("visual_identity_binding_not_found")
-            binding_id = int(row["id"])
+            binding = dict(row)
+            self._validate_binding_active_version(binding)
+            binding_id = int(binding["id"])
             self.db.execute_query(
                 """
                 UPDATE visual_identity_bindings
@@ -523,7 +531,7 @@ class VisualIdentityRepository:
     def _validate_pack_active_version(self, pack: Mapping[str, Any]) -> None:
         version_id = pack.get("active_version_id")
         if version_id is None:
-            return
+            raise ValueError("visual_identity_pack_active_version_mismatch")
         version_pack_id = self._version_pack_id(int(version_id))
         if version_pack_id != int(pack["id"]):
             raise ValueError("visual_identity_pack_active_version_mismatch")
@@ -571,26 +579,29 @@ class VisualIdentityRepository:
         self, pack_id: int, status: str, *, include_deleted: bool
     ) -> dict[str, Any]:
         with self.db.transaction():
-            cursor = self.db.execute_query(
+            row = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE id = ?
+                   AND owner_user_id = ?
+                   AND (? = 1 OR status != ?)
+                """,
+                (pack_id, LOCAL_OWNER_ID, int(include_deleted), "deleted"),
+            ).fetchone()
+            if row is None:
+                raise ValueError("visual_identity_pack_not_found")
+            self._validate_pack_active_version(dict(row))
+            self.db.execute_query(
                 """
                 UPDATE visual_identity_packs
                    SET status = ?,
                        updated_at = CURRENT_TIMESTAMP,
                        version = version + 1
-                 WHERE id = ?
-                   AND owner_user_id = ?
-                   AND (? = 1 OR status != ?)
+                 WHERE id = ? AND owner_user_id = ?
                 """,
-                (
-                    status,
-                    pack_id,
-                    LOCAL_OWNER_ID,
-                    int(include_deleted),
-                    "deleted",
-                ),
+                (status, pack_id, LOCAL_OWNER_ID),
             )
-            if cursor.rowcount == 0:
-                raise ValueError("visual_identity_pack_not_found")
         row = self.db.execute_query(
             """
             SELECT *

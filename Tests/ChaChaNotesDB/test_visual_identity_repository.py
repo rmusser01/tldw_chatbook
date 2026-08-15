@@ -151,6 +151,73 @@ def test_find_pack_by_stable_source_id_respects_deleted_tombstones(
     assert tombstone["status"] == "deleted"
 
 
+@pytest.mark.parametrize("source_context_json", ["{bad json", "[]"])
+def test_find_pack_rejects_invalid_source_context(
+    repository: VisualIdentityRepository, source_context_json: str
+) -> None:
+    activated = _activate(repository, source_kind="builtin")
+    with repository.db.transaction():
+        repository.db.execute_query(
+            "UPDATE visual_identity_packs SET source_context_json = ? WHERE id = ?",
+            (source_context_json, activated["pack"]["id"]),
+        )
+
+    with pytest.raises(ValueError, match="visual_identity_source_context_invalid"):
+        repository.find_pack_by_source_id("fixture.pack")
+
+
+@pytest.mark.parametrize("corruption", ["null", "missing", "non_owned", "cross_pack"])
+def test_find_pack_rejects_matching_pack_with_invalid_active_version(
+    repository: VisualIdentityRepository, corruption: str
+) -> None:
+    activated = _activate(repository, source_kind="builtin")
+    pack_id = activated["pack"]["id"]
+    bad_version_id = None
+    if corruption == "cross_pack":
+        _, bad_version_id = _seed_pack_version(repository.db, title="Other")
+    elif corruption == "missing":
+        bad_version_id = 999_999
+    elif corruption == "non_owned":
+        with repository.db.transaction():
+            other_pack_id = int(
+                repository.db.execute_query(
+                    """
+                    INSERT INTO visual_identity_packs(owner_user_id, title)
+                    VALUES (?, ?)
+                    """,
+                    (99, "Non-owned"),
+                ).lastrowid
+            )
+            bad_version_id = int(
+                repository.db.execute_query(
+                    """
+                    INSERT INTO visual_identity_pack_versions(
+                        pack_id, owner_user_id, version_number, manifest_json
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (other_pack_id, 99, 1, "{}"),
+                ).lastrowid
+            )
+
+    connection = repository.db.get_connection()
+    if corruption == "missing":
+        connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with repository.db.transaction():
+            repository.db.execute_query(
+                "UPDATE visual_identity_packs SET active_version_id = ? WHERE id = ?",
+                (bad_version_id, pack_id),
+            )
+    finally:
+        if corruption == "missing":
+            connection.execute("PRAGMA foreign_keys = ON")
+
+    with pytest.raises(
+        ValueError, match="visual_identity_pack_active_version_mismatch"
+    ):
+        repository.find_pack_by_source_id("fixture.pack")
+
+
 def test_get_active_actor_pack_returns_pack_version_and_sorted_live_assets(
     repository: VisualIdentityRepository,
 ) -> None:
@@ -184,6 +251,22 @@ def test_get_active_actor_pack_returns_pack_version_and_sorted_live_assets(
         "zeta",
     ]
     assert active["assets"] == repository.list_version_assets(active["version"]["id"])
+
+
+def test_get_active_actor_pack_rejects_null_pack_active_version(
+    repository: VisualIdentityRepository,
+) -> None:
+    activated = _activate(repository)
+    with repository.db.transaction():
+        repository.db.execute_query(
+            "UPDATE visual_identity_packs SET active_version_id = ? WHERE id = ?",
+            (None, activated["pack"]["id"]),
+        )
+
+    with pytest.raises(
+        ValueError, match="visual_identity_pack_active_version_mismatch"
+    ):
+        repository.get_active_actor_pack("character", "42")
 
 
 def test_activate_pack_creates_the_complete_active_graph_atomically(
@@ -260,6 +343,39 @@ def test_publish_version_keeps_versions_immutable_and_activates_the_next_number(
     assert version_numbers == [1, 2]
 
 
+def test_publish_rejects_null_pack_active_version_without_writing(
+    repository: VisualIdentityRepository,
+) -> None:
+    activated = _activate(repository)
+    pack_id = activated["pack"]["id"]
+    with repository.db.transaction():
+        repository.db.execute_query(
+            "UPDATE visual_identity_packs SET active_version_id = ? WHERE id = ?",
+            (None, pack_id),
+        )
+    before = _counts(repository.db)
+
+    with pytest.raises(
+        ValueError, match="visual_identity_pack_active_version_mismatch"
+    ):
+        repository.publish_version(
+            pack_id,
+            manifest={"revision": 2},
+            assets=[_asset("neutral")],
+            actor_kind="character",
+            actor_id="42",
+        )
+
+    assert _counts(repository.db) == before
+    assert (
+        repository.db.execute_query(
+            "SELECT active_version_id FROM visual_identity_packs WHERE id = ?",
+            (pack_id,),
+        ).fetchone()[0]
+        is None
+    )
+
+
 def test_archive_delete_and_binding_tombstone_never_hard_delete_rows(
     repository: VisualIdentityRepository,
 ) -> None:
@@ -302,6 +418,42 @@ def test_archive_delete_and_binding_tombstone_never_hard_delete_rows(
         ).fetchone()
         is not None
     )
+
+
+@pytest.mark.parametrize("operation", ["archive_pack", "mark_pack_deleted"])
+@pytest.mark.parametrize("corruption", ["null", "cross_pack"])
+def test_pack_status_changes_reject_invalid_active_version_without_writing(
+    repository: VisualIdentityRepository, operation: str, corruption: str
+) -> None:
+    activated = _activate(repository)
+    pack_id = activated["pack"]["id"]
+    bad_version_id = None
+    if corruption == "cross_pack":
+        _, bad_version_id = _seed_pack_version(repository.db, title="Other")
+    with repository.db.transaction():
+        repository.db.execute_query(
+            "UPDATE visual_identity_packs SET active_version_id = ? WHERE id = ?",
+            (bad_version_id, pack_id),
+        )
+    before = dict(
+        repository.db.execute_query(
+            "SELECT status, version FROM visual_identity_packs WHERE id = ?",
+            (pack_id,),
+        ).fetchone()
+    )
+
+    with pytest.raises(
+        ValueError, match="visual_identity_pack_active_version_mismatch"
+    ):
+        getattr(repository, operation)(pack_id)
+
+    after = dict(
+        repository.db.execute_query(
+            "SELECT status, version FROM visual_identity_packs WHERE id = ?",
+            (pack_id,),
+        ).fetchone()
+    )
+    assert after == before
 
 
 def test_candidate_asset_pack_mismatch_rejects_and_rolls_back_activation(
@@ -424,6 +576,42 @@ def test_active_binding_rejects_cross_pack_version_and_publish_writes_nothing(
         ).fetchone()[0]
         == first_version_id
     )
+
+
+def test_mark_binding_deleted_rejects_cross_pack_version_without_writing(
+    repository: VisualIdentityRepository,
+) -> None:
+    activated = _activate(repository)
+    binding_id = activated["binding"]["id"]
+    _, bad_version_id = _seed_pack_version(repository.db, title="Other")
+    with repository.db.transaction():
+        repository.db.execute_query(
+            """
+            UPDATE visual_identity_bindings
+               SET active_version_id = ?
+             WHERE id = ?
+            """,
+            (bad_version_id, binding_id),
+        )
+    before = dict(
+        repository.db.execute_query(
+            "SELECT status, version FROM visual_identity_bindings WHERE id = ?",
+            (binding_id,),
+        ).fetchone()
+    )
+
+    with pytest.raises(
+        ValueError, match="visual_identity_binding_active_version_mismatch"
+    ):
+        repository.mark_binding_deleted("character", "42")
+
+    after = dict(
+        repository.db.execute_query(
+            "SELECT status, version FROM visual_identity_bindings WHERE id = ?",
+            (binding_id,),
+        ).fetchone()
+    )
+    assert after == before
 
 
 def test_repository_does_not_bootstrap_its_own_schema(tmp_path: Path) -> None:
