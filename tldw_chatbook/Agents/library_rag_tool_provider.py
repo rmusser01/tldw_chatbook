@@ -4,10 +4,12 @@ When the Console's direct-Library-tools setting is off, this provider exposes
 exactly one agent tool -- ``search_library_rag`` -- as the default Library
 retrieval method. It is a bounded adapter over the app-owned
 ``library_rag_search_service``: excerpts and rows are capped so the final JSON
-stays under the shared 32 KiB ceiling, raw backing identities and provenance
+stays under the shared 32 KiB ceiling, citations and the provenance mapping
 never leave the adapter, and unavailable/setup conditions map to
 ``index_unavailable`` -- the provider never falls back to direct lexical
-reads.
+reads. The one identity a row may carry is the ``source_type``/``source_id``
+(+ ``chunk_id``) pair ``expand_document`` requires, emitted only for rows that
+tool can actually fetch (TASK-16174); see ``_project_row``.
 
 Synchronous to satisfy the ``ToolProvider`` protocol; it runs on the agent
 worker thread, where bridging the async retrieval service with
@@ -17,6 +19,7 @@ worker thread, where bridging the async retrieval service with
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -26,7 +29,10 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Library.library_expand_policy import expand_hint
+from tldw_chatbook.Library.library_expand_policy import (
+    EXPANDABLE_SOURCE_TYPES,
+    expand_hint,
+)
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -92,6 +98,20 @@ _RAG_TOOL_SCHEMA: dict[str, Any] = {
 }
 
 _ARGUMENT_KEYS = frozenset(_RAG_TOOL_SCHEMA["properties"])
+
+
+def _expandable_source_type(provenance: Any) -> str:
+    """The row's normalized ``provenance.source_type``, or ``""`` when it is
+    not a seam ``expand_document`` supports.
+
+    Reads and normalizes the same key the same way ``library_expand_policy``
+    does, so the identity this adapter declares can never name a different
+    seam from the hint declared beside it.
+    """
+    if not isinstance(provenance, Mapping):
+        return ""
+    source_type = str(provenance.get("source_type") or "").strip().lower()
+    return source_type if source_type in EXPANDABLE_SOURCE_TYPES else ""
 
 
 def _error_result(error: LibraryToolError) -> ToolResult:
@@ -279,18 +299,33 @@ class LibraryRagToolProvider:
 
     @staticmethod
     def _project_row(row: Any) -> dict[str, Any]:
-        """Project one evidence row to agent-safe fields (never raw source
-        identities, chunk ids, citations, or provenance).
+        """Project one evidence row to agent-safe fields (never citations, and
+        never the provenance mapping itself).
 
-        The one provenance-DERIVED field is ``expand_hint`` (TASK-16174): a
-        verdict on whether following this row into its document would add
-        anything, computed by the pure
-        ``Library.library_expand_policy.expand_hint`` helper. It carries only
-        ``expandable``/``reason`` -- no identity, no provenance value -- and
-        is omitted entirely for rows nothing can expand, so the payload's
-        no-raw-identity contract is unchanged. Without it, 54% of the rows an
-        agent is fed are label-only snippets it has no way to recognize as
-        labels.
+        Two provenance-DERIVED additions exist, both TASK-16174 and both
+        emitted under exactly one precondition -- the row is something
+        ``expand_document`` can actually fetch:
+
+        - ``expand_hint``: the verdict on whether following this row into its
+          document would add anything, from the pure
+          ``Library.library_expand_policy.expand_hint`` helper
+          (``expandable``/``reason`` only). Without it, 54% of the rows an
+          agent is fed are label-only snippets it has no way to recognize as
+          labels.
+        - ``source_type``/``source_id`` (+ ``chunk_id`` when non-empty): the
+          identity ``expand_document`` REQUIRES. Task 3 shipped the hint
+          alone, which left the loop closable only by inference -- a
+          label-only row's ``result_id`` merely HAPPENS to equal its
+          ``source_id``, and the seam was readable only from label prose. A
+          policy the agent can act on only by guessing measures its guessing.
+
+        The precondition is the hint's own (``expand_hint`` returns ``None``
+        for an absent/unsupported seam or an empty ``source_id``), so identity
+        and verdict cannot drift apart: a row with nothing to expand still
+        carries neither, keeping task-1337's projection for every such row.
+        Identity is emitted VERBATIM and is deliberately absent from the
+        sealing loop's shrink order -- a halved id is a wrong id, not a
+        smaller one.
         """
         score = getattr(row, "score", None)
         snippet = str(getattr(row, "snippet", "") or "")
@@ -303,20 +338,29 @@ class LibraryRagToolProvider:
                 :_MAX_RUNTIME_BACKEND_CHARS
             ],
         }
+        source_id = str(getattr(row, "source_id", "") or "").strip()
+        chunk_id = str(getattr(row, "chunk_id", "") or "").strip()
+        provenance = getattr(row, "provenance", None)
         # Computed from the UNPROJECTED snippet against this adapter's own
         # cap, so a snippet the projection above cuts is reported as
         # truncated rather than read back as complete text.
         hint = expand_hint(
             {
-                "source_id": getattr(row, "source_id", ""),
-                "chunk_id": getattr(row, "chunk_id", ""),
+                "source_id": source_id,
+                "chunk_id": chunk_id,
                 "snippet": snippet,
-                "provenance": getattr(row, "provenance", None),
+                "provenance": provenance,
             },
             snippet_cap=_MAX_SNIPPET_CHARS,
         )
         if hint is not None:
             projected["expand_hint"] = hint
+            # The hint's non-None precondition IS the tool's precondition, so
+            # this identity is always one `expand_document` accepts.
+            projected["source_type"] = _expandable_source_type(provenance)
+            projected["source_id"] = source_id
+            if chunk_id:
+                projected["chunk_id"] = chunk_id
         return projected
 
 
