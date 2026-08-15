@@ -6156,6 +6156,8 @@ class PersonasScreen(BaseAppScreen):
             snapshot
         )
         if not read_ok:
+            if not self._character_visual_identity_load_is_current(snapshot):
+                return
             await editor.discard_visual_identity_pack(mounted)
             await self._show_visual_identity_unavailable(snapshot)
             return

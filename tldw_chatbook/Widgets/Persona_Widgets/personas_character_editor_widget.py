@@ -892,8 +892,9 @@ class PersonasCharacterEditorWidget(Container):
         if content is None:
             return
         host = self.query_one("#personas-char-editor-visual-identity-host", Container)
-        if content.parent is host:
-            await content.remove()
+        if content.parent is not host:
+            return
+        await content.remove()
         if not host.children:
             self._reset_visual_identity_browser()
 
