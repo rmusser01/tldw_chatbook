@@ -353,6 +353,63 @@ async def test_markdown_row_sync_keeps_selection_when_body_grows():
         assert row.get_selection_text() == "body line"
 
 
+@pytest.mark.asyncio
+async def test_markdown_row_sync_non_prefix_shrink_resnaps_to_whole_lines():
+    """Regression (fix round 1): a non-prefix body replace shifts line
+    boundaries under the stored range, so clamping offsets alone produced a
+    misaligned quote (stray leading newline, partial line). The clamp must
+    re-snap to the NEW body's whole lines, or clear outright."""
+    app = _MarkdownRowApp()
+    async with app.run_test():
+        row = app.query_one(ConsoleMarkdownMessage)
+        source = "line one\nline two\nline three"
+        seeded = _make_assistant_message(source)
+        row.sync_message(
+            seeded,
+            resolve_console_message_presentation(seeded, ConsolePresentationContext()),
+        )
+        two = source.index("line two")
+        three = source.index("line three")
+        row.set_selection_range(two + 2, three + 2)
+        assert row.get_selection_text() == "line two\nline three"
+
+        # Non-prefix replace: "abcdefghi\nXY" puts a newline where the old
+        # selection's start used to be mid-line. Offset-only clamping yields
+        # the misaligned "\nXY"; re-snapping must yield whole lines.
+        replaced = _make_assistant_message("abcdefghi\nXY")
+        row.sync_message(
+            replaced,
+            resolve_console_message_presentation(replaced, ConsolePresentationContext()),
+        )
+        clamped = row.get_selection_text()
+        assert clamped != "\nXY"  # the misalignment this test regresses
+        # Whole-line property: the quote is a run of complete new-body lines
+        # (here both of them), never a partial or misaligned slice.
+        assert clamped == "abcdefghi\nXY"
+
+
+@pytest.mark.asyncio
+async def test_markdown_selection_strip_caps_huge_selections():
+    """The strip caps its display like the quote (select-all must not
+    duplicate a huge body below itself)."""
+    app = _MarkdownRowApp()
+    async with app.run_test():
+        row = app.query_one(ConsoleMarkdownMessage)
+        long_message = _make_assistant_message("x" * 5000)
+        row.sync_message(
+            long_message,
+            resolve_console_message_presentation(
+                long_message, ConsolePresentationContext()
+            ),
+        )
+        row.set_selection_range(0, 5000)
+        strip = _selection_strip(row)
+        renderable = strip.renderable
+        assert isinstance(renderable, Text)
+        assert len(str(renderable)) == SELECTION_QUOTE_CAP
+        assert str(renderable).endswith("[truncated]")
+
+
 def test_markdown_selection_protocol_is_safe_before_mount():
     row = ConsoleMarkdownMessage(_make_assistant_message("unmounted"))
     row.set_selection_range(2, 4)  # must not raise (row not composed yet)

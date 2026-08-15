@@ -1276,11 +1276,16 @@ class ConsoleMarkdownMessage(Vertical):
         self._refresh_selection_strip()
 
     def _clamp_selection_to_text(self) -> None:
-        """Clamp the stored line range to the current source length.
+        """Clamp the stored line range to the current source, re-snapped.
 
         Streaming updates grow/replace the markdown source; if the new text
         no longer contains the range start, drop the selection entirely
-        (mirrors ``ConsoleTranscriptMessage``'s clamp-on-sync).
+        (mirrors ``ConsoleTranscriptMessage``'s clamp-on-sync). A non-prefix
+        replace can also shift line boundaries under the stored offsets, so
+        the surviving range is re-snapped to the NEW text's whole lines --
+        clamping offsets alone produced misaligned quotes (stray leading
+        newline, partial line) when the old start landed mid-line of the new
+        body (fix round 1).
         """
         if self._selection_line_range is None:
             return
@@ -1289,7 +1294,9 @@ class ConsoleMarkdownMessage(Vertical):
         if start >= new_len:
             self._selection_line_range = None
         else:
-            self._selection_line_range = (start, min(end, new_len))
+            self._selection_line_range = _snap_to_line_bounds(
+                self._body_text, start, min(end, new_len)
+            )
         self._refresh_selection_strip()
 
     def _refresh_selection_strip(self) -> None:
@@ -1297,7 +1304,10 @@ class ConsoleMarkdownMessage(Vertical):
 
         The strip is the visually equivalent highlight: the Markdown widget
         owns its block layout and is left untouched, while the strip spells
-        the selected source lines out below it in reverse video.
+        the selected source lines out below it in reverse video. The strip
+        content is capped exactly like the quote (``cap_quote``) so
+        select-all on a huge message cannot duplicate the whole body below
+        itself (fix round 1).
         """
         try:
             strip = self.query_one(".console-markdown-selection-strip", Static)
@@ -1308,7 +1318,7 @@ class ConsoleMarkdownMessage(Vertical):
             return
         start, end = self._selection_line_range
         text = self.get_display_text()
-        selected = text[max(0, start) : min(end, len(text))]
+        selected = cap_quote(text[max(0, start) : min(end, len(text))])
         strip.update(Text(selected, style="reverse"))
         strip.display = bool(selected)
 
@@ -1647,11 +1657,12 @@ class ConsoleTranscriptMessage(Vertical):
             manager = transcript.selection_manager
             if manager.state.active or manager.just_finished:
                 # This click completed (or landed during) a text-selection
-                # drag; it must not toggle message selection (console
-                # selection phase 1). Markdown rows arm drags too (task G),
-                # so a genuine markdown click reaches here only after its
-                # empty drag finish consumed the flag -- this branch stays
-                # for drag releases and cross-row leftover suppression.
+                # drag on this row; it must not toggle message selection
+                # (console selection phase 1). A genuine click never reaches
+                # this branch: its empty drag finish consumed the flag on
+                # MouseUp, so what is left here is the drag-release Click
+                # (or a click landing mid-drag). Markdown rows carry the
+                # identical guard in their own ``on_click`` (task G).
                 manager.consume_just_finished()
                 return
             transcript.toggle_message_selection(self.message_id)
