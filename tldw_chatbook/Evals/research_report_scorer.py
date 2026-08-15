@@ -99,3 +99,22 @@ BASELINE_VERIFICATION_PAYLOAD: Dict[str, Any] = {
 BASELINE_METRICS: Dict[str, float] = score_research_report(
     BASELINE_VERIFICATION_PAYLOAD
 )
+
+
+def aggregate_metrics(payloads: list) -> Dict[str, float]:
+    """Mean metrics across a list of verification payloads (task-16330 --
+    live-baseline aggregation); an empty list scores all zeros with
+    ``sample_count`` 0."""
+    scored = [score_research_report(payload) for payload in payloads]
+    aggregate: Dict[str, float] = {"sample_count": float(len(scored))}
+    for key in (
+        "citation_accuracy",
+        "quote_grounding",
+        "claim_support_rate",
+        "cited_sentence_ratio",
+    ):
+        if scored:
+            aggregate[key] = sum(metric[key] for metric in scored) / len(scored)
+        else:
+            aggregate[key] = 0.0
+    return aggregate

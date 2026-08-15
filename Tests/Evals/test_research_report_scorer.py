@@ -106,3 +106,33 @@ def test_baseline_payload_reproduces_recorded_baseline():
     assert 0.0 <= metrics["quote_grounding"] <= 1.0
     assert 0.0 <= metrics["claim_support_rate"] <= 1.0
     assert 0.0 <= metrics["cited_sentence_ratio"] <= 1.0
+
+
+# --- aggregation for the live baseline (task-16330) ------------------------------
+
+def test_aggregate_metrics_averages_across_payloads():
+    from tldw_chatbook.Evals.research_report_scorer import aggregate_metrics
+
+    payloads = [
+        {"markers_total": 4, "markers_resolved": 4, "quotes_checked": 0,
+         "quotes_verified": 0, "uncited_sentences": 0},
+        {"markers_total": 4, "markers_resolved": 2, "quotes_checked": 2,
+         "quotes_verified": 1, "uncited_sentences": 4},
+    ]
+
+    aggregate = aggregate_metrics(payloads)
+
+    assert aggregate["sample_count"] == 2
+    assert aggregate["citation_accuracy"] == pytest.approx((1.0 + 0.5) / 2)
+    assert aggregate["quote_grounding"] == pytest.approx((0.0 + 0.5) / 2)
+    assert aggregate["claim_support_rate"] == pytest.approx(0.75)
+    assert aggregate["cited_sentence_ratio"] == pytest.approx((1.0 + 0.5) / 2)
+
+
+def test_aggregate_metrics_empty_payloads():
+    from tldw_chatbook.Evals.research_report_scorer import aggregate_metrics
+
+    aggregate = aggregate_metrics([])
+
+    assert aggregate["sample_count"] == 0
+    assert aggregate["citation_accuracy"] == 0.0

@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Live baseline recorder for the research-report self-eval (task-16330).
+
+Runs N real research questions through the local research engine (ADR-066)
+with the configured deep-search pipeline settings, scores each completed
+run's verification payload with the existing self-eval scorer, and prints
+the aggregated live baseline (mean metrics + per-run detail) plus JSON.
+
+Spend bounds are the point: small result counts, no sub-query fan-out, a
+handful of questions. Expect real network search traffic and LLM calls --
+both relevance and synthesis LLMs must be configured ([SearchSettings]).
+
+Usage:
+    python3 Helper_Scripts/Benchmarks/record_research_baseline.py [--questions 3]
+        [--max-results 5] [--json-out PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Default question set: neutral, stable topics so future re-runs stay
+# comparable; single-facet questions keep verification payloads small.
+# Academic-topic questions: with --academic the evidence pool is arXiv/S2
+# papers, so non-research topics (product features, protocols) legitimately
+# score zero relevance and produce no synthesis to verify.
+DEFAULT_QUESTIONS = [
+    "What is retrieval augmented generation?",
+    "What are mixture of experts language models?",
+    "How do graph neural networks work?",
+]
+
+
+# Credential requirements per engine (None = keyless). The preflight fails
+# fast BEFORE any spend when the chosen engine cannot search.
+_ENGINE_CREDENTIALS: dict[str, list[tuple[str, str]]] = {
+    "google": [("API", "google_api_key"), ("API", "google_cse_id")],
+    "brave": [("API", "brave_api_key")],
+    "serper": [("API", "serper_api_key")],
+    "tavily": [("API", "tavily_api_key")],
+    "kagi": [("API", "kagi_api_key")],
+    "duckduckgo": [],
+    "searx": [],
+}
+
+
+def missing_engine_credentials(engine: str) -> list[str]:
+    """Config slots (with env-var alternates) the engine needs but does not
+    have; empty list means the engine can search."""
+    from tldw_chatbook.config import get_cli_setting
+
+    missing: list[str] = []
+    for section, key in _ENGINE_CREDENTIALS.get(engine, []):
+        env_var = key.upper()
+        if not (os.getenv(env_var) or get_cli_setting(section, key, None)):
+            missing.append(f"[{section}] {key} (or env {env_var})")
+    return missing
+
+
+def _prime_local_llm_url(llm_endpoint: str, base_url: str) -> None:
+    """Point a local provider (e.g. llama_cpp) at ``base_url`` for THIS
+    process only: the handlers read api_settings.<provider>.api_url from the
+    load_settings cache, so priming the cache routes them without touching
+    the user's config file."""
+    from tldw_chatbook.config import load_settings
+
+    settings = load_settings()
+    provider_table = settings.setdefault("api_settings", {}).setdefault(llm_endpoint, {})
+    provider_table["api_url"] = base_url
+    # Local models are slow (big thinking models can take minutes for a full
+    # report); the provider default timeout is tuned for quick chat turns.
+    provider_table["api_timeout"] = 600
+
+
+def _build_search_params(
+    max_results: int,
+    engine_override: str | None = None,
+    llm_override: str | None = None,
+) -> dict:
+    """Assemble engine search params exactly like the web_deep_search tool
+    does, so the baseline measures the shipped pipeline configuration."""
+    from tldw_chatbook.Tools.web_tool_impls import _deep_search_settings
+
+    settings = _deep_search_settings()
+    relevance_llm = llm_override or settings.get("relevance_analysis_llm")
+    final_llm = llm_override or settings.get("final_answer_llm")
+    if not relevance_llm or not final_llm:
+        raise SystemExit(
+            "[config] [SearchSettings] relevance_analysis_llm and final_answer_llm "
+            "must both be configured before recording a live baseline."
+        )
+    engine = engine_override or settings.get("search_provider_default", "google")
+    missing = missing_engine_credentials(engine)
+    if missing:
+        raise SystemExit(
+            f"[config] search engine {engine!r} is missing credentials: "
+            + "; ".join(missing)
+            + ". Configure them, or pass --engine duckduckgo (keyless)."
+        )
+    return {
+        "engine": engine,
+        "content_country": "US",
+        "search_lang": "en",
+        "output_lang": "en",
+        "result_count": max_results,
+        "subquery_generation": False,  # spend bound: single query per run
+        "subquery_generation_llm": relevance_llm,
+        "relevance_analysis_llm": relevance_llm,
+        "final_answer_llm": final_llm,
+        "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
+        "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
+        "search_default_max_queries": 1,  # spend bound: no fan-out
+        "deep_search_timeout_s": settings.get("deep_search_timeout_s", 240),
+        "respect_robots_txt": True,
+    }
+
+
+async def _run_question(engine, service, question: str) -> dict | None:
+    """Execute one bounded research run; return its verification payload (or
+    None with the failure printed -- one failed question must not sink the
+    baseline)."""
+    run = service.launch_run(query=question)
+    final = await engine.execute_run(run["id"])
+    if final.get("status") != "completed":
+        print(f"  [run failed: {final.get('status')} — {final.get('progress_message')}]")
+        return None
+    verification = service.get_artifact(run["id"], "verification_summary.json") or {}
+    payload = (verification.get("content") or {}).get("citation_verification")
+    if not payload:
+        print("  [no citation verification on the synthesis branch]")
+        return None
+    return payload
+
+
+async def main_async(args: argparse.Namespace) -> int:
+    from tldw_chatbook.Evals.research_report_scorer import (
+        aggregate_metrics,
+        score_research_report,
+    )
+    from tldw_chatbook.Research_Interop.local_research_engine import LocalResearchEngine
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
+
+    if args.llm_base_url:
+        llm_endpoint = args.llm or "llama_cpp"
+        _prime_local_llm_url(llm_endpoint, args.llm_base_url)
+        args.llm = llm_endpoint
+    search_params = _build_search_params(
+        args.max_results,
+        engine_override=args.engine,
+        llm_override=args.llm,
+    )
+    print(
+        f"engine={search_params['engine']} relevance={search_params['relevance_analysis_llm']} "
+        f"synthesis={search_params['final_answer_llm']} max_results={args.max_results}"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="tldw-research-baseline-") as tmp:
+        service = LocalResearchService(Path(tmp) / "research.db")
+        paper_search_fn = None
+        if args.academic:
+            from tldw_chatbook.Research_Interop.academic_providers import search_papers
+
+            paper_search_fn = search_papers
+            print("academic lane: ON (arXiv + Semantic Scholar join the evidence pool)")
+        engine = LocalResearchEngine(
+            service, search_params=search_params, paper_search_fn=paper_search_fn
+        )
+
+        payloads = []
+        for question in DEFAULT_QUESTIONS[: args.questions]:
+            print(f"Running: {question}")
+            payload = await _run_question(engine, service, question)
+            if payload is not None:
+                metrics = score_research_report(payload)
+                print(
+                    f"  citation_accuracy={metrics['citation_accuracy']:.2f} "
+                    f"quote_grounding={metrics['quote_grounding']:.2f} "
+                    f"claim_support={metrics['claim_support_rate']:.2f} "
+                    f"cited_sentences={metrics['cited_sentence_ratio']:.2f} "
+                    f"(markers {payload.get('markers_resolved')}/{payload.get('markers_total')})"
+                )
+                payloads.append(payload)
+
+    if not payloads:
+        print(
+            "\n[no scored samples] No run produced a verification payload -- "
+            "check the per-run diagnostics above (engine/LLM credentials, "
+            "timeouts) before relying on this baseline."
+        )
+        return 1
+    aggregate = aggregate_metrics(payloads)
+    print("\n=== Live baseline (mean over runs) ===")
+    print(json.dumps(aggregate, indent=2))
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(aggregate, indent=2))
+        print(f"\nWritten to {args.json_out}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--questions", type=int, default=3, help="number of questions to run")
+    parser.add_argument(
+        "--max-results", type=int, default=5, help="search results per query (spend bound)"
+    )
+    parser.add_argument("--json-out", default=None, help="optional path for the aggregate JSON")
+    parser.add_argument(
+        "--llm",
+        default=None,
+        help="override both [SearchSettings] LLM endpoints (e.g. llama_cpp for a local server)",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        default=None,
+        help="prime api_settings.<--llm>.api_url for this process (no config file writes); implies --llm",
+    )
+    parser.add_argument(
+        "--academic",
+        action="store_true",
+        help="enable the keyless academic lane (arXiv + Semantic Scholar) alongside the web engine",
+    )
+    parser.add_argument(
+        "--engine",
+        default=None,
+        help="override [SearchSettings] search_provider_default (e.g. duckduckgo, keyless)",
+    )
+    args = parser.parse_args()
+    return asyncio.run(main_async(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

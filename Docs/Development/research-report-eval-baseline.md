@@ -32,7 +32,38 @@ recorded the same way:
 | `claim_support_rate` | 0.75 |
 | `cited_sentence_ratio` | 0.625 |
 
-## Recording a live baseline
+## Recorded live baseline (2026-08-15)
+
+Configuration: academic lane (arXiv, phrase-quoted queries; Semantic Scholar
+429-rate-limited from this network), web lane blocked (DuckDuckGo/Baidu bot
+challenge, no keyed engines configured), relevance + synthesis LLMs =
+local llama.cpp Qwen3.8-27B at `127.0.0.1:52864`. Bounded: 5 results/query,
+no sub-query fan-out, 3 questions.
+
+Command:
+`python3 Helper_Scripts/Benchmarks/record_research_baseline.py --questions 3 --engine duckduckgo --academic --llm-base-url http://127.0.0.1:52864/v1`
+
+| Metric | Live (n=2 scored runs) | Notes |
+|---|---|---|
+| `citation_accuracy` | **1.00** | 20/20 `[n]` markers resolved across scored runs |
+| `quote_grounding` | 0.00 | model emitted no quoted spans (0 checked) — untested, not failing |
+| `claim_support_rate` | 1.00 | every cited claim verified |
+| `cited_sentence_ratio` | 0.68 | runs 0.44 / 0.93 |
+
+Observations worth keeping:
+
+- The weak link is the RELEVANCE GATE, not citation integrity: 1 of 3
+  questions produced no synthesis because the strict "answers the question
+  comprehensively" bar (temp 0.7) rejected application papers. With the
+  local 27B model, gate pass-rate varies between identical runs.
+- arXiv phrase-quoting was required: token queries surfaced off-topic
+  papers (cognitive augmentation, image generation) that the gate then
+  correctly rejected (fixed in `academic_providers.search_arxiv`).
+- Local OpenAI-compatible providers previously returned raw response dicts
+  that broke every string consumer; fixed at the `chat_api_call` seam
+  during this live verification.
+
+## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,
    `final_answer_llm`) and run several research runs from the Research
