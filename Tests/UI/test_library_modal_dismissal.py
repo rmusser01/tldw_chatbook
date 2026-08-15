@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Model_Artifacts.acquisition import (
     ArtifactPreflightEntry,
     PreflightReport,
@@ -97,6 +98,7 @@ class LibraryModalContract:
     visible_negative_selector: str
     negative_assertion: Callable[[object], None]
     positive_type: type[object] | tuple[type[object], ...]
+    positive_assertion: Callable[[object], None] | None
     active_guard: str | None
     focus_postcondition: str
     non_dismissible_reason: str | None
@@ -122,6 +124,27 @@ def _assert_false(result: object) -> None:
 
 def _assert_prompt_delete_negative(result: object) -> None:
     assert result == PromptDeleteDecision(False, "library-contract")
+
+
+def _assert_exact(expected: object) -> Callable[[object], None]:
+    def assertion(result: object) -> None:
+        assert type(result) is type(expected)
+        assert result == expected
+
+    return assertion
+
+
+def _assert_prompt_variables_positive(result: object) -> None:
+    assert type(result) is PromptVariableApplication
+    assert result.system_text is None
+    assert result.user_text == "Hello {name}"
+    assert result.apply_system is False
+    assert result.apply_user is True
+    assert result.destination == "replace_snapshot"
+    assert result.target_session_id == "library-contract"
+    assert result.composer_fingerprint == "a" * 64
+    assert result.system_fingerprint is None
+    assert result.created_monotonic < result.expires_monotonic
 
 
 def _model_install_modal() -> ModelInstallModal:
@@ -241,6 +264,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#skill-trust-passphrase-cancel",
         _assert_none,
         str,
+        _assert_exact("secret"),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -252,6 +276,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#skill-trust-bootstrap-cancel",
         _assert_none,
         str,
+        _assert_exact("secret"),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -263,6 +288,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#model-install-cancel",
         _assert_false,
         bool,
+        _assert_exact(True),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -274,6 +300,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel",
         _assert_none,
         Path,
+        _assert_exact(Path("/tmp/open.txt").resolve()),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -285,6 +312,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel",
         _assert_none,
         Path,
+        _assert_exact(Path("/tmp/save.txt").resolve()),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -296,6 +324,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel",
         _assert_none,
         Path,
+        _assert_exact(Path("/tmp")),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -307,6 +336,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#prompt-delete-cancel",
         _assert_prompt_delete_negative,
         PromptDeleteDecision,
+        _assert_exact(PromptDeleteDecision(True, "library-contract")),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -318,6 +348,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#library-note-folder-dialog-cancel",
         _assert_none,
         str,
+        _assert_exact("Folder"),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -331,6 +362,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#library-note-folder-target-cancel",
         _assert_none,
         str,
+        _assert_exact(""),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -342,6 +374,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#prompt-collection-manager-cancel",
         _assert_none,
         PromptCollectionManagerResult,
+        _assert_exact(PromptCollectionManagerResult("browse", 1, None, ())),
         "_mutation_in_flight",
         _FOCUS_POSTCONDITION,
         None,
@@ -354,6 +387,7 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         type(None),
         None,
+        None,
         _FOCUS_POSTCONDITION,
         None,
     ),
@@ -365,6 +399,7 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         type(None),
         None,
+        None,
         _FOCUS_POSTCONDITION,
         None,
     ),
@@ -375,6 +410,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel-button",
         _assert_false,
         bool,
+        _assert_exact(True),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -387,6 +423,7 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         type(None),
         None,
+        None,
         _FOCUS_POSTCONDITION,
         None,
     ),
@@ -397,6 +434,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#file-notes-push-auth-cancel",
         _assert_false,
         bool,
+        _assert_exact(True),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -411,6 +449,7 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         type(None),
         None,
+        None,
         _FOCUS_POSTCONDITION,
         None,
     ),
@@ -421,6 +460,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#prompt-variables-cancel",
         _assert_none,
         PromptVariableApplication,
+        _assert_prompt_variables_positive,
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -432,6 +472,7 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel-button",
         _assert_false,
         bool,
+        _assert_exact(True),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -454,65 +495,14 @@ _FILE_NOTES_GIT_FILE = "tldw_chatbook/Widgets/Library/library_file_notes_git_pan
 class _OwnerScope:
     owner_file: str
     owner_class: str
-    presenter_names: tuple[str, ...]
 
 
 _SUPPORTED_OWNER_SCOPES = (
-    _OwnerScope(
-        _LIBRARY_SCREEN_FILE,
-        "LibraryScreen",
-        (
-            "_export_library_note",
-            "handle_library_skills_import_browse",
-            "handle_library_skills_import_browse_folder",
-            "action_show_workbench_help",
-            "_request_library_skill_trust_passphrase",
-            "_request_library_skill_trust_bootstrap_passphrase",
-            "handle_library_prompts_import_browse",
-            "handle_library_prompt_history_restore",
-            "_stage_library_prompt_for_console",
-            "_export_library_prompt",
-            "_open_library_prompt_delete_confirmation",
-            "handle_library_notes_import",
-            "handle_library_notes_sync_browse",
-            "handle_library_ingest_browse",
-            "handle_library_ingest_directory_browse",
-            "_open_transcribe_cpp_gguf_picker",
-            "_apply_parakeet_v2_preflight_result",
-            "_apply_library_external_preparation",
-            "handle_library_export_choose_destination",
-            "handle_library_notes_folder_new",
-            "handle_library_notes_folder_rename",
-            "handle_library_notes_folder_move",
-            "handle_library_notes_folder_remove",
-            "_choose_library_notes_placement_target",
-        ),
-    ),
-    _OwnerScope(
-        _COLLECTIONS_FILE,
-        "LibraryPromptCollectionsController",
-        ("open_manager",),
-    ),
-    _OwnerScope(
-        _FILE_NOTES_WORKSPACE_FILE,
-        "LibraryFileNotesWorkspace",
-        (
-            "_open_push_authorization",
-            "_open_session_git",
-            "_choose_root",
-            "_show_root_details",
-            "_session_git_push_endpoint_details",
-            "_compare_conflict",
-        ),
-    ),
-    # This production owner currently has no direct modal edge. Keeping the
-    # empty scope explicit makes a future nested presenter detectable.
-    _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel", ()),
-    _OwnerScope(
-        _FILE_NOTES_GIT_FILE,
-        "PushDestinationAuthorizationDialog",
-        ("_details_pressed",),
-    ),
+    _OwnerScope(_LIBRARY_SCREEN_FILE, "LibraryScreen"),
+    _OwnerScope(_COLLECTIONS_FILE, "LibraryPromptCollectionsController"),
+    _OwnerScope(_FILE_NOTES_WORKSPACE_FILE, "LibraryFileNotesWorkspace"),
+    _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel"),
+    _OwnerScope(_FILE_NOTES_GIT_FILE, "PushDestinationAuthorizationDialog"),
 )
 
 
@@ -788,13 +778,13 @@ def _discover_library_modal_edges(
             for node in tree.body
             if isinstance(node, ast.ClassDef) and node.name == scope.owner_class
         )
-        methods = {
-            node.name: node
+        methods = (
+            node
             for node in owner.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        for presenter_name in scope.presenter_names:
-            presenter = methods[presenter_name]
+        )
+        for presenter in methods:
+            presenter_name = presenter.name
             aliases = _import_aliases(tree, presenter)
             assignments = {
                 target.id: node.value
@@ -1449,12 +1439,18 @@ def _production_owner_sources() -> dict[str, str]:
 
 
 class _LibraryContractHarness(_FileNotesModalHarness):
-    CSS_PATH = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
+    CSS_PATH = TldwCli.CSS_PATH
+
+
+def _assert_contract_factory_exact(
+    contract: LibraryModalContract,
+) -> ModalScreen[Any]:
+    modal = contract.factory()
+    assert type(modal) is contract.concrete_type, (
+        f"factory returned {type(modal).__name__}, expected "
+        f"exactly {contract.concrete_type.__name__}"
     )
+    return modal
 
 
 def test_library_modal_contract_table_covers_every_discovered_concrete_type() -> None:
@@ -1483,6 +1479,35 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
         for row in LIBRARY_MODAL_CONTRACTS
     )
     assert all(row.non_dismissible_reason is None for row in LIBRARY_MODAL_CONTRACTS)
+
+
+def test_library_modal_contract_table_rejects_factory_returning_sibling_type() -> None:
+    contract = next(
+        row
+        for row in LIBRARY_MODAL_CONTRACTS
+        if row.concrete_type is ConfirmationDialog
+    )
+    mutated = replace(
+        contract,
+        factory=lambda: SessionGitTrustDialog("/notes"),
+    )
+
+    with pytest.raises(AssertionError, match="factory returned"):
+        _assert_contract_factory_exact(mutated)
+
+
+def test_library_modal_contract_table_positive_oracle_rejects_negative_result() -> None:
+    contract = next(
+        row for row in LIBRARY_MODAL_CONTRACTS if row.concrete_type is ModelInstallModal
+    )
+
+    assert contract.positive_assertion is not None
+    with pytest.raises(AssertionError):
+        contract.positive_assertion(False)
+
+
+def test_library_modal_contract_harness_uses_exact_production_css_stack() -> None:
+    assert _LibraryContractHarness.CSS_PATH == TldwCli.CSS_PATH
 
 
 def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> None:
@@ -1532,54 +1557,54 @@ def _assert_synthetic_edge_is_rejected(
         _assert_exact_library_modal_inventory(discovered, set())
 
 
+def _production_owner_scope(owner_class: str) -> _OwnerScope:
+    return next(
+        scope for scope in _SUPPORTED_OWNER_SCOPES if scope.owner_class == owner_class
+    )
+
+
 def test_library_modal_inventory_detects_controller_injected_edge() -> None:
+    scope = _production_owner_scope("LibraryPromptCollectionsController")
     _assert_synthetic_edge_is_rejected(
         source="""
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
 class LibraryPromptCollectionsController:
     def open_manager(self):
-        modal = Hidden()
-        self._push_modal()(modal)
+        pass
+    def _unexpected_presenter(self):
+        self._push_modal()(Hidden())
 """,
-        scope=_OwnerScope(
-            "synthetic_controller.py",
-            "LibraryPromptCollectionsController",
-            ("open_manager",),
-        ),
+        scope=scope,
         expected_type=ConfirmationDialog,
     )
 
 
 def test_library_modal_inventory_detects_nested_edge() -> None:
+    scope = _production_owner_scope("LibraryFileNotesGitPanel")
     _assert_synthetic_edge_is_rejected(
         source="""
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
 class LibraryFileNotesGitPanel:
-    def _open_injected(self):
+    def _unexpected_presenter(self):
         self.app.push_screen(Hidden())
 """,
-        scope=_OwnerScope(
-            "synthetic_nested.py",
-            "LibraryFileNotesGitPanel",
-            ("_open_injected",),
-        ),
+        scope=scope,
         expected_type=ConfirmationDialog,
     )
 
 
 def test_library_modal_inventory_detects_modal_to_modal_edge() -> None:
+    scope = _production_owner_scope("PushDestinationAuthorizationDialog")
     _assert_synthetic_edge_is_rejected(
         source="""
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
 class PushDestinationAuthorizationDialog:
     def _details_pressed(self):
+        pass
+    def _unexpected_presenter(self):
         self.app.push_screen(Hidden())
 """,
-        scope=_OwnerScope(
-            "synthetic_modal.py",
-            "PushDestinationAuthorizationDialog",
-            ("_details_pressed",),
-        ),
+        scope=scope,
         expected_type=ConfirmationDialog,
     )
 
@@ -1596,7 +1621,7 @@ async def test_concrete_library_modal_exact_negative_for_every_gesture(
     source: str,
 ) -> None:
     app = _LibraryContractHarness()
-    modal = contract.factory()
+    modal = _assert_contract_factory_exact(contract)
 
     async with app.run_test(size=(120, 48)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
@@ -1624,7 +1649,7 @@ async def test_concrete_library_modal_inside_and_non_primary_clicks_stay_open(
     contract: LibraryModalContract,
 ) -> None:
     app = _LibraryContractHarness()
-    modal = contract.factory()
+    modal = _assert_contract_factory_exact(contract)
 
     async with app.run_test(size=(120, 48)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
@@ -1673,7 +1698,7 @@ async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
 
 @pytest.mark.parametrize(
     "contract",
-    [row for row in LIBRARY_MODAL_CONTRACTS if row.positive_type is not type(None)],
+    [row for row in LIBRARY_MODAL_CONTRACTS if row.positive_assertion is not None],
     ids=lambda row: row.concrete_type.__name__,
 )
 @pytest.mark.asyncio
@@ -1681,7 +1706,7 @@ async def test_concrete_library_modal_public_positive_result_type(
     contract: LibraryModalContract,
 ) -> None:
     app = _LibraryContractHarness()
-    modal = contract.factory()
+    modal = _assert_contract_factory_exact(contract)
 
     async with app.run_test(size=(120, 48)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
@@ -1690,7 +1715,8 @@ async def test_concrete_library_modal_public_positive_result_type(
         await pilot.pause()
 
     assert len(app.results) == 1
-    assert isinstance(app.results[0], contract.positive_type)
+    assert contract.positive_assertion is not None
+    contract.positive_assertion(app.results[0])
 
 
 @pytest.mark.parametrize(
@@ -1721,7 +1747,7 @@ async def test_library_modal_lifecycle_runs_shared_handlers_exactly_once(
     monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mount)
     monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_unmount)
     app = _LibraryContractHarness()
-    modal = contract.factory()
+    modal = _assert_contract_factory_exact(contract)
 
     async with app.run_test(size=(120, 48)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
