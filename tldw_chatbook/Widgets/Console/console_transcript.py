@@ -18,7 +18,8 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
-from textual.events import Click, Key
+from textual.events import Click, Key, MouseDown, MouseMove, MouseUp
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
@@ -60,7 +61,12 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
-from tldw_chatbook.Widgets.Console.console_selection import cap_quote
+from tldw_chatbook.Widgets.Console.console_selection import (
+    SelectionManager,
+    TextSelection,
+    cap_quote,
+    offset_for_cell,
+)
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
@@ -1354,6 +1360,14 @@ class ConsoleMarkdownMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
+            if (
+                transcript.selection_manager.state.active
+                or transcript.selection_manager.just_finished
+            ):
+                # This click completed (or landed during) a text-selection
+                # drag; it must not toggle message selection (console
+                # selection phase 1).
+                return
             transcript.toggle_message_selection(self.message_id)
 
 
@@ -1528,6 +1542,15 @@ class ConsoleTranscriptMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
+            if (
+                transcript.selection_manager.state.active
+                or transcript.selection_manager.just_finished
+            ):
+                # This click completed (or landed during) a text-selection
+                # drag; it must not toggle message selection (console
+                # selection phase 1). Markdown rows are not selectable yet,
+                # but their click must still be suppressed on drag release.
+                return
             transcript.toggle_message_selection(self.message_id)
 
 
@@ -1805,10 +1828,85 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int:
+    """Map a body-local screen cell to a character offset in ``text``.
+
+    Console selection phase 1. Plain-row bodies are ``Static`` widgets whose
+    text wraps at the body's content width, so the vertical position must be
+    resolved against the wrapped layout, not treated as one long line.
+    ``Content.wrap`` mirrors the widget's own fold (leading indentation is
+    preserved, the fold space is dropped), so each wrapped line is aligned
+    back to its source offset by skipping the whitespace the fold dropped --
+    mapping choice verified against ``Content.wrap`` on Textual 8.2.8.
+
+    Cells above the body clamp to offset 0, cells below the last wrapped
+    line to the end of the text; on the hovered line the x cell maps through
+    ``offset_for_cell`` (clamped to that line's extent).
+
+    Args:
+        text: The row's display (plain body) text -- the selection domain.
+        width: The body Static's content width (cells).
+        cell_x: Body-local column of the pointer.
+        cell_y: Body-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    if width <= 0 or not text:
+        # Not laid out (or nothing to select): monotone single-line mapping.
+        return offset_for_cell(text, cell_x)
+    wrapped = [
+        line.plain
+        for line in Content(text, strip_control_codes=False).wrap(width)
+    ]
+    if cell_y < 0:
+        return 0
+    if cell_y >= len(wrapped):
+        return len(text)
+    source_offset = 0
+    for index, line in enumerate(wrapped):
+        if line:
+            start = text.find(line, source_offset)
+            if start == -1 or text[source_offset:start].strip():
+                # Wrap edge case not modeled (defensive): fall back to the
+                # single-line mapping rather than mis-anchor the drag.
+                return offset_for_cell(text, cell_x)
+            if index == cell_y:
+                return start + offset_for_cell(line, cell_x)
+            source_offset = start + len(line)
+        else:
+            if index == cell_y:
+                # Blank wrapped line: anchor at the current position.
+                return source_offset
+            # Consume the blank line's own break so later lines stay
+            # aligned; any other inter-line whitespace is absorbed by the
+            # next line's find() above.
+            if source_offset < len(text) and text[source_offset] in "\r\n":
+                source_offset += 1
+    return len(text)
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
     can_focus = True
+
+    class TranscriptTextSelected(Message):
+        """Posted when a mouse drag finished with a non-empty text selection.
+
+        Console selection phase 1. The owning screen anchors its selection
+        menu at the release cell (screen coordinates).
+        """
+
+        def __init__(
+            self, selection: TextSelection, screen_x: int, screen_y: int
+        ) -> None:
+            super().__init__()
+            self.selection = selection
+            self.screen_x = screen_x
+            self.screen_y = screen_y
+
     BINDINGS = [
         ("down,j", "select_next", "Next message"),
         ("up,k", "select_previous", "Previous message"),
@@ -1918,6 +2016,15 @@ class ConsoleTranscript(VerticalScroll):
         #: prefix, but only hydration removes ids from it.
         self._scrollback_hydration_scheduled = False
         self._hydrating_scrollback = False
+        #: Console selection phase 1: drag-selection state over plain rows.
+        #: Public so the owning screen (and tests) can inspect/consume it.
+        self.selection_manager = SelectionManager()
+        #: Row widget the active drag started on. Mouse capture reroutes
+        #: subsequent moves to THIS transcript (event control is then the
+        #: transcript itself), so extension resolves the origin row here
+        #: instead of from the event's control. Cleared on finish/cancel and
+        #: by the reconciliation guard when the row is removed/rebuilt.
+        self._selection_origin_row: ConsoleTranscriptMessage | None = None
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -2991,14 +3098,137 @@ class ConsoleTranscript(VerticalScroll):
         button.press()
         return True
 
+    def _selection_row_for(self, widget: Widget | None) -> ConsoleTranscriptMessage | None:
+        """Return the selectable message row for a pressed widget, if any.
+
+        Console selection phase 1. Walks parents from the event control to
+        the nearest ``ConsoleTranscriptMessage`` (the Task-3 selection
+        protocol). Protected controls (``PROTECTED_CLICK_CLASSES`` -- action
+        rows, speech controls, rules, banners, scrollbars) never start a
+        selection. Markdown rows are excluded until phase 1 task G wires
+        them (``ConsoleMarkdownMessage`` is not a protocol row).
+        """
+        if widget is None:
+            return None
+        if any(
+            widget.has_class(class_name)
+            for class_name in self.PROTECTED_CLICK_CLASSES
+        ):
+            return None
+        node: Widget | None = widget
+        while node is not None:
+            if node is self:
+                return None
+            if isinstance(node, ConsoleTranscriptMessage):
+                return node
+            node = node.parent
+        return None
+
+    def _selection_offset_for(
+        self, row: ConsoleTranscriptMessage, screen_x: int, screen_y: int
+    ) -> int:
+        """Map a screen cell to a character offset in ``row``'s body text.
+
+        The body is a child Static with its own (screen-space) region, so
+        the cell is resolved body-local and mapped wrap-aware through
+        ``_body_cell_to_offset``. Cells outside the body clamp to the text
+        bounds (above -> 0, below -> end), which is the single-row clamp
+        rule for drags that leave the row.
+        """
+        text = row.get_display_text()
+        try:
+            body = row.query_one(".console-transcript-message-body", Static)
+        except NoMatches:
+            return 0  # row not composed; anchor at the text start
+        region = body.region
+        width = body.content_region.width or region.width
+        if width <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _body_cell_to_offset(
+            text, width, screen_x - region.x, screen_y - region.y
+        )
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Arm a text-selection drag on a left press over a plain row."""
+        # Textual encodes a real left press as button 1 (the XTerm driver
+        # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
+        # as in plain mouse-move reports).
+        if event.button != 1:
+            return
+        row = self._selection_row_for(event.control)
+        if row is None:
+            return
+        offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
+        self.selection_manager.begin_drag(row.id, offset)
+        self._selection_origin_row = row
+        # Capture the mouse so the terminal MouseUp reaches this transcript
+        # even when the pointer is released outside it; otherwise the
+        # manager stays active and suppresses row clicks until the next
+        # MouseDown (ported from the reference implementation's fix).
+        self.capture_mouse(True)
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        """Extend the active drag over the origin row's body text."""
+        if not self.selection_manager.state.active:
+            return
+        event.stop()
+        selection = self.selection_manager.state.selection
+        row = self._selection_origin_row
+        if (
+            selection is None
+            or row is None
+            or not row.is_attached
+            or row.id != selection.row_key
+        ):
+            return  # origin row went away: hold the last position
+        offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
+        self.selection_manager.extend_drag(row.id, offset)
+        updated = self.selection_manager.state.selection
+        if updated is None:
+            return
+        for other in self._row_widgets.values():
+            if isinstance(other, ConsoleTranscriptMessage) and other.id != row.id:
+                other.clear_selection()
+        row.set_selection_range(updated.start, updated.end)
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Finish the drag; post a selection message for menu-worthy releases."""
+        # Self-guarding: a no-op unless this transcript holds the capture.
+        self.release_mouse()
+        if not self.selection_manager.state.active:
+            return
+        event.stop()
+        selection = self.selection_manager.finish_drag()
+        self._selection_origin_row = None
+        if selection is None:
+            # Empty finish (a plain click, not a drag): the manager's
+            # just_finished flag exists to suppress drag-release clicks, so
+            # consume it here and let the following Click select the message.
+            self.selection_manager.consume_just_finished()
+            return
+        self.post_message(
+            self.TranscriptTextSelected(
+                selection=selection,
+                screen_x=event.screen_x,
+                screen_y=event.screen_y,
+            )
+        )
+
     def on_click(self, event: Click) -> None:
         """Clear selection when the user clicks negative space in the transcript.
+
+        A drag release (``just_finished``) is consumed here instead: it must
+        not clear message selection, and the next genuine click must work.
 
         Clicks that land on controls with classes in ``PROTECTED_CLICK_CLASSES``
         (message action rows/buttons, rule separators, action-help text, the
         empty-state panel, or scrollbars) keep the current selection active. All
         other clicks that bubble up to the transcript itself clear the selection.
         """
+        if self.selection_manager.just_finished:
+            event.stop()
+            self.selection_manager.consume_just_finished()
+            return
         control = event.control
         if control is not None and any(
             control.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
@@ -3246,6 +3476,26 @@ class ConsoleTranscript(VerticalScroll):
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
         ]
 
+    def _cancel_selection_if_row_removed(self, widget: Widget) -> None:
+        """Drop drag-selection state when its row widget is removed/rebuilt.
+
+        A rebuilt row widget does not carry the previous selection range, so
+        keeping the manager state would desync highlight vs. domain (ported
+        from the reference implementation). Releases mouse capture the same
+        way ``on_mouse_up`` does, so a mid-drag row rebuild cannot leave the
+        pointer captured.
+        """
+        selection = self.selection_manager.state.selection
+        if (
+            isinstance(widget, ConsoleTranscriptMessage)
+            and selection is not None
+            and selection.row_key == widget.id
+        ):
+            if self.selection_manager.state.active:
+                self.release_mouse()
+            self.selection_manager.cancel()
+            self._selection_origin_row = None
+
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
@@ -3276,6 +3526,8 @@ class ConsoleTranscript(VerticalScroll):
         # one DOM operation.  A session swap therefore has one await instead
         # of two awaits per message (rule + body).
         if removals:
+            for widget in removals:
+                self._cancel_selection_if_row_removed(widget)
             await self.remove_children(removals)
 
         pending_widgets: list[Widget] = []
