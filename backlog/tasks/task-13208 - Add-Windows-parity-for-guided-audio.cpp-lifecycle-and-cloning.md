@@ -88,9 +88,10 @@ Detailed executable plan:
   place, copies only the clone model package into its disposable managed store,
   requires structural text/clone WAV evidence, and cannot report final pass
   without explicit audible-and-intelligible confirmation.
-- Host-side focused verification reached 1,037 passing tests plus two expected
+- Rebased host-side focused verification reached 1,036 passing tests plus two expected
   native-Windows skips. Four sandbox-denied loopback real-child tests passed
-  when granted loopback access. Two unrelated mounted UI baseline failures
+  when granted loopback access. One suite-load mount-readiness miss passed
+  immediately in isolation. Two unrelated mounted UI baseline failures
   reproduced outside this change; changed-file Ruff, format, scoped mypy, CI
   shape, harness, and diff gates pass.
 - Release gate: hosted Windows CI and provisioned objective/audible UAT evidence

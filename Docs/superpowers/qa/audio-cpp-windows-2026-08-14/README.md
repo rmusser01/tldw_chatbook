@@ -92,10 +92,12 @@ projected onto the other.
 
 ## Host-side pre-handoff evidence
 
-- Focused lifecycle/UI/CI/harness matrix: 1,037 passed, two native-Windows
+- Rebased lifecycle/UI/CI/harness matrix: 1,036 passed, two native-Windows
   probes skipped on the non-Windows host.
 - Four real-child supervisor cases initially denied by the restricted loopback
   sandbox: all four passed with loopback access.
+- One suite-load mount-readiness observation failed in the matrix and passed
+  immediately in isolation.
 - Two unrelated mounted UI baseline tests remain failing and were previously
   reproduced at the parent commit; neither failure intersects the Windows diff.
 - Changed Python files pass Ruff and Ruff format; the eight scoped production
