@@ -40,3 +40,13 @@ Extended the task-15471 claim invariant to the shutdown sweep in `cleanup_tts_re
 - **Born-red evidence**: new forced-interleave test `test_shutdown_sweep_skips_a_source_an_export_is_still_copying` (`Tests/TTS/test_tts_improvements.py`) gates `shutil.copy2`, registers the export via `_add_active_task` exactly as production's `on_tts_export_event` does (so the cancel-releases-the-claim interleaving is real), fires `cleanup_tts_resources()` mid-copy, and asserts the source survives un-zeroed, shutdown returned promptly, and the finished copy carries the real bytes. Failed on unfixed code at exactly `AssertionError: shutdown sweep destroyed the source mid-copy`; passes after.
 - **Tests**: `Tests/TTS/test_tts_improvements.py` 26 passed; full `Tests/TTS/` 4075 passed / 6 failed — the identical 6 fail at the untouched base commit `573de5dd0` (verified in a throwaway baseline worktree; unrelated subsystems: audio_cpp guided-text readiness, OpenAI backend key seam, request-admission publication). `ruff check` clean on both touched files; `ruff format` diff on `tts_events.py` is pre-existing whole-file churn (base fails format-check too) and none of its hunks touch the added lines.
 - Files: `tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py`, `Tests/TTS/test_tts_improvements.py`.
+
+**Review scope note (post-review, controller):** the independent review confirmed the fix and
+proved the one uncovered window (export admitted between snapshot and cancel pass) unreachable
+by construction — but found the hazard is LATENT, not user-facing today: `TTSExportEvent` is
+never constructed or posted in production, and `TTSEventHandler` is not a MessagePump, so the
+export path is currently test-only. The fix pays forward for when export is wired. Review
+follow-ups to file: `_discard_tts_artifact` still ignores claims (the last unguarded
+secure-delete path); the claim should key by PATH not message id (the id→path join breaks when
+the cache entry is evicted); wire-or-retire the export path; a test pinning the union's live
+half. The AC#3 comment's shutdown-cancellation clause was trimmed to the primary bound.

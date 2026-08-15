@@ -3792,8 +3792,9 @@ class TTSEventHandler:
         # because every claim is released by `handle_tts_export`'s `finally`,
         # which completes even for a cancelled export -- the release only
         # needs `_audio_files_lock`, and `Lock.acquire()` on a free lock has
-        # no suspension point for a further cancellation to land in -- and
-        # at shutdown `cleanup_tts_resources` cancels this task outright.
+        # no suspension point for a further cancellation to land in. (A
+        # cleanup task spawned via the untracked `create_task` site is not
+        # cancelled at shutdown; the release bound above stands on its own.)
         while True:
             async with self._audio_files_lock:
                 if message_id not in self._exporting_audio_refcounts:
