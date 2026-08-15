@@ -53,11 +53,15 @@ class FakeGateway:
         error: Exception | None = None,
         resolution: FakeResolution | None = None,
         block_after_first_chunk: bool = False,
+        error_after_chunks: bool = False,
     ) -> None:
         self.chunks = chunks if chunks is not None else ["Hello", " world"]
         self.error = error
         self.resolution = resolution or FakeResolution()
         self.block_after_first_chunk = block_after_first_chunk
+        # When False (default) the error fires before any chunk; when True
+        # all chunks stream first and the error lands mid-stream afterwards.
+        self.error_after_chunks = error_after_chunks
         self.first_chunk_sent = asyncio.Event()
         self.selections: list[ConsoleProviderSelection] = []
         self.messages: list[list[dict[str, str]]] = []
@@ -74,13 +78,15 @@ class FakeGateway:
     async def stream_chat(self, resolution: FakeResolution, messages: list[dict[str, str]]):
         self.stream_calls += 1
         self.messages.append(messages)
-        if self.error is not None:
+        if self.error is not None and not self.error_after_chunks:
             raise self.error
         for index, chunk in enumerate(self.chunks):
             yield chunk
             if self.block_after_first_chunk and index == 0:
                 self.first_chunk_sent.set()
                 await asyncio.Event().wait()  # never set: holds the stream open
+        if self.error is not None:
+            raise self.error
 
 
 async def collect(service: ConsoleSideChatService, **kwargs: Any) -> list[Any]:
@@ -163,6 +169,32 @@ async def test_provider_error_yields_error_outcome_with_empty_text() -> None:
             status="provider_error",
             error="safe copy",
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_provider_error_mid_stream_preserves_partial_text() -> None:
+    """A provider error after deltas must not wipe the streamed partial reply."""
+    gateway = FakeGateway(
+        chunks=["Hel", "lo ", "wor"],
+        error=ChatProviderError("mid-stream boom"),
+        error_after_chunks=True,
+    )
+    service = ConsoleSideChatService(gateway)
+
+    items = await collect(service, **default_run_kwargs())
+
+    assert items == [
+        "Hel",
+        "lo ",
+        "wor",
+        SideChatOutcome(
+            text="Hello wor",
+            provider="openai",
+            model="gpt-test",
+            status="provider_error",
+            error="mid-stream boom",
+        ),
     ]
 
 

@@ -211,6 +211,13 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
         self._reply_text = ""
         self._update_reply("")
         request_id = self._next_request_id()
+        # Deliberately weaker than the prompts-modal choreography: a
+        # superseded worker is NOT cancelled here. Only Send/Retry can call
+        # this while a stream is live, and _set_streaming hides both, so the
+        # race needs a second press to land before the display update —
+        # unreachable in practice. If it ever fires, the stale worker is
+        # wasted background work only; its deltas/outcome are dropped by the
+        # request-id fence below and in _finish_sidechat.
         self._active_request_id = request_id
         self._set_streaming(True)
         self._set_status("Streaming…")
@@ -247,7 +254,7 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._set_status(
                     "The side chat could not run. Check the provider and retry."
                 )
-                self._set_action_visible(_RETRY, True)
+                self._show_retry_actions()
 
     def _finish_sidechat(self, request_id: int, outcome: SideChatOutcome) -> None:
         if self._active_request_id != request_id:
@@ -266,11 +273,11 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
             self._set_action_visible(_SEND, self._auto_send_prompt is None)
         elif outcome.status == "cancelled":
             self._set_status("Cancelled.")
-            self._set_action_visible(_RETRY, True)
+            self._show_retry_actions()
         else:
             error = outcome.error or "the provider reported an error"
             self._set_status(f"Provider error: {error}")
-            self._set_action_visible(_RETRY, True)
+            self._show_retry_actions()
         if self._callback is not None:
             try:
                 self._callback(outcome)
@@ -308,6 +315,7 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, _SEND)
     def _send(self, event: Button.Pressed) -> None:
         event.stop()
+        # Send always submits the CURRENT TextArea content (Ask mode only).
         prompt = self.query_one(_PROMPT, TextArea).text
         if not prompt.strip():
             self._set_status("Type a question first.")
@@ -322,6 +330,8 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, _RETRY)
     def _retry(self, event: Button.Pressed) -> None:
         event.stop()
+        # Retry re-sends the last prompt UNCHANGED — it deliberately does
+        # not read the TextArea; edited text goes through Send instead.
         prompt = self._last_prompt or self._auto_send_prompt
         if prompt is None:
             prompt = self.query_one(_PROMPT, TextArea).text
@@ -350,6 +360,18 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
             self.query_one(selector, Button).display = visible
         except NoMatches:
             return
+
+    def _show_retry_actions(self) -> None:
+        """Actions after a cancelled/errored stream.
+
+        Retry always re-sends the last prompt unchanged (``_last_prompt``).
+        In Ask mode the prompt TextArea is still visible and editable, so
+        Send must come back alongside Retry — otherwise an edited prompt
+        could only be silently re-sent unchanged. Send always reads the
+        TextArea. In auto mode there is no prompt area, so Retry alone.
+        """
+        self._set_action_visible(_RETRY, True)
+        self._set_action_visible(_SEND, self._auto_send_prompt is None)
 
     def _set_streaming(self, active: bool) -> None:
         self._set_action_visible(_STOP, active)

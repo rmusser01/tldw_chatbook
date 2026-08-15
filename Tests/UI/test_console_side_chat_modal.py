@@ -2,11 +2,14 @@
 
 Covers: More Details auto-send on mount + streaming into the reply area, Ask
 mode waiting for Send, Stop cancellation (Cancelling… then the cancelled
-outcome with Retry), provider errors surfacing inline with Retry, Escape
-mid-stream cancelling the worker and dismissing, reply-buffer tail capping,
-the read-only quote block, the provider·model summary line, and worker
-isolation (non-exclusive ``console-side-chat`` group). All against the real
-``ConsoleSideChatService`` backed by a fake gateway — no live LLM.
+outcome with Retry — and, in Ask mode, Send returning so an edited prompt is
+submittable while Retry resends the last prompt unchanged), provider errors
+surfacing inline with Retry (mid-stream errors keep the streamed partial
+text), Escape mid-stream cancelling the worker and dismissing, reply-buffer
+tail capping, the read-only quote block, the provider·model summary line,
+and worker isolation (non-exclusive ``console-side-chat`` group). All
+against the real ``ConsoleSideChatService`` backed by a fake gateway — no
+live LLM.
 """
 
 from __future__ import annotations
@@ -52,11 +55,15 @@ class FakeGateway:
         error: Exception | None = None,
         resolution: FakeResolution | None = None,
         block_after_first_chunk: bool = False,
+        error_after_chunks: bool = False,
     ) -> None:
         self.chunks = chunks if chunks is not None else ["Hello", " world"]
         self.error = error
         self.resolution = resolution or FakeResolution()
         self.block_after_first_chunk = block_after_first_chunk
+        # When False (default) the error fires before any chunk; when True
+        # all chunks stream first and the error lands mid-stream afterwards.
+        self.error_after_chunks = error_after_chunks
         self.first_chunk_sent = asyncio.Event()
         self.messages: list[list[dict[str, str]]] = []
         self.stream_calls = 0
@@ -71,13 +78,15 @@ class FakeGateway:
     ):
         self.stream_calls += 1
         self.messages.append(messages)
-        if self.error is not None:
+        if self.error is not None and not self.error_after_chunks:
             raise self.error
         for index, chunk in enumerate(self.chunks):
             yield chunk
             if self.block_after_first_chunk and index == 0:
                 self.first_chunk_sent.set()
                 await asyncio.Event().wait()  # never set: holds the stream open
+        if self.error is not None:
+            raise self.error
 
 
 QUOTE = "the quoted transcript text"
@@ -147,6 +156,20 @@ async def _await_button_settled(
     while button.has_class("-active"):
         if asyncio.get_running_loop().time() > deadline:
             pytest.fail(f"{selector} never settled after its click animation")
+        await asyncio.sleep(0.02)
+
+
+async def _await_stream_calls(
+    gateway: FakeGateway, expected: int, timeout: float = 5.0
+) -> None:
+    """Wait until the gateway has seen ``expected`` stream_chat calls."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while gateway.stream_calls < expected:
+        if asyncio.get_running_loop().time() > deadline:
+            pytest.fail(
+                f"stream_calls never reached {expected}; "
+                f"last={gateway.stream_calls}"
+            )
         await asyncio.sleep(0.02)
 
 
@@ -270,6 +293,51 @@ async def test_stop_button_cancels_a_streaming_side_chat():
         await pilot.pause()
 
 
+@pytest.mark.asyncio
+async def test_ask_mode_after_stop_send_uses_edited_text_and_retry_uses_original():
+    """Ask mode must not dead-end after a stop: the editable prompt area is
+    still up, so Send (reads the TextArea) returns alongside Retry (resends
+    the last prompt unchanged)."""
+    gateway = FakeGateway(chunks=["partial "], block_after_first_chunk=True)
+    modal = _modal(gateway, auto=False)
+
+    app = _SideChatApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        prompt_area = modal.query_one("#console-side-chat-prompt", TextArea)
+        prompt_area.text = "original question"
+        await _await_button_settled(modal, "#console-side-chat-send")
+        await pilot.click("#console-side-chat-send")
+        await asyncio.wait_for(gateway.first_chunk_sent.wait(), timeout=5)
+
+        modal._stop_streaming()
+        await _await_status(modal, "Cancelled.")
+        assert _displayed(modal, "#console-side-chat-send")
+        assert _displayed(modal, "#console-side-chat-retry")
+        assert not _displayed(modal, "#console-side-chat-stop")
+
+        # Retry resends the last prompt unchanged, ignoring the edited area.
+        prompt_area.text = "edited question"
+        await _await_button_settled(modal, "#console-side-chat-retry")
+        await pilot.click("#console-side-chat-retry")
+        await _await_stream_calls(gateway, 2)
+        assert "original question" in gateway.messages[1][1]["content"]
+        assert "edited question" not in gateway.messages[1][1]["content"]
+
+        # Stop again, then Send submits the edited TextArea content.
+        modal._stop_streaming()
+        await _await_status(modal, "Cancelled.")
+        await _await_button_settled(modal, "#console-side-chat-send")
+        await pilot.click("#console-side-chat-send")
+        await _await_stream_calls(gateway, 3)
+        assert "edited question" in gateway.messages[2][1]["content"]
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
 # ---------------------------------------------------------------------------
 # Provider errors
 # ---------------------------------------------------------------------------
@@ -292,6 +360,59 @@ async def test_provider_error_shows_inline_and_retry_reruns():
         await pilot.click("#console-side-chat-retry")
         await pilot.pause()
         assert gateway.stream_calls == 2
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_ask_mode_provider_error_keeps_send_for_edited_prompt():
+    gateway = FakeGateway(error=ChatProviderError("safe copy"))
+    modal = _modal(gateway, auto=False)
+
+    app = _SideChatApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        prompt_area = modal.query_one("#console-side-chat-prompt", TextArea)
+        prompt_area.text = "first question"
+        await _await_button_settled(modal, "#console-side-chat-send")
+        await pilot.click("#console-side-chat-send")
+        await _await_status(modal, "Provider error: safe copy")
+
+        # Send must stay available alongside Retry so an edited prompt can
+        # be submitted without reopening the modal.
+        assert _displayed(modal, "#console-side-chat-send")
+        assert _displayed(modal, "#console-side-chat-retry")
+
+        prompt_area.text = "second question"
+        await _await_button_settled(modal, "#console-side-chat-send")
+        await pilot.click("#console-side-chat-send")
+        await _await_stream_calls(gateway, 2)
+        assert "second question" in gateway.messages[1][1]["content"]
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_provider_error_mid_stream_keeps_partial_reply():
+    """A mid-stream provider error must not blank the already-streamed text."""
+    gateway = FakeGateway(
+        chunks=["partial answer"],
+        error=ChatProviderError("mid-stream boom"),
+        error_after_chunks=True,
+    )
+    modal = _modal(gateway)
+
+    app = _SideChatApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await _await_status(modal, "Provider error: mid-stream boom")
+
+        assert _text(modal, "#console-side-chat-reply") == "partial answer"
+        assert _displayed(modal, "#console-side-chat-retry")
 
         await pilot.press("escape")
         await pilot.pause()

@@ -150,8 +150,11 @@ class ConsoleSideChatService:
                 parts.append(item)
                 yield item
         except ChatProviderError as exc:
+            # Keep any already-streamed deltas in the outcome: the modal
+            # renders outcome.text as the final reply, so text="" would wipe
+            # a partial answer the user was reading mid-stream.
             yield SideChatOutcome(
-                text="",
+                text=cap_reply_buffer("".join(parts)),
                 provider=provider,
                 model=model,
                 status="provider_error",
