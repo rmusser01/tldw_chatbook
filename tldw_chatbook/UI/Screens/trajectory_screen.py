@@ -37,6 +37,8 @@ dismiss second), and the footer hints line stays 1:1 with ``BINDINGS``
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from datetime import datetime
 
 from loguru import logger
@@ -113,15 +115,18 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("i", "toggle_inspector", "Inspector"),
         Binding("e", "load_earlier", "Earlier"),
         Binding("/", "focus_search", "Search"),
+        Binding("f", "resume_follow", "Follow"),
     ]
 
     #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-031; tested).
+    #: ``f follow`` is only RENDERED on live screens (``_refresh_hints``).
     TRAJECTORY_SHORTCUTS = (
         ("enter", "inspect"),
         ("t", "collapse"),
         ("i", "inspector"),
         ("/", "search"),
         ("e", "earlier"),
+        ("f", "follow"),
     )
 
     DEFAULT_CSS = """
@@ -165,6 +170,8 @@ class TrajectoryScreen(ModalScreen[None]):
         *,
         screen_title: str = "",
         conversation_id: str | None = None,
+        revision_provider: Callable[[], int] | None = None,
+        snapshot_builder: Callable[[], TrajectorySnapshot] | None = None,
     ) -> None:
         """Store the projection output; all rendering happens on mount.
 
@@ -172,11 +179,26 @@ class TrajectoryScreen(ModalScreen[None]):
             snapshot: The ``derive_trajectory`` output to render.
             screen_title: Display title (typically the conversation name).
             conversation_id: Conversation id, shown in the title line.
+            revision_provider: Live-mode callable returning the store's
+                payload revision for this conversation (task-5 tail-follow).
+                When provided together with ``snapshot_builder`` the screen
+                polls it every 0.5s and rebuilds on change.
+            snapshot_builder: Live-mode callable rebuilding the snapshot
+                from current persisted state; run in a worker thread.
         """
         super().__init__()
         self._snapshot = snapshot
         self._screen_title = screen_title
         self._conversation_id = conversation_id
+        self._revision_provider = revision_provider
+        self._snapshot_builder = snapshot_builder
+        self._last_revision: int | None = None
+        #: Tail-follow: True while the reader is at the bottom; scrolling
+        #: up suspends it, ``f`` re-enables.
+        self._follow = True
+        #: Explicit resume grace: geometry-polling must not cancel an
+        #: in-flight ``f`` before its deferred ``scroll_end`` lands.
+        self._follow_grace_until = 0.0
         self._turns: tuple[TrajectoryTurn, ...] = snapshot.turns
         self._turn_numbers: dict[str, int] = {
             turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
@@ -222,9 +244,109 @@ class TrajectoryScreen(ModalScreen[None]):
         else:
             self._render_ledger()
         table.focus()
+        if self._revision_provider is not None and self._snapshot_builder is not None:
+            try:
+                self._last_revision = self._revision_provider()
+            except Exception:  # noqa: BLE001 - provider is external state
+                self._last_revision = None
+            self.set_interval(0.5, self._poll_revision)
 
     def on_unmount(self) -> None:
         self._alive = False
+
+    # -- live tail-follow (task-5) --------------------------------------------
+
+    def _poll_revision(self) -> None:
+        """Interval tick: rebuild the snapshot when the store revision moves."""
+        if not self._alive or self._snapshot_builder is None:
+            return
+        if self._revision_provider is None:
+            return
+        self._sync_follow_from_scroll()
+        try:
+            revision = self._revision_provider()
+        except Exception:  # noqa: BLE001 - provider is external state
+            return
+        if revision == self._last_revision:
+            return
+        self._last_revision = revision
+        self.run_worker(
+            self._live_rebuild_worker, thread=True, group="trajectory-live"
+        )
+
+    def _live_rebuild_worker(self) -> None:
+        """Worker-thread half of the live rebuild (video-player pattern)."""
+        builder = self._snapshot_builder
+        if builder is None:
+            return
+        try:
+            snapshot = builder()
+        except Exception as exc:  # noqa: BLE001 - worker boundary
+            logger.warning(
+                "Trajectory live rebuild failed: component=trajectory_screen "
+                "error_type={}",
+                type(exc).__name__,
+            )
+            return
+        try:
+            self.app.call_from_thread(self._apply_live_snapshot, snapshot)
+        except Exception:  # noqa: BLE001 - worker boundary
+            return
+
+    def _apply_live_snapshot(self, snapshot: TrajectorySnapshot) -> None:
+        """Swap in a rebuilt snapshot, preserving reader state; follow tail."""
+        if not self._alive:
+            return
+        self._snapshot = snapshot
+        self._turns = snapshot.turns
+        self._turn_numbers = {
+            turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
+        }
+        # Keep collapsed turns and the search query; never shrink the window.
+        self._visible_count = max(
+            self._visible_count, min(self._total_records, PAGE_SIZE)
+        )
+        self._render_ledger()
+        try:
+            self.query_one("#trajectory-title", Static).update(self._title_text())
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            pass
+        self._refresh_hints()
+        if self._follow:
+            try:
+                table = self.query_one("#trajectory-table", DataTable)
+                # The re-render resets scroll geometry; scrolling must land
+                # after the table re-lays out, not at the stale range.
+                table.call_after_refresh(table.scroll_end, animate=False)
+            except Exception:  # noqa: BLE001 - pre-mount refresh
+                pass
+
+    def _sync_follow_from_scroll(self) -> None:
+        """Suspend follow while the reader is off the bottom edge.
+
+        Pull-based (checked on every poll tick) rather than event-based:
+        DataTable scroll geometry is authoritative and needs no message
+        plumbing, and a table that cannot scroll at all keeps following.
+        """
+        try:
+            table = self.query_one("#trajectory-table", DataTable)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            return
+        if table.max_scroll_y <= 0:
+            return
+        if time.monotonic() < self._follow_grace_until:
+            return
+        self._follow = table.scroll_y >= table.max_scroll_y - 1
+
+    def action_resume_follow(self) -> None:
+        """Re-enable tail-follow and jump to the newest records (``f``)."""
+        self._follow = True
+        self._follow_grace_until = time.monotonic() + 1.0
+        try:
+            table = self.query_one("#trajectory-table", DataTable)
+            table.call_after_refresh(table.scroll_end, animate=False)
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            pass
 
     def _title_text(self) -> str:
         parts = ["Trajectory"]
@@ -467,7 +589,8 @@ class TrajectoryScreen(ModalScreen[None]):
         pairs = [
             (key, label)
             for key, label in self.TRAJECTORY_SHORTCUTS
-            if key != "e" or self._hidden_earlier > 0
+            if (key != "e" or self._hidden_earlier > 0)
+            and (key != "f" or self._snapshot_builder is not None)
         ]
         text = " · ".join(f"{key} {label}" for key, label in pairs)
         try:

@@ -4318,6 +4318,18 @@ class ConsoleChatStore:
                     "trajectory_rows_write_failed"
                 )
                 return False
+        if result is not False:
+            # task-5: a successful sidecar write is trajectory-visible state.
+            # Bump the revision bus (conversation key + every live session
+            # bound to that conversation) so the polling trajectory screen
+            # rebuilds its snapshot; without this, tail-follow sees nothing.
+            for conversation_id in dict.fromkeys(
+                row.conversation_id for row in rows
+            ):
+                self._bump_payload_revision(conversation_id)
+                for session in self._sessions.values():
+                    if session.persisted_conversation_id == conversation_id:
+                        self._bump_payload_revision(session.id)
         return result is not False
 
     def _nodes_lookup(self, message_id: str) -> ConsoleChatMessage | None:
@@ -6582,6 +6594,21 @@ class ConsoleChatStore:
         self._payload_revisions[session_id] = (
             self._payload_revisions.get(session_id, 0) + 1
         )
+
+    def get_payload_revision(self, session_or_conversation_id: str) -> int:
+        """Return the payload-revision counter for a session or conversation.
+
+        Public read side of the revision bus the trajectory live view polls
+        (task-5): the counter has no observer interface, so the screen
+        ``set_interval``-polls this getter. Accepts either a Console session
+        id or a persisted conversation id -- the trajectory write path bumps
+        BOTH keys -- returning the newest of the matches (0 when unknown).
+        """
+        revision = self._payload_revisions.get(session_or_conversation_id, 0)
+        for session in self._sessions.values():
+            if session.persisted_conversation_id == session_or_conversation_id:
+                revision = max(revision, self._payload_revisions.get(session.id, 0))
+        return revision
 
     def _bump_conversation_context_epoch(self, session_id: str) -> None:
         """Advance one live session's provider-context change token."""
