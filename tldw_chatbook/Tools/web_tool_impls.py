@@ -2476,7 +2476,7 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # the RELEVANT count, not an analyzed count either).
     coverage_verb = "found" if deadline_hit else "scored"
 
-    # Citation verification (task-16319): when the pipeline ran its
+    # Citation verification (task-16331): when the pipeline ran its
     # citation/quote check (LLM-success branch only), surface the counts in
     # the footer so the model can weigh the answer's grounding; absent on
     # fallback/failure branches, which have no verdict to report.

@@ -6994,7 +6994,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
         )
         # Research services: ONE wiring path, not two. This used to duplicate
-        # `_wire_research_services` verbatim here (task-16320); the method's
+        # `_wire_research_services` verbatim here (task-16332); the method's
         # own already-wired guard makes calling it from this earlier-in-
         # `__init__` bootstrap equivalent to the old embedded copy, and the
         # later direct `_wire_research_services()` call then early-returns.

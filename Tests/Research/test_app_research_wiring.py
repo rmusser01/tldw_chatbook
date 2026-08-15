@@ -1,9 +1,9 @@
-"""App-level research service wiring (task-16320).
+"""App-level research service wiring (task-16332).
 
 The research wiring used to exist VERBATIM TWICE in app.py: once inside
 `_wire_watchlists_and_notifications_services` (the broad parity bootstrap,
 which runs first at startup) and once in `_wire_research_services` (which
-then early-returned via its already-wired guard). task-16320 replaced the
+then early-returned via its already-wired guard). task-16332 replaced the
 embedded copy with a call to the method. These tests pin the contract that
 made that replacement safe: the boot path wires the full research service
 set exactly once, and a second `_wire_research_services()` call never

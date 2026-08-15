@@ -1428,7 +1428,7 @@ class FinalAnswerDict(TypedDict):
     evidence: List[Dict[str, Any]]
     confidence: float
     chunks: List[Dict[str, Any]]
-    # Present ONLY on the LLM-success branch (task-16319): marker resolution
+    # Present ONLY on the LLM-success branch (task-16331): marker resolution
     # and quote-check counts from deep_search_citations.verify_citations.
     # Failure/empty branches omit it rather than fabricating a clean verdict.
     citation_verification: NotRequired[Dict[str, Any]]
@@ -1749,7 +1749,7 @@ def aggregate_results(
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
-            # Citation verification (task-16319): resolve the "[n]" markers
+            # Citation verification (task-16331): resolve the "[n]" markers
             # against the numbered evidence ids and quote-check quoted spans
             # against the scraped originals -- pure string work, no network.
             # Unknown ids are flagged inline ("[n?]") and counted, never

@@ -34,7 +34,7 @@ Phase 1 generates sub-queries once and never revises them as evidence arrives. A
 1. TDD engine iteration loop: injectable gap_fn (default returns empty without a configured synthesis LLM - never breaks the run), loop collect plus synthesize while gaps are returned and iteration < max_iterations from limits_json (default 1 preserves single-pass behavior), merge results across iterations with URL dedup, record iteration_started events, surface remaining gaps in report_v1.md and bundle.json
 2. TDD budget interaction: a gap iteration that cannot reserve searches stops cleanly through the existing research_limit_exceeded path
 3. Tests plus lint plus task close
-ADR required: no - same engine contract (ADR-066) gaining a bounded loop through its existing seams; gap_fn mirrors the search_fn and analyze_fn injection pattern
+ADR required: no - same engine contract (ADR-068) gaining a bounded loop through its existing seams; gap_fn mirrors the search_fn and analyze_fn injection pattern
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

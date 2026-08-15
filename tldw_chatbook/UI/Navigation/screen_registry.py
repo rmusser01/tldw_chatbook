@@ -146,7 +146,7 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "writing": ScreenRoute(
         "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
     ),
-    # task-16322 (ADR-066) re-registers the research screen: the local
+    # task-16322 (ADR-068) re-registers the research screen: the local
     # research execution engine now drives launched local runs, so
     # ResearchWindow (the run/event observation surface) is reachable from
     # navigation again under the legacy "research" route id (still a
@@ -198,7 +198,7 @@ _SCREEN_ALIASES = {
     # mirrors the "notes"/"prompts"/"skills" aliases above, and matches the
     # route inventory, which already declared ingest -> library.
     "ingest": "library",
-    # "research" is a REAL screen route again (task-16322, ADR-066) -- see
+    # "research" is a REAL screen route again (task-16322, ADR-068) -- see
     # its ScreenRoute registration above. It is deliberately NOT an alias.
     # The standalone Search screen is retired (RAG UX v2 PR-1, critique
     # 2026-08-02T21-11-50Z): search/RAG now lives entirely inside Library's

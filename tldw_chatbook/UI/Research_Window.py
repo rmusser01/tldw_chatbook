@@ -124,7 +124,7 @@ class ResearchWindow(Vertical):
 
     def _start_local_engine(self, run_id: str) -> None:
         """Start the local research execution engine for ``run_id``
-        (task-16322, ADR-066) in a Textual worker when mounted.
+        (task-16322, ADR-068) in a Textual worker when mounted.
 
         A resumed local run re-enters the engine, which restarts the phase
         machine from the top (phase-level resume is out of scope for v1).

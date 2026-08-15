@@ -85,12 +85,12 @@ Result:
   `generate_and_search` + `analyze_and_aggregate` pipeline to agents with
   deadline/cancellation handling and byte caps. It is NOT connected to
   the run lifecycle — that connection is part of task-16322.
-- **task-16319** added citation verification to the pipeline: `[n]`
+- **task-16331** added citation verification to the pipeline: `[n]`
   markers are resolved against evidence ids, quoted spans are checked
   against scraped originals (verbatim-first ladder), and the counts ship
   in the tool's honesty footer
   (`Web_Scraping/deep_search_citations.py`).
-- **task-16320** collapsed the duplicated research service wiring in
+- **task-16332** collapsed the duplicated research service wiring in
   `app.py` to the single `_wire_research_services` path.
 
 ## Outcome

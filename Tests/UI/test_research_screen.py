@@ -5,7 +5,7 @@ import pytest
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
 from tldw_chatbook.UI.Research_Window import ResearchWindow
 
-# NOTE (task-16322, ADR-066): ``ResearchScreen`` is back -- the local
+# NOTE (task-16322, ADR-068): ``ResearchScreen`` is back -- the local
 # research execution engine drives launched local runs, so the window is
 # reachable from navigation again under the "research" route id (the
 # task-255 library alias is reversed). The screen-level behavior is covered
@@ -287,7 +287,7 @@ async def test_research_window_reports_local_checkpoint_approval_unavailable():
     assert "Local research checkpoints" in window.status_message
 
 
-# --- local engine start wiring (task-16322, ADR-066) ---------------------------
+# --- local engine start wiring (task-16322, ADR-068) ---------------------------
 
 @pytest.mark.asyncio
 async def test_research_window_starts_local_engine_after_local_create(monkeypatch):

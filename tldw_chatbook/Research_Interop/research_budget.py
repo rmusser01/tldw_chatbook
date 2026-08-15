@@ -1,4 +1,4 @@
-"""Research budget ledger (task-16323, extends ADR-066's engine contract).
+"""Research budget ledger (task-16323, extends ADR-068's engine contract).
 
 Reserve-and-settle budget enforcement for local research runs, porting two
 reference designs: mole's ledger discipline (reserve before execution,

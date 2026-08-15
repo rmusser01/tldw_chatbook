@@ -1,4 +1,4 @@
-"""Research budget ledger (task-16323, extends ADR-066's engine contract).
+"""Research budget ledger (task-16323, extends ADR-068's engine contract).
 
 Port of the reserve-and-settle pattern (mole's enforced budgets +
 tldw_server limits.py's structured research_limit_exceeded errors) onto the

@@ -390,7 +390,7 @@ def test_skills_route_resolves_to_library_screen():
 
 
 def test_research_route_resolves_to_research_screen():
-    """task-16322 (ADR-066) reverses task-255's library alias: the research
+    """task-16322 (ADR-068) reverses task-255's library alias: the research
     route is a real screen again.
 
     The local research execution engine now drives launched local runs

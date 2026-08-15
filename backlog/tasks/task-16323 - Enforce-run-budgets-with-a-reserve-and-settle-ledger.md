@@ -36,7 +36,7 @@ The runs schema carries limits_json but nothing enforces it and the deep-search 
 2. TDD Research_Interop/research_budget.py: BudgetLedger with reserve/settle for searches and fetched docs and tokens, runtime deadline checks, non-negative invariants, structured ResearchLimitExceeded(key) errors, and a snapshot for persistence
 3. TDD engine enforcement: parse limits_json into the ledger, check before each phase unit, pass the runtime budget into phase 1 via phase1_time_budget_s, stop cleanly through fail_run with a research_limit_exceeded message at a phase boundary while preserving partial artifacts, persist budget_ledger.json after settlements
 4. Tests plus lint plus task close
-ADR required: no - enforcement lands inside the ADR-066 engine contract which explicitly anticipated task-16323; link ADR-066
+ADR required: no - enforcement lands inside the ADR-068 engine contract which explicitly anticipated task-16323; link ADR-068
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

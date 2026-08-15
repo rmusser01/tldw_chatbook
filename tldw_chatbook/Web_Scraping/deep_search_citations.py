@@ -1,4 +1,4 @@
-"""Citation verification for the deep-search pipeline (task-16319).
+"""Citation verification for the deep-search pipeline (task-16331).
 
 Port of tldw_server dev's verbatim-first checking design (Claims_Extraction/
 alignment.py + RAG guardrails quote citations) onto the chatbook deep-search
@@ -139,7 +139,7 @@ def verify_citations(
     answer_text: str, evidence: Sequence[Mapping[str, Any]]
 ) -> Dict[str, Any]:
     """Verify the ``[n]`` markers and quoted spans of a synthesized answer
-    against the run's evidence (task-16319).
+    against the run's evidence (task-16331).
 
     Args:
         answer_text: The synthesis LLM's answer text.

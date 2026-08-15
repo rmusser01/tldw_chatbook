@@ -1,4 +1,4 @@
-# ADR-066: Local research execution engine
+# ADR-068: Local research execution engine
 
 - **Status:** Accepted
 - **Date:** 2026-08-15
@@ -6,7 +6,7 @@
 - **Related:** ADR-024 (RAG citation provenance — different domain, cited for
   contrast); `Docs/Development/research-sessions-runs-tranche-2.md`;
   task-255 (orphan research route removal); task-1356 (`web_deep_search`
-  tool); task-16319 (deep-search citation verification); task-16323 (budget
+  tool); task-16331 (deep-search citation verification); task-16323 (budget
   ledger, follows), task-16324 (iterative replanning, follows)
 
 ## Context
@@ -49,7 +49,7 @@ contract `ServerResearchService` already mirrors.
    `cancel_run`.
 4. **Artifact contract mirrors the server's names** so bundles are
    shape-comparable across modes: `plan.json`, `collection_summary.json`,
-   `sources.json`, `verification_summary.json` (fed by task-16319's
+   `sources.json`, `verification_summary.json` (fed by task-16331's
    `citation_verification` when the synthesis branch produced one),
    `report_v1.md`, and `bundle.json`.
 5. **Re-register a Research destination** resolving task-255's deferred

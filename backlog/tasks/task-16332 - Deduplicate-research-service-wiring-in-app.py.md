@@ -1,5 +1,5 @@
 ---
-id: TASK-16320
+id: TASK-16332
 title: Deduplicate research service wiring in app.py
 status: Done
 assignee:

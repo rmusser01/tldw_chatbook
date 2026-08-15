@@ -1,4 +1,4 @@
-"""Deep-search citation verification (task-16319). Pins the matching ladder
+"""Deep-search citation verification (task-16331). Pins the matching ladder
 ported from tldw_server's Claims_Extraction/guardrails verbatim-first design:
 exact substring, then casefold/whitespace-normalized containment, then a
 bounded token-level fuzzy fallback. Fakes live only at chat_api_call / the
