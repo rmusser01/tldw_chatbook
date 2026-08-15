@@ -41,7 +41,6 @@ class TTSReconfigurationTicket:
     provider_id: str
     generation: int
     completion: asyncio.Task[ReconfigureResult]
-    admission_fenced: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -821,15 +820,11 @@ class TTSAdapterRegistry:
             ):
                 return ReconfigureResult.SUPERSEDED
             if slot.config == new_config and not slot.unavailable:
-                assert slot.applying_generation is not None
-                slot.applied_generation = slot.applying_generation
                 return ReconfigureResult.UNCHANGED
             close_record = slot.active
             slot.active = None
             slot.config = new_config
             slot.revision += 1
-            assert slot.applying_generation is not None
-            slot.applied_generation = slot.applying_generation
             slot.unavailable = False
             if close_record is not None:
                 close_record.retired = True
@@ -877,6 +872,9 @@ class TTSAdapterRegistry:
                     async with slot.lock:
                         if slot.applying_generation == generation:
                             slot.applying_generation = None
+                async with slot.lock:
+                    if result is not ReconfigureResult.SUPERSEDED:
+                        slot.applied_generation = generation
                 return result
 
         completion = asyncio.create_task(apply())
@@ -942,12 +940,7 @@ class TTSAdapterRegistry:
 
         completion = asyncio.create_task(ticket_result())
         completion.add_done_callback(self._observe_task_result)
-        return TTSReconfigurationTicket(
-            provider_id,
-            generation,
-            completion,
-            admission_fenced=True,
-        )
+        return TTSReconfigurationTicket(provider_id, generation, completion)
 
     async def _complete_exclusive_handoff(
         self,
