@@ -1509,3 +1509,222 @@ def test_get_unread_items_count_since_counts_only_newer_unread(db):
     assert db.get_unread_items_count_since("2026-08-07T00:00:00+00:00") == 1, (
         "a is before the floor, c is reviewed -- only b counts"
     )
+
+
+# --- TASK-15770: the Today-badge count is index-served ------------------------
+
+
+def _captured_count_sql(db):
+    """The SQL `get_unread_items_count_since` ACTUALLY executes, captured via
+    `set_trace_callback` -- not a copy of the string pasted into the test, so
+    the plan pin below cannot drift away from the production query."""
+    captured = []
+    db.conn.set_trace_callback(captured.append)
+    try:
+        db.get_unread_items_count_since("2026-08-07T00:00:00+00:00")
+    finally:
+        db.conn.set_trace_callback(None)
+    count_stmts = [s for s in captured if "COUNT(*)" in s and "subscription_items" in s]
+    assert len(count_stmts) == 1, (
+        f"expected exactly one COUNT statement, got: {captured}"
+    )
+    return count_stmts[0]
+
+
+def test_get_unread_items_count_since_is_index_served(db):
+    """AC#1/AC#2 (TASK-15770): the badge count query is served by
+    `idx_subscription_items_effective_date`, not a full-table scan.
+
+    The plan is pinned on the INDEX NAME appearing (lesson: EXPLAIN output
+    can hide a scan behind a table alias, so "no SCAN in the detail" alone
+    is a weaker pin), with the no-SCAN assertion kept as a secondary guard.
+    Born red against the pre-task inline-COALESCE shape: SQLite (probe-
+    verified on 3.49.1) does NOT rewrite the inline expression to the
+    generated column -- that shape full-scans.
+    """
+    source_id = db.add_subscription(
+        name="Feed", type="rss", source="https://f.example/f"
+    )
+    _insert_item(db, source_id, "https://f.example/a", "a", "body")
+
+    sql = _captured_count_sql(db)
+    # The captured statement may arrive with the bound parameter already
+    # expanded (sqlite3_expanded_sql) or still holding the placeholder,
+    # depending on the sqlite3 module build -- EXPLAIN accordingly.
+    params = ("2026-08-07T00:00:00+00:00",) if "?" in sql else ()
+    plan_rows = db.conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()
+    details = [row[3] for row in plan_rows]
+
+    assert any("idx_subscription_items_effective_date" in d for d in details), (
+        f"badge count query is not index-served; plan: {details}"
+    )
+    assert not any(d.startswith("SCAN") for d in details), (
+        f"badge count query still scans; plan: {details}"
+    )
+
+
+def test_unread_count_parity_old_inline_expression_vs_rewritten_query(tmp_path):
+    """AC#3 (TASK-15770): the rewritten count is identical to the OLD inline
+    `COALESCE(datetime(published_date), datetime(created_at))` predicate's,
+    mirroring task-15464's ordering-parity test:
+
+    - LEGACY rows inserted into a hand-built pre-migration schema, then
+      BACKFILLED by opening through `SubscriptionsDB` (the ALTER path);
+    - NEW rows through the real `persist_subscription_item` write path;
+    - valid, NULL, and garbage `published_date`; timezone-offset dates that
+      cross the floor only after `datetime()` normalization; rows exactly AT
+      the floor (inclusive boundary); non-'new' statuses; one hard-deleted
+      row.
+
+    The expected count is the OLD expression independently recomputed
+    against the live table for each floor -- not a hand-written number.
+    """
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_LEGACY_SCHEMA_SQL)
+    conn.execute(
+        "INSERT INTO subscriptions (id, name, type, source) "
+        "VALUES (1, 'Legacy', 'rss', 'https://legacy.example/f')"
+    )
+    legacy_rows = [
+        # (url, published_date, created_at, status)
+        (
+            "https://legacy.example/valid",
+            "2024-01-16T09:00:00Z",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+        ("https://legacy.example/null", None, "2024-06-01 00:00:00", "new"),
+        (
+            "https://legacy.example/garbage",
+            "not-a-real-date",
+            "2024-06-02 00:00:00",
+            "new",
+        ),
+        (
+            "https://legacy.example/at-floor",
+            "2024-05-01T00:00:00Z",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+        (
+            "https://legacy.example/reviewed",
+            "2024-07-01T00:00:00Z",
+            "2024-01-01 00:00:00",
+            "reviewed",
+        ),
+        # Says "05-01" but normalizes to 2024-04-30 22:00 UTC -- BEFORE a
+        # 2024-05-01T00:00Z floor despite the date string.
+        (
+            "https://legacy.example/tz-before",
+            "2024-05-01T01:00:00+03:00",
+            "2024-01-01 00:00:00",
+            "new",
+        ),
+    ]
+    for url, published, created, status in legacy_rows:
+        conn.execute(
+            "INSERT INTO subscription_items "
+            "(subscription_id, url, title, published_date, created_at, status, content_hash) "
+            "VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (url, url, published, created, status, url),
+        )
+    conn.commit()
+    conn.close()
+
+    legacy_db = SubscriptionsDB(str(path), client_id="count-parity-probe")
+    try:
+        with legacy_db.transaction() as sconn:
+            for url, title, published, now, content_hash in (
+                (
+                    "https://new.example/valid",
+                    "new valid",
+                    "2024-06-15T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n1",
+                ),
+                (
+                    "https://new.example/null",
+                    "new null",
+                    None,
+                    "2024-05-20T00:00:00+00:00",
+                    "n2",
+                ),
+                (
+                    "https://new.example/garbage",
+                    "new garbage",
+                    "still-garbage",
+                    "2024-04-15T00:00:00+00:00",
+                    "n3",
+                ),
+                (
+                    "https://new.example/at-floor",
+                    "new at floor",
+                    "2024-05-01T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n4",
+                ),
+                # Normalizes to 2024-05-01 02:00 UTC -- AFTER the floor
+                # despite the "04-30" date string.
+                (
+                    "https://new.example/tz-after",
+                    "new tz after",
+                    "2024-04-30T22:00:00-04:00",
+                    "2024-01-01T00:00:00+00:00",
+                    "n5",
+                ),
+                (
+                    "https://new.example/doomed",
+                    "deleted later",
+                    "2024-06-20T00:00:00Z",
+                    "2024-01-01T00:00:00+00:00",
+                    "n6",
+                ),
+            ):
+                persist_subscription_item(
+                    sconn,
+                    1,
+                    {
+                        "url": url,
+                        "title": title,
+                        "published_date": published,
+                        "content_hash": content_hash,
+                    },
+                    run_id=None,
+                    now=now,
+                )
+        # Read/unread transitions after insert, plus a hard delete.
+        with legacy_db.transaction() as sconn:
+            sconn.execute(
+                "UPDATE subscription_items SET status = 'ignored' WHERE url = ?",
+                ("https://new.example/null",),
+            )
+            sconn.execute(
+                "DELETE FROM subscription_items WHERE url = ?",
+                ("https://new.example/doomed",),
+            )
+
+        floors = (
+            "2024-05-01T00:00:00Z",  # the tie/tz boundary itself
+            "2024-05-01T02:00:00+03:00",  # offset floor: normalizes BEFORE the tie rows
+            "2024-06-01T00:00:00+00:00",  # mid-range
+            "2000-01-01T00:00:00+00:00",  # everything unread
+            "2030-01-01T00:00:00+00:00",  # nothing
+        )
+        nonzero_seen = False
+        for floor in floors:
+            old_count = legacy_db.conn.execute(
+                "SELECT COUNT(*) FROM subscription_items "
+                "WHERE status = 'new' AND "
+                "COALESCE(datetime(published_date), datetime(created_at)) >= datetime(?)",
+                (floor,),
+            ).fetchone()[0]
+            assert legacy_db.get_unread_items_count_since(floor) == old_count, (
+                f"count diverged from the old inline expression at floor {floor}"
+            )
+            nonzero_seen = nonzero_seen or old_count > 0
+        # Guard against a vacuous both-sides-zero pass on a broken fixture.
+        assert nonzero_seen
+        assert legacy_db.get_unread_items_count_since("2030-01-01T00:00:00+00:00") == 0
+    finally:
+        legacy_db.close()
