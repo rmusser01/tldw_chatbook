@@ -278,7 +278,7 @@ async def test_console_has_one_canonical_visible_state_action_strip():
 
 
 @pytest.mark.asyncio
-async def test_console_status_chips_sit_above_composer():
+async def test_console_status_chips_sit_below_composer():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -288,9 +288,11 @@ async def test_console_status_chips_sit_above_composer():
         chips = console.query_one("#console-status-chips")
         grid = console.query_one("#console-workspace-grid")
         composer = console.query_one("#console-native-composer")
-        # Below the chat/rail grid, above the composer.
+        # Below the chat/rail grid AND below the composer: the chips close
+        # the shell as a bottom status row so the composer cluster stays
+        # contiguous with the transcript.
         assert chips.region.y >= grid.region.y + grid.region.height
-        assert chips.region.y + chips.region.height <= composer.region.y
+        assert composer.region.y + composer.region.height <= chips.region.y
         assert _is_displayed(chips)
 
 
@@ -315,7 +317,7 @@ async def test_console_control_bar_renders_visible_state_chips():
             "#console-sources-chip",
             "#console-approvals-chip",
         )
-        # Chips now live in the #console-status-chips strip above the composer,
+        # Chips now live in the #console-status-chips strip below the composer,
         # not inside #console-control-bar; query them by global id.
         visible_chip_text = []
         for selector in expected_selectors:
