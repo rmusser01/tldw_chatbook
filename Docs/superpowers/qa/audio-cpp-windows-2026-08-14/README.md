@@ -3,7 +3,7 @@
 Status: **NOT RUN — TASK-13208 remains In Progress**
 
 Implementation checkpoint: branch `codex/task-13208-windows-audio-cpp`, UAT
-harness commit `5a3b2e22e`. Hosted Windows results and provisioned machine
+harness commit `9a32b1278`. Hosted Windows results and provisioned machine
 evidence are pending; this document does not claim either architecture yet.
 
 This handoff validates Windows 10+ on x86 or x64 with Python 3.12+. ARM is not
