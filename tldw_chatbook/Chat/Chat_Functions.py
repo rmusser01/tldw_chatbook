@@ -997,17 +997,27 @@ def chat_api_call(
                         from .usage_recorder import active_recorder
 
                         recorder = active_recorder()
+                        # Cloud providers normalize to the OpenAI chat
+                        # shape but may keep their own usage field names
+                        # (Anthropic: input_tokens/output_tokens); OpenAI
+                        # names win when both are present (task-16335).
+                        usage_prompt = usage.get("prompt_tokens")
+                        if usage_prompt is None:
+                            usage_prompt = usage.get("input_tokens")
+                        usage_completion = usage.get("completion_tokens")
+                        if usage_completion is None:
+                            usage_completion = usage.get("output_tokens")
                         if (
                             recorder is not None
                             and isinstance(usage, dict)
                             and (
-                                usage.get("prompt_tokens") is not None
-                                or usage.get("completion_tokens") is not None
+                                usage_prompt is not None
+                                or usage_completion is not None
                             )
                         ):
                             recorder.record_usage(
-                                prompt_tokens=usage.get("prompt_tokens") or 0,
-                                completion_tokens=usage.get("completion_tokens") or 0,
+                                prompt_tokens=usage_prompt or 0,
+                                completion_tokens=usage_completion or 0,
                             )
                             usage_recorded = True
                     except Exception:  # noqa: BLE001 - accounting must never break a call

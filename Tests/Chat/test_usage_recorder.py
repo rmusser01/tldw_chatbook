@@ -192,3 +192,69 @@ def test_chat_api_call_unknown_dict_shape_passes_through(monkeypatch):
     )
 
     assert result == {"error": "odd provider payload"}
+
+
+# --- cloud provider usage key variants (task-16335) -------------------------------
+
+def test_chat_api_call_records_anthropic_style_usage_keys(monkeypatch):
+    # Anthropic normalizes its response to the OpenAI chat shape but keeps
+    # its own usage field names (input_tokens/output_tokens).
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"input_tokens": 31, "output_tokens": 13},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "a long enough prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert recorder.prompt_tokens() == 31
+    assert recorder.completion_tokens() == 13
+
+
+def test_chat_api_call_openai_style_usage_still_exact(monkeypatch):
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 6},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (5, 6)
+
+
+def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 9,
+                  "input_tokens": 100, "output_tokens": 100},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (8, 9)
