@@ -1,5 +1,5 @@
 ---
-id: TASK-16312
+id: TASK-16482
 title: Align Library Prompt browsing to 20-item pages
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - pagination
   - prompts
 dependencies:
-  - TASK-16311
+  - TASK-16481
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

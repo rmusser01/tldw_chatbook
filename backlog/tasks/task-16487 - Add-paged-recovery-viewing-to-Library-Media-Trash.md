@@ -1,5 +1,5 @@
 ---
-id: TASK-16317
+id: TASK-16487
 title: Add paged recovery viewing to Library Media Trash
 status: To Do
 assignee: []
@@ -10,11 +10,11 @@ labels:
   - media-trash
   - follow-up
 dependencies:
-  - TASK-16311
-  - TASK-16312
-  - TASK-16313
-  - TASK-16314
-  - TASK-16315
+  - TASK-16481
+  - TASK-16482
+  - TASK-16483
+  - TASK-16484
+  - TASK-16485
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

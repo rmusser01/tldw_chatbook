@@ -1,4 +1,4 @@
-# TASK-16311 Library Conversation Pagination Implementation Plan
+# TASK-16481 Library Conversation Pagination Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 ## Authority and constraints
 
-- Task: `backlog/tasks/task-16311 - Standardize-Library-pager-display-and-harden-Conversation-paging.md`
+- Task: `backlog/tasks/task-16481 - Standardize-Library-pager-display-and-harden-Conversation-paging.md`
 - Design: `Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md`
 - Architecture: `backlog/decisions/067-library-top-level-pagination-contracts.md` (Accepted), ADR-003, ADR-030, and ADR-033.
 - Worktree: `.worktrees/library-top-level-pagination`; branch `codex/library-top-level-pagination`. Task 0 rebases onto latest `origin/dev`; the exact task base is always `git merge-base HEAD origin/dev` after that rebase, never the older planning SHA.
@@ -50,9 +50,9 @@ Modify:
 - `Tests/UI/test_library_multiselect_conversations.py` — current-page selection clearing and stale-action safety.
 - `Tests/UI/test_destination_shells.py` — update real destination service-contract fakes for the additive locator seam when required.
 - `Docs/User_Guide/library/media-and-conversations.md` — document the 20-item Conversation pager and recovery/selection behavior.
-- `backlog/tasks/task-16311 - Standardize-Library-pager-display-and-harden-Conversation-paging.md` — implementation plan link, checked AC, evidence, ADR, notes, and Done status at closeout only.
+- `backlog/tasks/task-16481 - Standardize-Library-pager-display-and-harden-Conversation-paging.md` — implementation plan link, checked AC, evidence, ADR, notes, and Done status at closeout only.
 
-Do not modify Prompt, Media, Skill, Collection, Notes-tree, Trash, or Collection-member production owners in TASK-16311.
+Do not modify Prompt, Media, Skill, Collection, Notes-tree, Trash, or Collection-member production owners in TASK-16481.
 
 ---
 
@@ -65,7 +65,7 @@ Do not modify Prompt, Media, Skill, Collection, Notes-tree, Trash, or Collection
 Run:
 
 ```bash
-backlog task 16311 --plain
+backlog task 16481 --plain
 cat backlog/docs/lessons-testing-evidence.md
 cat backlog/docs/lessons-live-verification.md
 cat backlog/docs/lessons-backlog-hygiene.md
@@ -558,7 +558,7 @@ git commit -m "feat(library): render resilient conversation pager"
 **Files:**
 
 - Modify: `Docs/User_Guide/library/media-and-conversations.md`
-- Modify: `backlog/tasks/task-16311 - Standardize-Library-pager-display-and-harden-Conversation-paging.md`
+- Modify: `backlog/tasks/task-16481 - Standardize-Library-pager-display-and-harden-Conversation-paging.md`
 
 - [x] **Step 1: Run and restore required inverse mutations**
 
@@ -621,10 +621,10 @@ Expected: Ruff and diff checks pass; full suite passes. If full suite is red, st
 Request independent spec and quality reviews. Resolve every Critical/Important finding and rerun affected gates. Only after all Definition-of-Done requirements are proven:
 
 ```bash
-backlog task edit 16311 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --check-ac 7
-backlog task edit 16311 -s Done --notes "Implemented source-owned exact Conversation paging per ADR-067; see implementation notes and recorded automated, mutation, geometry, privacy, and isolated live evidence."
-git add Docs/User_Guide/library/media-and-conversations.md "backlog/tasks/task-16311 - Standardize-Library-pager-display-and-harden-Conversation-paging.md"
+backlog task edit 16481 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 --check-ac 6 --check-ac 7
+backlog task edit 16481 -s Done --notes "Implemented source-owned exact Conversation paging per ADR-067; see implementation notes and recorded automated, mutation, geometry, privacy, and isolated live evidence."
+git add Docs/User_Guide/library/media-and-conversations.md "backlog/tasks/task-16481 - Standardize-Library-pager-display-and-harden-Conversation-paging.md"
 git commit -m "docs(library): close conversation pagination task"
 ```
 
-Expected: every AC checked, Implementation Notes present, TASK-16311 status Done, worktree clean, and TASK-16312 through TASK-16315 remain independent To Do tasks ready for their own plans.
+Expected: every AC checked, Implementation Notes present, TASK-16481 status Done, worktree clean, and TASK-16482 through TASK-16485 remain independent To Do tasks ready for their own plans.

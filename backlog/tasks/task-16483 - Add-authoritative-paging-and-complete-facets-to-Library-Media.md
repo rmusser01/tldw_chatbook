@@ -1,5 +1,5 @@
 ---
-id: TASK-16313
+id: TASK-16483
 title: Add authoritative paging and complete facets to Library Media
 status: To Do
 assignee: []
@@ -10,7 +10,7 @@ labels:
   - media
   - privacy
 dependencies:
-  - TASK-16311
+  - TASK-16481
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

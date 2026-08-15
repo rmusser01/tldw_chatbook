@@ -1,5 +1,5 @@
 ---
-id: TASK-16316
+id: TASK-16486
 title: Add placement-aware paging to the Library Notes tree
 status: To Do
 assignee: []
@@ -10,11 +10,11 @@ labels:
   - notes
   - follow-up
 dependencies:
-  - TASK-16311
-  - TASK-16312
-  - TASK-16313
-  - TASK-16314
-  - TASK-16315
+  - TASK-16481
+  - TASK-16482
+  - TASK-16483
+  - TASK-16484
+  - TASK-16485
 references:
   - >-
     Docs/superpowers/specs/2026-08-14-library-top-level-source-pagination-design.md

@@ -1,10 +1,10 @@
 ---
-id: TASK-16311
+id: TASK-16481
 title: Standardize Library pager display and harden Conversation paging
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-15 02:44'
-updated_date: '2026-08-15 23:13'
+updated_date: '2026-08-15 23:34'
 labels:
   - library
   - pagination
@@ -31,7 +31,7 @@ Make every top-level Conversation reachable through a consistent 20-item Library
 - [x] #4 Conversation count and page rows come from one coherent read transaction and malformed page or locator envelopes fail closed inside the canvas.
 - [x] #5 Conversation selection clears with visible notice on page or scope change, while focus and detail/back behavior follow the approved design.
 - [x] #6 The shared code is limited to one pure pager-display calculation; Conversation retains request, state, worker, widget, and event ownership.
-- [x] #7 Automated state, service, mounted Textual, geometry, race, privacy, mutation, and isolated live verification required by the approved design pass.
+- [ ] #7 Automated state, service, mounted Textual, geometry, race, privacy, mutation, and isolated live verification required by the approved design pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,9 +39,9 @@ Make every top-level Conversation reachable through a consistent 20-item Library
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
-Reason: TASK-16311 changes the Conversation page/locator service contract and establishes the pure shared display contract.
+Reason: TASK-16481 changes the Conversation page/locator service contract and establishes the pure shared display contract.
 
-Detailed plan: Docs/superpowers/plans/2026-08-14-task-16311-library-conversation-pagination.md
+Detailed plan: Docs/superpowers/plans/2026-08-14-task-16481-library-conversation-pagination.md
 
 1. Add the pure immutable pager-display calculation with exhaustive state tests.
 2. Make Conversation count/rows coherent and add a bounded stable-ID owning-page locator.
@@ -83,8 +83,7 @@ malformed envelopes fail closed.
   Library shell passed 625 tests; its only two failures were the Notes
   `create_discard` keyboard parametrizations, reproduced identically on exact
   base `2ff12ac50b0d7a73599f34e796ca9e933f40a4e8`. Ruff and diff checks passed.
-- Live/privacy evidence:
-  `/private/tmp/task16311-live-audited.nPe6Hm`. Fresh isolated profiles at true
+- Live/privacy evidence: fresh isolated profiles at true
   100x30 and 170x48 each passed all 8 checkpoints with 45 synthetic
   conversations: exact three-page ranges, fixed pager/row 20, source-wide
   oldest-page search and clear, selection clearing, stable-ID navigation,
@@ -97,6 +96,6 @@ malformed envelopes fail closed.
   terminal turn was interrupted after the last captured 95% progress. Per the
   user's explicit closeout direction, unrelated failures were not rerun or
   classified. Stale pre-fix node IDs remaining in pytest's cache do not exist
-  at this HEAD. The authoritative Task-16311 suites above were rerun after that
+  at this HEAD. The authoritative Task-16481 suites above were rerun after that
   event and contain zero related failures.
 <!-- SECTION:NOTES:END -->
