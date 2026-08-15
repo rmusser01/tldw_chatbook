@@ -75,6 +75,11 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             markup=False,
         )
         actions_disabled = self.canvas.actions_disabled
+        stale_action_reason = ""
+        if actions_disabled:
+            stale_action_reason = (
+                pager.status_copy if pager is not None else self.canvas.status_copy
+            )
         export_btn = Button(
             library_disabled_action_label("Export…", actions_disabled),
             id="library-conversations-export",
@@ -83,6 +88,8 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         )
         export_btn.disabled = actions_disabled
         export_btn.display = not select_mode
+        if actions_disabled:
+            export_btn.tooltip = stale_action_reason
         yield export_btn
         # Disable only when nothing to select AND not already in select mode --
         # in select mode "Done" must stay pressable so the user can always exit,
@@ -102,7 +109,11 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
         )
         select_btn.disabled = select_disabled
         if select_disabled:
-            select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+            select_btn.tooltip = (
+                stale_action_reason
+                if actions_disabled
+                else LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+            )
         yield select_btn
         if select_mode:
             action_row = Horizontal(classes="ds-toolbar")
@@ -121,7 +132,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     classes="library-toolbar-count",
                     markup=False,
                 )
-                yield Button(
+                select_all = Button(
                     library_disabled_action_label(
                         f"Select all {rendered_count} shown", actions_disabled
                     ),
@@ -130,13 +141,19 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     compact=True,
                     disabled=actions_disabled,
                 )
-                yield Button(
+                if actions_disabled:
+                    select_all.tooltip = stale_action_reason
+                yield select_all
+                clear = Button(
                     library_disabled_action_label("Clear", actions_disabled),
                     id="library-conversations-select-clear",
                     classes="library-canvas-action",
                     compact=True,
                     disabled=actions_disabled,
                 )
+                if actions_disabled:
+                    clear.tooltip = stale_action_reason
+                yield clear
                 export_disabled = actions_disabled or self.canvas.selected_count == 0
                 export_selected = Button(
                     # task-4023 AC#1 (RC-07): "○" disabled marker; base
@@ -153,7 +170,9 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 export_selected.disabled = export_disabled
                 # F-018: a disabled action says why.
                 export_selected.tooltip = (
-                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                    stale_action_reason
+                    if actions_disabled
+                    else LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
                     if export_selected.disabled
                     else LIBRARY_EXPORT_SELECTED_TOOLTIP
                 )
@@ -208,7 +227,11 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                 button.conversation_id = row.conversation_id
                 button._library_row_label_rest = label_rest
                 # Tooltips are rendered as markup too -- escape user titles.
-                button.tooltip = escape_markup(row.title)
+                button.tooltip = (
+                    stale_action_reason
+                    if actions_disabled
+                    else escape_markup(row.title)
+                )
                 button.set_class(row.selected, "library-conversation-row-selected")
                 button.disabled = actions_disabled
                 button.styles.height = 2
@@ -296,7 +319,7 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
             toolbar = Horizontal(classes="ds-toolbar")
             toolbar.styles.height = "auto"
             with toolbar:
-                yield Button(
+                open_console = Button(
                     library_disabled_action_label(
                         "Open in Console", actions_disabled
                     ),
@@ -305,3 +328,6 @@ class LibraryConversationsCanvas(PostRecomposeCallback, RecomposeCaptureGuard, V
                     compact=True,
                     disabled=actions_disabled,
                 )
+                if actions_disabled:
+                    open_console.tooltip = stale_action_reason
+                yield open_console

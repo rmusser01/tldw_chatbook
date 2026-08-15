@@ -80,6 +80,7 @@ from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import EMPTY_SCOPE_COPY
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
+    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
@@ -136,6 +137,7 @@ from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.app_factory import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
+CONVERSATION_PAGER_TEST_SIZES = ((100, 30), (170, 48))
 
 
 def _open_source_test_app() -> SimpleNamespace:
@@ -467,7 +469,11 @@ async def test_conversation_canvas_scrolls_current_page_while_pager_stays_fixed(
         assert scroll.scroll_y > 0
 
 
-@pytest.mark.parametrize("size", [(100, 30), (170, 48)])
+def test_library_conversation_pager_matrix_covers_both_supported_sizes():
+    assert CONVERSATION_PAGER_TEST_SIZES == ((100, 30), (170, 48))
+
+
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_geometry_keeps_pager_fixed_and_row_20_reachable(
     size,
@@ -549,6 +555,13 @@ def _visible_text(screen) -> str:
         label = getattr(widget, "label", "")
         chunks.append(str(label) if label is not None else "")
     return " ".join(chunks)
+
+
+def _assert_conversation_widget_inside_pane(screen, widget) -> None:
+    pane = screen.query_one("#library-canvas")
+    assert widget.region.x >= pane.region.x
+    assert widget.region.right <= pane.region.right
+    assert widget.region.bottom <= pane.region.bottom
 
 
 def _seed_conversations(app, conversations, *, notes=None, media=None, highlights=None):
@@ -6798,8 +6811,9 @@ async def test_library_conversation_default_scope_entry_starts_validated_loading
             )
 
 
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
-async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state():
+async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state(size):
     """Retry mounts only for recovery and reaches the existing screen handler."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(2))
@@ -6826,7 +6840,7 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
     service = FailOnceConversationService()
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         try:
             await _wait_for_library_shell(screen, pilot)
@@ -6862,6 +6876,12 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
             assert str(previous.tooltip) == pager_state.previous_reason
             assert str(next_page.tooltip) == pager_state.next_reason
             assert pager_state.previous_reason in _visible_text(screen)
+            for widget in (
+                screen.query_one("#library-conversations-pager"),
+                previous,
+                next_page,
+            ):
+                _assert_conversation_widget_inside_pane(screen, widget)
 
             service.release.set()
             await _wait_for_worker_group_to_drain(
@@ -6877,6 +6897,7 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
             )
             assert len(screen.query("#library-conversations-retry")) == 1
             assert retry.disabled is False
+            _assert_conversation_widget_inside_pane(screen, retry)
             assert str(
                 screen.query_one("#library-conversations-title", Static).renderable
             ) == "Conversations"
@@ -6893,6 +6914,17 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
             assert str(
                 screen.query_one("#library-conversations-title", Static).renderable
             ) == "Conversations (2)"
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.query_one(
+                    "#library-conversations-pager"
+                ).region.width
+                > 0,
+                message="Recovered Conversation pager never completed layout.",
+            )
+            _assert_conversation_widget_inside_pane(
+                screen, screen.query_one("#library-conversations-pager")
+            )
         finally:
             service.release.set()
             await _wait_for_worker_group_to_drain(
@@ -7020,13 +7052,14 @@ async def test_library_conversation_retry_first_failure_has_no_applied_metadata(
             )
 
 
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
-async def test_library_conversation_pager_disabled_reason_and_focus_fallback():
+async def test_library_conversation_pager_disabled_reason_and_focus_fallback(size):
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(45))
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations").press()
@@ -7049,6 +7082,12 @@ async def test_library_conversation_pager_disabled_reason_and_focus_fallback():
         assert previous.label.plain == f"{LIBRARY_DISABLED_ACTION_MARKER} Previous"
         assert str(previous.tooltip) == first_pager.previous_reason
         assert first_pager.previous_reason in _visible_text(screen)
+        for widget in (
+            screen.query_one("#library-conversations-pager"),
+            previous,
+            next_page,
+        ):
+            _assert_conversation_widget_inside_pane(screen, widget)
         next_page.focus()
         next_page.press()
         await _wait_for_condition(
@@ -7059,6 +7098,9 @@ async def test_library_conversation_pager_disabled_reason_and_focus_fallback():
         )
         assert "Page 2 of 3" in str(
             screen.query_one("#library-conversations-page-status").renderable
+        )
+        _assert_conversation_widget_inside_pane(
+            screen, screen.query_one("#library-conversations-next", Button)
         )
 
         screen.query_one("#library-conversations-next", Button).press()
@@ -7078,16 +7120,23 @@ async def test_library_conversation_pager_disabled_reason_and_focus_fallback():
         assert "Page 3 of 3" in str(
             screen.query_one("#library-conversations-page-status").renderable
         )
+        for widget in (
+            screen.query_one("#library-conversations-pager"),
+            screen.query_one("#library-conversations-previous", Button),
+            final_next,
+        ):
+            _assert_conversation_widget_inside_pane(screen, widget)
 
 
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
-async def test_library_conversation_disabled_reason_stale_actions_and_notice():
+async def test_library_conversation_disabled_reason_stale_actions_and_notice(size):
     """Stale rows are read-only while filter and mounted Retry recover them."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(25))
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations", Button).press()
@@ -7122,10 +7171,80 @@ async def test_library_conversation_disabled_reason_stale_actions_and_notice():
 
         state = screen._build_library_conversations_state()
         assert state.pager is not None and state.pager.retry_visible is True
+        stale_reason = state.pager.status_copy
         assert retry.disabled is False
         assert screen.query_one("#library-conversations-filter", Input).disabled is False
         assert state.pager.previous_reason in _visible_text(screen)
         assert "Selection cleared." in _visible_text(screen)
+
+        stale_action_ids = (
+            "library-conversations-export",
+            "library-conversations-select-toggle",
+            "library-conversations-select-all",
+            "library-conversations-select-clear",
+            "library-conversations-export-selected",
+            "library-conversation-open-console",
+        )
+        for widget_id in stale_action_ids:
+            button = screen.query_one(f"#{widget_id}", Button)
+            assert str(button.tooltip) == stale_reason
+            assert button.label.plain.startswith(LIBRARY_DISABLED_ACTION_MARKER)
+        for row in screen.query(".library-conversation-row"):
+            assert str(row.tooltip) == stale_reason
+
+        previous = screen.query_one("#library-conversations-previous", Button)
+        next_page = screen.query_one("#library-conversations-next", Button)
+        assert str(previous.tooltip) == state.pager.previous_reason
+        assert str(next_page.tooltip) == state.pager.next_reason
+        for widget in (
+            screen.query_one("#library-conversations-pager"),
+            retry,
+            screen.query_one("#library-conversations-select-toggle", Button),
+            screen.query_one("#library-conversations-select-all", Button),
+            screen.query_one("#library-conversations-select-clear", Button),
+            screen.query_one("#library-conversations-export-selected", Button),
+            previous,
+            next_page,
+        ):
+            _assert_conversation_widget_inside_pane(screen, widget)
+
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_freshness == "fresh"
+            and not screen._library_conversation_loading
+            and not screen.query("#library-conversations-retry")
+            and screen.query_one("#library-conversations-filter", Input).has_focus,
+            message="Conversation Retry did not recover stale rows and focus Filter.",
+        )
+        for selector in (
+            ".library-conversation-row",
+            "#library-conversations-export",
+            "#library-conversations-select-toggle",
+        ):
+            buttons = list(screen.query(selector))
+            assert buttons and all(not button.disabled for button in buttons)
+
+        screen.query_one("#library-conversations-select-toggle", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-conversations-export-selected"))
+            and screen.query_one(
+                "#library-conversations-export-selected", Button
+            ).disabled
+            and screen.query_one(
+                "#library-conversations-export-selected", Button
+            ).region.width
+            > 0,
+            message="Fresh Conversation selection mode did not expose no-selection copy.",
+        )
+        export_selected = screen.query_one(
+            "#library-conversations-export-selected", Button
+        )
+        assert str(export_selected.tooltip) == (
+            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+        )
+        _assert_conversation_widget_inside_pane(screen, export_selected)
 
 
 @pytest.mark.asyncio
