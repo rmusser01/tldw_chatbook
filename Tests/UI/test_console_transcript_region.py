@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -91,9 +92,12 @@ class _SpeechHeaderHarness(App):
 
 
 def _speech_status(transcript: ConsoleTranscript, message_id: str) -> str:
-    label = transcript.query_one(
-        f"#console-message-speech-status-{message_id}", Static
-    )
+    try:
+        label = transcript.query_one(
+            f"#console-message-speech-status-{message_id}", Static
+        )
+    except NoMatches:
+        return ""  # no speech presentation mounted = no status
     return str(label.renderable)
 
 
@@ -328,25 +332,31 @@ async def test_note_follow_intent_stamps_the_mounted_transcript():
 
 
 @pytest.mark.asyncio
-async def test_completed_assistant_headers_always_show_one_speech_action():
+async def test_idle_speech_lives_in_selected_action_row_not_header():
     app = _SpeechHeaderHarness()
     async with app.run_test(size=(140, 32)) as pilot:
         await _wait_for_selector(app, pilot, "#console-message-speech-a")
         transcript = app.query_one(ConsoleTranscript)
 
+        # Unselected: no header speech action anywhere (idle Speak is not
+        # part of the normal per-message chrome).
         assert transcript.selected_message_id is None
-        assert len(app.query("#console-message-speech-action-speech-a")) == 1
-        assert len(app.query("#console-message-speech-action-speech-b")) == 1
+        assert len(app.query("#console-message-speech-action-speech-a")) == 0
+        assert len(app.query("#console-message-speech-action-speech-b")) == 0
 
         transcript.select_message("speech-a")
         await pilot.pause()
 
+        # Selected: Speak appears in the ACTION ROW with the other
+        # per-message options, on that message only.
         action_row = app.query_one("#console-message-actions-speech-a")
         action_ids = {child.id for child in action_row.children}
         assert "console-message-action-copy-speech-a" in action_ids
         assert "console-message-action-edit-speech-a" in action_ids
-        assert "console-message-speech-action-speech-a" not in action_ids
-        assert len(app.query("#console-message-speech-action-speech-a")) == 1
+        assert "console-message-action-speak-speech-a" in action_ids
+        assert len(app.query("#console-message-action-speak-speech-b")) == 0
+        # The header still hosts no speech control while idle.
+        assert len(app.query("#console-message-speech-action-speech-a")) == 0
 
 
 @pytest.mark.asyncio
@@ -356,10 +366,6 @@ async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
         await _wait_for_selector(app, pilot, "#console-message-speech-a")
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-speech-a", ConsoleMarkdownMessage)
-        action = app.query_one("#console-message-speech-action-speech-a", Button)
-        action.focus()
-        await pilot.pause()
-        assert action.has_focus
 
         assert transcript.set_speech_state("speech-a", "generating") is True
         await pilot.pause()
@@ -374,7 +380,6 @@ async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
         assert app.query_one("#console-message-speech-a") is row
         assert playing is action
         assert playing.disabled is False
-        assert playing.has_focus
         assert _speech_status(transcript, "speech-a") == "Playing"
 
         assert transcript.set_speech_state("speech-a", "stopped") is True

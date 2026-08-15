@@ -566,7 +566,6 @@ def test_speak_action_present_for_completed_assistant_text():
 @pytest.mark.parametrize(
     ("speech_state", "action_id", "enabled", "status_label"),
     [
-        ("idle", "speak", True, ""),
         ("generating", "speak-stop", False, "Generating"),
         ("playing", "speak-stop", True, "Playing"),
         ("stopped", "speak", True, "Stopped"),
@@ -593,7 +592,41 @@ def test_completed_assistant_header_has_canonical_speech_presentation(
     assert presentation.status_label == status_label
 
 
-def test_selected_action_row_excludes_header_owned_speech_action():
+def test_idle_header_never_hosts_speech_action():
+    """Idle Speak lives in the selected action row, never the header."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello there",
+        status="complete",
+        id="m1",
+    )
+
+    for selected in (False, True):
+        presentation = message_actions.resolve_console_header_speech(
+            message, "idle", selected=selected
+        )
+        assert presentation.action is None
+        assert presentation.status_label == ""
+
+
+def test_playback_lifecycle_stays_visible_when_deselected():
+    """Generating/playing controls must remain reachable after deselection."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="hello there",
+        status="complete",
+        id="m1",
+    )
+
+    for state, action_id in (("generating", "speak-stop"), ("playing", "speak-stop")):
+        presentation = message_actions.resolve_console_header_speech(
+            message, state, selected=False
+        )
+        assert presentation.action is not None
+        assert presentation.action.action_id == action_id
+
+
+def test_selected_action_row_includes_speak_and_swaps_to_stop():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -602,17 +635,28 @@ def test_selected_action_row_excludes_header_owned_speech_action():
         id="m1",
     )
 
-    actions = service.selected_row_actions(message, speaking_message_id="m1")
+    def ids(speaking_message_id):
+        return [
+            action.action_id
+            for action in service.selected_row_actions(
+                message, speaking_message_id=speaking_message_id
+            )
+        ]
 
-    assert [action.action_id for action in actions] == [
-        "copy",
-        "edit",
-        "save-as",
-        "regenerate",
-        "continue",
-        "feedback",
-        "delete",
-    ]
+    idle_ids = ids(None)
+    assert "speak" in idle_ids
+    assert "speak-stop" not in idle_ids
+
+    speaking_ids = ids("m1")
+    assert "speak" not in speaking_ids
+    assert "speak-stop" in speaking_ids
+    assert set(speaking_ids) == set(id for id in idle_ids if id != "speak") | {
+        "speak-stop"
+    }
+
+    other_ids = ids("some-other-message")
+    assert "speak" in other_ids
+    assert "speak-stop" not in other_ids
 
 
 @pytest.mark.parametrize(

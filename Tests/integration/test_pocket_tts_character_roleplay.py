@@ -793,15 +793,11 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
                 ".console-transcript-speaker-label",
                 Static,
             )
-            action = chat_screen.query_one(
-                f"#console-message-speech-action-{greeting.id}",
-                Button,
-            )
         except NoMatches:
             return None
-        return title, speaker, action
+        return title, speaker
 
-    title, speaker, greeting_action = await _wait_for(app, greeting_visible)
+    title, speaker = await _wait_for(app, greeting_visible)
     greeting_body = chat_screen.query_one(
         f"#console-message-{greeting.id} .console-markdown-body",
         Markdown,
@@ -809,7 +805,22 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
     assert title.visual.plain == "Conversation | Chat with Pocket Ann"
     assert speaker.visual.plain == "Pocket Ann"
     assert greeting_body.source == "Hello, I am Ann."
-    assert greeting_action.console_action_id == "speak"
+
+    # Idle Speak lives in the selected-message action row: select the
+    # greeting, then the speak button appears alongside copy/edit.
+    chat_screen.query_one("#console-native-transcript").select_message(greeting.id)
+
+    def greeting_speak_button():
+        try:
+            return chat_screen.query_one(
+                f"#console-message-action-speak-{greeting.id}",
+                Button,
+            )
+        except NoMatches:
+            return None
+
+    greeting_action = await _wait_for(app, greeting_speak_button)
+    assert str(greeting_action.label) == "🔊"
     assert greeting_action.disabled is False
     assert len(context.fake_pocket_tts.requests) == context.tts_request_baseline
 
@@ -857,11 +868,15 @@ async def send_roleplay_message(app, message: str) -> None:
     chat_screen = context.chat_screen
     greeting_message_id = context.greeting_message_id
     assert greeting_message_id is not None
+    # Idle Speak renders in the selected-message action row.
+    chat_screen.query_one("#console-native-transcript").select_message(
+        greeting_message_id
+    )
     greeting_action = chat_screen.query_one(
-        f"#console-message-speech-action-{greeting_message_id}",
+        f"#console-message-action-speak-{greeting_message_id}",
         Button,
     )
-    assert greeting_action.console_action_id == "speak"
+    assert str(greeting_action.label) == "🔊"
     assert greeting_action.disabled is False
     assert len(context.fake_pocket_tts.requests) == context.tts_request_baseline
     composer = chat_screen.query_one("#console-native-composer", ConsoleComposerBar)
