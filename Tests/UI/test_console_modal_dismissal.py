@@ -103,6 +103,9 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from tldw_chatbook.Widgets.Console.console_side_chat_modal import (
+    ConsoleSideChatModal,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
     TagCount,
@@ -269,6 +272,25 @@ async def _save_system_prompt(_name: str, _text: str) -> str:
     return "saved"
 
 
+class _IdleSideChatService:
+    """Contract-fixture side-chat service: an async generator that yields
+    nothing, so the dismissal factory never starts a stream."""
+
+    async def run(self, **_kwargs: object) -> Any:
+        return
+        yield  # pragma: no cover -- makes run() an async generator
+
+
+def _side_chat_factory() -> ConsoleSideChatModal:
+    return ConsoleSideChatModal(
+        service=_IdleSideChatService(),  # type: ignore[arg-type]
+        provider_selection=None,
+        sidechat_model="",
+        quote="selected transcript text",
+        auto_send_prompt=None,
+    )
+
+
 def _prompt_variables_factory() -> PromptVariablesDialog:
     return PromptVariablesDialog(
         PromptVariablesDialogRequest(
@@ -415,6 +437,16 @@ TASK2_MODAL_CONTRACTS = (
         None,
         "Console image style action",
         "_cancel_search_debounce",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleSideChatModal,
+        _side_chat_factory,
+        "#console-side-chat-modal",
+        None,
+        "Console selection More Details / Ask in Side Chat actions",
+        "cancel side-chat worker",
         "none",
         _RESTORE_OPENER,
     ),
@@ -764,10 +796,16 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
         )
     ),
 )
+# The side-chat modal is contracted and inventoried but has no launch site
+# yet: the Console selection-menu wiring lands with phase 2 task 5, so it is
+# excluded from the declared root launches (the AST walk would otherwise
+# report it missing).
+_SIDE_CHAT_MODAL_NOT_YET_LAUNCHED = {ConsoleSideChatModal}
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
     if contract.modal_type is not ConsoleWorkspaceRenameModal
+    and contract.modal_type is not ConsoleSideChatModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1013,7 +1051,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     }
     discovered_console_types = _discover_console_modal_types()
 
-    assert len(discovered_console_types) == 28
+    assert len(discovered_console_types) == 29
     assert discovered_console_types == console_contract_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
@@ -1027,7 +1065,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
-    assert reachable_modal_types == all_contract_types
+    assert (
+        reachable_modal_types
+        == all_contract_types - _SIDE_CHAT_MODAL_NOT_YET_LAUNCHED
+    )
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types
@@ -1143,7 +1184,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 13
+    assert len(TASK2_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
@@ -1156,12 +1197,14 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsolePromptQueueModal",
         "ConsoleRunLogModal",
         "ConsoleScopePickerModal",
+        "ConsoleSideChatModal",
         "ConsoleSkillPickerModal",
         "ConsoleStylePickerModal",
     }
     expected_hooks = {
         "ConsoleCharacterPickerModal": "_cancel_query_debounce",
         "ConsoleCitationSourcesModal": "increment _request_generation",
+        "ConsoleSideChatModal": "cancel side-chat worker",
         "ConsoleStylePickerModal": "_cancel_search_debounce",
     }
     for contract in TASK2_MODAL_CONTRACTS:
