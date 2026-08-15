@@ -1,9 +1,10 @@
 ---
 id: TASK-16320
 title: 'Trajectory import: open shared traces read-only'
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-15 13:53'
+updated_date: '2026-08-15 17:39'
 labels:
   - trajectory
   - import
@@ -22,3 +23,9 @@ Import a trajectory export file (task-16319 format) and render it in the existin
 <!-- AC:BEGIN -->
 - [ ] #1 Imported file renders in the TrajectoryScreen (ledger, inspector, timeline) without any DB writes,Malformed files fail with actionable error messages,Version mismatches are detected and reported,Import action accessible from the Console trajectory surface,Tests cover happy path, malformed input, and version mismatch
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Chat/trajectory_import.py: load file -> validate_trajectory_export (ADR-067 seam) -> map export sections to derive_trajectory inputs -> TrajectorySnapshot; no DB writes anywhere. 2. UI: import action on the trajectory surface (single-letter ADR-031 binding + file open), renders read-only snapshot; errors surfaced as notifications. 3. Tests: mapping unit tests, malformed/version rejection, no-write assertion (DB row counts unchanged), UI pilot test.
+<!-- SECTION:PLAN:END -->
