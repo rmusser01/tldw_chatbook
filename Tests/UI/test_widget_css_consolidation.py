@@ -36,6 +36,16 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "tldw_chatbook"
 _CSS_ROOT = _PACKAGE_ROOT / "css"
 
+#: TASK-15997: the other two trees the class-level-CSS parse guard covers.
+#: Neither is a "vendored/standalone" case the way ``widget_css.EXCLUDED_DIRS``
+#: means it (that exclusion is about code with its own App that never loads
+#: *this* app's bundle) -- a harness ``App`` under ``Tests/`` or a runnable
+#: script under ``Helper_Scripts/`` both parse their own CSS at their own
+#: runtime, so an invalid property there is worth catching on exactly the same
+#: grounds, and the walk below applies no directory exclusions to either.
+_TESTS_ROOT = _REPO_ROOT / "Tests"
+_HELPER_SCRIPTS_ROOT = _REPO_ROOT / "Helper_Scripts"
+
 #: Textual's parse cache size (``textual/css/stylesheet.py``). The whole point of
 #: the consolidation is to keep the live source count comfortably below it.
 _PARSE_CACHE_CAPACITY = 64
@@ -53,18 +63,35 @@ def _css_variables() -> dict:
     return tokenize_values(App().get_css_variables())
 
 
-def _class_css_blocks() -> list[tuple[str, str, str]]:
-    """Every class-level CSS string literal in the package.
+def _class_css_blocks(
+    root: Path | None = None,
+    *,
+    excluded_dirs: tuple[str, ...] = widget_css.EXCLUDED_DIRS,
+) -> list[tuple[str, str, str]]:
+    """Every class-level CSS string literal under ``root``.
+
+    The one block-extraction helper every parse-guard test shares (TASK-15997):
+    called with no arguments it walks the ``tldw_chatbook`` package exactly as
+    it always did; passing a different ``root`` (and, typically, no exclusions)
+    reuses the identical AST scan for ``Tests/`` or ``Helper_Scripts/`` instead
+    of forking a copy of it.
+
+    Args:
+        root: Directory to walk. Defaults to the ``tldw_chatbook`` package.
+        excluded_dirs: Path components that exclude a file from the walk.
+            Defaults to ``widget_css.EXCLUDED_DIRS`` (vendored/standalone code
+            under the package); pass ``()`` for trees with no such carve-out.
 
     Returns:
         ``(module, class_name, css)`` triples, covering the consolidated
         attributes and any ``DEFAULT_CSS``/``CSS`` that has not moved.
     """
+    root = _PACKAGE_ROOT if root is None else root
     wanted = {"DEFAULT_CSS", "CSS", widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR}
     blocks: list[tuple[str, str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        relative = path.relative_to(_PACKAGE_ROOT)
-        if any(part in widget_css.EXCLUDED_DIRS for part in relative.parts):
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if any(part in excluded_dirs for part in relative.parts):
             continue
         source = path.read_text(encoding="utf-8")
         if not any(name in source for name in wanted):
@@ -499,10 +526,54 @@ def test_every_class_level_css_block_parses_as_a_stylesheet():
     ``test_scope_rewrite_matches_textuals_own_scoping`` would not catch this:
     it calls ``textual.css.parse.parse`` directly, which collects errors onto
     ``rule.errors`` instead of raising. Only ``Stylesheet.parse`` raises.
+
+    TASK-15997 swept ``Tests/`` and ``Helper_Scripts/`` for the same defect
+    class -- see ``test_class_level_css_blocks_outside_the_package_parse``,
+    which shares ``_assert_class_css_blocks_parse`` with this test rather than
+    forking the check.
+    """
+    _assert_class_css_blocks_parse(_class_css_blocks(), allowlist={})
+
+
+#: TASK-15997: deliberate invalid-CSS fixtures that exist to negative-test the
+#: CSS machinery itself (e.g. a harness asserting Textual raises
+#: ``StylesheetParseError`` when the fixture is pushed). This is an EXPLICIT
+#: per-``(module, class_name)`` allowlist, not a directory or filename skip --
+#: a fixture that needs to stay invalid must be named here, with a reason, or
+#: the sweep below fails on it. Empty today: no such fixture exists yet under
+#: ``Tests/`` or ``Helper_Scripts/``; ``test_css_parse_guard_catches_seeded_
+#: invalid_blocks_in_newly_covered_trees`` proves the mechanism itself works
+#: without needing a real one committed.
+_KNOWN_INVALID_CSS_FIXTURES: dict[tuple[str, str], str] = {}
+
+
+def _assert_class_css_blocks_parse(
+    blocks: list[tuple[str, str, str]],
+    *,
+    allowlist: dict[tuple[str, str], str],
+) -> None:
+    """Run every ``(module, class_name, css)`` block through ``Stylesheet.parse()``.
+
+    Shared by every tree the guard covers (the package, ``Tests/``,
+    ``Helper_Scripts/``) so a fix to the check itself applies everywhere at
+    once, rather than three copies drifting apart.
+
+    Args:
+        blocks: ``(module, class_name, css)`` triples from ``_class_css_blocks``.
+        allowlist: ``(module, class_name) -> reason`` for fixtures that are
+            *deliberately* invalid CSS (negative tests of the CSS machinery
+            itself). An allowlisted block is excluded from the failure list,
+            but must actually still fail to parse today -- a block that starts
+            parsing cleanly again (fixed, or the fixture rewritten) makes its
+            entry stale, which is also asserted here rather than left to rot.
     """
     variables = App().get_css_variables()
-    failures = []
-    for module, class_name, css in _class_css_blocks():
+    failures: list[str] = []
+    stale_allowlist_entries: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for module, class_name, css in blocks:
+        key = (module, class_name)
+        seen_keys.add(key)
         stylesheet = Stylesheet(variables=variables)
         stylesheet.add_source(
             css, read_from=(module, class_name), is_default_css=True, scope=class_name
@@ -510,11 +581,90 @@ def test_every_class_level_css_block_parses_as_a_stylesheet():
         try:
             stylesheet.parse()
         except Exception as exc:  # noqa: BLE001 - report every offender at once
-            failures.append(f"{module}::{class_name}: {type(exc).__name__}")
+            if key not in allowlist:
+                failures.append(f"{module}::{class_name}: {type(exc).__name__}")
+        else:
+            if key in allowlist:
+                stale_allowlist_entries.append(f"{module}::{class_name}")
     assert not failures, (
         "class-level CSS that Textual cannot parse -- this fails the whole "
         "stylesheet at runtime, not just the offending rule:\n" + "\n".join(failures)
     )
+    assert not stale_allowlist_entries, (
+        "allowlisted invalid-CSS fixture now parses cleanly -- remove its "
+        "entry from _KNOWN_INVALID_CSS_FIXTURES:\n" + "\n".join(stale_allowlist_entries)
+    )
+    unused_allowlist_entries = [
+        f"{module}::{class_name}: {reason}"
+        for (module, class_name), reason in allowlist.items()
+        if (module, class_name) not in seen_keys
+    ]
+    assert not unused_allowlist_entries, (
+        "allowlist entry does not match any scanned block -- the fixture was "
+        "renamed, moved, or removed; update or delete the entry:\n"
+        + "\n".join(unused_allowlist_entries)
+    )
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        pytest.param(_TESTS_ROOT, id="Tests"),
+        pytest.param(_HELPER_SCRIPTS_ROOT, id="Helper_Scripts"),
+    ],
+)
+def test_class_level_css_blocks_outside_the_package_parse(root: Path):
+    """TASK-15997: the same parse guard, swept over ``Tests/`` and ``Helper_Scripts/``.
+
+    ``test_every_class_level_css_block_parses_as_a_stylesheet`` only ever
+    walked the ``tldw_chatbook`` package -- nothing checked a test harness's
+    own ``App.CSS`` or a ``Helper_Scripts/`` example for the identical defect
+    class (an invalid property poisons the *whole* stylesheet, not just its
+    own declaration). Swept once while adding this test: 28 class-level CSS
+    blocks under ``Tests/`` (test-harness ``App``/``Screen`` subclasses'
+    ``CSS`` -- none declare ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS``, since the
+    consolidation only applies inside the package), 0 under
+    ``Helper_Scripts/`` (its custom-splash-card examples are ``.toml`` data,
+    not Python classes, and the one ``.py`` helper there declares no
+    class-level CSS attribute at all). All 28 parsed cleanly -- no crashers
+    found in either tree.
+    """
+    blocks = _class_css_blocks(root, excluded_dirs=())
+    _assert_class_css_blocks_parse(blocks, allowlist=_KNOWN_INVALID_CSS_FIXTURES)
+
+
+def test_css_parse_guard_catches_seeded_invalid_blocks_in_newly_covered_trees(
+    tmp_path,
+):
+    """Born-red proof: the Tests/Helper_Scripts sweep is not a no-op.
+
+    Both real trees currently come back clean (see
+    ``test_class_level_css_blocks_outside_the_package_parse``), which on its
+    own does not distinguish "nothing is broken" from "the check never ran".
+    Seed one throwaway module per newly-covered tree with the exact defect
+    class TASK-15450 found in the package (``font-size:`` is not a Textual
+    property) and assert the shared check -- the same
+    ``_assert_class_css_blocks_parse`` the real sweep uses -- raises for both.
+    """
+    invalid_css_module = (
+        "from textual.app import App\n\n\n"
+        "class _SeededInvalidCssHarness(App):\n"
+        '    CSS = """\n'
+        "    Widget { font-size: 10; }\n"
+        '    """\n'
+    )
+    for tree_name in ("Tests", "Helper_Scripts"):
+        tree_root = tmp_path / tree_name
+        tree_root.mkdir()
+        (tree_root / "seeded_invalid_css.py").write_text(invalid_css_module)
+
+        blocks = _class_css_blocks(tree_root, excluded_dirs=())
+        assert [b[:2] for b in blocks] == [
+            ("seeded_invalid_css.py", "_SeededInvalidCssHarness")
+        ], f"extractor did not find the seeded block under {tree_name}/"
+
+        with pytest.raises(AssertionError, match="StylesheetParseError"):
+            _assert_class_css_blocks_parse(blocks, allowlist={})
 
 
 @pytest.mark.asyncio
