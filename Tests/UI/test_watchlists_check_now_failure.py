@@ -332,7 +332,7 @@ USER_INITIATED_MUTATIONS = (
     "_delete_source",
     "_delete_run",
     "_delete_rule",
-    "_delete_item",
+    "handle_delete_requested",
 )
 
 

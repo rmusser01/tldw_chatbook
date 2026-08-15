@@ -39,6 +39,7 @@ from tldw_chatbook.TTS.studio_preferences import (
     StudioTTSWriteStatus,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 
 from ..Workbench.workbench_state import WorkbenchAction
 from .speech_action_strip import SpeechActionStrip
@@ -460,7 +461,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Provider override",
-                Select(
+                PruneSafeSelect(
                     (("Inherit global", _INHERIT), *_PROVIDER_OPTIONS),
                     id="studio-tts-provider",
                     allow_blank=False,
@@ -471,7 +472,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Model policy",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         ("Exact", "exact"),
@@ -496,7 +497,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Voice policy",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         ("Exact", "exact"),
@@ -521,7 +522,7 @@ class SpeechSettingsPane(SpeechSettingsMixin, Vertical):
             )
             yield _field_row(
                 "Output format",
-                Select(
+                PruneSafeSelect(
                     (
                         ("Inherit", _INHERIT),
                         *((value.upper(), value) for value in _FORMATS),

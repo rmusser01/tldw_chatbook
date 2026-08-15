@@ -50,6 +50,11 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 _DEFAULT_AUTO_PAUSE_THRESHOLD = 10
 
 
+def _sqlite_unicode_casefold(value: Any) -> str:
+    """Casefold SQLite text without raising on NULL or malformed values."""
+    return value.casefold() if isinstance(value, str) else ""
+
+
 def _default_auto_pause_threshold() -> int:
     """The `auto_pause_threshold` column default for a NEW subscription.
 
@@ -80,7 +85,9 @@ def _default_auto_pause_threshold() -> int:
         `_DEFAULT_AUTO_PAUSE_THRESHOLD` if the config value is absent, not
         parseable as an int, or not positive.
     """
-    configured = get_cli_setting("subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD)
+    configured = get_cli_setting(
+        "subscriptions", "auto_pause_after_failures", _DEFAULT_AUTO_PAUSE_THRESHOLD
+    )
     try:
         threshold = int(configured)
     except (TypeError, ValueError):
@@ -105,6 +112,20 @@ class RateLimitError(SubscriptionError):
     """Exception for rate limit violations."""
 
     pass
+
+
+class SubscriptionsDBUnavailableError(SubscriptionError):
+    """Fixed failure for an unavailable agent-readable Watchlists database."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database is unavailable")
+
+
+class SubscriptionsDBReadError(SubscriptionError):
+    """Fixed failure for a transient agent-read readiness operation."""
+
+    def __init__(self) -> None:
+        super().__init__("Watchlists database read failed")
 
 
 # --- Database Class ---
@@ -144,7 +165,9 @@ def ensure_site_configs_schema(db_path) -> None:
     # outside all of that, and would be an undocumented raw call site --
     # `Tests/DB/test_private_sqlite_inventory.py` audits exactly that and
     # caught this when the helper was first written.
-    with closing(connect_private_sqlite("db.subscriptions.site_configs", db_path)) as conn:
+    with closing(
+        connect_private_sqlite("db.subscriptions.site_configs", db_path)
+    ) as conn:
         if str(db_path) != ":memory:":
             conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -180,16 +203,74 @@ class SubscriptionsDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
+    _AGENT_READ_REQUIRED_COLUMNS = {
+        "subscriptions": frozenset(
+            {
+                "id",
+                "name",
+                "type",
+                "source",
+                "is_active",
+                "is_paused",
+                "last_checked",
+                "last_successful_check",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "subscription_items": frozenset(
+            {
+                "id",
+                "subscription_id",
+                "url",
+                "title",
+                "content",
+                "published_date",
+                "author",
+                "status",
+                "diff_summary",
+                "change_percentage",
+                "change_type",
+                "canonical_url",
+                "created_at",
+                "updated_at",
+                "content_format",
+                "content_kind",
+                "effective_date",
+            }
+        ),
+        "watchlists": frozenset({"id", "name"}),
+        "watchlist_sources": frozenset({"watchlist_id", "subscription_id"}),
+    }
+
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        *,
+        read_only: bool = False,
+    ):
         """
         Initialize the Subscriptions database.
 
         Args:
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier for multi-client support
+            read_only: Open an existing database without initializing schema
         """
         self._local = threading.local()
-        super().__init__(db_path, client_id)
+        self._read_only = read_only
+        # Only the monotonic complete state is retained. A false/incomplete
+        # probe is deliberately not cached: a background FTS backfill may
+        # make the same long-lived owner complete before its next search.
+        self._fts_items_complete: Optional[bool] = None
+        super().__init__(db_path, client_id, initialize_schema=not read_only)
+        if read_only:
+            try:
+                self.conn
+            except Exception:
+                self.close()
+                raise SubscriptionsDBUnavailableError() from None
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return a connection with foreign-key enforcement enabled.
@@ -201,7 +282,35 @@ class SubscriptionsDB(BaseDB):
         deleted. Matches ``ChaChaNotes_DB`` and ``Client_Media_DB_v2``, which
         each enable it per connection.
         """
+        if self._read_only:
+            conn = connect_private_sqlite(
+                "db.subscriptions.agent_read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
+            )
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.create_function(
+                    "unicode_casefold",
+                    1,
+                    _sqlite_unicode_casefold,
+                    deterministic=True,
+                )
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute("PRAGMA query_only = ON;")
+            except Exception:
+                conn.close()
+                raise
+            return conn
+
         conn = super()._get_connection()
+        conn.create_function(
+            "unicode_casefold",
+            1,
+            _sqlite_unicode_casefold,
+            deterministic=True,
+        )
         conn.execute("PRAGMA foreign_keys = ON;")
         if not self.is_memory_db:
             conn.execute("PRAGMA journal_mode = WAL;")
@@ -214,6 +323,33 @@ class SubscriptionsDB(BaseDB):
         # so every connection this DB opens needs it, not just the first.
         conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
+
+    def assert_agent_read_ready(self) -> None:
+        """Require the exact core schema used by Watchlists agent reads.
+
+        FTS tables are deliberately not part of readiness. Search checks FTS
+        coverage separately and falls back to literal ``LIKE`` when the index
+        is absent or incomplete.
+
+        Raises:
+            SubscriptionsDBUnavailableError: If a required table or column is
+                unavailable. The fixed message contains no SQL, path, or
+                stored value.
+            SubscriptionsDBReadError: If the readiness read fails operationally.
+                The fixed message contains no underlying exception payload.
+        """
+        try:
+            conn = self.conn
+            for table, required_columns in self._AGENT_READ_REQUIRED_COLUMNS.items():
+                columns = {
+                    row[1] for row in conn.execute(f"PRAGMA table_xinfo({table})")
+                }
+                if not required_columns <= columns:
+                    raise SubscriptionsDBUnavailableError()
+        except SubscriptionsDBUnavailableError:
+            raise
+        except (sqlite3.Error, OSError):
+            raise SubscriptionsDBReadError() from None
 
     def _initialize_schema(self):
         """Initialize the database schema.
@@ -531,27 +667,41 @@ class SubscriptionsDB(BaseDB):
         cursor = conn.cursor()
 
         # Add columns to subscription_items
-        items_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")}
+        items_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+        }
         if "queued_for_briefing" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
+            )
         if "run_id" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
         if "alert_matches" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
+            )
 
         # Add columns to subscription_filters
-        filters_cols = {row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")}
+        filters_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+        }
         if "priority" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN priority INTEGER DEFAULT 0"
+            )
         if "is_include_required" not in filters_cols:
-            cursor.execute("ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_filters ADD COLUMN is_include_required BOOLEAN DEFAULT 0"
+            )
 
         # Widen CHECK constraint on subscription_filters.action.
         # Must check for the literal action value 'include' rather than the
         # bare substring, because the new column `is_include_required` would
         # otherwise make the substring match and skip the migration.
         existing_check = None
-        for row in cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"):
+        for row in cursor.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='subscription_filters'"
+        ):
             existing_check = row[0]
         if existing_check and "'include'" not in existing_check:
             # This rebuild predates FK enforcement (Task 1a) and may run
@@ -611,7 +761,9 @@ class SubscriptionsDB(BaseDB):
                     FROM subscription_filters
                 """)
                 cursor.execute("DROP TABLE subscription_filters")
-                cursor.execute("ALTER TABLE subscription_filters_new RENAME TO subscription_filters")
+                cursor.execute(
+                    "ALTER TABLE subscription_filters_new RENAME TO subscription_filters"
+                )
                 cursor.execute("""
                     CREATE TRIGGER IF NOT EXISTS update_subscription_filters_timestamp
                     AFTER UPDATE ON subscription_filters
@@ -643,8 +795,12 @@ class SubscriptionsDB(BaseDB):
                     )
 
         # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_run_id ON subscription_items(run_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_items_queued ON subscription_items(queued_for_briefing, status)"
+        )
 
         # Reader/body columns. `content` holds the renderable body: article text
         # for feed items, diff text for site changes. `url_snapshots` remains the
@@ -652,13 +808,19 @@ class SubscriptionsDB(BaseDB):
         if "content" not in items_cols:
             cursor.execute("ALTER TABLE subscription_items ADD COLUMN content TEXT")
         if "content_format" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_format TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_format TEXT"
+            )
         if "content_kind" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN content_kind TEXT")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN content_kind TEXT"
+            )
         # Flag is a separate boolean, not a status: the status CHECK has no
         # 'flagged' value, and an item can be flagged *and* reviewed at once.
         if "is_flagged" not in items_cols:
-            cursor.execute("ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscription_items ADD COLUMN is_flagged BOOLEAN DEFAULT 0"
+            )
 
         # TASK-15464: a stored, indexed effective-date column, replacing the
         # per-row `COALESCE(datetime(published_date), datetime(created_at))`
@@ -722,7 +884,9 @@ class SubscriptionsDB(BaseDB):
         # generated column cannot be written to directly (confirmed by the
         # same probe: an explicit INSERT/UPDATE naming it raises), so there
         # is no data-migration step for a crash to catch mid-way at all.
-        items_xcols = {row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")}
+        items_xcols = {
+            row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+        }
         if "effective_date" not in items_xcols:
             cursor.execute(
                 "ALTER TABLE subscription_items ADD COLUMN effective_date TEXT "
@@ -780,7 +944,9 @@ class SubscriptionsDB(BaseDB):
         # BEGIN IMMEDIATE exists precisely for that. The exemption is
         # deliberate, not ignorance of the rule; pinned by
         # `test_migration_rolls_back_atomically_on_mid_migration_failure`.
-        snapshot_cols = {row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")}
+        snapshot_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(url_snapshots)")
+        }
         if "extraction_fingerprint" not in snapshot_cols:
             from ..Subscriptions.noise_defaults import default_ignore_selectors_text
 
@@ -993,7 +1159,9 @@ class SubscriptionsDB(BaseDB):
         # _initialize_schema (base_db.py:76), which creates it and then calls
         # this method. Only the column needs checking, for databases created
         # before batch_id existed.
-        run_cols = {row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")}
+        run_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+        }
         if "batch_id" not in run_cols:
             cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
         cursor.execute(
@@ -1185,16 +1353,13 @@ class SubscriptionsDB(BaseDB):
                    SUM(CASE WHEN si.status = 'new' THEN 1 ELSE 0 END)
             FROM subscription_items si
             """,
-            (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
-        ).fetchall()
+                (self.UNASSIGNED_BUCKET, self.ALL_SOURCES_BUCKET),
+            ).fetchall()
 
         # No `if row[0] is not None` filter here: watchlists.id and
         # watchlist_sources.watchlist_id are NOT NULL, and both sentinels
         # bind non-null literals, so every row's bucket id is always non-null.
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     def get_source_item_counts(self) -> Dict[int, Dict[str, int]]:
         """Per-source item totals and unread counts, for rail badges.
@@ -1215,11 +1380,8 @@ class SubscriptionsDB(BaseDB):
             FROM subscription_items
             GROUP BY subscription_id
             """
-        ).fetchall()
-        return {
-            row[0]: {"total": row[1] or 0, "unread": row[2] or 0}
-            for row in rows
-        }
+            ).fetchall()
+        return {row[0]: {"total": row[1] or 0, "unread": row[2] or 0} for row in rows}
 
     @property
     def conn(self):
@@ -1954,6 +2116,150 @@ class SubscriptionsDB(BaseDB):
         "s.name as subscription_name, s.type as subscription_type"
     )
 
+    #: Narrow metadata projection for agent search. This is intentionally not
+    #: based on the broader UI list projection: raw processing errors, alert
+    #: matches, hashes, categories/enclosures, flags, and redundant previews
+    #: are not part of the agent evidence contract.
+    _AGENT_LIST_ITEM_COLUMNS = (
+        "i.id, i.subscription_id, i.url, i.title, i.published_date, "
+        "i.author, i.status, i.canonical_url, i.created_at, i.updated_at, "
+        "i.content_format, i.content_kind, i.effective_date, "
+        "s.name AS subscription_name, s.type AS subscription_type, "
+        "s.source AS subscription_source, "
+        "s.is_active AS subscription_is_active, "
+        "s.is_paused AS subscription_is_paused, "
+        "s.created_at AS subscription_created_at, "
+        "s.updated_at AS subscription_updated_at, "
+        "s.last_checked AS subscription_last_checked, "
+        "s.last_successful_check AS subscription_last_successful_check"
+    )
+    _AGENT_SEARCH_PAGE_LIMIT = 50
+    _AGENT_MEMBERSHIP_SOURCE_LIMIT = 50
+    _AGENT_MEMBERSHIP_COLLECTION_LIMIT = 20
+    _AGENT_RESOLUTION_CANDIDATE_LIMIT = 20
+
+    @classmethod
+    def _agent_search_projection(
+        cls, search_terms: Sequence[str]
+    ) -> tuple[str, List[Any]]:
+        """Build the LIKE fallback's bounded literal-context projection.
+
+        The body window is centered on the first query term found beyond its
+        leading 1,000 characters. This includes a deep body match even when
+        an earlier AND term matched only the title or author. With no deep
+        body term, the ordinary leading preview is the useful bounded input.
+        """
+        deep_match_legs: List[str] = []
+        projection_params: List[Any] = []
+        for term in search_terms:
+            deep_match_legs.append(
+                "WHEN instr(lower(COALESCE(i.content, '')), lower(?)) > 1000 "
+                "THEN instr(lower(COALESCE(i.content, '')), lower(?)) - 1000"
+            )
+            projection_params.extend((term, term))
+        start_expression = (
+            f"CASE {' '.join(deep_match_legs)} ELSE 1 END" if deep_match_legs else "1"
+        )
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + f", substr(i.content, {start_expression}, 2000) "
+            "AS content_match_context",
+            projection_params,
+        )
+
+    @classmethod
+    def _agent_fts_search_projection(cls) -> str:
+        """Build an FTS-tokenizer-aware, character-bounded body projection.
+
+        FTS5 ``snippet`` uses the same Unicode/diacritic and punctuation
+        tokenization as the MATCH that admitted the row. Restrict it to the
+        content column (index 1), cap its token window, and apply a final
+        character bound so unusually long tokens cannot make a list row
+        unbounded. Empty markers keep public snippet formatting in the later
+        service layer.
+        """
+        return (
+            cls._AGENT_LIST_ITEM_COLUMNS
+            + ", substr(snippet(subscription_items_fts, 1, '', '', '', 32), "
+            "1, 2000) AS content_match_context"
+        )
+
+    @staticmethod
+    def _item_scope_predicates(
+        *,
+        subscription_id: Optional[int],
+        status: Optional[str],
+        watchlist_id: Optional[int],
+        statuses: Optional[Sequence[str]],
+        since: Optional[str],
+    ) -> tuple[List[str], List[Any]]:
+        """Build the shared source, collection, status, and date predicates.
+
+        The date floor targets the generated normalized ``effective_date``
+        column and normalizes the bound value through SQLite ``datetime()``;
+        this preserves the legacy mixed stored-date behavior and index path.
+        """
+        predicates: List[str] = []
+        params: List[Any] = []
+        if subscription_id is not None:
+            predicates.append("i.subscription_id = ?")
+            params.append(subscription_id)
+        if status is not None:
+            predicates.append("i.status = ?")
+            params.append(status)
+        if watchlist_id is not None:
+            predicates.append(
+                "i.subscription_id IN ("
+                "SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?"
+                ")"
+            )
+            params.append(watchlist_id)
+        if statuses is not None:
+            placeholders = ", ".join("?" for _ in statuses)
+            predicates.append(f"i.status IN ({placeholders})")
+            params.extend(statuses)
+        if since is not None:
+            predicates.append("i.effective_date >= datetime(?)")
+            params.append(since)
+        return predicates, params
+
+    def _subscription_items_fts_is_complete(self, conn: Any) -> bool:
+        """Whether every current item id has a real FTS docsize row.
+
+        An external-content FTS table can appear to contain all content rows
+        even when its index is only partially backfilled. The shadow docsize
+        table is the actual membership authority. An anti-join proves exact
+        coverage of item ids; table presence or equal counts cannot.
+
+        Only ``True`` is cached. Existing insert/update/delete triggers keep a
+        proven-complete index complete, while an incomplete legacy database is
+        rechecked on every later search so a background backfill can take
+        effect without reopening this owner.
+        """
+        if self._fts_items_complete is True:
+            return True
+        try:
+            row = conn.execute(
+                """
+                SELECT NOT EXISTS (
+                    SELECT 1
+                    FROM subscription_items i
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM subscription_items_fts_docsize d
+                        WHERE d.id = i.id
+                    )
+                    LIMIT 1
+                )
+                """
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        complete = bool(row and row[0])
+        if complete:
+            self._fts_items_complete = True
+        return complete
+
     def _search_items_rows(
         self,
         conn: Any,
@@ -1961,6 +2267,10 @@ class SubscriptionsDB(BaseDB):
         params: List[Any],
         search_terms: List[str],
         limit: int,
+        *,
+        select_columns: Optional[str] = None,
+        select_params: Sequence[Any] = (),
+        fts_select_columns: Optional[str] = None,
     ) -> List[Any]:
         """The `search` half of `get_new_items`: FTS5 MATCH, LIKE fallback.
 
@@ -1973,33 +2283,37 @@ class SubscriptionsDB(BaseDB):
         ``\\`` stay literal). Either way the caller gets rows; the search
         box must never raise into the reader.
         """
+        columns = select_columns or self._LIST_ITEM_COLUMNS
+        fts_columns = fts_select_columns or columns
+        effective_fts_select_params = () if fts_select_columns else select_params
         match = " AND ".join(self._quote_fts5_term(term) for term in search_terms)
         fts_where = (
             f"{where_clause} AND subscription_items_fts MATCH ?"
             if where_clause
             else "WHERE subscription_items_fts MATCH ?"
         )
-        try:
-            return conn.execute(
-                f"""
-                SELECT {self._LIST_ITEM_COLUMNS}
-                FROM subscription_items i
-                JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
-                JOIN subscriptions s ON i.subscription_id = s.id
-                {fts_where}
-                ORDER BY i.effective_date DESC, i.id ASC
-                LIMIT ?
-                """,
-                tuple([*params, match, limit]),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            logger.debug("subscription_items_fts unavailable; falling back to LIKE search.")
+        if self._subscription_items_fts_is_complete(conn):
+            try:
+                return conn.execute(
+                    f"""
+                    SELECT {fts_columns}
+                    FROM subscription_items i
+                    JOIN subscription_items_fts ON subscription_items_fts.rowid = i.id
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {fts_where}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*effective_fts_select_params, *params, match, limit]),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                logger.debug(
+                    "subscription_items_fts unavailable; falling back to LIKE search."
+                )
         like_clauses: List[str] = []
         like_params: List[Any] = []
         for term in search_terms:
-            escaped = (
-                term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like_clauses.append(
                 "(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' "
                 "OR i.author LIKE ? ESCAPE '\\')"
@@ -2007,19 +2321,363 @@ class SubscriptionsDB(BaseDB):
             like_params.extend([f"%{escaped}%"] * 3)
         like_predicates = " AND ".join(like_clauses)
         like_where = (
-            f"{where_clause} AND {like_predicates}" if where_clause else f"WHERE {like_predicates}"
+            f"{where_clause} AND {like_predicates}"
+            if where_clause
+            else f"WHERE {like_predicates}"
         )
         return conn.execute(
             f"""
-            SELECT {self._LIST_ITEM_COLUMNS}
+            SELECT {columns}
             FROM subscription_items i
             JOIN subscriptions s ON i.subscription_id = s.id
             {like_where}
             ORDER BY i.effective_date DESC, i.id ASC
             LIMIT ?
             """,
-            tuple([*params, *like_params, limit]),
+            tuple([*select_params, *params, *like_params, limit]),
         ).fetchall()
+
+    def search_items_for_agent(
+        self,
+        *,
+        query: Optional[str] = None,
+        subscription_id: Optional[int] = None,
+        watchlist_id: Optional[int] = None,
+        statuses: Optional[Sequence[str]] = None,
+        since: Optional[str] = None,
+        limit: int = 10,
+        snapshot_max_item_id: Optional[int] = None,
+        after_effective_date: Optional[str] = None,
+        after_item_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return one bounded, stable-keyset page for agent evidence.
+
+        This is a storage seam, not the public tool contract: validation,
+        canonical IDs, cursors, JSON packing, URL handling, and excerpt text
+        normalization belong to the tool service. Values are bound SQL
+        parameters and all multi-row body material stays capped at 2,000
+        characters.
+
+        The first page captures the current maximum item id. Later pages pass
+        that value back, admitting every pre-existing row (including one with
+        a future effective date) while excluding all later inserts. The
+        continuation key follows ``effective_date DESC, id ASC`` explicitly,
+        including the NULL-date sink.
+
+        Args:
+            query: Literal whitespace-delimited search terms, or blank to
+                browse without a text predicate.
+            subscription_id: Optional source-row scope.
+            watchlist_id: Optional collection-row scope.
+            statuses: Optional status values to include; ``None`` means all.
+            since: Optional inclusive effective-date floor.
+            limit: Page size from 1 through 50.
+            snapshot_max_item_id: First-page item-ID high-water, or ``None``
+                to capture the current maximum.
+            after_effective_date: Last row's effective date, or ``None`` for
+                the NULL-date sink.
+            after_item_id: Last row ID for keyset continuation.
+
+        Returns:
+            A mapping containing bounded ``items``, ``has_more``, and the
+            traversal ``snapshot_max_item_id``.
+
+        Raises:
+            ValueError: If ``limit`` is outside 1..50 or an effective-date
+                continuation omits ``after_item_id``.
+        """
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if limit > self._AGENT_SEARCH_PAGE_LIMIT:
+            raise ValueError(f"limit must be at most {self._AGENT_SEARCH_PAGE_LIMIT}")
+        if after_effective_date is not None and after_item_id is None:
+            raise ValueError("after_item_id is required with after_effective_date")
+
+        search_terms = query.split() if query and query.strip() else []
+        select_columns, select_params = self._agent_search_projection(search_terms)
+        fts_select_columns = self._agent_fts_search_projection()
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=None,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
+
+        with self.transaction() as conn:
+            if snapshot_max_item_id is None:
+                high_water_row = conn.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM subscription_items"
+                ).fetchone()
+                snapshot_max_item_id = int(high_water_row[0])
+            predicates.append("i.id <= ?")
+            params.append(snapshot_max_item_id)
+
+            if after_item_id is not None:
+                if after_effective_date is None:
+                    predicates.append("i.effective_date IS NULL AND i.id > ?")
+                    params.append(after_item_id)
+                else:
+                    predicates.append(
+                        "(i.effective_date IS NULL "
+                        "OR i.effective_date < datetime(?) "
+                        "OR (i.effective_date = datetime(?) AND i.id > ?))"
+                    )
+                    params.extend(
+                        [after_effective_date, after_effective_date, after_item_id]
+                    )
+
+            where_clause = f"WHERE {' AND '.join(predicates)}"
+            fetch_limit = limit + 1
+            if search_terms:
+                rows = self._search_items_rows(
+                    conn,
+                    where_clause,
+                    params,
+                    search_terms,
+                    fetch_limit,
+                    select_columns=select_columns,
+                    select_params=select_params,
+                    fts_select_columns=fts_select_columns,
+                )
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT {select_columns}
+                    FROM subscription_items i
+                    JOIN subscriptions s ON i.subscription_id = s.id
+                    {where_clause}
+                    ORDER BY i.effective_date DESC, i.id ASC
+                    LIMIT ?
+                    """,
+                    tuple([*select_params, *params, fetch_limit]),
+                ).fetchall()
+
+        return {
+            "items": [dict(row) for row in rows[:limit]],
+            "has_more": len(rows) > limit,
+            "snapshot_max_item_id": snapshot_max_item_id,
+        }
+
+    def get_item_detail_for_agent(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """Return one authoritative item joined to its source, or ``None``.
+
+        Unlike ``get_item_content``, a missing row is distinguishable from a
+        present row whose article body is NULL. The single-row detail path may
+        read full ``content``; raw ``extracted_data`` and source secrets are
+        intentionally not projected.
+
+        Args:
+            item_id: ``subscription_items.id`` to retrieve.
+
+        Returns:
+            The allowlisted item/source row, including a possibly-null
+            ``content`` value, or ``None`` when the item does not exist.
+        """
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    i.id, i.subscription_id, i.url, i.title, i.content,
+                    i.published_date, i.author, i.status, i.diff_summary,
+                    i.change_percentage, i.change_type, i.canonical_url,
+                    i.created_at, i.updated_at, i.content_format,
+                    i.content_kind, i.effective_date,
+                    s.name AS subscription_name,
+                    s.type AS subscription_type,
+                    s.source AS subscription_source,
+                    s.is_active AS subscription_is_active,
+                    s.is_paused AS subscription_is_paused,
+                    s.created_at AS subscription_created_at,
+                    s.updated_at AS subscription_updated_at,
+                    s.last_checked AS subscription_last_checked,
+                    s.last_successful_check AS subscription_last_successful_check
+                FROM subscription_items i
+                JOIN subscriptions s ON s.id = i.subscription_id
+                WHERE i.id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    @classmethod
+    def _bounded_agent_candidate_limit(cls, limit: int) -> int:
+        """Clamp a caller's candidate request to the storage boundary."""
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        return min(limit, cls._AGENT_RESOLUTION_CANDIDATE_LIMIT)
+
+    def resolve_source_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact name/URL first, else partial names.
+
+        Both legs query ``subscriptions`` directly, so candidates beyond the
+        legacy ``get_all_subscriptions``/UI scan ceiling remain reachable.
+        Ambiguity is retained for the tool service to report rather than being
+        silently resolved here.
+
+        Args:
+            query: Numeric source ID, or an exact/partial source name or exact
+                configured URL. Exact names take precedence over exact URLs.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered, allowlisted source candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
+        """
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        source_columns = (
+            "id, name, type, source, is_active, is_paused, created_at, "
+            "updated_at, last_checked, last_successful_check"
+        )
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    f"SELECT {source_columns} FROM subscriptions WHERE id = ?",
+                    (query,),
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                f"""
+                SELECT {source_columns}
+                FROM subscriptions
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
+                LIMIT ?
+                """,
+                (query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE source = ?
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    f"""
+                    SELECT {source_columns}
+                    FROM subscriptions
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def resolve_collection_candidates(
+        self, query: Union[str, int], *, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Resolve an id, or exact names first, else bounded partial names.
+
+        Args:
+            query: Numeric collection ID or an exact/partial collection name.
+            limit: Requested candidate count, capped at 20.
+
+        Returns:
+            Deterministically ordered collection ID/name candidates.
+
+        Raises:
+            ValueError: If ``limit`` is less than one.
+        """
+        bounded_limit = self._bounded_agent_candidate_limit(limit)
+        with self.transaction() as conn:
+            if isinstance(query, int):
+                row = conn.execute(
+                    "SELECT id, name FROM watchlists WHERE id = ?", (query,)
+                ).fetchone()
+                return [dict(row)] if row is not None else []
+            rows = conn.execute(
+                """
+                SELECT id, name
+                FROM watchlists
+                WHERE unicode_casefold(name) = unicode_casefold(?)
+                ORDER BY unicode_casefold(name), name, id
+                LIMIT ?
+                """,
+                (query, bounded_limit),
+            ).fetchall()
+            if not rows:
+                rows = conn.execute(
+                    """
+                    SELECT id, name
+                    FROM watchlists
+                    WHERE instr(unicode_casefold(name), unicode_casefold(?)) > 0
+                    ORDER BY unicode_casefold(name), name, id
+                    LIMIT ?
+                    """,
+                    (query, bounded_limit),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_source_collection_memberships(
+        self, subscription_ids: Sequence[int]
+    ) -> Dict[int, Dict[str, Any]]:
+        """Load bounded collection memberships for at most one result page.
+
+        One window-ranked ``IN`` query fetches at most one lookahead beyond
+        the per-source collection cap. Each source therefore reports whether
+        additional memberships were omitted, without an N+1 count/query.
+
+        Args:
+            subscription_ids: Source row IDs from one agent search page.
+
+        Returns:
+            Mapping of each requested source ID to ``collections`` (at most
+            20 deterministic ID/name rows) and ``has_more`` truncation state.
+
+        Raises:
+            ValueError: If more than 50 distinct source IDs are supplied.
+        """
+        unique_ids = list(dict.fromkeys(subscription_ids))
+        if len(unique_ids) > self._AGENT_MEMBERSHIP_SOURCE_LIMIT:
+            raise ValueError(
+                "source collection memberships accepts at most "
+                f"{self._AGENT_MEMBERSHIP_SOURCE_LIMIT} source ids"
+            )
+        memberships: Dict[int, Dict[str, Any]] = {
+            source_id: {"collections": [], "has_more": False}
+            for source_id in unique_ids
+        }
+        if not unique_ids:
+            return memberships
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.transaction() as conn:
+            rows = conn.execute(
+                f"""
+                WITH ranked_memberships AS (
+                    SELECT ws.subscription_id, w.id, w.name,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ws.subscription_id
+                               ORDER BY lower(w.name), w.name, w.id
+                           ) AS membership_rank
+                    FROM watchlist_sources ws
+                    JOIN watchlists w ON w.id = ws.watchlist_id
+                    WHERE ws.subscription_id IN ({placeholders})
+                )
+                SELECT subscription_id, id, name, membership_rank
+                FROM ranked_memberships
+                WHERE membership_rank <= ?
+                ORDER BY subscription_id, membership_rank
+                """,
+                (*unique_ids, self._AGENT_MEMBERSHIP_COLLECTION_LIMIT + 1),
+            ).fetchall()
+        for row in rows:
+            result = memberships[int(row["subscription_id"])]
+            if row["membership_rank"] > self._AGENT_MEMBERSHIP_COLLECTION_LIMIT:
+                result["has_more"] = True
+                continue
+            result["collections"].append({"id": int(row["id"]), "name": row["name"]})
+        return memberships
 
     def get_new_items(
         self,
@@ -2122,53 +2780,23 @@ class SubscriptionsDB(BaseDB):
         # their product is how the "all statuses" case came to be missing in
         # the first place. Values stay bound parameters -- only the fixed
         # predicate TEXT is assembled here.
-        predicates: List[str] = []
-        params: List[Any] = []
-        if subscription_id:
-            predicates.append("i.subscription_id = ?")
-            params.append(subscription_id)
-        if status is not None:
-            predicates.append("i.status = ?")
-            params.append(status)
+        predicates, params = self._item_scope_predicates(
+            subscription_id=subscription_id,
+            status=status,
+            watchlist_id=watchlist_id,
+            statuses=statuses,
+            since=since,
+        )
         if run_id is not None:
             predicates.append("i.run_id = ?")
             params.append(run_id)
-        if watchlist_id is not None:
-            predicates.append(
-                "i.subscription_id IN (SELECT subscription_id FROM watchlist_sources WHERE watchlist_id = ?)"
-            )
-            params.append(watchlist_id)
         if unassigned_only:
             predicates.append(
                 "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = i.subscription_id)"
             )
-        if statuses is not None:
-            placeholders = ", ".join("?" for _ in statuses)
-            predicates.append(f"i.status IN ({placeholders})")
-            params.extend(statuses)
         if is_flagged is not None:
             predicates.append("i.is_flagged = ?")
             params.append(1 if is_flagged else 0)
-        if since is not None:
-            # PR #1443 review: `created_at` is schema-backed mixed-format
-            # (CURRENT_TIMESTAMP's space-separated naive shape AND ingest's
-            # ISO `T`+offset), and a bare string compare orders ' ' before
-            # 'T' -- a same-instant pair would compare wrong. `datetime()`
-            # normalizes both shapes (and the offset) to one canonical
-            # string; the COALESCE wraps the NORMALIZED values so an
-            # unparseable feed-supplied published_date (datetime() -> NULL)
-            # falls back to created_at instead of poisoning the compare.
-            #
-            # TASK-15464: `i.effective_date` IS this exact COALESCE
-            # expression -- see the migration comment in
-            # `_ensure_watchlists_schema` -- stored/generated rather than
-            # recomputed, so this predicate is byte-for-byte equivalent to
-            # the inline form it replaces, and now shares the same
-            # `idx_subscription_items_effective_date` index the ORDER BY
-            # below uses, instead of computing `datetime()` per row per
-            # query.
-            predicates.append("i.effective_date >= datetime(?)")
-            params.append(since)
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
 
         search_terms = search.split() if search and search.strip() else []

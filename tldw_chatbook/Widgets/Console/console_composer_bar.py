@@ -5166,7 +5166,7 @@ class ConsoleComposerBar(Horizontal):
                 # so Stop's hidden budget never parks between draft and
                 # Send), then Dictate follows across the MIC_SEND_GAP buffer
                 # so a press aimed at one cannot land on the other.
-                yield self._bounded_button(
+                send_button = self._bounded_button(
                     "Send",
                     width=6,
                     id="console-send-message",
@@ -5179,6 +5179,8 @@ class ConsoleComposerBar(Horizontal):
                     # something to send.
                     disabled=True,
                 )
+                send_button.styles.line_pad = 0
+                yield send_button
                 mic_button = self._bounded_button(
                     "Dictate",
                     width=11,
@@ -5199,6 +5201,7 @@ class ConsoleComposerBar(Horizontal):
                     # THIS tab's own run (behavior unchanged) -- say so.
                     tooltip="Stop this tab's run.",
                 )
+                stop_button.styles.line_pad = 0
                 stop_button.styles.display = "none"
                 yield stop_button
                 # Attach and Save Chatbook moved into the composer Menu: this

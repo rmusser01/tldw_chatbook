@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -65,7 +66,8 @@ def _temperature_in_range(value: float) -> bool:
 
 
 class ConsoleModelPopover(
-    ModalScreen["ConsoleModelPopoverResult | ConsoleSessionSettings | str | None"]
+    SafeModalDismissMixin,
+    ModalScreen["ConsoleModelPopoverResult | ConsoleSessionSettings | str | None"],
 ):
     """Quick provider/model/temperature/streaming switcher for the session."""
 
@@ -124,7 +126,8 @@ class ConsoleModelPopover(
     }
     """
 
-    BINDINGS = [("escape", "dismiss_popover", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-model-popover"
 
     def __init__(
         self,
@@ -425,6 +428,6 @@ class ConsoleModelPopover(
             return
         self.dismiss(ConsoleModelPopoverResult(settings=settings, compaction_mode=mode))
 
-    def action_dismiss_popover(self) -> None:
+    async def action_dismiss_popover(self) -> None:
         """Dismiss the popover with no result (Escape)."""
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")

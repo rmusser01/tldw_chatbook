@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
@@ -26,7 +27,11 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     parse_console_speech_preferences,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    ConflictError,
+    TrajectoryRowWrite,
+)
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
@@ -595,6 +600,7 @@ class ChatPersistenceService:
         allow_source_owned_repair: bool = False,
         expected_roleplay_version: int | None = None,
         preserve_provider_continuation: bool = False,
+        preserve_descendants: bool = False,
     ) -> bool:
         """Update a message's content, optionally its parent/feedback, and its images.
 
@@ -652,6 +658,8 @@ class ChatPersistenceService:
             metadata_json: Optional structured message metadata JSON
                 (task-2364). Follows the same only-when-supplied rule as
                 ``usage_json``, for the same reason.
+            preserve_descendants: Skip descendant tombstones when this
+                update belongs to an authoritative bulk-history resave.
 
         Returns:
             True if the row update was applied; False if the underlying
@@ -760,6 +768,7 @@ class ChatPersistenceService:
                         update_data,
                         expected_version=current_message["version"],
                         preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result and attachments is not None:
@@ -791,6 +800,7 @@ class ChatPersistenceService:
                         update_data,
                         expected_version=current_message["version"],
                         preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
                     )
                 )
                 if result:
@@ -803,6 +813,7 @@ class ChatPersistenceService:
                 update_data,
                 expected_version=current_message["version"],
                 preserve_provider_continuation=preserve_provider_continuation,
+                preserve_descendants=preserve_descendants,
             )
         )
 
@@ -847,6 +858,42 @@ class ChatPersistenceService:
             message_id,
             expected_version=current_message["version"],
         )
+
+    def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
+        """Persist trajectory sidecar rows; LOCAL-ONLY, never raises.
+
+        The trajectory sibling of :meth:`update_message_usage`: the
+        ``message_trajectory_metadata`` sidecar (schema v38) is local-only
+        with no sync triggers, so it never routes through the
+        version-bumping general-purpose row updater. A small bounded retry
+        absorbs transient write-write lock contention (concurrent Console
+        sessions, compaction auxiliary turns): ``upsert_trajectory_rows``
+        assigns ``seq`` inside its own transaction, so a rolled-back
+        attempt simply re-derives seqs on retry. Returns ``False`` (after
+        logging with row COUNT only -- never message contents or payloads)
+        when every attempt failed, so the store's best-effort capture knows
+        the batch was dropped.
+
+        Args:
+            rows: Sidecar rows to upsert.
+
+        Returns:
+            True when the rows were written; False when all attempts failed.
+        """
+        last_error: Exception | None = None
+        for attempt in range(5):
+            try:
+                self.db.upsert_trajectory_rows(rows)
+                return True
+            except Exception as exc:  # noqa: BLE001 -- never fail the turn
+                last_error = exc
+                # Brief escalating backoff: the losing writer of a
+                # concurrent pair only needs the winner's commit to land.
+                time.sleep(0.02 * (attempt + 1))
+        logger.bind(row_count=len(rows), error=repr(last_error)).warning(
+            "trajectory_rows_write_failed"
+        )
+        return False
 
     def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
         """Persist structured message metadata WITHOUT touching sync metadata.
@@ -1304,6 +1351,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(message_id)
             elif message_id:
@@ -1336,6 +1384,7 @@ class ChatPersistenceService:
                     feedback=feedback,
                     update_parent="parent_message_id" in message_obj,
                     update_feedback="feedback" in message_obj,
+                    preserve_descendants=True,
                 )
                 consumed_existing_ids.add(existing_message["id"])
                 fallback_index += 1

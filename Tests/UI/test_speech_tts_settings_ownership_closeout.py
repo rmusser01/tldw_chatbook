@@ -39,6 +39,7 @@ from Tests.UI.test_speech_profile_navigation import (
     _SpeechHost,
     _wait_until,
 )
+from Tests.UI.test_speech_playground_pane_lifecycle import _runtime_observation
 from Tests.UI.test_studio_tts_preferences import _Host, _Store
 from tldw_chatbook import config as config_module
 from tldw_chatbook.app import TldwCli
@@ -866,6 +867,29 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
         assert settings_service.provider_operations == []
 
     catalog_service = FakeTTSService()
+    runtime_observation = _runtime_observation(
+        saved_mode="external",
+        applied_mode="external",
+        process_state="running",
+        process_generation=1,
+        capability="available",
+        endpoint=fake_url,
+        active_endpoint=fake_url,
+        catalog_revision=11,
+        catalog_fresh=True,
+    )
+
+    async def start_and_test_audio_cpp() -> object:
+        return await catalog_service.get_catalog("audio_cpp", refresh=True)
+
+    async def audio_cpp_runtime_observation(
+        *, selected_model_id: str | None = None
+    ) -> object:
+        del selected_model_id
+        return runtime_observation
+
+    catalog_service.start_and_test_audio_cpp = start_and_test_audio_cpp  # type: ignore[attr-defined]
+    catalog_service.audio_cpp_runtime_observation = audio_cpp_runtime_observation  # type: ignore[attr-defined]
     native_service = _StudioNativeService(
         _Response(
             _CountingStream((_complete_wav(),)),
@@ -924,7 +948,15 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
                     == initial_refreshes + 1
                 ),
             )
-            await speech_host.workers.wait_for_complete()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    playground._audio_cpp_lifecycle_busy is None
+                    and not playground.query_one(
+                        "#tts-refresh-catalog-btn", Button
+                    ).disabled
+                ),
+            )
 
             playground.query_one("#tts-model-select", Select).value = "second-model"
             await _wait_until(
@@ -969,6 +1001,7 @@ async def test_first_time_audio_cpp_setup_lab_generation_and_console_handoff(
             artifact = speech_host._stts_handler.playground_state().artifact
             assert artifact is not None
             assert playground.current_audio_artifact == artifact
+            assert playground.current_audio_artifact is not artifact
             assert not playground.query_one("#audio-play-btn", Button).disabled
             with wave.open(str(artifact.path), "rb") as wav_file:
                 assert wav_file.getnchannels() == 1

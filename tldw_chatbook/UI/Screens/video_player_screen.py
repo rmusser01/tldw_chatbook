@@ -42,6 +42,7 @@ from tldw_chatbook.Media_Playback.render_mode import (
     frame_to_ascii,
 )
 from tldw_chatbook.Widgets.Console.console_video_preview import ConsoleVideoPreview
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 SEEK_STEP_SECONDS = 5.0
 _STATUS_INTERVAL_SECONDS = 0.25
@@ -70,7 +71,7 @@ def _format_clock(seconds: float | None) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-class VideoPlayerScreen(ModalScreen[None]):
+class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
     """Play one video file with audio + sync inside the Console."""
 
     BINDINGS = [
@@ -79,7 +80,11 @@ class VideoPlayerScreen(ModalScreen[None]):
         Binding("left", "seek_back", "-5s", show=True),
         Binding("right", "seek_fwd", "+5s", show=True),
         Binding("q", "close_player", "Close", show=True),
+        Binding("escape", "request_safe_cancel", "Close", show=False),
     ]
+
+    # The player occupies the whole screen, so it has no synthetic backdrop.
+    SAFE_MODAL_CONTENT = None
 
     def __init__(
         self,
@@ -433,10 +438,14 @@ class VideoPlayerScreen(ModalScreen[None]):
         self._refresh_status()
 
     def action_stop_playback(self) -> None:
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
     def action_close_player(self) -> None:
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.action_close_player()
 
     def action_seek_back(self) -> None:
         self._seek_relative(-SEEK_STEP_SECONDS)

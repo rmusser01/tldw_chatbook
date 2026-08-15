@@ -55,6 +55,7 @@ from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
 from .agent import ConsoleAgentController
 from .dictation import ConsoleDictationController
 from .hands_free import ConsoleHandsFreeController
+from .image import ConsoleImageController
 from .message import ConsoleMessageController
 from .prompt_queue import (
     ConsolePromptQueueUIController,
@@ -62,6 +63,7 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .session import ConsoleSessionController
+from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -76,19 +78,20 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's eight controllers and attach them.
+    """Construct the Console screen's nine controllers and attach them.
 
-    Assigns, in this order, `screen._workspace`, `screen._session`,
-    `screen._dictation`, `screen._hands_free`, `screen._message`,
-    `screen._prompts` and `screen._agent`. The order is documentation, not a
-    constraint: every cross-controller dependency below is resolved at call
-    time (see the module docstring), so no controller reads a sibling that
-    does not exist yet.
+    Assigns, in this order, `screen._image`, `screen._workspace`,
+    `screen._session`, `screen._dictation`, `screen._hands_free`,
+    `screen._message`, `screen._prompts`, `screen._agent`, and
+    `screen._prompt_queue`. The order is documentation, not a constraint:
+    every cross-controller dependency below is resolved at call time (see the
+    module docstring), so no controller reads a sibling that does not exist
+    yet.
 
     `ChatScreen.__init__` calls this at exactly the point the first
     construction used to occupy. That position matters: the ~250 attribute
     assignments around it in `__init__` include names these lambdas read, and
-    none of the seven constructors reads anything off `screen` eagerly (each
+    none of the nine constructors reads anything off `screen` eagerly (each
     stores `screen` and its callables and nothing else), so the call needs to
     sit where it can see everything the pre-move constructions could.
 
@@ -100,17 +103,70 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
-    #: Workspace policy context, lifecycle, and resume-flow state and
-    #: behaviour moved to `ConsoleWorkspaceController` (wave-2 console
-    #: decomposition, task 2) -- the largest cluster in wave 2.
-    #: `self._console_workspace_conversation_query`/`_search_timer`/
-    #: `_search_token`/`_search_rows`/`_search_total`/`_search_error`
-    #: stay readable/writable via the six proxy properties defined near
-    #: `_console_composer_or_none`, so `on_console_workspace_
-    #: conversation_search_changed` (a sibling conversation-browser
-    #: handler that only mirrors three of them) and `on_button_pressed`'s
-    #: workspace-search branches needed no change. See `workspace.py`'s
-    #: module docstring for the full map of what moved and why.
+    screen._image = ConsoleImageController(
+        screen,
+        app_instance=screen.app_instance,
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        recent_console_image_messages=(
+            lambda messages: screen._recent_console_image_messages(messages)
+        ),
+        console_image_default_mode=lambda: screen._console_image_default_mode,
+        console_generation_browse=lambda: screen._console_generation_browse(),
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        build_console_provider_selection=(
+            lambda: screen._build_console_provider_selection()
+        ),
+        ensure_console_provider_gateway=(
+            lambda: screen._ensure_console_provider_gateway()
+        ),
+        console_image_preparing=(
+            lambda: getattr(screen, "_console_image_preparing", None)
+        ),
+        current_console_chat_store=lambda: screen._console_chat_store,
+        console_composer_or_none=lambda: screen._console_composer_or_none(),
+        console_visible_draft_session_id=(
+            lambda: screen._console_visible_draft_session_id
+        ),
+        append_native_console_system_message=(
+            lambda *args, **kwargs: screen._append_native_console_system_message(
+                *args, **kwargs
+            )
+        ),
+        request_console_control_bar_sync=(
+            lambda: screen._request_console_control_bar_sync()
+        ),
+        default_console_session_settings=(
+            lambda: screen._session._default_console_session_settings()
+        ),
+        clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
+    )
+
+    screen._video = ConsoleVideoController(
+        app_instance=screen.app_instance,
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        wait_for_console_screen_result=(
+            lambda modal: screen._wait_for_console_screen_result(modal)
+        ),
+        open_video_with_os=lambda path: screen._open_video_with_os(path),
+        append_native_console_system_message=(
+            lambda *args, **kwargs: screen._append_native_console_system_message(
+                *args, **kwargs
+            )
+        ),
+        default_console_session_settings=(
+            lambda: screen._session._default_console_session_settings()
+        ),
+        console_composer_or_none=lambda: screen._console_composer_or_none(),
+        clear_console_composer_draft=lambda: screen._clear_console_composer_draft(),
+    )
+
+    #: Workspace policy, lifecycle, resume, scope, and conversation-browser
+    #: behavior have one owner. The controller keeps canonical rich browser
+    #: state and projects legacy Workspace rows through compatibility aliases.
+    #: Its browser inputs are explicit late-bound callables; the screen keeps
+    #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
         app_instance=screen.app_instance,
@@ -127,13 +183,6 @@ def build_console_controllers(
         native_session_rows_accessor=(
             lambda state: screen._session._with_native_console_session_rows(state)
         ),
-        conversation_browser_state_accessor=(
-            lambda state, current_conversation_id: (
-                screen._with_console_conversation_browser_state(
-                    state, current_conversation_id=current_conversation_id
-                )
-            )
-        ),
         capture_draft_switch_snapshot=(
             lambda: screen._session._capture_console_draft_switch_snapshot()
         ),
@@ -143,16 +192,12 @@ def build_console_controllers(
         default_session_settings_accessor=(
             lambda: screen._session._default_console_session_settings()
         ),
-        scope_picker_listers_accessor=(
-            lambda: screen._console_scope_picker_listers()
-        ),
+        scope_picker_listers_accessor=(lambda: screen._console_scope_picker_listers()),
         active_native_session_accessor=(
             lambda: screen._session._active_native_console_session()
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._refresh_console_effective_scope_and_sync(
-                session
-            )
+            lambda session: screen._refresh_console_effective_scope_and_sync(session)
         ),
         # Message <-> workspace seam (the reverse direction of the
         # session/message seams the message controller's own
@@ -164,9 +209,7 @@ def build_console_controllers(
         # resolves `self._message` at CALL time, so construction order
         # (workspace built before message) does not matter.
         messages_from_conversation_tree_accessor=(
-            lambda tree: screen._message._console_messages_from_conversation_tree(
-                tree
-            )
+            lambda tree: screen._message._console_messages_from_conversation_tree(tree)
         ),
         session_settings_for_resume_accessor=(
             lambda conversation: screen._session._console_session_settings_for_resume(
@@ -174,9 +217,7 @@ def build_console_controllers(
             )
         ),
         resolve_resumed_character_name=(
-            lambda character_id: screen._resolve_resumed_character_name(
-                character_id
-            )
+            lambda character_id: screen._resolve_resumed_character_name(character_id)
         ),
         # Agent <-> workspace seam, same shape as the message seam above:
         # the resume flow's TOOL-marker re-derivation moved to
@@ -185,17 +226,13 @@ def build_console_controllers(
         # changed, from the screen's own method to the controller.
         inject_resume_agent_markers_accessor=(
             lambda messages, conversation_id: (
-                screen._agent._inject_resume_agent_markers(
-                    messages, conversation_id
-                )
+                screen._agent._inject_resume_agent_markers(messages, conversation_id)
             )
         ),
         resolve_effective_scope_state=(
             lambda session: screen._resolve_console_effective_scope_state(session)
         ),
-        sync_retrieval_scope_row=(
-            lambda: screen._sync_console_retrieval_scope_row()
-        ),
+        sync_retrieval_scope_row=(lambda: screen._sync_console_retrieval_scope_row()),
         note_follow_intent=lambda: screen._note_console_follow_intent(),
         focus_composer_if_needed=(
             lambda **kwargs: screen._focus_console_composer_if_needed(**kwargs)
@@ -203,16 +240,38 @@ def build_console_controllers(
         conversation_section_config_accessor=(
             lambda: screen._console_conversation_section_config()
         ),
-        # The grouped browser's collapse preferences live in the screen's
-        # own `app_config` accessors (alongside rail-state and search
-        # preferences that are not this cluster's), so the write stays
-        # there and the two toggle branches moved in wave-4 task 2 reach
-        # it by name.
+        # Supply the screen-owned preference tree late-bound; Workspace owns
+        # the grouped-browser collapse transition that mutates it.
         conversation_browser_config=(
             lambda: screen._console_conversation_browser_config()
         ),
         focus_conversation_search=(
             lambda: screen._focus_console_workspace_conversation_search()
+        ),
+        schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
+        current_chat_controller_accessor=lambda: screen._console_chat_controller,
+        fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
+        run_marker_with_unseen=(
+            lambda controller, session, unseen_ids: (
+                screen._console_run_marker_with_unseen(
+                    controller,
+                    session,
+                    unseen_ids,
+                )
+            )
+        ),
+        broken_conversation_ids_accessor=(
+            lambda: getattr(screen, "_console_broken_conversation_ids", set())
+        ),
+        ensure_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
+        subagent_counts_for_rows=(
+            lambda bridge, rows: screen._agent._console_subagent_counts_for_rows(
+                bridge,
+                rows,
+            )
+        ),
+        conversation_browser_collapse_preferences=(
+            lambda: screen._console_conversation_browser_collapse_preferences()
         ),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
@@ -245,9 +304,7 @@ def build_console_controllers(
         effective_console_provider_model=(
             lambda: screen._effective_console_provider_model()
         ),
-        provider_readiness_app_config=(
-            lambda: screen._provider_readiness_app_config()
-        ),
+        provider_readiness_app_config=(lambda: screen._provider_readiness_app_config()),
         build_provider_selection=(
             lambda session_id: screen._build_console_provider_selection(session_id)
         ),
@@ -264,7 +321,7 @@ def build_console_controllers(
             lambda **kwargs: screen._focus_console_composer_if_needed(**kwargs)
         ),
         invalidate_persisted_rows_cache=(
-            lambda: screen._invalidate_console_persisted_rows_cache()
+            lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
         mark_conversation_row_broken=(
             lambda conversation_id: screen._mark_console_conversation_row_broken(
@@ -272,9 +329,7 @@ def build_console_controllers(
             )
         ),
         refresh_effective_scope_and_sync=(
-            lambda session: screen._refresh_console_effective_scope_and_sync(
-                session
-            )
+            lambda session: screen._refresh_console_effective_scope_and_sync(session)
         ),
         # Session<->workspace seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
@@ -283,9 +338,7 @@ def build_console_controllers(
         # so construction order does not matter.
         set_active_workspace_for_session=(
             lambda session_id: (
-                screen._workspace._set_active_workspace_for_console_session(
-                    session_id
-                )
+                screen._workspace._set_active_workspace_for_console_session(session_id)
             )
         ),
         resume_workspace_conversation=(
@@ -363,9 +416,7 @@ def build_console_controllers(
             )
         ),
         enter_hands_free_loop=(
-            lambda **kwargs: screen._hands_free._enter_console_hands_free_loop(
-                **kwargs
-            )
+            lambda **kwargs: screen._hands_free._enter_console_hands_free_loop(**kwargs)
         ),
         hands_free_force_immediate_send=(
             lambda: screen._hands_free._console_hands_free_force_immediate_send()
@@ -381,9 +432,7 @@ def build_console_controllers(
         # was the same "temporary exception" shape as the four above,
         # for the same staleness reason, now closed out the same way.
         realtime_adopt_transcript=(
-            lambda transcript: screen._console_realtime_adopt_transcript(
-                transcript
-            )
+            lambda transcript: screen._console_realtime_adopt_transcript(transcript)
         ),
         # Same screen-owned realtime engine, read as a live session rather
         # than called: `_handle_console_dictation_button` (wave-4 task 2)
@@ -392,9 +441,7 @@ def build_console_controllers(
         # Controller` takes an identically-named, identically-shaped one.
         realtime_session_accessor=lambda: screen._console_realtime,
         run_pending_voice_action=(
-            lambda session_id: screen._run_pending_console_voice_action(
-                session_id
-            )
+            lambda session_id: screen._run_pending_console_voice_action(session_id)
         ),
         undo_histories_accessor=lambda: screen._console_undo_histories,
         visible_draft_session_id_accessor=(
@@ -431,9 +478,7 @@ def build_console_controllers(
         request_dictation_start=lambda: screen._request_console_dictation_start(),
         request_dictation_stop=lambda: screen._request_console_dictation_stop(),
         run_pending_voice_action=(
-            lambda session_id: screen._run_pending_console_voice_action(
-                session_id
-            )
+            lambda session_id: screen._run_pending_console_voice_action(session_id)
         ),
         realtime_session_accessor=lambda: screen._console_realtime,
         enter_realtime_loop=(
@@ -466,9 +511,7 @@ def build_console_controllers(
         ensure_console_chat_controller=(
             lambda: screen._ensure_console_chat_controller()
         ),
-        current_chat_controller_accessor=(
-            lambda: screen._console_chat_controller
-        ),
+        current_chat_controller_accessor=(lambda: screen._console_chat_controller),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         # Session <-> message seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
@@ -506,9 +549,9 @@ def build_console_controllers(
                 )
             )
         ),
-        # The change-review, image-generation, and image-view clusters
-        # stay screen-owned this wave (out of scope) -- each reach is a
-        # named callable, never a back-door through screen attributes.
+        # Change-review stays screen-owned; image-generation and image-view
+        # are controller-owned. Each reach is a named callable, never a
+        # back-door through screen attributes.
         console_change_review_run_id=(
             lambda store, message_id: screen._console_change_review_run_id(
                 store, message_id
@@ -522,29 +565,36 @@ def build_console_controllers(
             lambda: screen._clear_native_console_message_selection()
         ),
         regenerate_console_generation_variant=(
-            lambda message_id: screen._regenerate_console_generation_variant(
+            lambda message_id: screen._image._regenerate_console_generation_variant(
                 message_id
             )
         ),
         select_console_generation_variant=(
-            lambda message, direction: screen._select_console_generation_variant(
+            lambda message, direction: screen._image._select_console_generation_variant(
                 message, direction=direction
             )
         ),
         keep_console_generation_variant=(
-            lambda message: screen._keep_console_generation_variant(message)
+            lambda message: screen._image._keep_console_generation_variant(message)
         ),
         handle_console_toggle_image_view=(
-            lambda message_id: screen._handle_console_toggle_image_view(message_id)
+            lambda message_id: screen._image._handle_console_toggle_image_view(
+                message_id
+            )
         ),
         invalidate_console_persisted_rows_cache=(
-            lambda: screen._invalidate_console_persisted_rows_cache()
+            lambda: screen._workspace._invalidate_console_persisted_rows_cache()
         ),
         play_console_video=(
-            lambda message_id: screen._play_console_video(message_id)
+            lambda message_id: screen._video._play_console_video(message_id)
         ),
         save_console_video_copy=(
-            lambda message_id: screen._save_console_video_copy(message_id)
+            lambda message_id: screen._video._save_console_video_copy(message_id)
+        ),
+        regenerate_console_video_message=(
+            lambda message_id: screen._video._regenerate_console_video_message(
+                message_id
+            )
         ),
     )
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
@@ -576,10 +626,12 @@ def build_console_controllers(
                 or screen._console_realtime is not None
             )
         ),
-        sync_controls=lambda enabled, paused, retry_available: screen._sync_console_auto_speak_controls(
-            enabled,
-            paused,
-            retry_available,
+        sync_controls=lambda enabled, paused, retry_available: (
+            screen._sync_console_auto_speak_controls(
+                enabled,
+                paused,
+                retry_available,
+            )
         ),
         notify=lambda copy, severity: screen.app_instance.notify(
             copy,
@@ -630,8 +682,8 @@ def build_console_controllers(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
         apply_console_session_system_prompt=(
-            lambda system_prompt: (
-                screen._session._apply_console_session_system_prompt(system_prompt)
+            lambda system_prompt: screen._session._apply_console_session_system_prompt(
+                system_prompt
             )
         ),
         sync_console_session_draft=(
@@ -646,9 +698,7 @@ def build_console_controllers(
         ensure_console_provider_gateway=(
             lambda: screen._ensure_console_provider_gateway()
         ),
-        console_provider_blocker_copy=(
-            lambda: screen._console_provider_blocker_copy()
-        ),
+        console_provider_blocker_copy=(lambda: screen._console_provider_blocker_copy()),
         # A bare-attribute READ, not a call: the modal opener hands
         # this straight to `ConsolePromptsModal(configure_provider=...)`
         # without calling it, so the accessor must return the screen's
@@ -659,9 +709,7 @@ def build_console_controllers(
         open_console_provider_recovery_accessor=(
             lambda: screen._open_console_provider_recovery
         ),
-        console_setup_blocked_reason=(
-            lambda: screen._console_setup_blocked_reason()
-        ),
+        console_setup_blocked_reason=(lambda: screen._console_setup_blocked_reason()),
         focus_console_composer_if_needed=(
             lambda **kwargs: screen._focus_console_composer_if_needed(**kwargs)
         ),
@@ -673,9 +721,7 @@ def build_console_controllers(
                 text, replace=replace
             )
         ),
-        clear_console_composer_draft=(
-            lambda: screen._clear_console_composer_draft()
-        ),
+        clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
         append_native_console_system_message=(
             lambda text: screen._append_native_console_system_message(text)
         ),
@@ -706,9 +752,7 @@ def build_console_controllers(
         screen,
         app_instance=screen.app_instance,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
-        provider_gateway_accessor=(
-            lambda: screen._ensure_console_provider_gateway()
-        ),
+        provider_gateway_accessor=(lambda: screen._ensure_console_provider_gateway()),
         # A bare-attribute READ, not a call: `ConsoleAgentBridge` stores
         # this callable and calls it per run, so the accessor must return
         # the screen's method rather than today's answer -- the same shape
@@ -737,31 +781,21 @@ def build_console_controllers(
         ),
     )
     screen._prompt_queue = ConsolePromptQueueUIController(
-        chat_controller_accessor=(
-            lambda: screen._ensure_console_chat_controller()
-        ),
+        chat_controller_accessor=(lambda: screen._ensure_console_chat_controller()),
         ensure_active_session=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
         blocked_reason_accessor=lambda: screen._console_send_blocked_reason(),
-        setup_blocked_reason_accessor=(
-            lambda: screen._console_setup_blocked_reason()
-        ),
+        setup_blocked_reason_accessor=(lambda: screen._console_setup_blocked_reason()),
         restore_stash=lambda stash: screen._restore_console_send_stash(stash),
         append_system_message=(
             lambda text: screen._append_native_console_system_message(text)
         ),
         notify=(
-            lambda text, severity: screen.app_instance.notify(
-                text, severity=severity
-            )
+            lambda text, severity: screen.app_instance.notify(text, severity=severity)
         ),
-        focus_composer=(
-            lambda: screen._focus_console_composer_if_needed(force=True)
-        ),
-        inflight_stashes_accessor=(
-            lambda: screen._console_inflight_send_stashes
-        ),
+        focus_composer=(lambda: screen._focus_console_composer_if_needed(force=True)),
+        inflight_stashes_accessor=(lambda: screen._console_inflight_send_stashes),
         note_follow_intent=lambda: screen._note_console_follow_intent(),
         launch_chain=(
             lambda draft, session_id: screen.run_worker(

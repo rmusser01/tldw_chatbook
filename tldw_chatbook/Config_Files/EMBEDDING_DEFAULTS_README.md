@@ -11,12 +11,10 @@ pip install tldw_chatbook[embeddings_rag]
 ```
 
 **Default Configuration:**
-- Model: `mxbai-embed-large-v1` (1024 dimensions)
+- Model: `e5-small-v2` (384 dimensions)
 - Provider: HuggingFace
 - Device: Auto-detected (CUDA > MPS > CPU)
 - Auto-download: Enabled
-- Model size: ~335MB
-- Special feature: Supports Matryoshka dimensions (512, 256)
 
 No additional configuration is required to start using embeddings!
 
@@ -25,23 +23,15 @@ No additional configuration is required to start using embeddings!
 Embedding settings can be configured in multiple places (in order of priority):
 
 1. **Environment Variables** (highest priority)
-   - `RAG_EMBEDDING_MODEL` - Override the embedding model
+   - `RAG_EMBEDDING_MODEL` - Override the embedding model used by RAG
    - `RAG_DEVICE` - Force specific device (cuda/mps/cpu)
    - `OPENAI_API_KEY` - For OpenAI embeddings
 
-2. **RAG Configuration** in `config.toml`:
-   ```toml
-   [rag.embedding]
-   model = "mxbai-embed-large-v1"
-   device = "auto"
-   cache_size = 2
-   batch_size = 16
-   ```
-
-3. **Embedding Configuration** in `config.toml`:
+2. **Embedding Configuration** in `config.toml` (example: switching the
+   shipped `e5-small-v2` default to a higher-quality model):
    ```toml
    [embedding_config]
-   default_model_id = "mxbai-embed-large-v1"
+   default_model_id = "mxbai-embed-large-v1"  # overrides the shipped e5-small-v2 default
    
    [embedding_config.models.mxbai-embed-large-v1]
    provider = "huggingface"
@@ -49,20 +39,20 @@ Embedding settings can be configured in multiple places (in order of priority):
    dimension = 1024
    ```
 
-4. **Built-in Defaults** (lowest priority)
+3. **Built-in Defaults** (lowest priority)
 
 ## Available Default Models
 
 The system comes pre-configured with several embedding models:
 
-### High-Quality Models (Default)
-- **mxbai-embed-large-v1** (Default) - Best quality, supports Matryoshka dimensions
+### High-Quality Models
+- **mxbai-embed-large-v1** - Best quality, supports Matryoshka dimensions
   - Full: 1024 dimensions
   - Reduced: 512 dimensions (93% performance)
   - Fast: 256 dimensions (still good quality)
 
 ### Small Models (Fast, ~100MB)
-- **e5-small-v2** - Good balance of speed and quality
+- **e5-small-v2** (shipped default) - Good balance of speed and quality
 - **all-MiniLM-L6-v2** - Fastest, good for development
 - **bge-small-en-v1.5** - Good multilingual support
 
@@ -87,8 +77,8 @@ The system comes pre-configured with several embedding models:
 
 ### API Models (Requires API Key)
 - **openai-ada-002** - OpenAI's legacy model
-- **openai-3-small** - New generation, efficient
-- **openai-3-large** - Highest quality
+- **openai-text-embedding-3-small** - New generation, efficient
+- **openai-text-embedding-3-large** - Highest quality
 
 ## Basic Configuration Examples
 
@@ -125,12 +115,7 @@ batch_size = 16
 ### 4. Use OpenAI Embeddings
 ```toml
 [embedding_config]
-default_model_id = "openai-3-small"
-
-[embedding_config.models.openai-3-small]
-provider = "openai"
-model_name_or_path = "text-embedding-3-small"
-dimension = 1536
+default_model_id = "openai-text-embedding-3-small"
 # api_key set via OPENAI_API_KEY environment variable
 ```
 
@@ -148,15 +133,16 @@ dimension = 768
 
 ## RAG-Specific Configuration
 
-For RAG functionality, configure embeddings in the RAG section:
+RAG does not read a `[rag.embedding]` table from `config.toml`. The RAG
+embedding model defaults to the pipeline profile's `embedding.model`
+(`all-MiniLM-L6-v2` for the builtin profiles; see
+`tldw_chatbook/RAG_Search/config_profiles.py` and
+`tldw_chatbook/Config_Files/rag_pipelines.toml`), and can be overridden with
+the `RAG_EMBEDDING_MODEL` / `RAG_DEVICE` environment variables:
 
-```toml
-[rag.embedding]
-model = "e5-base-v2"     # Model ID from embedding_config
-device = "auto"          # Auto-detect best device
-cache_size = 2           # Models to keep in memory
-batch_size = 16          # Batch size for processing
-max_length = 512         # Max sequence length
+```bash
+export RAG_EMBEDDING_MODEL=e5-base-v2  # Model ID from embedding_config
+export RAG_DEVICE=auto                 # Auto-detect best device
 ```
 
 ## Advanced Usage
@@ -292,10 +278,10 @@ revision = "4bbc0f1e9df5b9563d418e9b5663e98070713eb8"  # Pinned for security
 
 If upgrading from an older version:
 
-1. The system now uses `mxbai-embed-large-v1` as default (was `e5-small-v2`)
-2. Device selection now supports `"auto"`
-3. RAG configuration moved to `[rag.embedding]` section
+1. The shipped `[embedding_config] default_model_id` is `e5-small-v2`
+2. Device selection supports `"auto"`
+3. RAG embedding overrides use the `RAG_EMBEDDING_MODEL` / `RAG_DEVICE` environment variables (there is no `[rag.embedding]` config table)
 4. Models are defined in `[embedding_config.models]` section
-5. New models support revision pinning for security
+5. Models support revision pinning for security
 
 Old configurations will continue to work via backward compatibility.

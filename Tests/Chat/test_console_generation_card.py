@@ -7,8 +7,9 @@ render check:
    present in the card-spec map, even when an image spec is ALSO registered
    for the same message (proves precedence, not merely spec omission).
 2. The reconcile signature differs when the browsed variant index changes.
-3. ``ChatScreen._build_console_image_specs``/``_recent_console_image_messages``
-   skip generation messages entirely (no double render, no LRU slot burn).
+3. ``ConsoleImageController._build_console_image_specs`` and the screen's
+   ``_recent_console_image_messages`` skip generation messages entirely (no
+   double render, no LRU slot burn).
 4. The details block renderable carries every Style/Source/Seed/Prompt/
    Negative field for a sample spec.
 
@@ -30,7 +31,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     GenerationVariantMeta,
     MessageAttachment,
 )
-from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+from Tests.UI.console_controller_stubs import (
+    NO_APP,
+    stub_image_controller,
+    stub_message_controller,
+)
 from tldw_chatbook.Chat.console_image_view import ConsoleImageRowSpec
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_generation_card import (
@@ -66,6 +71,17 @@ def _bare_screen() -> ChatScreen:
         # No harness app -- see the sibling note in
         # test_console_rag_settings_modal; declared, not inferred.
         app_instance=NO_APP,
+    )
+    stub_image_controller(
+        screen,
+        context="test_console_generation_card._bare_screen",
+        app_instance=NO_APP,
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        recent_console_image_messages=(
+            lambda messages: screen._recent_console_image_messages(messages)
+        ),
+        console_image_default_mode=lambda: screen._console_image_default_mode,
+        console_generation_browse=lambda: screen._console_generation_browse(),
     )
     return screen
 
@@ -268,7 +284,7 @@ def test_image_specs_exclude_card_messages():
     cache.prepare(generation_message.id, generation_message.image_data)
     cache.prepare(plain_message.id, plain_message.image_data)
 
-    specs = screen._build_console_image_specs(messages)
+    specs = screen._image._build_console_image_specs(messages)
     assert generation_message.id not in specs
     assert plain_message.id in specs
 

@@ -515,13 +515,7 @@ class CCPCharacterHandler:
                 card_widget = self.window.query_one("#ccp-character-card-view")
                 if hasattr(card_widget, "load_character"):
                     card_widget.load_character(data)
-                    logger.debug(
-                        "Displayed character card for {}",
-                        sanitize_character_display_label(
-                            data.get("name", "Unknown"),
-                            max_characters=_OPTION_LABEL_MAX_CHARACTERS,
-                        ),
-                    )
+                    logger.debug("Displayed character card")
                     return
             except Exception as e:
                 logger.warning(f"Could not use character card widget loader: {e}")
@@ -599,13 +593,7 @@ class CCPCharacterHandler:
             # Handle image display
             self._display_character_image(data)
 
-            logger.debug(
-                "Displayed character card for {}",
-                sanitize_character_display_label(
-                    data.get("name", "Unknown"),
-                    max_characters=_OPTION_LABEL_MAX_CHARACTERS,
-                ),
-            )
+            logger.debug("Displayed character card")
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error displaying character card: {e}")

@@ -66,6 +66,7 @@ from tldw_chatbook.Media_Creation.generation_templates import (
     GenerationTemplate,
     get_all_templates,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 FILTER_INPUT_ID = "console-style-picker-filter"
 MODAL_ID = "console-style-picker-modal"
@@ -161,10 +162,13 @@ def format_style_preview(template: GenerationTemplate) -> str:
     return "\n".join(lines)
 
 
-class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
+class ConsoleStylePickerModal(
+    SafeModalDismissMixin, ModalScreen[Optional[Mapping[str, object]]]
+):
     """Search and pick a `/generate-image` style template (built-in or user-defined)."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-style-picker-modal"
 
     def __init__(self, *, initial_query: str = "") -> None:
         """Initialize the picker.
@@ -201,7 +205,7 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
             # text is untrusted; see module docstring.
             yield Static(DETAIL_EMPTY_COPY, id=DETAIL_STATIC_ID, markup=False)
 
-    async def on_mount(self) -> None:
+    async def on_mount(self) -> None:  # type: ignore[override]
         self._focus_filter_input()
         await self._apply_filter(self._initial_query)
 
@@ -215,9 +219,17 @@ class ConsoleStylePickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_picker(self) -> None:
-        self._cancel_search_debounce()
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+
+        async def cancel_debounce() -> None:
+            self._cancel_search_debounce()
+
+        await self.run_cancel_effect_once(cancel_debounce)
+        self.dismiss_safe_once(None)
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
     def _filter_changed(self, event: Input.Changed) -> None:

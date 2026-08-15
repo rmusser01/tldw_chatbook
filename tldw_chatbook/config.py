@@ -665,9 +665,7 @@ def _get_typed_value(
         return default
 
 
-def _get_int_timeout_value(
-    data_dict: Dict, key: str, default: int
-) -> int:
+def _get_int_timeout_value(data_dict: Dict, key: str, default: int) -> int:
     """Get an integer timeout value, rejecting booleans, non-positive values, and malformed strings.
 
     Args:
@@ -869,9 +867,7 @@ def normalize_provider_config_key(provider: object) -> str:
         A stripped, lowercase provider key with spaces and hyphens replaced by
         underscores.
     """
-    normalized = (
-        str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
-    )
+    normalized = str(provider or "").strip().lower().replace(" ", "_").replace("-", "_")
     return "zai" if normalized == "z.ai" else normalized
 
 
@@ -2690,7 +2686,7 @@ users_name = "default_user" # Default user name for the TUI
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
-local_tools_enabled = true      # standard web + workspace agent tools; every call still uses MCP Ask/Allow/Off permissions
+local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
 # Conversation-memory defaults (ADR-052). Model capacity remains capability data,
 # not a persisted policy value.
 conversation_budget_mode = "automatic"  # automatic, custom
@@ -2962,6 +2958,9 @@ local_mlx_lm = ["None"]
 [model_catalog]
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
+# The startup check is confirm-first: nothing is contacted online until the
+# user answers the one-time consent dialog (which sets this to true).
+refresh_consent_recorded = false
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
 write_to_config = [] # exact [providers] keys whose new models append to this file
@@ -4178,7 +4177,7 @@ require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
 
-# expose_local_tools = false   # expose workspace-local agent tools (fs_*/git_*/web_*) to external MCP clients; permission-gated, writes effectively denied until granted
+# expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 
 # Tool-specific settings
 [mcp.tools]
@@ -4540,9 +4539,13 @@ def _maybe_encrypt_setting_value(
         encrypted_value = enc_module.encrypt_value(value, password)
         logger.info(f"Encrypted {key} in config section")
         return encrypted_value
-    except Exception as e:
-        logger.error(f"Failed to encrypt value: {e}")
-        return value
+    except Exception as error:
+        logger.error(
+            "Failed to encrypt config value (key={}, exception_category={}).",
+            key,
+            type(error).__name__,
+        )
+        raise
 
 
 def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[str, Any]:
@@ -5307,8 +5310,7 @@ def apply_settings_mutation_to_cli_config(
     *,
     delete_keys: Mapping[str, Collection[str]] | None = None,
     mutation_precondition: Callable[[], bool] | None = None,
-    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool]
-    | None = None,
+    locked_snapshot_precondition: Callable[[AtomicConfigSnapshot], bool] | None = None,
 ) -> ConfigMutationResult:
     """Atomically apply exact config sets/deletes, then refresh caches."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -5377,8 +5379,7 @@ def apply_settings_mutation_to_cli_config(
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
-                    "(phase=precondition, config_path={}, error_type={}).",
-                    config_path,
+                    "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
                 return ConfigMutationResult(False, False, "before_replace")
@@ -5401,8 +5402,7 @@ def apply_settings_mutation_to_cli_config(
             except Exception as error:
                 logger.error(
                     "Configuration mutation failed "
-                    "(phase=locked_precondition, config_path={}, error_type={}).",
-                    config_path,
+                    "(phase=locked_precondition, error_type={}).",
                     type(error).__name__,
                 )
                 return ConfigMutationResult(False, False, "before_replace")
@@ -5415,15 +5415,24 @@ def apply_settings_mutation_to_cli_config(
                     conflict_reason="identity_changed",
                 )
 
-        deleted_any = _delete_config_keys(config_data, requested_deletes)
-        for section, values in section_values.items():
-            if not values:
-                continue
-            current_level = _target_config_section(config_data, section)
-            for key, value in values.items():
-                current_level[key] = _maybe_encrypt_setting_value(
-                    config_data, key, value
-                )
+        try:
+            deleted_any = _delete_config_keys(config_data, requested_deletes)
+            for section, values in section_values.items():
+                if not values:
+                    continue
+                current_level = _target_config_section(config_data, section)
+                for key, value in values.items():
+                    current_level[key] = _maybe_encrypt_setting_value(
+                        config_data, key, value
+                    )
+        except Exception as error:
+            logger.error(
+                "Configuration mutation failed "
+                "(phase=before_replace, config_path={}, error_type={}).",
+                config_path,
+                type(error).__name__,
+            )
+            return ConfigMutationResult(False, False, "before_replace")
         set_any = any(bool(values) for values in section_values.values())
         if not set_any and not deleted_any:
             return ConfigMutationResult(False, False, None)
@@ -5471,6 +5480,8 @@ def save_settings_to_cli_config(
         section_values,
         delete_keys=delete_keys,
     )
+    if result.conflict:
+        return False
     if result.failure_phase is None and not result.file_replaced:
         return True
     return result.fully_applied
@@ -6207,6 +6218,16 @@ def get_tts_profiles_db_path() -> Path:
         candidate = candidate.expanduser()
         return validate_path_simple(candidate, require_exists=False).resolve()
     return get_user_data_dir() / "tldw_chatbook_tts_profiles.db"
+
+
+def get_notes_sync_state_db_path() -> Path:
+    """Return the device-private Notes import/sync state database path.
+
+    Returns:
+        The profile-local path for Notes import receipts and sync state.
+    """
+
+    return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
 
 
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:

@@ -132,6 +132,13 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.subscriptions.agent_read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Subscriptions_DB",
+        _READ_ONLY_URI,
+        "External agent tools read the existing Watchlists database without "
+        "creating, migrating, or writing it.",
+        preserve_read_only_source_mode=True,
+    ),
     "db.subscriptions.site_configs": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
         _PRIVATE_FILE,
@@ -211,6 +218,12 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/Notes/Notes_Library",
         _PRIVATE_FILE,
         "The Notes library owns a per-user database parent.",
+    ),
+    "notes.sync_state": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/note_import_receipts",
+        _PRIVATE_FILE,
+        "Device-private import receipts and future lasting-sync state remain "
+        "profile-local and outside centralized backup.",
     ),
     "notifications.client": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/client_notifications_db",

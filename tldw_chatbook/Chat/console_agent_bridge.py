@@ -1183,12 +1183,10 @@ class FleetDrainFanout:
         for name, consumer in consumers:
             try:
                 consumer(event)
-            except Exception:  # noqa: BLE001 -- one consumer never starves the rest
-                logger.opt(exception=True).warning(
-                    "fleet drain consumer {name} raised for "
-                    "conversation {conversation_id}",
-                    name=name,
-                    conversation_id=event.conversation_id,
+            except Exception as exc:  # noqa: BLE001 -- one consumer never starves the rest
+                logger.warning(
+                    "fleet drain consumer raised (exception_type={})",
+                    type(exc).__name__,
                 )
 
 
@@ -1740,10 +1738,10 @@ class _StreamingModelAdapter:
                 )
         except Exception as exc:  # noqa: BLE001 — observability is never fatal
             usage = None
-            logger.opt(exception=True).warning(
+            logger.warning(
                 "usage accounting failed after a successful provider turn; "
-                "completing the turn without usage: {!r}",
-                exc,
+                "completing the turn without usage (exception_type={})",
+                type(exc).__name__,
             )
         if usage is not None:
             response["usage"] = usage

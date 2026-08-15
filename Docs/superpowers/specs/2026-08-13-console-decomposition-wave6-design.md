@@ -1,20 +1,24 @@
 # Console Decomposition Wave 6 Design
 
-**Status:** approved after written spec and quality review 2026-08-13
+**Status:** approved after written spec and quality review 2026-08-13; post-image
+baseline amendment approved 2026-08-14
 
 ## Problem
 
-The one-way Console size ratchet is genuinely red on current `origin/dev`:
+The one-way Console size ratchet remains genuinely red after TASK-3070.2 landed on
+current `origin/dev`:
 
-- `tldw_chatbook/UI/Screens/chat_screen.py`: **22,338 lines** versus a **17,727**-line ceiling
-- `ChatScreen`: **705 methods** versus a **593**-method ceiling
+- `tldw_chatbook/UI/Screens/chat_screen.py`: **22,172 lines** versus a **17,727**-line ceiling
+- `ChatScreen`: **712 methods** versus a **593**-method ceiling
 
-TASK-3070.1 records implementation base
-`bed39af6b004e4db86218fad01d2ea515b332135`. The rebase added unrelated continuation,
-provider, and configuration work to `ChatScreen`, but every reviewed Wave 6 definition
-and its aggregate source span remains unchanged from the originally reviewed inventory.
+TASK-3070.1 retains immutable implementation base
+`bed39af6b004e4db86218fad01d2ea515b332135` for the original Wave 6 families. After
+TASK-3070.2, the serial rebase at `8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0`
+added fleet/wake, first-chat, browser-unseen, and auto-speak ownership to `ChatScreen`.
+That post-image baseline is independently locked at 22,172 lines and 712 direct
+methods; it does not rewrite the original evidence.
 
-The overage is 4,611 lines and 112 methods. Raising either ceiling is forbidden by
+The remaining overage is 4,445 lines and 119 methods. Raising either ceiling is forbidden by
 `Tests/Architecture/test_screen_size_ratchet.py`; it would erase the protection that
 the earlier decomposition waves established. This wave must earn a reduction by moving
 coherent ownership out of the screen.
@@ -22,27 +26,32 @@ coherent ownership out of the screen.
 The first draft used name matching and four controllers. Review rejected that arithmetic:
 the four honest clusters contained only 4,415 method-body lines before delegation
 overhead, and their framework entry points would leave too little method-count margin.
-The amended design uses a source-inspected move/stay inventory: five independently
-testable new controllers plus one coherent extension of the existing Workspace
-controller.
+The post-image amendment keeps every approved child boundary intact, extends the
+Workspace browser inventory by its new unseen-marker helper, and adds three later
+atomic ownership slices: a fleet lifecycle controller plus coherent extensions of the
+existing Session and HandsFree controllers.
 
-| Controller | Inspected candidate bodies | Screen residue budget | Projected net line reduction | Projected method reduction |
+| Remaining controller work | Inspected candidate bodies | Screen residue budget | Projected net line reduction | Projected method reduction |
 |---|---:|---:|---:|---:|
-| `ConsoleImageController` | 1,335 / 31 methods | at most 79 lines / 6 definitions | at least 1,256 | 25 |
 | `ConsoleVideoController` | 1,292 / 33 | at most 10 / 2 | at least 1,282 | 31 |
-| `ConsoleWorkspaceController` browser extension | 912 / 21 | at most 5 lines / 1 definition | at least 907 | 20 |
+| `ConsoleWorkspaceController` browser extension | 959 / 22 | at most 5 lines / 1 definition | at least 954 | 21 |
 | `ConsoleRetrievalController` | 992 / 34 | at most 10 / 2 | at least 982 | 32 |
 | `ConsoleSkillController` plus dead-path removal | 339 / 16 | at most 15 / 3 | at least 324 | 13 |
 | `ConsoleCharacterController` | 281 / 8 | 0 / 0 | 281 | 8 |
+| `ConsoleFleetLifecycleController` | 401 / 16 | 0 / 0 | 401 | 16 |
+| `ConsoleSessionController` first-chat extension | 328 / 8 | 0 / 0 | 328 | 8 |
+| `ConsoleHandsFreeController` auto-speak extension | 48 / 5 | at most 15 / 3 | at least 33 | 2 |
 | Compatibility descriptors | 0 / 0 | at most 64 lines / 0 methods | -64 | 0 |
-| **Total** | **5,151 / 143** | **at most 183 / 14** | **at least 4,968** | **129** |
+| **Remaining total** | **4,640 / 142** | **at most 119 lines / 11 definitions** | **at least 4,521** | **131** |
 
 Production screen consumers are rewired to the owning controller, while every moved
 plain assignable screen attribute is preserved through one small reusable module-level
 read/write descriptor class plus explicit class assignments (31 attributes, budgeted
-as at most 64 physical lines and zero direct `ChatScreen` methods). The projected method
-reduction is therefore 129, 17 methods beyond the required 112, and the line projection
-has 357 lines of margin. If characterization discovers another baseline plain
+as at most 64 physical lines and zero direct `ChatScreen` methods). The remaining
+projection is deliberately conservative: it charges the complete 64-line descriptor
+budget again even though the image-family descriptor support has already landed. The
+projected final screen is at most 17,651 lines / 581 methods, leaving 76 lines and 12
+methods of margin. If characterization discovers another baseline plain
 attribute, it must add the descriptor assignment and revalidate both margins before
 production extraction. If either margin no longer clears, implementation stops for
 another design review; no cluster is widened and no budget is raised.
@@ -201,6 +210,31 @@ decision/state. The screen and `ConsoleLeftRail` keep modal presentation and ava
 rendering. `_refresh_active_character_avatar_if_scope_changed` is split: controller
 computes whether/what to refresh, and a screen/region callback applies the pixels.
 
+### `ConsoleFleetLifecycleController`
+
+Owns the post-baseline fleet-completion handoff, durable unseen-marker cache and run
+marker policy, mount-time wake claims, user-priority and in-view decisions, wake retry
+and delivery-start transitions, teardown accounting, and survivor-tick lifecycle. It
+receives named late-bound callbacks for the displayed composer, screen visibility,
+transcript repaint scheduling, timer creation/stopping, and workspace/session
+activation; it never queries the DOM or reaches through the screen to another
+controller. The exact first-signal, durable-mark-before-view-clear, teardown ordering,
+and idle-timer behavior remain unchanged.
+
+### `ConsoleSessionController` first-chat extension
+
+Owns the post-baseline first-chat default fence, pristine-session eligibility, exact
+claim release/acknowledgement, rollback, and retry policy. Existing screen callbacks
+perform the final mounted UI resynchronization and focus restoration only. Claim
+identity, configuration-generation fencing, no-overwrite behavior, metadata-only
+diagnostics, and retryable failure semantics remain byte-equivalent.
+
+### `ConsoleHandsFreeController` auto-speak extension
+
+Owns the post-baseline auto-speak destination and control-state decisions. The three
+Textual `@on` entry points stay on `ChatScreen` as at-most-five-line delegates. No
+speech queue, retry, resume, or presentation behavior changes.
+
 ## Source-Inspected Ownership Inventory
 
 Legend: **M** removes the `ChatScreen` definition and rewires production callers
@@ -259,7 +293,7 @@ seams and are not counted in the 1,292 candidate lines.
 
 ### Conversation browser
 
-**M (20):** `_start_console_conversation_browser_search`,
+**M (21):** `_start_console_conversation_browser_search`,
 `_console_browser_row_key`, `_console_browser_row_scope_copy`,
 `_console_browser_row_matches_query`, `_filter_console_browser_rows_for_query`,
 `_find_console_browser_row`, `_console_browser_display_identity`,
@@ -269,8 +303,9 @@ seams and are not counted in the 1,292 candidate lines.
 `_sync_persisted_console_browser_rows`, `_compute_persisted_console_browser_rows`,
 `_merge_console_browser_rows`, `_current_console_browser_rows`,
 `_refresh_console_conversation_browser_search`,
-`_refresh_console_conversation_browser_after_selection`, and
-`_with_console_conversation_browser_state`. The screen's existing decorated input
+`_refresh_console_conversation_browser_after_selection`,
+`_with_console_conversation_browser_state`, and `_console_browser_unseen_marker`. The
+screen's existing decorated input
 handler arms the timer with a late-bound controller callback directly.
 
 **D (1):** `on_console_workspace_conversation_search_changed` retains its `@on`
@@ -337,6 +372,39 @@ supported them.
 picker callback invoke the controller directly; the controller uses a named screen/
 region callback only for the final pixel application.
 
+### Fleet/wake post-baseline drift
+
+**M (16):** `consume_pending_console_fleet_completion`,
+`_claim_console_fleet_wake_marks`, `_console_wake_user_priority`,
+`_console_wake_probe_composer`, `_console_screen_displayed`,
+`_console_wake_conversation_in_view`, `_poke_console_wake_retry`,
+`_on_console_wake_delivery_started`, `_console_wake_turn_active`,
+`_record_console_fleet_teardown`, `_console_fleet_unseen_ids`,
+`_console_run_marker_with_unseen`, `_console_fleet_survivors_live`,
+`_maybe_start_console_fleet_survivor_tick`, `_stop_console_fleet_survivor_tick`,
+and `_console_fleet_survivor_tick`.
+
+Screen/DOM observations are supplied through named dependencies; none of these names
+remain as direct `ChatScreen` definitions.
+
+### First-chat post-baseline drift
+
+**M (8):** `_first_chat_defaults_match`, `_current_first_chat_defaults`,
+`eligible_console_first_chat_session_id`, `_release_first_chat_claim`,
+`_log_first_chat_handoff_exception`, `_resync_console_after_first_chat_rollback`,
+`_resync_mounted_console_after_first_chat_rollback`, and
+`consume_pending_console_first_chat_intent`.
+
+### Auto-speak post-baseline drift
+
+**M (2):** `_resolve_console_auto_speak_destination` and
+`_sync_console_auto_speak_controls`.
+
+**D (3):** `on_console_auto_speak_changed`,
+`on_console_auto_speak_resume_requested`, and
+`on_console_auto_speak_retry_requested` retain their `@on` decorators and delegate
+within the five-line physical-span limit.
+
 ## Baseline Attribute Compatibility Inventory
 
 The following 31 names require assignable `ChatScreen` compatibility on the
@@ -388,7 +456,7 @@ mutations must fail these tests; shadow attributes are forbidden.
 4. The controller returns a value or invokes a narrowly named screen callback.
 5. The screen or existing region widget applies DOM/presentation changes.
 
-Construction for the five new controllers is added to `build_console_controllers`; the
+Construction for the six new controllers is added to `build_console_controllers`; the
 existing Workspace construction receives the added browser dependencies and state.
 Construction order is not semantically load-bearing: sibling dependencies are
 late-bound callables.
@@ -422,7 +490,7 @@ integration only.
 
 ### Cross-cutting architecture tests
 
-- AST inspection rejects any call whose attribute name is `query_one` inside the five
+- AST inspection rejects any call whose attribute name is `query_one` inside the six
   new controllers or the moved Workspace browser methods; this is structural, not a
   substring check.
 - AST ownership inventory proves every **M** method is absent from `ChatScreen` and every
@@ -446,6 +514,8 @@ integration only.
 - Skills/character: live `/skills` and `$name` routing, trust/block/install/script
   decisions, absence of the dead skill-picker surface, character picker/prompt
   seed/handoff, avatar refresh, and rail rendering.
+- Fleet/first-chat/auto-speak: durable handoff and unseen markers, wake delivery and
+  survivor ticks, pristine-session fencing/rollback, and speech resume/retry events.
 
 Required mutation checks remove each screen delegate, cross-session/generation gate,
 shared cancellation-event handoff, persistence-before-cleanup step, and unified
@@ -470,12 +540,15 @@ reviewable:
 5. TASK-3070.5 extracts retrieval/RAG.
 6. TASK-3070.6 extracts skills.
 7. TASK-3070.7 extracts character policy/avatar state.
-8. TASK-3070.8 rebases, lowers the ratchet, updates canonical progress, and
-   closes the parent.
+8. TASK-3070.8 extracts fleet/wake lifecycle ownership.
+9. TASK-3070.9 extends Session with first-chat handoff ownership.
+10. TASK-3070.10 extends HandsFree with auto-speak ownership.
+11. TASK-3070.11 rebases, lowers the ratchet, updates canonical progress, and
+    closes the parent.
 
 Each child is delivered as one atomic PR and must return its focused gate to green
-before it is reviewed and merged. TASK-3070.2 through TASK-3070.7 branch from the latest
-`dev` only after their predecessor PR merges; TASK-3070.8 is the final rebase/ratchet/
+before it is reviewed and merged. TASK-3070.2 through TASK-3070.10 branch from the latest
+`dev` only after their predecessor PR merges; TASK-3070.11 is the final rebase/ratchet/
 closeout PR after every extraction predecessor lands. Commits inside a child PR remain
 focused on that child. If a rebase changes the inventory enough to invalidate the
 projection, stop and amend this design before implementation.
@@ -485,6 +558,7 @@ projection, stop and amend this design before implementation.
 - The size and method ratchets pass without increasing either budget.
 - Relative to the final rebased starting measurement, `ChatScreen` loses at least the
   exact overage in both dimensions, with the ratchet lowered to the earned result.
-- Image/H3, video, browser, retrieval, skill, and character behaviour is unchanged.
+- Image/H3, video, browser, retrieval, skill, character, fleet/wake, first-chat, and
+  auto-speak behaviour is unchanged.
 - Each family has an obvious non-DOM owner and isolated no-mount unit tests.
 - All automated, static, privacy, cancellation, persistence, and lifecycle gates pass.

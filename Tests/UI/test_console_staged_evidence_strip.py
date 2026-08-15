@@ -905,7 +905,7 @@ async def test_console_send_blocked_reason_blocks_for_library_staged_zero_availa
         reason = screen._console_send_blocked_reason()
         assert (
             # task-15791: same TASK-2154 rename as the chip ("RAG" -> "Library
-        # search") reached this blocked-reason copy.
-        "Console send blocked: Library search has no available evidence"
-            in reason
+            # search") reached this blocked-reason copy.
+            "Console send blocked: Library search has no available evidence. "
+            "Review source authority before sending." in reason
         )

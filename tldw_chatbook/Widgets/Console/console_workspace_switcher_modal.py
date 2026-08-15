@@ -9,13 +9,16 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID, WorkspaceRecord
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: TASK-714: the switcher dismisses with an (action, workspace_id) tuple -
 #: "switch", "rename", or "archive" - or None on cancel.
 WorkspaceSwitcherResult = tuple[str, str]
 
 
-class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None]):
+class ConsoleWorkspaceSwitcherModal(
+    SafeModalDismissMixin, ModalScreen[WorkspaceSwitcherResult | None]
+):
     """Choose the active workspace for Console context.
 
     Args:
@@ -90,8 +93,9 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None])
     }
     """
 
+    SAFE_MODAL_CONTENT = "#console-workspace-switcher-modal"
     BINDINGS = [
-        ("escape", "dismiss", "Cancel"),
+        ("escape", "request_safe_cancel", "Cancel"),
         # TASK-722: arrow ergonomics on top of Tab/Shift+Tab focus cycling.
         ("down", "focus_next", "Next"),
         ("up", "focus_previous", "Previous"),
@@ -182,13 +186,10 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None])
                     "Cancel", id="console-workspace-switcher-cancel", compact=True
                 )
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#console-workspace-switcher-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     def _workspace_at(self, button_id: str) -> WorkspaceRecord | None:
         try:
@@ -219,7 +220,7 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[WorkspaceSwitcherResult | None])
         self.dismiss((action, workspace.workspace_id))
 
 
-class ConsoleWorkspaceRenameModal(ModalScreen[str | None]):
+class ConsoleWorkspaceRenameModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Prompt for a new workspace name (TASK-714)."""
 
     DEFAULT_CSS = """
@@ -248,7 +249,8 @@ class ConsoleWorkspaceRenameModal(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-workspace-rename-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     AUTO_FOCUS = "#console-workspace-rename-input"
 
@@ -272,9 +274,6 @@ class ConsoleWorkspaceRenameModal(ModalScreen[str | None]):
                     "Save", id="console-workspace-rename-save", compact=True
                 )
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     def _submit(self) -> None:
         value = self.query_one(
             "#console-workspace-rename-input", Input
@@ -283,9 +282,9 @@ class ConsoleWorkspaceRenameModal(ModalScreen[str | None]):
             self.dismiss(value)
 
     @on(Button.Pressed, "#console-workspace-rename-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-workspace-rename-save")
     def _save(self, event: Button.Pressed) -> None:

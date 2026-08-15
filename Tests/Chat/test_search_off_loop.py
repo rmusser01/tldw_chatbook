@@ -111,7 +111,7 @@ async def test_persisted_console_browser_rows_threads_raw_file_backed_service():
     screen = ChatScreen(app)
     caller_thread = threading.get_ident()
 
-    await screen._persisted_console_browser_rows("query")
+    await screen._workspace._persisted_console_browser_rows("query")
 
     assert raw_service.calls >= 1
     assert all(ident != caller_thread for ident in raw_service.thread_idents)
@@ -126,7 +126,7 @@ async def test_persisted_console_browser_rows_stays_inline_for_memory_backed_ser
     screen = ChatScreen(app)
     caller_thread = threading.get_ident()
 
-    await screen._persisted_console_browser_rows("query")
+    await screen._workspace._persisted_console_browser_rows("query")
 
     assert raw_service.calls >= 1
     assert all(ident == caller_thread for ident in raw_service.thread_idents)
@@ -155,15 +155,15 @@ async def test_refresh_console_conversation_browser_search_discards_result_when_
         screen._console_conversation_browser_search_token = 2
         return [SimpleNamespace(row_key="conv-x")], 1, ""
 
-    screen._persisted_console_browser_rows = fake_persisted_rows
+    screen._workspace._persisted_console_browser_rows = fake_persisted_rows
     screen._sync_console_workspace_context = lambda: None
     screen.call_after_refresh = lambda fn: None
-    screen._filter_console_browser_rows_for_query = lambda rows, query: rows
-    screen._merge_console_browser_rows = lambda a, b: tuple(a) + tuple(b)
-    screen._native_console_browser_rows = lambda: ()
-    screen._membership_console_browser_rows = lambda: ()
+    screen._workspace._filter_console_browser_rows_for_query = lambda rows, query: rows
+    screen._workspace._merge_console_browser_rows = lambda a, b: tuple(a) + tuple(b)
+    screen._workspace._native_console_browser_rows = lambda: ()
+    screen._workspace._membership_console_browser_rows = lambda: ()
 
-    await screen._refresh_console_conversation_browser_search("hello", 1)
+    await screen._workspace._refresh_console_conversation_browser_search("hello", 1)
 
     # The persisted-rows result must NOT have been applied: total stays
     # None/unset and the rows list holds only what was already staged

@@ -30,12 +30,13 @@ from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
 
 
-class ConsoleContextModal(ModalScreen[None]):
+class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     """Display the current transcript and assembled next-send payload."""
 
     DEFAULT_CSS = """
@@ -53,9 +54,10 @@ class ConsoleContextModal(ModalScreen[None]):
     """
 
     BINDINGS = [
-        ("escape", "dismiss", "Close"),
+        ("escape", "request_safe_cancel", "Close"),
         ("r", "refresh", "Refresh"),
     ]
+    SAFE_MODAL_CONTENT = "#console-context-modal"
 
     snapshot = reactive(
         ConsoleContextSnapshot(current_messages=[], next_send_payload={})
@@ -270,9 +272,9 @@ class ConsoleContextModal(ModalScreen[None]):
         return json.dumps(obj, indent=2, default=str)
 
     @on(Button.Pressed, "#console-context-close")
-    def _close(self, event: Button.Pressed) -> None:
+    async def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, "#console-context-refresh")
     def _refresh(self, event: Button.Pressed) -> None:
@@ -331,5 +333,5 @@ class ConsoleContextModal(ModalScreen[None]):
     def action_refresh(self) -> None:
         self.run_worker(self._load_snapshot, exclusive=True)
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss(self) -> None:
+        await self.request_safe_cancel(source="visible")

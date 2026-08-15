@@ -262,7 +262,7 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         await _wait_for_selector(screen, pilot, "#library-study-handoff-purpose")
 
         canvas = screen.query_one("#library-canvas")
-        assert canvas.query("#library-study-handoff-detail")
+        assert canvas.query("#library-study-handoff-canvas")
 
         title = screen.query_one("#library-active-mode-title", Static)
         assert str(title.renderable) == header_label
@@ -301,9 +301,10 @@ async def test_library_quizzes_mode_empty_state_explains_global_recovery_without
         await _wait_for_selector(screen, pilot, "#library-study-handoff-recovery")
         visible = _visible_text(screen)
 
-        # D1: with no Library sources at all, the carries-forward line is
-        # omitted entirely (no widget), not stated as a negative.
-        assert not screen.query("#library-study-handoff-context")
+        # D1: the stable context widget remains mounted for targeted state
+        # synchronization, but is hidden and contributes no negative copy.
+        context = screen.query_one("#library-study-handoff-context", Static)
+        assert context.display is False
         assert "No Library source snapshot will be carried forward." not in visible
         assert (
             "Import sources or create notes first, or open Quizzes globally "

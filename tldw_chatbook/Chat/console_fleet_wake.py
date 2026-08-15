@@ -414,8 +414,11 @@ class ConsoleFleetWakeCoordinator:
                         getattr(child, "status", "") or "done"
                     )
             self.retry_soon()
-        except Exception:  # noqa: BLE001 -- never raise into the fan-out
-            logger.opt(exception=True).warning("fleet wake drain intake failed")
+        except Exception as exc:  # noqa: BLE001 -- never raise into the fan-out
+            logger.warning(
+                "fleet wake drain intake failed (exception_type={})",
+                type(exc).__name__,
+            )
 
     # -- scheduling -----------------------------------------------------------
 
@@ -472,17 +475,21 @@ class ConsoleFleetWakeCoordinator:
         try:
             if controller.send_refusal_copy(session_id) is not None:
                 return
-        except Exception:  # noqa: BLE001 -- a broken gate defers, never fires
-            logger.opt(exception=True).debug("wake send gate raised; deferring")
+        except Exception as exc:  # noqa: BLE001 -- a broken gate defers, never fires
+            logger.debug(
+                "wake send gate raised; deferring (exception_type={})",
+                type(exc).__name__,
+            )
             return
         probe = getattr(controller, "wake_user_priority_probe", None)
         if callable(probe):
             try:
                 if probe(session_id):
                     return  # user wins ties
-            except Exception:  # noqa: BLE001 -- user wins on uncertainty too
-                logger.opt(exception=True).debug(
-                    "wake user-priority probe raised; deferring"
+            except Exception as exc:  # noqa: BLE001 -- user wins on uncertainty too
+                logger.debug(
+                    "wake user-priority probe raised; deferring (exception_type={})",
+                    type(exc).__name__,
                 )
                 return
         rows = self._rows_for(conversation_id, bucket)
@@ -504,9 +511,10 @@ class ConsoleFleetWakeCoordinator:
         if callable(hook):
             try:
                 hook(session_id)
-            except Exception:  # noqa: BLE001 -- UI freshness is best-effort
-                logger.opt(exception=True).debug(
-                    "wake delivery UI hook raised"
+            except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+                logger.debug(
+                    "wake delivery UI hook raised (exception_type={})",
+                    type(exc).__name__,
                 )
         task = loop.create_task(
             self._deliver(
@@ -554,10 +562,10 @@ class ConsoleFleetWakeCoordinator:
                 wake_authorization=authorization,
             )
             accepted = bool(getattr(result, "accepted", False))
-        except Exception:  # noqa: BLE001 -- a failed wake is a retry, not a crash
-            logger.opt(exception=True).warning(
-                "wake delivery failed for conversation {conversation_id}",
-                conversation_id=conversation_id,
+        except Exception as exc:  # noqa: BLE001 -- a failed wake is a retry, not a crash
+            logger.warning(
+                "wake delivery failed (exception_type={})",
+                type(exc).__name__,
             )
         finally:
             self._delivering = None
@@ -567,12 +575,11 @@ class ConsoleFleetWakeCoordinator:
             if callable(stamp):
                 try:
                     stamp(delivered_run_ids)
-                except Exception:  # noqa: BLE001 -- a lost stamp risks one
+                except Exception as exc:  # noqa: BLE001 -- a lost stamp risks one
                     # re-announce at a later claim, never a lost result.
-                    logger.opt(exception=True).warning(
-                        "wake delivery ledger stamp failed for "
-                        "{conversation_id}",
-                        conversation_id=conversation_id,
+                    logger.warning(
+                        "wake delivery ledger stamp failed (exception_type={})",
+                        type(exc).__name__,
                     )
             with self._registry_lock:
                 bucket = self._pending.get(conversation_id)
@@ -625,9 +632,11 @@ class ConsoleFleetWakeCoordinator:
             return True
         try:
             return bool(probe(conversation_id, session_id))
-        except Exception:  # noqa: BLE001 -- uncertainty keeps the badge
-            logger.opt(exception=True).debug(
-                "wake view probe raised; keeping the unseen mark"
+        except Exception as exc:  # noqa: BLE001 -- uncertainty keeps the badge
+            logger.debug(
+                "wake view probe raised; keeping the unseen mark "
+                "(exception_type={})",
+                type(exc).__name__,
             )
             return False
 
@@ -661,17 +670,20 @@ class ConsoleFleetWakeCoordinator:
             return 0
         try:
             marked = service.list_marked_conversation_ids(service.FLEET_UNSEEN)
-        except Exception:  # noqa: BLE001 -- a claim must never break a mount
-            logger.opt(exception=True).warning("wake mark listing failed")
+        except Exception as exc:  # noqa: BLE001 -- a claim must never break a mount
+            logger.warning(
+                "wake mark listing failed (exception_type={})",
+                type(exc).__name__,
+            )
             return 0
         seeded = 0
         for conversation_id in marked:
             try:
                 rows = undelivered(conversation_id)
-            except Exception:  # noqa: BLE001
-                logger.opt(exception=True).warning(
-                    "wake ledger read failed for {conversation_id}",
-                    conversation_id=conversation_id,
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "wake ledger read failed (exception_type={})",
+                    type(exc).__name__,
                 )
                 continue
             if not rows:
@@ -698,8 +710,11 @@ class ConsoleFleetWakeCoordinator:
                     session.id,
                 ):
                     return session.id
-        except Exception:  # noqa: BLE001
-            logger.opt(exception=True).debug("wake session resolution failed")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "wake session resolution failed (exception_type={})",
+                type(exc).__name__,
+            )
         return None
 
     def _runs_db(self) -> Any | None:

@@ -92,6 +92,10 @@ def _prepare_clean_environment(
     for env_var, path in paths.items():
         path.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(env_var, str(path))
+    # ADR-020 amendment: the consent dialog self-suppresses in headless
+    # runs (see _push_model_catalog_consent_modal), so full-app tests here
+    # never see it; consent gating has dedicated unit tests in
+    # test_app_model_catalog_wiring.py.
     return {env_var: str(path) for env_var, path in paths.items()}
 
 
@@ -128,10 +132,20 @@ class _CatalogRefreshScheduleHost:
         self.app_config = app_config
         self.run_worker = MagicMock()
         self.post_message = MagicMock()
+        self.call_after_refresh = MagicMock()
+        self.push_screen = MagicMock()
+        self._push_model_catalog_consent_modal = MagicMock()
         self._refresh_model_catalogs = AsyncMock()
 
     _schedule_startup_model_catalog_refresh = (
         TldwCli._schedule_startup_model_catalog_refresh
+    )
+
+
+def _pin_consented_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "tldw_chatbook.app.load_settings",
+        lambda: {"model_catalog": {"refresh_consent_recorded": True}},
     )
 
 
@@ -157,7 +171,10 @@ def test_setup_network_owner_actions_suppress_startup_catalog_refresh(
     host.run_worker.assert_not_called()
 
 
-def test_normal_startup_schedules_catalog_refresh_once() -> None:
+def test_normal_startup_schedules_catalog_refresh_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pin_consented_settings(monkeypatch)
     host = _CatalogRefreshScheduleHost(
         {"first_run": {"setup_completed": True}}
     )
@@ -172,7 +189,29 @@ def test_normal_startup_schedules_catalog_refresh_once() -> None:
     )
 
 
-def test_completed_first_run_schedules_deferred_catalog_refresh_once() -> None:
+def test_unconsented_startup_shows_consent_modal_instead_of_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-020 amendment: no consent on file means a dialog, not network I/O."""
+    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: {})
+    host = _CatalogRefreshScheduleHost(
+        {"first_run": {"setup_completed": True}}
+    )
+
+    assert host._schedule_startup_model_catalog_refresh(environ={}) is True
+    assert host._schedule_startup_model_catalog_refresh(environ={}) is False
+
+    host.run_worker.assert_not_called()
+    host.call_after_refresh.assert_called_once()
+    assert host.call_after_refresh.call_args.args[0] is (
+        host._push_model_catalog_consent_modal
+    )
+
+
+def test_completed_first_run_schedules_deferred_catalog_refresh_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pin_consented_settings(monkeypatch)
     host = _CatalogRefreshScheduleHost({})
 
     TldwCli._handle_first_run_wizard_result(
@@ -424,7 +463,7 @@ async def _click_nav_destination(
         if _nav_button_is_clickable(app, button_id):
             app.screen.query_one(f"#{button_id}", Button).press()
             return
-        overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+        overflow_hint = app.query_one("#nav-overflow-hint", Button)
         if not overflow_hint.display:
             # Nothing overflows: the button is already as reachable as it
             # will ever get, so press it and let the assertions speak.
@@ -432,6 +471,10 @@ async def _click_nav_destination(
             return
         overflow_hint.press()
         await pilot.pause(0.05)
+        if app.screen.__class__.__name__ == "NavOverflowMenu":
+            destination_id = button_id.removeprefix("nav-")
+            app.screen.query_one(f"#nav-overflow-{destination_id}", Button).press()
+            return
     raise AssertionError(
         f"#{button_id} never became clickable within {timeout_seconds:.1f}s"
     )

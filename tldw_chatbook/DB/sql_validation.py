@@ -62,6 +62,7 @@ VALID_TABLES = {
         "learning_paths",
         "message_attachments",
         "message_generation_metadata",
+        "message_trajectory_metadata",
         "messages",
         "mindmap_nodes",
         "mindmaps",

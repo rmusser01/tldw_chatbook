@@ -1493,12 +1493,22 @@ def test_curated_install_failures_log_bounded_error_type(operation, monkeypatch)
         screen._provision_curated = fail_provision
         module.LLMScreen._run_curated_provision.__wrapped__(screen)
 
+    operation_label = "preflight" if operation == "preflight" else "installation"
+    fake_logger.error.assert_called_once_with(
+        f"Curated model {operation_label} failed; error_type={{}}",
+        "RuntimeError",
+    )
     logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
     assert "RuntimeError" in logged
-    assert "PRIVATE-WORKER-DETAIL" not in logged
-    assert reference.artifact_id not in logged
-    assert reference.revision not in logged
-    assert reference.variant not in logged
+    assert all(
+        private not in logged
+        for private in (
+            reference.artifact_id,
+            reference.revision,
+            reference.variant,
+            "PRIVATE-WORKER-DETAIL",
+        )
+    )
     if operation == "installation":
         fake_app._ensure_parakeet_source_service.assert_not_called()
 
@@ -2067,9 +2077,13 @@ def test_run_curated_preflight_except_clause_survives_a_malformed_reference(
     # Must not itself raise (that is exactly the regression under test).
     module.LLMScreen._run_curated_preflight.__wrapped__(screen)
 
-    fake_logger.error.assert_called_once()
+    fake_logger.error.assert_called_once_with(
+        "Curated model preflight failed; error_type={}",
+        "RuntimeError",
+    )
     logged = " ".join(str(value) for value in fake_logger.error.call_args.args)
     assert "RuntimeError" in logged
+    assert "unknown" not in logged
     assert "PRIVATE-WORKER-DETAIL" not in logged
 
     fake_app.call_from_thread.assert_called_once_with(

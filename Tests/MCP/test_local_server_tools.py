@@ -7,6 +7,12 @@ kill switch honored, and no Console-only seams (todo store, session
 approvals, persistence).
 """
 
+from concurrent.futures import ThreadPoolExecutor
+import json
+import sqlite3
+import threading
+import time
+
 import pytest
 from loguru import logger
 
@@ -16,6 +22,11 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
 )
+from tldw_chatbook.DB.Subscriptions_DB import (
+    SubscriptionsDB,
+    SubscriptionsDBReadError,
+)
+import tldw_chatbook.MCP.local_server_tools as local_server_tools
 from tldw_chatbook.MCP.local_server_tools import (
     EXTERNAL_NO_CALLBACK_REFUSAL,
     LocalToolRegistration,
@@ -169,6 +180,333 @@ def test_session_task_tools_absent_from_external_catalog(workspace, store):
     assert "fs_read" in names
 
 
+def test_watchlists_registration_is_storage_lazy_and_server_mode_never_resolves_path(
+    monkeypatch, workspace, store
+):
+    path_calls = 0
+
+    def fail_path_resolution():
+        nonlocal path_calls
+        path_calls += 1
+        raise AssertionError("server mode must not resolve the subscriptions path")
+
+    class ServerRuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "server"
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        fail_path_resolution,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_server_tools, "RuntimeSourceStateStore", ServerRuntimeStore, raising=False
+    )
+    provider = build_server_local_provider(workspace, store)
+    provider.list_catalog()
+    provider.load_schema("local:watchlists_search_items")
+    provider.load_schema("local:watchlists_get_item")
+    assert path_calls == 0
+    _grant(store, provider, "watchlists_search_items")
+
+    result = provider.invoke("local:watchlists_search_items", {})
+
+    assert result.ok
+    assert json.loads(result.content) == {
+        "status": "unsupported",
+        "retryable": False,
+        "message": (
+            "server Watchlists search is not supported; switch Watchlists to Local "
+            "before retrying"
+        ),
+    }
+    assert path_calls == 0
+
+
+def test_watchlists_first_local_call_opens_one_read_only_database(
+    monkeypatch, tmp_path, workspace, store
+):
+    db_path = tmp_path / "subscriptions.db"
+    mutable = SubscriptionsDB(db_path)
+    mutable.close()
+    path_calls = 0
+    constructions = []
+
+    class LocalRuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    real_database = SubscriptionsDB
+
+    def resolve_path():
+        nonlocal path_calls
+        path_calls += 1
+        return db_path
+
+    def construct_database(path, client_id="default", *, read_only=False):
+        constructions.append((path, client_id, read_only))
+        return real_database(path, client_id, read_only=read_only)
+
+    monkeypatch.setattr(
+        local_server_tools, "get_subscriptions_db_path", resolve_path, raising=False
+    )
+    monkeypatch.setattr(
+        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
+    )
+    monkeypatch.setattr(
+        local_server_tools, "SubscriptionsDB", construct_database, raising=False
+    )
+
+    provider = build_server_local_provider(workspace, store)
+    assert path_calls == 0
+    assert constructions == []
+    _grant(store, provider, "watchlists_search_items")
+
+    first = provider.invoke("local:watchlists_search_items", {})
+    second = provider.invoke("local:watchlists_search_items", {})
+
+    assert json.loads(first.content)["status"] == "ok"
+    assert json.loads(second.content)["status"] == "ok"
+    assert path_calls == 1
+    assert constructions == [(db_path, "default", True)]
+
+
+def test_watchlists_lazy_resolver_closes_failure_and_retries(monkeypatch, tmp_path):
+    candidates = []
+
+    class Candidate:
+        def __init__(self, *, fail):
+            self.fail = fail
+            self.closed = False
+
+        def assert_agent_read_ready(self):
+            if self.fail:
+                raise SubscriptionsDBReadError()
+
+        def close(self):
+            self.closed = True
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = Candidate(fail=not candidates)
+        candidates.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: tmp_path / "subscriptions.db",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_server_tools, "SubscriptionsDB", construct_database, raising=False
+    )
+    resolver = local_server_tools._LazyWatchlistsDBResolver()
+
+    with pytest.raises(SubscriptionsDBReadError):
+        resolver()
+    assert candidates[0].closed is True
+    assert resolver() is candidates[1]
+    assert candidates[1].closed is False
+
+
+def test_watchlists_lazy_resolver_blocks_replacement_until_failed_close_succeeds(
+    monkeypatch, tmp_path, workspace, store, caplog
+):
+    sentinel = "SENTINEL /private/leaked.db API_KEY=secret"
+    constructions = []
+
+    class FailedCandidate:
+        def __init__(self):
+            self.close_calls = 0
+
+        def assert_agent_read_ready(self):
+            raise SubscriptionsDBReadError()
+
+        def close(self):
+            self.close_calls += 1
+            if self.close_calls < 3:
+                raise RuntimeError(sentinel)
+
+        def search_items_for_agent(self, **_kwargs):
+            raise AssertionError("failed candidate must never execute a search")
+
+    class ReadyCandidate:
+        def assert_agent_read_ready(self):
+            return None
+
+        def close(self):
+            raise AssertionError("successful candidate remains process-owned")
+
+        def search_items_for_agent(self, **_kwargs):
+            return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+
+        def get_source_collection_memberships(self, _source_ids):
+            return {}
+
+    failed = FailedCandidate()
+    ready = ReadyCandidate()
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = failed if not constructions else ready
+        constructions.append(candidate)
+        return candidate
+
+    class LocalRuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: tmp_path / "subscriptions.db",
+    )
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
+    monkeypatch.setattr(
+        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore
+    )
+    provider = build_server_local_provider(workspace, store)
+    _grant(store, provider, "watchlists_search_items")
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+
+    try:
+        first = provider.invoke("local:watchlists_search_items", {})
+        second = provider.invoke("local:watchlists_search_items", {})
+        assert constructions == [failed]
+        third = provider.invoke("local:watchlists_search_items", {})
+    finally:
+        logger.remove(sink_id)
+
+    assert failed.close_calls == 3
+    assert constructions == [failed, ready]
+    assert [json.loads(result.content)["status"] for result in (first, second)] == [
+        "feature_unavailable",
+        "feature_unavailable",
+    ]
+    assert all(
+        json.loads(result.content)["retryable"] is True for result in (first, second)
+    )
+    assert json.loads(third.content)["status"] == "ok"
+    assert sentinel not in first.content
+    assert sentinel not in second.content
+    assert sentinel not in caplog.text
+    assert all(sentinel not in record for record in records)
+
+
+def test_watchlists_lazy_resolver_concurrent_first_calls_retain_one_instance(
+    monkeypatch, tmp_path
+):
+    constructions = []
+    entered = threading.Event()
+
+    class Candidate:
+        def assert_agent_read_ready(self):
+            return None
+
+        def close(self):
+            raise AssertionError("successful candidate must remain open")
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = Candidate()
+        constructions.append(candidate)
+        entered.set()
+        time.sleep(0.02)
+        return candidate
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: tmp_path / "subscriptions.db",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_server_tools, "SubscriptionsDB", construct_database, raising=False
+    )
+    resolver = local_server_tools._LazyWatchlistsDBResolver()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(resolver) for _ in range(8)]
+        assert entered.wait(timeout=1)
+        resolved = [future.result() for future in futures]
+
+    assert len(constructions) == 1
+    assert all(candidate is constructions[0] for candidate in resolved)
+
+
+@pytest.mark.parametrize("storage_state", ["missing", "pre_migration"])
+def test_watchlists_unready_database_is_bounded_and_keeps_other_tools(
+    monkeypatch, tmp_path, workspace, store, storage_state
+):
+    database_path = tmp_path / "subscriptions.db"
+    if storage_state == "pre_migration":
+        with sqlite3.connect(database_path) as connection:
+            connection.execute("CREATE TABLE legacy_only (id INTEGER PRIMARY KEY)")
+        before = database_path.read_bytes()
+    else:
+        before = None
+
+    class LocalRuntimeStore:
+        def __init__(self, _path):
+            pass
+
+        def load(self):
+            return "local"
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: database_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_server_tools, "RuntimeSourceStateStore", LocalRuntimeStore, raising=False
+    )
+    provider = build_server_local_provider(workspace, store)
+    _grant(store, provider, "watchlists_search_items")
+
+    result = provider.invoke("local:watchlists_search_items", {})
+
+    payload = json.loads(result.content)
+    assert payload["status"] == "feature_unavailable"
+    assert payload["retryable"] is False
+    assert str(database_path) not in result.content
+    if before is None:
+        assert not database_path.exists()
+    else:
+        assert database_path.read_bytes() == before
+    names = {entry.name for entry in provider.list_catalog()}
+    assert {"fs_read", "git_status", "web_fetch"} <= names
+
+
+def test_watchlists_external_ask_refuses_before_storage_resolution(
+    monkeypatch, workspace, store
+):
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: (_ for _ in ()).throw(AssertionError("must not resolve storage")),
+        raising=False,
+    )
+    provider = build_server_local_provider(workspace, store)
+
+    result = provider.invoke("local:watchlists_search_items", {})
+
+    assert result == ToolResult(ok=False, error=EXTERNAL_NO_CALLBACK_REFUSAL)
+
+
 # -- _local_agent_tool_registrations (pure builder, no mcp package needed) --
 
 
@@ -264,8 +602,24 @@ async def test_flag_on_registers_local_tool_names(monkeypatch, tmp_path):
     assert "fs_write" in names
     assert "git_status" in names
     assert "web_fetch" in names
+    assert "watchlists_search_items" in names
+    assert "watchlists_get_item" in names
     assert "todo_write" not in names
     assert TASK_TOOL_NAMES.isdisjoint(names)
+
+    provider = build_server_local_provider(
+        tmp_path, MCPPermissionStore(tmp_path / "mcp_permissions.json")
+    )
+    expected = {
+        name: provider.load_schema(f"local:{name}").parameters
+        for name in ("watchlists_search_items", "watchlists_get_item")
+    }
+    published = {
+        descriptor["name"]: descriptor["inputSchema"]
+        for descriptor in await server.mcp.list_tools(_context())
+        if descriptor["name"] in expected
+    }
+    assert published == expected
 
 
 @pytest.mark.asyncio

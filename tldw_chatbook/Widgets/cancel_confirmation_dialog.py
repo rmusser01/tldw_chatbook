@@ -5,12 +5,15 @@ Cancel confirmation dialog for media ingestion processes.
 
 from typing import Optional
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Container
 from textual.screen import ModalScreen
 from textual.widgets import Label, Button, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
-class CancelConfirmationDialog(ModalScreen[bool]):
+
+class CancelConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     """Modal dialog for confirming cancellation of media processing."""
 
     DEFAULT_CSS = """
@@ -51,6 +54,9 @@ class CancelConfirmationDialog(ModalScreen[bool]):
     }
     """
 
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#cancel-confirmation-dialog"
+
     def __init__(
         self,
         title: str = "Cancel Transcription?",
@@ -77,17 +83,21 @@ class CancelConfirmationDialog(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
-        with Container():
+        with Container(id="cancel-confirmation-dialog"):
             yield Static(self.title_text, classes="dialog-title")
             yield Label(self.message_text, classes="dialog-message")
             with Horizontal(classes="button-container"):
                 yield Button(self.cancel_text, variant="primary", id="continue-btn")
                 yield Button(self.confirm_text, variant="error", id="cancel-btn")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         event.stop()  # Prevent propagation to parent
         if event.button.id == "cancel-btn":
             self.dismiss(True)  # User confirmed cancellation
         else:
-            self.dismiss(False)  # User wants to continue processing
+            await self.request_safe_cancel(source="button")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once(False)

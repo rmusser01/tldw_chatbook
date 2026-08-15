@@ -25,7 +25,10 @@ from loguru import logger
 
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Library.library_export_scope import ExportScope
-from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.UI.Screens.library_screen import (
+    LibraryEntryReconcileResult,
+    LibraryScreen,
+)
 
 
 # --- _build_library_export_payload: include_media invariant -----------------
@@ -148,10 +151,23 @@ def test_prompt_scope_counts_use_the_app_prompt_database_only():
 
 def test_prompt_memory_database_forces_inline_count_resolution():
     prompts = _PromptIdSource([7, 8], is_memory_db=True)
-    landed: list[tuple[ExportScope, dict[str, int]]] = []
+    landed: list[tuple[ExportScope, dict[str, int], dict[str, object]]] = []
     scope = ExportScope(kind="prompts")
+    route_key = ("export",)
+
+    def apply_counts(
+        settled_scope: ExportScope,
+        counts: dict[str, int],
+        **context: object,
+    ) -> LibraryEntryReconcileResult:
+        landed.append((settled_scope, counts, context))
+        return LibraryEntryReconcileResult.APPLIED
+
     fake = SimpleNamespace(
         _library_export_scope=scope,
+        _library_export_counts_request_id=0,
+        _library_snapshot_state_generation=7,
+        _library_entry_route_key=lambda: route_key,
         app_instance=SimpleNamespace(
             media_db=_PoisonExportSource(), prompts_db=prompts
         ),
@@ -162,9 +178,7 @@ def test_prompt_memory_database_forces_inline_count_resolution():
             "notes": 0,
             "prompts": 2,
         },
-        _apply_library_export_counts=lambda settled_scope, counts: landed.append(
-            (settled_scope, counts)
-        ),
+        _apply_library_export_counts=apply_counts,
         _run_library_export_counts_worker=lambda *_args: pytest.fail(
             "memory-backed Prompt counts must stay on the owner thread"
         ),
@@ -176,6 +190,7 @@ def test_prompt_memory_database_forces_inline_count_resolution():
         (
             scope,
             {"media": 0, "conversations": 0, "notes": 0, "prompts": 2},
+            {"generation": 7, "route_key": route_key, "request_id": 1},
         )
     ]
 

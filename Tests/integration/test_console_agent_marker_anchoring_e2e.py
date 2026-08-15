@@ -72,7 +72,12 @@ class _Gateway:
         self.calls = 0
 
     async def resolve_for_send(self, _selection):
-        return SimpleNamespace(ready=True, provider="llama_cpp", visible_copy="")
+        return SimpleNamespace(
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            visible_copy="",
+        )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         chunks = self._scripts[self.calls]

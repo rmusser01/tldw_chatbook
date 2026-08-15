@@ -202,6 +202,10 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe():
         resumed_store.set_active_leaf(
             resumed_session.id, resumed_store._leaf_under(resumed_new_user.id)
         )
+        stale_reply_persisted_id = resumed_store.get_message(
+            resumed_store.active_leaf(resumed_session.id)
+        ).persisted_message_id
+        assert stale_reply_persisted_id is not None
 
         # ---- Step 5: in-place "Save" (NOT resend) still edits in place ----
         resumed_edited_user_id = resumed_new_user.id
@@ -217,6 +221,7 @@ async def test_console_edit_and_resend_full_lifecycle_persist_resume_swipe():
         assert [
             m.content
             for m in resumed_store.messages_for_session(resumed_session.id)
-        ] == ["typo fix", "edited-reply"]
+        ] == ["typo fix"]
+        assert db.get_message_by_id(stale_reply_persisted_id) is None
     finally:
         db.close_connection()

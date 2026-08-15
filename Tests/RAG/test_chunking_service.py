@@ -37,7 +37,20 @@ class TestEveryChunkingMethodReturnsUsableText:
     ]
 
     @pytest.mark.parametrize(("method", "content"), CASES)
-    def test_method_yields_string_text(self, method, content):
+    def test_method_yields_string_text(self, method, content, monkeypatch):
+        if method == "tokens":
+            import tldw_chatbook.Chunking.token_chunker as token_chunker
+
+            monkeypatch.setattr(
+                token_chunker,
+                "TransformersTokenizer",
+                token_chunker.FallbackTokenizer,
+            )
+        elif method == "semantic":
+            import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib
+
+            monkeypatch.setattr(chunk_lib, "_ensure_nltk", lambda: None)
+
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 
         try:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import logging
 import os
 import time
-from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -36,20 +36,17 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
 
 
-def _video_retention_config(**overrides) -> SimpleNamespace:
-    values = {
-        "retention": "session",
-        "retention_ttl_hours": 24,
-        "max_store_mb": 2048,
-    }
-    values.update(overrides)
-    return SimpleNamespace(**values)
+@dataclass
+class _VideoRetentionConfig:
+    retention: str = "session"
+    retention_ttl_hours: int = 24
+    max_store_mb: int = 2048
 
 
 @pytest.fixture(autouse=True)
 def isolated_video_store(monkeypatch: pytest.MonkeyPatch, tmp_path):
     data_root = tmp_path / "user-data"
-    config = _video_retention_config()
+    config = _VideoRetentionConfig()
     monkeypatch.setattr(
         "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
         lambda: data_root,
@@ -236,9 +233,7 @@ def test_video_retention_startup_failure_is_bounded(
 
     def fail_retention(self: VideoStore):
         retention_calls.append(self)
-        raise RuntimeError(
-            f"{private_path} {private_message_id} {private_media_name}"
-        )
+        raise RuntimeError(f"{private_path} {private_message_id} {private_media_name}")
 
     monkeypatch.setattr(VideoStore, "enforce_retention", fail_retention)
     diagnostics: list[str] = []
@@ -251,7 +246,10 @@ def test_video_retention_startup_failure_is_bounded(
     assert retention_calls == [app.generated_video_store]
     assert isinstance(app.generated_video_store, VideoStore)
     diagnostic = "".join(diagnostics)
-    assert "Generated-video startup retention failed (error_type=RuntimeError)." in diagnostic
+    assert (
+        "Generated-video startup retention failed (error_type=RuntimeError)."
+        in diagnostic
+    )
     assert private_path not in diagnostic
     assert private_message_id not in diagnostic
     assert private_media_name not in diagnostic
@@ -373,8 +371,7 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             assert restored_composer.draft_text() == draft
             assert restored_chat is not chat
             assert (
-                restored_chat._ensure_console_video_store()
-                is app.generated_video_store
+                restored_chat._ensure_console_video_store() is app.generated_video_store
             )
             restored_store = restored_chat._ensure_console_chat_store()
             restored_message = restored_store.get_message(message_id)

@@ -139,6 +139,7 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "MistralAI": True,
                 "Moonshot": True,
                 "OpenRouter": True,
+                "QwenCloud": True,
                 "ZAI": False,
             }
             expected_write = {
@@ -147,6 +148,7 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 "MistralAI": False,
                 "Moonshot": False,
                 "OpenRouter": True,
+                "QwenCloud": False,
                 "ZAI": False,
             }
             for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:

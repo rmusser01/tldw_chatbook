@@ -364,6 +364,7 @@ def _make_sync_probe_screen(monitor):
         setattr(screen, slot, MagicMock())
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
+    screen._console_chat_store = None
     # Console decomposition wave 2 (PR #1381) moved stages onto instance-held
     # delegate objects created in __init__ (`_session`, `_workspace`).
     # `spec=ChatScreen` auto-stubs only CLASS attributes, so these fall

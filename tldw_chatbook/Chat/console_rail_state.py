@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import Any
 
@@ -40,6 +40,11 @@ CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # hide and the main column's min-width is waived so the transcript always
 # renders (covers the 80x24 and 60x18 review captures).
 CONSOLE_SINGLE_PANE_COLUMNS = 84
+#: Width band where the Console may automatically reveal Inspector when its
+#: standard-width readiness contract is satisfied. Exported so resize
+#: deduplication and the UI eligibility check share exact boundaries.
+CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS = 118
+CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS = 128
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 
@@ -141,9 +146,9 @@ class ConsoleRailState:
     # TASK-2154.2: a rail rendered OPEN below its compact-collapse threshold
     # (an explicit user toggle overrode the responsive default). Drives the
     # main column's min-width waiver so the honored rail can never break the
-    # grid. Computed only in build_console_rail_state -- the 118-128-col band
-    # and pending-launch auto-open paths replace() right_open afterwards and
-    # deliberately keep these flags False, preserving their exact rendering.
+    # grid. build_console_rail_state computes preference-derived overrides;
+    # resolve_console_rail_priority may grant Inspector override authority
+    # after an automatic open.
     right_compact_override: bool = False
     left_compact_override: bool = False
     compact_override: bool = False
@@ -305,12 +310,8 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
         session_open=session_open,
-        workspace_open=_coerce_bool(
-            raw.get("workspace_open"), session_open
-        ),
-        conversations_open=_coerce_bool(
-            raw.get("conversations_open"), session_open
-        ),
+        workspace_open=_coerce_bool(raw.get("workspace_open"), session_open),
+        conversations_open=_coerce_bool(raw.get("conversations_open"), session_open),
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
@@ -526,6 +527,63 @@ def build_console_inspector_rail_badge(
     return ""
 
 
+def _inspector_priority_width(available_columns: int | None) -> bool:
+    return (
+        available_columns is not None
+        and CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+        <= available_columns
+        < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
+    )
+
+
+def resolve_console_rail_priority(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> ConsoleRailState:
+    """Give Inspector effective priority when both compact rails are open.
+
+    Args:
+        rail_state: Effective rail state before compact priority resolution.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        The original state outside the priority conflict, or an immutable copy
+        with Context collapsed and Inspector granted compact override authority.
+    """
+    if not (
+        _inspector_priority_width(available_columns)
+        and rail_state.left_open
+        and rail_state.right_open
+    ):
+        return rail_state
+    return replace(
+        rail_state,
+        left_open=False,
+        right_compact_override=True,
+        compact_override=True,
+    )
+
+
+def console_context_reveal_preferences(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+) -> dict[str, bool]:
+    """Return minimal preference updates needed to reveal Context.
+
+    Args:
+        rail_state: Current effective rail state.
+        available_columns: Current terminal width, when known.
+
+    Returns:
+        Context's open preference and, only during an effective compact
+        Inspector conflict, Inspector's closed preference.
+    """
+    changes = {"left_open": True}
+    if _inspector_priority_width(available_columns) and rail_state.right_open:
+        changes["right_open"] = False
+    return changes
+
+
 def console_rail_width_band(available_columns: int | None) -> str:
     """Bucket a terminal width into the Console workspace layout band.
 
@@ -536,9 +594,8 @@ def console_rail_width_band(available_columns: int | None) -> str:
         available_columns: Current terminal width, when known.
 
     Returns:
-        ``"single-pane"`` below ``CONSOLE_SINGLE_PANE_COLUMNS``, ``"narrow"``
-        below ``CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS``, otherwise
-        ``"standard"`` (also the fallback when the width is unknown).
+        A stable resize-deduplication key separating the single-pane, narrow,
+        compact auto-open boundary, and standard-width bands.
     """
     if available_columns is None:
         return "standard"
@@ -546,6 +603,12 @@ def console_rail_width_band(available_columns: int | None) -> str:
         return "single-pane"
     if available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS:
         return "narrow"
+    if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS:
+        return "compact-before-auto-open"
+    if available_columns < CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS + 1:
+        return "compact-auto-open"
+    if available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS:
+        return "compact-after-auto-open"
     return "standard"
 
 

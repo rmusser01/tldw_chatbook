@@ -281,15 +281,14 @@ def test_manual_library_job_reaches_fake_native_model_and_parent_writer(
             return SimpleNamespace(
                 text="vertical hello",
                 language="en",
-                segments=(
-                    SimpleNamespace(text="vertical hello", t0_ms=0, t1_ms=100),
-                ),
+                segments=(SimpleNamespace(text="vertical hello", t0_ms=0, t1_ms=100),),
                 timings=SimpleNamespace(mel_ms=1.0, encode_ms=2.0, decode_ms=3.0),
             )
 
     class Model:
-        def __init__(self, path: str):
+        def __init__(self, path: str, *, backend: str):
             assert path == str(model_path)
+            assert backend == "auto"
             calls.append("load")
             self.arch = "whisper"
             self.backend = "cpu"
@@ -328,11 +327,13 @@ def test_manual_library_job_reaches_fake_native_model_and_parent_writer(
     monkeypatch.setattr(
         app_module,
         "get_cli_setting",
-        lambda key, *args: str(model_path)
-        if key == "transcription.transcribe_cpp.model_path"
-        else args[0]
-        if args
-        else None,
+        lambda key, *args: (
+            str(model_path)
+            if key == "transcription.transcribe_cpp.model_path"
+            else args[0]
+            if args
+            else None
+        ),
     )
 
     app = object.__new__(TldwCli)

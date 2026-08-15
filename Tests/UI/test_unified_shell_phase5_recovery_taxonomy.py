@@ -246,24 +246,35 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     # exceptions cannot proliferate silently. Only genuine call sites
     # count: the AST walk skips prose mentions in comments/docstrings.
     allowed_annotated_asyncio_run = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 3,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 6,
     }
     # @work(thread=True) is likewise a deliberate, reviewable exception on
-    # these service-backed screens (Library computes export counts, runs
-    # sync-body export service calls, persists rail/search preferences,
-    # installs the verified Parakeet model, and scans ingest paths on
-    # dedicated OS threads). Exact decorator counts per file keep new thread
-    # workers from slipping in silently; personas and skills stay on async
-    # workers only.
+    # these service-backed screens. Library computes export counts, runs
+    # sync-body export and ingest preparation calls, persists rail/search/
+    # Notes/ingest preferences, installs verified transcription models, and
+    # scans ingest paths on dedicated OS threads. Exact decorator counts per
+    # file keep new thread workers from slipping in silently; personas and
+    # skills stay on async workers only.
     allowed_thread_workers = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 6,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 13,
     }
     for screen_path in screen_paths:
         source = _text(screen_path)
+        tree = ast.parse(source)
         thread_workers = sum(
             1
-            for line in source.splitlines()
-            if line.lstrip().startswith("@work(thread=True")
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            for decorator in node.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Name)
+            and decorator.func.id == "work"
+            and any(
+                keyword.arg == "thread"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in decorator.keywords
+            )
         )
         assert thread_workers == allowed_thread_workers.get(screen_path, 0), (
             screen_path,
@@ -271,7 +282,7 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
         )
         annotated = 0
         source_lines = source.splitlines()
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(tree):
             if not (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)

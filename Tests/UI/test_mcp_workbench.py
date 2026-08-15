@@ -227,6 +227,50 @@ async def test_workbench_at_100x30_keeps_primary_content_reachable(monkeypatch):
         assert "..." in str(rows[1].label)
 
 
+@pytest.mark.asyncio
+async def test_workbench_at_100x30_keeps_server_master_switch_reachable(monkeypatch):
+    """Paint may shorten the label, but its semantics and interaction remain."""
+    _, save_calls = _fake_tool_gate_config_seam(monkeypatch)
+    app = WorkbenchAppWithBundledCSS()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.click(f"#{MCP_RAIL_ROW_PREFIX}1")
+        await pilot.pause()
+
+        checkbox = app.query_one("#mcp-gate-local_tools_enabled", Checkbox)
+        assert str(checkbox.label) == (
+            "Local workspace, web, and Watchlists tools (master switch)"
+        )
+        checkbox.scroll_visible(animate=False, force=True, immediate=True)
+        checkbox.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert checkbox.is_on_screen
+        assert app.focused is checkbox
+
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in app.screen._compositor.render_strips()
+        )
+        assert "Local workspace, web, and Watchlists tools" in rendered
+
+        original = checkbox.value
+        assert await pilot.click(checkbox, offset=(1, 0))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ("console", "local_tools_enabled", not original) in save_calls
+
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        title = app.query_one("#mcp-tools-local-config-title", Static)
+        title.scroll_visible(animate=False)
+        await pilot.pause()
+        assert title.is_on_screen
+        assert str(title.renderable) == "Local workspace, web, and Watchlists tools"
+
+
 class ProblemRecordsService(FakeHubService):
     """FakeHubService whose local catalog is a caller-supplied record list,
     so a test can control exactly how many problem servers load (F-054)."""
@@ -8685,6 +8729,7 @@ _LOCAL_AGENT_TOOL_NAMES = {
     "fs_list", "fs_read", "fs_write", "fs_edit", "fs_patch", "fs_glob",
     "fs_grep", "git_status", "git_diff", "git_log", "git_blame",
     "git_branches", "web_fetch", "web_search", "web_crawl",
+    "watchlists_search_items", "watchlists_get_item",
 }
 
 
@@ -8735,7 +8780,9 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         assert TASK_TOOL_NAMES.isdisjoint(names)
         # One coherent group, honestly non-executable until Hub-side
         # execution is wired (inspector renders "not_executable" from this).
-        assert all(t.server_label == "Local workspace" for t in local)
+        assert all(
+            t.server_label == "Local workspace, web, and Watchlists" for t in local
+        )
         assert all(t.source == "local" for t in local)
         assert all(t.executable is False for t in local)
         assert all(t.stale is False for t in local)
@@ -8743,6 +8790,23 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         # permission risk floor.
         assert all(t.input_schema for t in local)
         assert {t.name: t.tags for t in local}["fs_write"] == ("mutates",)
+        permission_rows = app.query_one(MCPPermissionsMode)._all_rows
+        local_server_row = next(
+            row
+            for row in permission_rows
+            if row.kind == "server" and row.server_key == "local:__local__"
+        )
+        assert local_server_row.server_label == "Local workspace, web, and Watchlists"
+        labels_by_tool = {
+            row.tool_name: row.server_label
+            for row in permission_rows
+            if row.kind == "tool" and row.server_key == "local:__local__"
+        }
+        assert {
+            labels_by_tool["fs_list"],
+            labels_by_tool["web_fetch"],
+            labels_by_tool["watchlists_search_items"],
+        } == {"Local workspace, web, and Watchlists"}
         # The pre-existing sources are untouched: the fake's "docs" profile
         # tool still lists under its own key.
         assert any(

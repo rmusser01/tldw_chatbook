@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import (
     MCPPermissionStore,
@@ -27,9 +28,9 @@ SEED_LINE = "UAT seed: this note belongs to the configured workspace."
 
 
 def _fence(name: str, arguments: dict) -> str:
-    return "```tool_call\n" + json.dumps(
-        {"name": name, "arguments": arguments}
-    ) + "\n```"
+    return (
+        "```tool_call\n" + json.dumps({"name": name, "arguments": arguments}) + "\n```"
+    )
 
 
 class ScriptedConsoleGateway:
@@ -151,10 +152,7 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
     )
     store = ConsoleChatStore()
     session = store.ensure_session()
-    prompt = (
-        "Read notes/project.md, then add exactly "
-        f"'{UAT_MESSAGE}' to the note."
-    )
+    prompt = f"Read notes/project.md, then add exactly '{UAT_MESSAGE}' to the note."
     store.append_message(session.id, role=ConsoleMessageRole.USER, content=prompt)
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
@@ -169,7 +167,13 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
     _run_id, outcome = bridge.run_reply(
         conversation_id="uat-notes-round-trip",
         session_id=session.id,
-        resolution=object(),
+        resolution=ConsoleProviderResolution(
+            provider="scripted",
+            base_url="",
+            model="scripted-uat-model",
+            ready=True,
+            execution_key="scripted",
+        ),
         assistant_message_id=assistant.id,
         model="scripted-uat-model",
         session_system_prompt="Use workspace tools to complete the request.",
@@ -180,7 +184,9 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
     )
 
     assert outcome.status == RUN_DONE
-    assert outcome.final_text == "Read the existing note and added the requested message."
+    assert (
+        outcome.final_text == "Read the existing note and added the requested message."
+    )
     calls = [step.tool_name for step in outcome.steps if step.kind == "tool_call"]
     assert calls == ["find_tools", "load_tools", "fs_read", "fs_edit"]
     read_result = next(
@@ -190,8 +196,7 @@ def test_console_agent_reads_then_updates_configured_workspace_note(
     )
     assert SEED_LINE in read_result
     assert any(
-        SEED_LINE in str(message.get("content", ""))
-        for message in gateway.calls[3]
+        SEED_LINE in str(message.get("content", "")) for message in gateway.calls[3]
     )
 
     after = note.read_text(encoding="utf-8")

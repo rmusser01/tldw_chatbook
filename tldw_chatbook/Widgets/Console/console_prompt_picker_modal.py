@@ -46,6 +46,8 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 PromptSearch = Callable[[str], Awaitable[list[Mapping[str, object]]]]
 
 MODE_INSERT = "insert"
@@ -89,10 +91,13 @@ _MODE_TITLES = {
 }
 
 
-class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
+class ConsolePromptPickerModal(
+    SafeModalDismissMixin, ModalScreen[Optional[Mapping[str, object]]]
+):
     """Search and pick a saved prompt for the Console `/prompt`/`/system` commands."""
 
-    BINDINGS = [("escape", "dismiss_picker", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#console-prompt-picker-modal"
 
     def __init__(
         self,
@@ -160,8 +165,8 @@ class ConsolePromptPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
         except (NoMatches, QueryError):
             pass
 
-    def action_dismiss_picker(self) -> None:
-        self.dismiss(None)
+    async def action_dismiss_picker(self) -> None:
+        await self.request_safe_cancel(source="visible")
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
     def _filter_changed(self, event: Input.Changed) -> None:

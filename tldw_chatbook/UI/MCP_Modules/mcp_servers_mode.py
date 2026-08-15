@@ -46,7 +46,9 @@ _MUTATIONS_GATED_TOOLTIP = "Requires team, org, or system-admin scope."
 # different source/table entirely), so the button is gated off there rather
 # than silently landing writes nobody looking at this screen would see.
 _IMPORT_GATED_TOOLTIP = "Import creates LOCAL server profiles — switch Source to Local."
-_IMPORT_LOCAL_TOOLTIP = "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+_IMPORT_LOCAL_TOOLTIP = (
+    "Import servers from a Claude-Desktop-style mcpServers JSON file or paste."
+)
 
 _TABLE_COLUMNS = ("Name", "Connection", "Status", "Tools", "Auth", "Scope")
 # Task 11: the Local source never has a meaningful Scope (built-in is
@@ -71,9 +73,13 @@ _COLUMN_DROP_PRIORITY = ("Auth", "Connection")
 # the ⌂ built-in marker (mcp_rail.py's row prefix), which had no
 # explanation anywhere. Mirrors Permissions mode's `#mcp-perm-legend`
 # (mcp_permissions_mode.py) in placement (after the content) and styling.
-_SERVERS_LEGEND_TEXT = " · ".join(
-    f"{glyph} {STATE_LABELS[state].lower()}" for state, glyph in STATE_GLYPHS.items()
-) + " · ⌂ built-in"
+_SERVERS_LEGEND_TEXT = (
+    " · ".join(
+        f"{glyph} {STATE_LABELS[state].lower()}"
+        for state, glyph in STATE_GLYPHS.items()
+    )
+    + " · ⌂ built-in"
+)
 
 
 def _fit_columns(
@@ -117,11 +123,13 @@ def _fit_columns(
         columns.remove(droppable)
     return columns
 
+
 # `_named_items_text()`'s "show at most this many names, then '+N more'"
 # cap -- pulled out to a named constant (was three inline `8` literals) so
 # the truncation point and the "how many are left" arithmetic can't drift
 # apart from each other.
 _NAMED_ITEMS_CAP = 8
+
 
 # Task 1 (MCP Hub Phase 6): the overview Status cell's `state_text()` kind,
 # derived from `STATE_CSS_CLASSES` (readiness.py) rather than a second,
@@ -135,7 +143,7 @@ def _readiness_kind(state: ReadinessState) -> str:
 
 
 def _callout_tooltip(snap: ReadinessSnapshot) -> str:
-    """"Open {label}." for a callout, prefixed by any technical detail the
+    """ "Open {label}." for a callout, prefixed by any technical detail the
     snapshot carries (F-050 -- e.g. the disabled built-in's config syntax,
     which no longer appears in the one-line callout label itself)."""
     technical = str((snap.detail or {}).get("technical_detail") or "").strip()
@@ -144,7 +152,7 @@ def _callout_tooltip(snap: ReadinessSnapshot) -> str:
 
 
 def _count_display(value: int | None) -> str:
-    """"—" for an unreported count, else the plain integer as a string.
+    """ "—" for an unreported count, else the plain integer as a string.
 
     Mirrors `update_overview()`'s own inline `"—" if snap.tool_count is
     None else str(snap.tool_count)` ternary for the overview table's Tools
@@ -156,7 +164,7 @@ def _count_display(value: int | None) -> str:
 
 
 def _named_items_text(items: Any, *, key: str) -> str:
-    """"{count}: {comma-joined names}" for a Servers-mode detail line, or
+    """ "{count}: {comma-joined names}" for a Servers-mode detail line, or
     the literal "none" when there's nothing to show (Task 5, MCP Hub Phase
     6 -- see `_detail_text()`'s local-source Tools/Resources/Prompts
     lines).
@@ -174,7 +182,9 @@ def _named_items_text(items: Any, *, key: str) -> str:
     names: list[str] = []
     for item in items[:_NAMED_ITEMS_CAP]:
         if isinstance(item, Mapping):
-            names.append(str(item.get(key) or item.get("name") or item.get("uri") or "?"))
+            names.append(
+                str(item.get(key) or item.get("name") or item.get("uri") or "?")
+            )
         else:
             names.append(str(item))
     text = ", ".join(names)
@@ -205,8 +215,7 @@ _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 # LocalToolProvider construction), not the MCP client/server handshake --
 # no MCP client is involved at all.
 _TOOL_GATE_NOTE_TEXT = (
-    "Applies on next app restart — tool providers build their catalogs "
-    "at startup."
+    "Applies on next app restart — tool providers build their catalogs at startup."
 )
 
 # task-3240 fix round 1 (Important 1c): the master switch's raw config key
@@ -214,21 +223,22 @@ _TOOL_GATE_NOTE_TEXT = (
 # here, display-only. The Checkbox's `id` is still built from `gate.key`
 # (LOCAL_TOOLS_MASTER_KEY), never from this label, so the save/reload path
 # is untouched.
-_LOCAL_TOOLS_MASTER_LABEL = "Local workspace + web tools (master switch)"
+_LOCAL_TOOLS_MASTER_LABEL = "Local workspace, web, and Watchlists tools (master switch)"
 
 _LOCAL_TOOLS_INCLUDED_TEXT = (
     "Includes web_search, web_fetch, and web_crawl, plus workspace file, "
-    "Git, and session todo tools. web_deep_search is separately gated."
+    "Git, Watchlists search/detail, and session todo tools. web_deep_search "
+    "is separately gated."
 )
 
-# task-3240 fix round 1 (Important 1a): shown under the "Local workspace
-# tools" subheading whenever the master switch is off -- without it, an
+# task-3240 fix round 1 (Important 1a): shown under the local-tools subheading
+# whenever the master switch is off -- without it, an
 # enabled web_deep_search with the master off LOOKS live (both checkboxes
 # read as independent toggles) but stays unreachable until the master is
 # also turned on.
 _LOCAL_TOOLS_MASTER_OFF_NOTE_TEXT = (
-    "Master switch is off — web_search, web_fetch, web_crawl, and the local "
-    "workspace tools are unavailable to Console agents."
+    "Master switch is off — workspace, web, and Watchlists tools are "
+    "unavailable to Console agents."
 )
 
 
@@ -473,9 +483,17 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # the sentence Static stays plain (`ds-status-badge` only).
             with Horizontal(id="mcp-overview-summary-row"):
                 yield Static(
-                    "", id="mcp-overview-summary-glyph", classes="ds-status-badge", markup=False,
+                    "",
+                    id="mcp-overview-summary-glyph",
+                    classes="ds-status-badge",
+                    markup=False,
                 )
-                yield Static("", id="mcp-overview-summary", classes="ds-status-badge", markup=False)
+                yield Static(
+                    "",
+                    id="mcp-overview-summary",
+                    classes="ds-status-badge",
+                    markup=False,
+                )
             table = DataTable(id="mcp-servers-table")
             table.cursor_type = "row"
             yield table
@@ -493,11 +511,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                     tooltip="Return to the overview table.",
                 )
                 yield Static(
-                    "", id="mcp-detail-title", classes="destination-section", markup=False
+                    "",
+                    id="mcp-detail-title",
+                    classes="destination-section",
+                    markup=False,
                 )
             yield Horizontal(id="mcp-detail-toolbar", classes="ds-toolbar")
             with VerticalScroll(id="mcp-detail-scroll"):
-                yield Static("", id="mcp-detail-body", classes="ds-field-row", markup=False)
+                yield Static(
+                    "", id="mcp-detail-body", classes="ds-field-row", markup=False
+                )
                 yield Vertical(id="mcp-detail-builtin-toggles")
                 yield Vertical(id="mcp-detail-tool-gates")
                 yield Button(
@@ -826,7 +849,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         self._callout_keys = [snap.server_key for snap in visible]
         callout_widgets.extend(
             Button(
-                escape_markup(f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"),
+                escape_markup(
+                    f"{STATE_GLYPHS[snap.state]} {snap.label}: {snap.message}"
+                ),
                 id=f"mcp-callout-{index}",
                 classes="mcp-callout console-action-subdued",
                 compact=True,
@@ -1212,7 +1237,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         widgets()` -- spec review finding 5 (branch (b)): `_collect_
         snapshots()` never produces a `local:__local__` row, so this is the
         only reachable place for ALL nine gates. Rendered under two
-        subheadings ("Agent built-ins" / "Local workspace + web tools") so the
+        subheadings ("Agent built-ins" / "Local workspace, web, and Watchlists tools") so the
         accepted UX trade-off stays visible rather than papered over: this
         pane is badged as the built-in MCP SERVER, but these checkboxes
         control the in-process AGENT tool catalog -- a different subsystem.
@@ -1255,7 +1280,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if local_gates:
             widgets.append(
                 Static(
-                    "Local workspace + web tools",
+                    "Local workspace, web, and Watchlists tools",
                     id="mcp-gate-heading-local",
                     classes="ds-field-row",
                     markup=False,
@@ -1319,7 +1344,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
-    def _detail_text(self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False) -> str:
+    def _detail_text(
+        self, snapshot: ReadinessSnapshot, *, mutations_available: bool = False
+    ) -> str:
         detail = snapshot.detail or {}
         lines: list[str] = [snapshot.message, ""]
         if snapshot.source == "server" and isinstance(detail.get("raw"), dict):
@@ -1348,7 +1375,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 lines.append(_MUTATIONS_GATED_TOOLTIP)
         elif snapshot.source == "local":
             args = redact_args([str(a) for a in detail.get("args") or []])
-            lines.append(f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip())
+            lines.append(
+                f"Command · {detail.get('command') or '—'} {' '.join(args)}".rstrip()
+            )
             placeholders = detail.get("env_placeholders") or {}
             missing = set(detail.get("missing_env") or [])
             for env_key, raw in placeholders.items():
@@ -1372,10 +1401,16 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             # all three uniformly (defensive reads, explicit "none" empty
             # copy) rather than duplicating the join/truncate logic per kind.
             discovery = detail.get("discovery_snapshot") or {}
-            lines.append(f"Tools · {_named_items_text(discovery.get('tools'), key='name')}")
+            lines.append(
+                f"Tools · {_named_items_text(discovery.get('tools'), key='name')}"
+            )
             lines.append("")
-            lines.append(f"Resources · {_named_items_text(discovery.get('resources'), key='uri')}")
-            lines.append(f"Prompts · {_named_items_text(discovery.get('prompts'), key='name')}")
+            lines.append(
+                f"Resources · {_named_items_text(discovery.get('resources'), key='uri')}"
+            )
+            lines.append(
+                f"Prompts · {_named_items_text(discovery.get('prompts'), key='name')}"
+            )
         elif snapshot.source == "server":
             base_url = str(detail.get("base_url") or "")
             lines.append(f"Base URL · {redact_url(base_url) if base_url else '—'}")
@@ -1473,7 +1508,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             event.stop()
             snippet = ""
             if self._detail_snapshot is not None:
-                snippet = str((self._detail_snapshot.detail or {}).get("client_snippet") or "")
+                snippet = str(
+                    (self._detail_snapshot.detail or {}).get("client_snippet") or ""
+                )
             if snippet:
                 self.app.copy_to_clipboard(snippet)
                 self.app.notify("Client config copied to clipboard.")
@@ -1494,7 +1531,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if button_id == "mcp-detail-disconnect":
             event.stop()
             if self._detail_snapshot is not None:
-                self.post_message(self.DisconnectRequested(self._detail_snapshot.server_key))
+                self.post_message(
+                    self.DisconnectRequested(self._detail_snapshot.server_key)
+                )
             return
         if button_id == "mcp-detail-delete":
             event.stop()
@@ -1511,5 +1550,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self._delete_armed = False
             await self._rebuild_detail_toolbar()
             if self._detail_snapshot is not None:
-                self.post_message(self.DeleteConfirmed(self._detail_snapshot.server_key))
+                self.post_message(
+                    self.DeleteConfirmed(self._detail_snapshot.server_key)
+                )
             return

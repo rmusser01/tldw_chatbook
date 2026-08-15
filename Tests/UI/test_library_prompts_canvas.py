@@ -2775,6 +2775,44 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
         assert prompt_service.browse_threads[0] != ui_thread
 
 
+def test_library_prompt_scope_snapshot_is_primitive_and_round_trips() -> None:
+    """Screen snapshots keep Prompt request state in reviewed builtins."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    original = LibraryScreen(app)
+    expected_scope = PromptBrowseScope(
+        query="restored",
+        collection_id=7,
+        sort_by="name",
+        sort_order="asc",
+        page=2,
+        page_size=25,
+    )
+    original._library_prompt_browse_controller.invalidate(expected_scope)
+    saved_state = original.save_state()
+    assert type(saved_state["library_prompts_scope"]) is dict
+    assert saved_state["library_prompts_scope"] == {
+        "backend": "local",
+        "query": "restored",
+        "collection_id": 7,
+        "sort_by": "name",
+        "sort_order": "asc",
+        "page": 2,
+        "page_size": 25,
+    }
+    restored = LibraryScreen(app)
+    restored.restore_state(saved_state)
+    assert restored._library_prompt_browse_controller.scope == expected_scope
+
+    legacy = LibraryScreen(app)
+    legacy.restore_state({"library_prompts_scope": expected_scope})
+    assert legacy._library_prompt_browse_controller.scope == expected_scope
+
+    malformed = LibraryScreen(app)
+    malformed.restore_state({"library_prompts_scope": {"page": 0}})
+    assert malformed._library_prompt_browse_controller.scope == PromptBrowseScope()
+
+
 @pytest.mark.asyncio
 async def test_library_prompts_restored_create_row_list_dispatches_browse_once():
     """A restored create-row/list state settles one exact browse request."""
@@ -8053,7 +8091,9 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
                 break
 
         assert screen._library_prompts_view == "list"
-        assert browse_calls == [(scope_before, None)]
+        assert browse_calls == [
+            (scope_before, f"library-prompt-row-{prompt_id}")
+        ]
         assert refresh_calls == 1
         row = screen.query_one(f"#library-prompt-row-{prompt_id}", Button)
         for _ in range(100):

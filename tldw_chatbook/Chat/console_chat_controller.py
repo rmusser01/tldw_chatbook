@@ -185,8 +185,11 @@ from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
+from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
+from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
+from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
     describe_stream_failure,
@@ -1571,9 +1574,7 @@ class ConsoleChatController:
         #: hidden Console; the user must still LEARN of it). ``None`` =
         #: unwired (controller doubles): the historical clear-on-delivery
         #: stands.
-        self.wake_conversation_in_view: (
-            Callable[[str, str], bool] | None
-        ) = None
+        self.wake_conversation_in_view: Callable[[str, str], bool] | None = None
         self._register_fleet_wake(agent_bridge)
         #: task-2154.16 (FB-05): UI-thread callback invoked DIRECTLY (same
         #: main-loop guarantee as ``notify_run_outcome`` above) from
@@ -2380,9 +2381,10 @@ class ConsoleChatController:
             try:
                 if checker(self._agent_conversation_id(session.id)):
                     return True
-            except Exception:  # noqa: BLE001 -- a UI timer must never crash on a read
-                logger.opt(exception=True).debug(
-                    "fleet unsettled check failed for a session; treated as idle"
+            except Exception as exc:  # noqa: BLE001 -- a UI timer must never crash on a read
+                logger.debug(
+                    "fleet unsettled check failed for a session; treated as idle (exception_type={})",
+                    type(exc).__name__,
                 )
         return False
 
@@ -4709,6 +4711,13 @@ class ConsoleChatController:
             if raw_root
             else Path(os.getcwd()).resolve()
         )
+        subscriptions_db = getattr(self.app, "subscriptions_db", None)
+        watchlists_service = WatchlistsToolService(
+            db_resolver=lambda: subscriptions_db,
+            runtime_source_loader=lambda: RuntimeSourceStateStore(
+                default_runtime_policy_path()
+            ).load(),
+        )
         provider = LocalToolProvider(
             workspace_root=root,
             resolve_state=service.gate_tool_test,
@@ -4719,6 +4728,7 @@ class ConsoleChatController:
             ),
             persist_approval=_persist_approval,
             record_decision=_record_decision,
+            watchlists_service=watchlists_service,
             **self._todo_wiring(session_id),
         )
         return provider, build_local_review_hook(provider, bound_request_approvals)
@@ -8913,7 +8923,10 @@ class ConsoleChatController:
             )
         )
 
-        if effective_representation is ContextCompactionRepresentation.VISUAL_TRANSCRIPT:
+        if (
+            effective_representation
+            is ContextCompactionRepresentation.VISUAL_TRANSCRIPT
+        ):
             budget = resolved.effective_conversation_budget_tokens
             visual_plan = None
             if budget is not None:
@@ -9156,9 +9169,7 @@ class ConsoleChatController:
             raise ValueError("Console turn context does not own the assistant row.")
         try:
             continuation_sidecar, continuation_target = (
-                self._provider_continuation_history_for_resolution(
-                    owner_id, resolution
-                )
+                self._provider_continuation_history_for_resolution(owner_id, resolution)
             )
         except ContinuationConflictError:
             return self._block_context_preflight(
@@ -9332,6 +9343,19 @@ class ConsoleChatController:
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
         stream_signals = ConsoleProviderStreamSignals()
+        # Trajectory sidecar (schema v38): arm this turn's timing capture at
+        # the single dispatch choke point covering BOTH the direct-provider
+        # and agent paths, BEFORE the provider call. First-token is stamped
+        # at the store's chunk seam; completion at usage-attach. Best-effort
+        # -- a sidecar failure must never fail the send.
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id, step_started_at=time.time()
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_step_start_failed"
+            )
         try:
             if (
                 bool(
@@ -9489,9 +9513,10 @@ class ConsoleChatController:
             try:
                 if not checker(self._agent_conversation_id(session_id)):
                     return
-            except Exception:  # noqa: BLE001 -- money over memory: keep the source
-                logger.opt(exception=True).debug(
-                    "has_unsettled_children raised; recording re-attach source anyway"
+            except Exception as exc:  # noqa: BLE001 -- money over memory: keep the source
+                logger.debug(
+                    "has_unsettled_children raised; recording re-attach source anyway (exception_type={})",
+                    type(exc).__name__,
                 )
         self._fleet_usage_reattach_sources[assistant_message_id] = (
             stream_signals,
@@ -9567,9 +9592,7 @@ class ConsoleChatController:
         loop = self._usage_reattach_loop
         if loop is not None and not loop.is_closed():
             try:
-                loop.call_soon_threadsafe(
-                    self._reattach_fleet_usage_guarded, event
-                )
+                loop.call_soon_threadsafe(self._reattach_fleet_usage_guarded, event)
                 return
             except RuntimeError:
                 pass  # closed between the check and the call: fall through
@@ -9582,10 +9605,10 @@ class ConsoleChatController:
         neither may happen for a best-effort cost figure."""
         try:
             self._reattach_fleet_usage(event)
-        except Exception:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
-            logger.opt(exception=True).warning(
-                "fleet usage re-attach failed for conversation {conversation_id}",
-                conversation_id=getattr(event, "conversation_id", "?"),
+        except Exception as exc:  # noqa: BLE001 -- a dropped fold is a missing figure, not a broken run
+            logger.warning(
+                "fleet usage re-attach failed (exception_type={})",
+                type(exc).__name__,
             )
 
     def _reattach_fleet_usage(self, event: Any) -> None:
@@ -9626,11 +9649,7 @@ class ConsoleChatController:
                 message_id, stream_signals, resolution, partial=partial
             )
             session_id = getattr(child, "session_id", None)
-            watch = (
-                self._post_turn_usage_watch.get(session_id)
-                if session_id
-                else None
-            )
+            watch = self._post_turn_usage_watch.get(session_id) if session_id else None
             if watch is not None and watch[0] is stream_signals:
                 self._post_turn_usage_watch[session_id] = (
                     stream_signals,
@@ -9700,6 +9719,22 @@ class ConsoleChatController:
         call's ``prompt_tokens`` would be priced against an earlier call's
         stale ``prompt_tokens_details.cached_tokens``.
         """
+        # Trajectory sidecar (schema v38): completion stamp + finalize flush.
+        # Runs BEFORE the usage early-returns so a turn with no usage still
+        # gets its completed_at stamped and its assistant row flushed. Never
+        # fails the send (same posture as the usage attach below).
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id,
+                completed_at=time.time(),
+                model=str(getattr(resolution, "model", "") or "") or None,
+                provider=str(getattr(resolution, "provider", "") or "") or None,
+                flush=True,
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_completion_failed"
+            )
         if stream_signals is None:
             return
         payloads = self._usage_payloads(stream_signals)

@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.rag_scope import (
     build_semantic_allowlists,
     media_id_params,
     note_id_params,
+    scope_empty_notice,
     write_conversation_scope,
 )
 from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
@@ -1112,11 +1113,10 @@ class TestWorkspaceScopeIntersectionE2E:
         context = await cre.get_rag_context_for_chat(app, "zanzibarite")
 
         assert context is None
-        assert any(
-            "retrieval scope is empty" in message.lower()
-            and "no-workspace-overlap" in message.lower()
-            for message, _severity in app.notifications
-        ), app.notifications
+        assert (
+            scope_empty_notice("no-workspace-overlap"),
+            "warning",
+        ) in app.notifications
 
 
 class _RaisingWorkspaceRegistry:
@@ -1176,11 +1176,10 @@ class TestWorkspaceScopeReadFailureFailsClosed:
         context = await cre.get_rag_context_for_chat(app, "zanzibarite")
 
         assert context is None
-        assert any(
-            "retrieval scope is empty" in message.lower()
-            and "workspace-scope-unavailable" in message.lower()
-            for message, _severity in app.notifications
-        ), app.notifications
+        assert (
+            scope_empty_notice("workspace-scope-unavailable"),
+            "warning",
+        ) in app.notifications
 
     @pytest.mark.asyncio
     async def test_conversation_scope_present_still_fails_closed_not_narrowed(
@@ -1225,11 +1224,10 @@ class TestWorkspaceScopeReadFailureFailsClosed:
         context = await cre.get_rag_context_for_chat(app, "zanzibarite")
 
         assert context is None
-        assert any(
-            "retrieval scope is empty" in message.lower()
-            and "workspace-scope-unavailable" in message.lower()
-            for message, _severity in app.notifications
-        ), app.notifications
+        assert (
+            scope_empty_notice("workspace-scope-unavailable"),
+            "warning",
+        ) in app.notifications
 
     @pytest.mark.asyncio
     async def test_resolve_scope_for_session_reports_distinct_cause(self, cha_db):
@@ -1654,11 +1652,10 @@ class TestChatEntryPointEmptyScopeShortCircuit:
                 "cause": "deleted-items",
             }
         ]
-        assert any(
-            "retrieval scope is empty" in message.lower()
-            and "deleted-items" in message.lower()
-            for message, _severity in app.notifications
-        ), app.notifications
+        assert (
+            scope_empty_notice("deleted-items"),
+            "warning",
+        ) in app.notifications
 
 
 class TestExistingIdsSyncDanglingDrop:

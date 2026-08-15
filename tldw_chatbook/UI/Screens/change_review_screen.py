@@ -39,6 +39,7 @@ from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
     ShadowRepoService,
 )
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Default per-file diff display cap; the Settings surface is TASK-1979,
 #: but the flat section name is the spec's (dotted sections drop defaults).
@@ -752,7 +753,7 @@ class ChangeReviewScreen(Screen):
         content.update(text)
 
 
-class ChangeRevertConfirmModal(ModalScreen[bool]):
+class ChangeRevertConfirmModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Confirm a revert, naming user-edited files BY NAME (TASK-1974).
 
     The list is the guard's whole point: files whose disk state differs from
@@ -761,7 +762,8 @@ class ChangeRevertConfirmModal(ModalScreen[bool]):
     exactly which files, not "some files changed".
     """
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#change-revert-confirm"
 
     def __init__(self, summary: str, edited_since: list[str]) -> None:
         super().__init__()
@@ -789,8 +791,9 @@ class ChangeRevertConfirmModal(ModalScreen[bool]):
         self.dismiss(True)
 
     @on(Button.Pressed, "#change-revert-no")
-    def _cancel_button(self) -> None:
-        self.dismiss(False)
+    async def _cancel_button(self) -> None:
+        await self.request_safe_cancel(source="button")
 
-    def action_cancel(self) -> None:
-        self.dismiss(False)
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self.dismiss_safe_once(False)

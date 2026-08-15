@@ -1608,12 +1608,9 @@ class InstalledView(Widget):
             logger.warning("Managed model deletion blocked by a lease")
         else:
             logger.error(
-                "Managed model deletion failed for {}@{}/{}; error_type={} code={}",
-                reference.artifact_id,
-                reference.revision,
-                reference.variant,
+                "Managed model deletion failed "
+                "(error_type={}, code=operation_failed)",
                 type(exc).__name__,
-                "operation_failed",
             )
         return lifecycle_failure_message(exc, operation="deletion")
 

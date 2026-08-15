@@ -45,7 +45,7 @@ dependencies = [
     "rich",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
-    "pillow",
+    "pillow==11.2.1",  # ADR-054 renderer identity; matches reviewed context-use evidence
     "PyYAML",
     "pydantic>=2.4,<3",
     "portalocker==3.2.0",
@@ -492,6 +492,7 @@ exclude = [
     "migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql",
     "migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql",
     "migrations/chachanotes_v35_to_v36_note_folders.sql",
+    "migrations/chachanotes_v36_to_v37_provider_continuation.sql",
 ]
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]

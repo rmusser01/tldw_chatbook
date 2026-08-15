@@ -1996,6 +1996,55 @@ class _GatedLibraryRagSearchService(_StaticLibraryRagSearchService):
         return self.result
 
 
+class _SequencedGatedLibraryRagSearchService:
+    """Record and gate admitted B/C/D retrievals on executor threads."""
+
+    def __init__(self) -> None:
+        queries = ("B", "C", "D")
+        self.entered = {query: threading.Event() for query in queries}
+        self.release = {query: threading.Event() for query in queries}
+        self.finished = {query: threading.Event() for query in queries}
+        self._lock = threading.Lock()
+        self._calls: list[str] = []
+        self._active = 0
+        self._max_active = 0
+
+    async def search(self, query, scope, mode, **kwargs):
+        del scope, mode, kwargs
+        return await asyncio.to_thread(self._blocking_search, query)
+
+    def _blocking_search(self, query: str):
+        with self._lock:
+            self._calls.append(query)
+            self._active += 1
+            self._max_active = max(self._max_active, self._active)
+        self.entered[query].set()
+        try:
+            self.release[query].wait(_GATED_RELEASE_TIMEOUT_SECONDS)
+        finally:
+            with self._lock:
+                self._active -= 1
+            self.finished[query].set()
+        return {
+            "results": [
+                {
+                    "title": query,
+                    "snippet": f"Evidence for {query}",
+                    "source_id": f"source-{query.lower()}",
+                    "provenance": {"source_type": "conversation"},
+                }
+            ]
+        }
+
+    def snapshot(self) -> tuple[tuple[str, ...], int, int]:
+        with self._lock:
+            return tuple(self._calls), self._active, self._max_active
+
+    def release_all(self) -> None:
+        for gate in self.release.values():
+            gate.set()
+
+
 async def _wait_for_library_rag_query_ready(screen, pilot, query, *, attempts=150):
     for _ in range(attempts):
         inputs = list(screen.query("#library-rag-query-input"))
@@ -2010,6 +2059,442 @@ async def _wait_for_library_rag_query_ready(screen, pilot, query, *, attempts=15
             return
         await pilot.pause(0.02)
     raise AssertionError(f"Library Search/RAG query never became ready: {query!r}")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        rail_input = screen.query_one("#library-search-input", Input)
+        rag_input = screen.query_one("#library-rag-query-input", Input)
+        with rail_input.prevent(Input.Changed):
+            rail_input.value = "B"
+        with rag_input.prevent(Input.Changed):
+            rag_input.value = "B"
+        screen._library_rag_query = "B"
+
+        patch_calls: list[tuple[str, str]] = []
+        refresh_calls = 0
+        real_patch = screen._patch_sibling_library_search_input
+        real_refresh = screen._refresh_search_rag_panel_state_widgets
+
+        def bounded_patch(selector: str, value: str) -> None:
+            patch_calls.append((selector, value))
+            if len(patch_calls) <= 8:
+                real_patch(selector, value)
+
+        async def counted_refresh(*args, **kwargs) -> None:
+            nonlocal refresh_calls
+            refresh_calls += 1
+            await real_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(
+            screen, "_patch_sibling_library_search_input", bounded_patch
+        )
+        monkeypatch.setattr(
+            screen, "_refresh_search_rag_panel_state_widgets", counted_refresh
+        )
+
+        screen.handle_library_search_changed(Input.Changed(rail_input, "A"))
+        screen.handle_library_search_changed(Input.Changed(rail_input, "B"))
+        for _ in range(12):
+            await pilot.pause()
+
+        assert (patch_calls, refresh_calls) == (
+            [
+                ("#library-rag-query-input", "A"),
+                ("#library-rag-query-input", "B"),
+            ],
+            0,
+        )
+        assert rail_input.value == "B"
+        assert rag_input.value == "B"
+        assert screen._library_rag_query == "B"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    service = _SequencedGatedLibraryRagSearchService()
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        screen.query_one("#library-rag-query-input", Input).value = "B"
+        await _wait_for_library_rag_query_ready(screen, pilot, "B")
+        screen.query_one("#library-rag-run-query", Button).press()
+
+        try:
+            await _wait_for_condition(
+                pilot,
+                service.entered["B"].is_set,
+                message="Run B never entered the gated retrieval service.",
+            )
+
+            heartbeat = asyncio.Event()
+            screen.call_later(heartbeat.set)
+            screen.query_one("#library-row-browse-media").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    heartbeat.is_set()
+                    and screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                ),
+                message="Blocked retrieval starved heartbeat or Media navigation.",
+            )
+            assert service.snapshot() == (("B",), 1, 1)
+        finally:
+            service.release["B"].set()
+            if service.entered["B"].is_set():
+                await _wait_for_condition(
+                    pilot,
+                    service.finished["B"].is_set,
+                    message="Released Run B never left the retrieval service.",
+                )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="Library RAG search worker group never drained.",
+            )
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_repeated_supersession_serializes_underlying_retrieval(
+    monkeypatch,
+):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    service = _SequencedGatedLibraryRagSearchService()
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        applied_queries: list[str] = []
+        real_apply = screen._apply_library_rag_search_outcome
+
+        async def recording_apply(request, outcome) -> None:
+            applied_queries.append(request.query)
+            await real_apply(request, outcome)
+
+        monkeypatch.setattr(
+            screen, "_apply_library_rag_search_outcome", recording_apply
+        )
+        try:
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-search").press()
+            await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+            query_input = screen.query_one("#library-rag-query-input", Input)
+            run_button = screen.query_one("#library-rag-run-query", Button)
+
+            query_input.value = "B"
+            await _wait_for_library_rag_query_ready(screen, pilot, "B")
+            run_button.press()
+            await _wait_for_condition(
+                pilot,
+                service.entered["B"].is_set,
+                message="Run B never entered the gated retrieval service.",
+            )
+
+            query_input.value = "C"
+            await _wait_for_library_rag_query_ready(screen, pilot, "C")
+            run_button.press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["C"].is_set()
+                    or sum(
+                        worker.node is screen
+                        and worker.group == "library_rag_search"
+                        for worker in host.workers
+                    )
+                    >= 2
+                ),
+                message="Run C neither entered nor registered while B drained.",
+            )
+            workers_before_d = {
+                id(worker)
+                for worker in host.workers
+                if worker.node is screen and worker.group == "library_rag_search"
+            }
+
+            query_input.value = "D"
+            await _wait_for_library_rag_query_ready(screen, pilot, "D")
+            screen.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["D"].is_set()
+                    or any(
+                        worker.node is screen
+                        and worker.group == "library_rag_search"
+                        and id(worker) not in workers_before_d
+                        for worker in host.workers
+                    )
+                ),
+                message="Run D never registered after superseding C.",
+            )
+
+            heartbeat = asyncio.Event()
+            screen.call_later(heartbeat.set)
+            screen.query_one("#library-row-browse-media").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    heartbeat.is_set()
+                    and screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                ),
+                message="Superseded retrievals starved heartbeat or Media navigation.",
+            )
+            for _ in range(8):
+                await pilot.pause()
+
+            assert service.snapshot() == (("B",), 1, 1)
+            assert not service.entered["C"].is_set()
+            assert not service.entered["D"].is_set()
+            assert applied_queries == []
+
+            service.release["B"].set()
+            await _wait_for_condition(
+                pilot,
+                service.entered["D"].is_set,
+                message="Run D never entered after Run B drained.",
+            )
+            assert not service.entered["C"].is_set()
+            assert service.snapshot() == (("B", "D"), 1, 1)
+            assert applied_queries == []
+
+            service.release["D"].set()
+            await _wait_for_condition(
+                pilot,
+                lambda: all(
+                    service.finished[query].is_set() or query == "C"
+                    for query in ("B", "C", "D")
+                ),
+                message="Admitted retrievals never reached terminal state.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="Library RAG search worker group never drained.",
+            )
+
+            screen.query_one("#library-row-browse-search").press()
+            await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+            assert service.snapshot() == (("B", "D"), 0, 1)
+            assert applied_queries == ["D"]
+            assert screen._library_rag_query == "D"
+            assert screen.query_one("#library-rag-query-input", Input).value == "D"
+            assert screen._library_rag_results[0].title == "D"
+        finally:
+            service.release_all()
+            await _wait_for_condition(
+                pilot,
+                lambda: service.snapshot()[1] == 0,
+                message="Gated retrieval threads did not finish during cleanup.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    worker.node is screen and worker.group == "library_rag_search"
+                    for worker in host.workers
+                ),
+                message="Library RAG workers did not drain during cleanup.",
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_fresh_screen_reentry_serializes_draining_retrieval(
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _SequencedGatedLibraryRagSearchService()
+    app.library_rag_search_service = service
+    applied_queries: list[tuple[int, str]] = []
+    real_apply = LibraryScreen._apply_library_rag_search_outcome
+
+    async def recording_apply(screen, request, outcome) -> None:
+        applied_queries.append((id(screen), request.query))
+        await real_apply(screen, request, outcome)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_apply_library_rag_search_outcome", recording_apply
+    )
+
+    async with app.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        first = None
+        second = None
+        try:
+            await _wait_for_condition(
+                pilot,
+                lambda: getattr(app, "_initial_screen_pushed", False),
+                message="The app never finished pushing its initial screen.",
+            )
+            await app.handle_screen_navigation(NavigateToScreen("library"))
+            first = app.screen
+            assert isinstance(first, LibraryScreen)
+            await _wait_for_library_shell(first, pilot)
+            first.query_one("#library-row-browse-search", Button).press()
+            await _wait_for_selector(first, pilot, "#library-rag-query-input")
+            first.query_one("#library-rag-query-input", Input).value = "B"
+            await _wait_for_library_rag_query_ready(first, pilot, "B")
+            first.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                service.entered["B"].is_set,
+                message="Query B never entered on the first Library screen.",
+            )
+
+            await app.handle_screen_navigation(NavigateToScreen("home"))
+            assert app.screen is not first
+            await app.handle_screen_navigation(NavigateToScreen("library"))
+            second = app.screen
+            assert isinstance(second, LibraryScreen)
+            assert second is not first
+            await _wait_for_library_shell(second, pilot)
+            await _wait_for_selector(second, pilot, "#library-rag-query-input")
+
+            canvas = second.query_one("#library-rag-query-input", Input)
+            canvas.value = "D"
+            await _wait_for_library_rag_query_ready(second, pilot, "D")
+            second.query_one("#library-rag-run-query", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    service.entered["D"].is_set()
+                    or any(
+                        worker.node is second
+                        and worker.group == "library_rag_search"
+                        for worker in app.workers
+                    )
+                ),
+                message="Query D never entered or registered after re-entry.",
+            )
+            heartbeat = asyncio.Event()
+            second.call_later(heartbeat.set)
+            await _wait_for_condition(
+                pilot,
+                heartbeat.is_set,
+                message="The fresh Library screen heartbeat stalled behind B.",
+            )
+            for _ in range(8):
+                await pilot.pause()
+
+            assert service.snapshot() == (("B",), 1, 1)
+            assert not service.entered["D"].is_set()
+            assert applied_queries == []
+
+            service.release["B"].set()
+            await _wait_for_condition(
+                pilot,
+                service.entered["D"].is_set,
+                message="Query D did not enter after query B settled.",
+            )
+            assert service.finished["B"].is_set()
+            assert service.snapshot() == (("B", "D"), 1, 1)
+            assert applied_queries == []
+
+            service.release["D"].set()
+            await _wait_for_condition(
+                pilot,
+                service.finished["D"].is_set,
+                message="Query D did not finish after release.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    (worker.node is first or worker.node is second)
+                    and worker.group == "library_rag_search"
+                    for worker in app.workers
+                ),
+                message="A cross-screen Library RAG worker did not terminate.",
+            )
+            await _wait_for_selector(second, pilot, "#library-rag-result-0")
+            assert second.query_one("#library-rag-query-input", Input).value == "D"
+            assert second.query("#library-rag-result-0")
+        finally:
+            service.release_all()
+            for query in ("B", "C", "D"):
+                if service.entered[query].is_set():
+                    await _wait_for_condition(
+                        pilot,
+                        service.finished[query].is_set,
+                        message=f"Admitted query {query} did not terminate.",
+                    )
+            await _wait_for_condition(
+                pilot,
+                lambda: service.snapshot()[1] == 0,
+                message="A cross-screen retrieval thread remained active.",
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not any(
+                    (worker.node is first or worker.node is second)
+                    and worker.group == "library_rag_search"
+                    for worker in app.workers
+                ),
+                message="A cross-screen Library RAG worker remained registered.",
+            )
+
+    assert second is not None
+    assert service.snapshot() == (("B", "D"), 0, 1)
+    assert applied_queries == [(id(second), "D")]
+    assert second._library_rag_query == "D"
+    assert [row.title for row in second._library_rag_results] == ["D"]
+    assert second._library_rag_retrieval_status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restore_normalizes_transient_rag_searching_state():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
+    original._library_rag_query = "B"
+    original._library_rag_retrieval_status = "searching"
+    saved = original.save_state()
+    assert saved["library_rag_retrieval_status"] == "searching"
+
+    restored = LibraryScreen(app)
+    restored.restore_state(saved)
+    assert restored._library_rag_retrieval_status == ""
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        await _wait_for_library_rag_query_ready(screen, pilot, "B")
+
+        assert screen._library_rag_retrieval_status == ""
+        assert screen.query_one("#library-rag-query-input", Input).value == "B"
+        assert screen.query_one("#library-rag-run-query", Button).disabled is False
+        assert not screen.query("#library-rag-searching-line")
 
 
 @pytest.mark.asyncio
@@ -5814,14 +6299,26 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         async def list_conversations(self, **kwargs):
             raise RuntimeError("offline")
 
-    app.chat_conversation_scope_service = FailingConversationService()
     screen = LibraryScreen(app)
-    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         active = _active_library_screen(host)
+        await _wait_for_library_shell(active, pilot)
+        app.chat_conversation_scope_service = FailingConversationService()
+        active.query_one("#library-row-browse-conversations").press()
         await _wait_for_selector(active, pilot, "#library-conversations-filter")
+        field = active.query_one("#library-conversations-filter", Input)
+        field.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: "load"
+            in str(
+                active.query_one("#library-conversations-status").renderable
+            ).lower(),
+            message="Conversation load failure never reached the retry canvas.",
+        )
 
         assert active.query_one("#library-conversations-canvas")
         assert active.query_one("#library-conversations-previous", Button).disabled
@@ -5834,7 +6331,6 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
             _conversation_records(2)
         )
-        field = active.query_one("#library-conversations-filter", Input)
         field.focus()
         await pilot.press("enter")
         await _wait_for_selector(active, pilot, "#library-conversation-row-1")
@@ -16436,6 +16932,13 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
             return self._worker_count_override
         return super()._ingest_parse_worker_count()
 
+    def library_rag_search_execution_lock(self) -> asyncio.Lock:
+        lock = getattr(self, "_library_rag_search_execution_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._library_rag_search_execution_lock_instance = lock
+        return lock
+
     async def on_mount(self) -> None:
         await self.push_screen(LibraryScreen(self))
 
@@ -22637,7 +23140,14 @@ async def test_library_note_sync_routes_cancel_pending_navigator_focus() -> None
         screen.query_one("#library-notes-sync-back").press()
         await _wait_for_selector(screen, pilot, "#library-notes-filter")
         screen._release_library_notes_focus_after_snapshot()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-notes-filter",
+            message=lambda: (
+                "Notes sync Back never restored Filter focus; focused="
+                f"{getattr(screen.focused, 'id', None)!r}."
+            ),
+        )
 
         assert screen._library_notes_pending_focus_identity is None
         assert screen._library_notes_view == "list"

@@ -9,10 +9,10 @@ through the Model Context Protocol.
 ## Exposed local agent tools (opt-in)
 
 When `[mcp] expose_local_tools = true` is set in config.toml, the server also
-exposes the workspace-local agent tools (`fs_*`, `fs_patch`, `git_*`,
-`web_fetch`, `web_search`, `web_crawl`, and `web_deep_search`) to external
-MCP clients -- `web_deep_search` is opt-in (see below). Invocation is routed
-through
+exposes workspace, web, and Watchlists agent tools (`fs_*`, `fs_patch`,
+`git_*`, `web_fetch`, `web_search`, `web_crawl`, `web_deep_search`,
+`watchlists_search_items`, and `watchlists_get_item`) to external MCP clients
+-- `web_deep_search` is opt-in (see below). Invocation is routed through
 `Agents/local_tool_provider.LocalToolProvider`'s permission gate
 (`MCP/local_server_tools.py`) — never by wrapping the tool cores directly.
 `web_deep_search` needs its OWN gate on top of this one: it is absent from
@@ -870,7 +870,7 @@ class TldwMCPServer:
             )
 
     def _register_local_agent_tools(self):
-        """Register workspace-local agent tools (fs_*/git_*/web_*) when enabled.
+        """Register workspace, web, and Watchlists agent tools when enabled.
 
         Gated behind ``[mcp] expose_local_tools`` (default false); a no-op
         when the flag is off. Called from ``__init__`` -- deliberately NOT

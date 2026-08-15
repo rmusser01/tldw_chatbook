@@ -861,7 +861,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
 
 @pytest.mark.asyncio
 async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(monkeypatch):
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
     from tldw_chatbook.Video_Generation import video_templates
 
@@ -907,7 +907,7 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
         ),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui",
@@ -919,9 +919,7 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
     fake_screen = SimpleNamespace(
-        _session=SimpleNamespace(
-            _default_console_session_settings=lambda: object()
-        ),
+        _default_console_session_settings=lambda: object(),
         _ensure_console_chat_store=lambda: FakeStore(),
         _append_native_console_system_message=append_system_message,
         _console_videogen_inflight_sessions=lambda: set(),
@@ -932,12 +930,12 @@ async def test_chat_screen_dispatch_marks_template_negative_as_style_derived(mon
         _sync_native_console_chat_ui=sync_ui,
     )
 
-    await chat_screen_module.ChatScreen._console_command_generate_video(
+    await video_controller_module.ConsoleVideoController._console_command_generate_video(
         fake_screen,
         SimpleNamespace(args="@cinematic base prompt"),
     )
 
-    assert captured_dispatch["function"] is chat_screen_module.run_video_generation
+    assert captured_dispatch["function"] is video_controller_module.run_video_generation
     assert captured_dispatch["kwargs"]["prompt"] == (
         "base prompt, cinematic positive suffix"
     )

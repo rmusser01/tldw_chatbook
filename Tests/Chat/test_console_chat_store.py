@@ -4513,10 +4513,35 @@ def test_set_message_metadata_on_an_unpersisted_row_rides_the_later_create():
         message.id,
         MessageMetadata(engine="realtime", transcript_status="final"),
     )
-    store.update_message_content(message.id, "what the user said")
+    store.finalize_deferred_user_message_content(message.id, "what the user said")
 
     assert persistence.created[-1]["content"] == "what the user said"
     assert '"transcript_status": "final"' in persistence.created[-1]["metadata_json"]
+
+
+def test_finalize_deferred_user_message_content_preserves_reply_descendant():
+    persistence = RecordingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="",
+        persist=True,
+    )
+    reply = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        persist=True,
+    )
+
+    store.finalize_deferred_user_message_content(user.id, "what the user said")
+
+    rows = store.messages_for_session(session.id)
+    assert [row.id for row in rows] == [user.id, reply.id]
+    assert rows[0].content == "what the user said"
+    assert store.get_message(reply.id).role is ConsoleMessageRole.ASSISTANT
 
 
 def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
@@ -4526,9 +4551,9 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     create a message with neither text nor an image at all
     (`CharactersRAGDB.add_message`) -- so a metadata-only "empty" record can
     never durably exist. Writing a short, honest placeholder as the row's
-    real content -- through the SAME `update_message_content` call the
-    "final" transcript case uses above -- flushes the deferred create, and
-    a follow-up metadata-only patch (mirroring the "final" case's own
+    real content -- through the same `finalize_deferred_user_message_content`
+    call used by the "final" transcript case above -- flushes the deferred
+    create, and a follow-up metadata-only patch (mirroring the "final" case's own
     two-step order: content write, then status write) marks it "empty"."""
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.UI.Screens.chat_screen import (
@@ -4548,7 +4573,7 @@ def test_an_empty_transcript_placeholder_persists_through_the_deferred_create():
     )
     assert persistence.created == [], "an empty row has nothing to persist yet"
 
-    store.update_message_content(message.id, placeholder)
+    store.finalize_deferred_user_message_content(message.id, placeholder)
     assert persistence.created[-1]["content"] == placeholder, (
         "the row must be durably created once its emptiness is final, not "
         "left stranded in memory"
@@ -4573,11 +4598,12 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
     though, and `Tests/UI/test_console_resume_active_path.py::test_resume_
     restores_an_empty_transcript_row_and_its_explanation` -- the existing
     real-DB coverage for this exact row shape -- HAND-SEEDS the row directly
-    via `db.add_message(...)`; it never exercises `update_message_content`'s
-    deferred-create flush at all, so it does not close this gap either. This
-    test does: drives the real flow (deferred row -> content write -> status
-    write) against a real `ChatPersistenceService`/`CharactersRAGDB` pair and
-    reads the row straight back off the DB, mirroring this file's own
+    via `db.add_message(...)`; it never exercises
+    `finalize_deferred_user_message_content`'s deferred-create flush at all,
+    so it does not close this gap either. This test does: drives the real flow
+    (deferred row -> content write -> status write) against a real
+    `ChatPersistenceService`/`CharactersRAGDB` pair and reads the row straight
+    back off the DB, mirroring this file's own
     established real-DB pattern (`test_persist_session_if_needed_flushes_
     held_rag_scope_through_real_db`, `test_stop_path_usage_flush_uses_local_
     write_and_leaves_version_unchanged`) for exactly this kind of durability
@@ -4601,7 +4627,7 @@ def test_empty_transcript_placeholder_reaches_a_real_db_through_the_deferred_cre
         )
         assert message.persisted_message_id is None, "deferred, not yet durable"
 
-        store.update_message_content(
+        store.finalize_deferred_user_message_content(
             message.id, CONSOLE_REALTIME_EMPTY_TRANSCRIPT_PLACEHOLDER
         )
         store.set_message_metadata(

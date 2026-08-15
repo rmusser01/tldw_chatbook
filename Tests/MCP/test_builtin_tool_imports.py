@@ -38,6 +38,18 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
 
+@pytest.fixture(autouse=True)
+def _offline_unused_rag_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep import/DB smoke tests off the optional embedding download path."""
+    import tldw_chatbook.MCP.tools as tools_module
+
+    monkeypatch.setattr(
+        tools_module,
+        "SimplifiedRAGSearchService",
+        lambda _media_db: object(),
+    )
+
+
 def test_mcp_tools_resources_prompts_server_modules_import_without_importerror():
     """Direct regression net for the literal defect: at HEAD (pre-fix) each
     of these raised `ImportError: cannot import name 'ChaChaNotes_DB' from
@@ -198,9 +210,10 @@ def test_implemented_legacy_manifest_tool_names_and_order_are_stable():
         "limit",
         "character_id",
     }
-    assert set(
-        by_name["get_conversation_history"]["inputSchema"]["properties"]
-    ) == {"conversation_id", "limit"}
+    assert set(by_name["get_conversation_history"]["inputSchema"]["properties"]) == {
+        "conversation_id",
+        "limit",
+    }
     assert set(by_name["export_conversation"]["inputSchema"]["properties"]) == {
         "conversation_id",
         "format",

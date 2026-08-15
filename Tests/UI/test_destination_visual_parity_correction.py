@@ -8,13 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.css.query import NoMatches
 from textual.widgets import Button
+from textual.widgets import Checkbox
 from textual.widgets import Collapsible
 from textual.widgets import DataTable
 from textual.widgets import Static
@@ -2041,6 +2042,7 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             panes=panes,
             actions=actions,
             height=42,
+            start_by=14 if route == "schedules" else 12,
         )
 
 
@@ -2093,6 +2095,7 @@ async def test_operational_empty_or_blocked_states_preserve_workbench_geometry(
             panes=panes,
             actions=actions,
             height=42,
+            start_by=14 if route == "schedules" else 12,
         )
         _assert_any_marker_inside_container(
             screen,
@@ -2182,6 +2185,7 @@ async def test_operational_loading_states_preserve_workbench_geometry(
             panes=panes,
             actions=actions,
             height=42,
+            start_by=14 if route == "schedules" else 12,
         )
         _assert_marker_inside_container(
             screen,
@@ -2466,9 +2470,23 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _click_settings_category(screen, pilot, "console-behavior")
+        toggle = screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Checkbox
+        )
+        screen.query_one("#settings-detail-pane-body").scroll_to_widget(
+            toggle,
+            animate=False,
+            immediate=True,
+            top=True,
+            force=True,
+        )
+        await pilot.pause()
+        initial_value = toggle.value
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        await pilot.pause()
         banner = screen.query_one("#settings-category-state-banner")
 
+        assert toggle.value is not initial_value
         assert "State:" in str(banner.renderable)
         assert banner.has_class("settings-dirty-category")
 
@@ -2716,13 +2734,9 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
         if route == "schedules":
             assert screen.has_class("schedules-workbench-compact")
             compact_inspector = screen.query_one("#scheduling-inspector-pane")
-            assert _is_effectively_displayed(compact_inspector)
-            assert compact_inspector.region.width > 0
-            _assert_visible_in_viewport(
-                compact_inspector,
-                height=32,
-                context="schedules:compact-inspector",
-                viewport_width=100,
+            assert not _is_effectively_displayed(compact_inspector)
+            assert "Inspector hidden" in str(
+                screen.query_one("#scheduling-pane-notice", Static).renderable
             )
             for width, compact in ((121, False), (120, True)):
                 await pilot.resize_terminal(width, 32)

@@ -2183,6 +2183,11 @@ class SpeechPlaygroundPane(
             if audio_cpp_selected:
                 self._request_audio_cpp_runtime_observation()
             return
+        if failure_copy is None and audio_cpp_selected:
+            try:
+                self.query_one("#tts-refresh-catalog-btn", Button).disabled = False
+            except NoMatches:
+                pass
         if failure_copy is not None:
             if operation == "sample":
                 self._audio_cpp_sample_state = "failed"
@@ -2621,7 +2626,10 @@ class SpeechPlaygroundPane(
         """
         self._sync_split_layout()
         self._refresh_provider_ids()
-        self._settle_language_axis(self.provider)
+        # The language Select may still be composing its nested current-label
+        # widget during the pane's Mount event. Mutate it after first refresh,
+        # before the catalog callback queued below.
+        self.call_after_refresh(self._settle_language_axis, self.provider)
         self._rehydrate_handler_state()
         self._sync_truthful_status_rows()
         self._sync_audio_cpp_runtime_visibility(self.provider)

@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -383,8 +383,9 @@ async def test_library_registration_updates_the_screens_own_footer():
         else:
             raise AssertionError("Library Search/RAG row did not mount.")
         for _ in range(300):
-            screen_footer = screen.query_one(AppFooterStatus)
-            if "use Library context in Console" in screen_footer.shortcut_text:
+            footers = list(screen.query(AppFooterStatus))
+            if footers and "use Library context in Console" in footers[0].shortcut_text:
+                screen_footer = footers[0]
                 break
             await pilot.pause(0.01)
         else:

@@ -54,9 +54,9 @@ order between controllers never matters.
 **`handle_console_message_action` is the wave's risk centre** (294 lines,
 the largest constructor in this cluster as a direct consequence): it has NO
 DOM access of its own, so nothing blocks the move, but it dispatches across
-several clusters that stay screen-owned this wave (change-review, image-
-generation, citation) -- each of those reaches becomes exactly one more
-named callable here, never a back-door through `self.screen`.
+several clusters outside this controller (change-review, image-generation,
+citation) -- each of those reaches becomes exactly one more named callable
+here, never a back-door through `self.screen`.
 
 **Dead bodies / delegation table**: this cluster's pre-move test suite
 reaches an unusually large number of these methods directly by their
@@ -85,10 +85,9 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
   document the whole realtime engine as staying screen-owned this
   programme.
 - `_console_imagegen_inflight_message_ids` -- image-generation in-flight
-  bookkeeping keyed by message id, the message-id-keyed sibling of
-  `_console_imagegen_inflight_sessions`, which `session.py`'s own docstring
-  already calls out as a name-pattern false positive staying screen-owned
-  for the identical reason.
+  bookkeeping keyed by message id, now owned with its session-keyed sibling
+  by `ConsoleImageController`; it remains outside this message controller
+  despite the name match.
 - `_selected_console_message_inspector_rows` / `_clear_native_console_
   message_selection` -- real `query_one` DOM access.
 - `handle_console_send_message` / `_send_console_message_from_visible_
@@ -133,7 +132,10 @@ from ...Chat.console_command_grammar import (
 from ...Chat.console_roleplay_identity import ConsoleMessagePresentation
 from ...Chat.console_ephemeral import blocked_reason
 from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
-from ...Chat.console_message_actions import ConsoleActionResult, ConsoleMessageActionService
+from ...Chat.console_message_actions import (
+    ConsoleActionResult,
+    ConsoleMessageActionService,
+)
 from ...Chat.console_save_targets import (
     console_chatbook_artifact_payload,
     derive_console_save_title,
@@ -144,7 +146,11 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from ...Widgets.Console import ConsoleEditMessageModal, ConsoleEditResult, ConsoleSaveAsModal
+from ...Widgets.Console import (
+    ConsoleEditMessageModal,
+    ConsoleEditResult,
+    ConsoleSaveAsModal,
+)
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -220,6 +226,7 @@ class ConsoleMessageController:
         invalidate_console_persisted_rows_cache: Callable[[], None],
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
+        regenerate_console_video_message: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -320,10 +327,12 @@ class ConsoleMessageController:
                 cluster's cache invalidator (already a named callable on
                 `session.py`), used only by `handle_console_message_
                 action`'s delete branch.
-            play_console_video: `ChatScreen._play_console_video`, used by
-                the video play action.
-            save_console_video_copy: `ChatScreen._save_console_video_copy`,
-                used by the video save action.
+            play_console_video: `ConsoleVideoController._play_console_video`,
+                used by the video play action.
+            save_console_video_copy: `ConsoleVideoController._save_console_
+                video_copy`, used by the video save action.
+            regenerate_console_video_message: `ConsoleVideoController._regenerate_
+                console_video_message`, used by the video regenerate action.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -360,6 +369,7 @@ class ConsoleMessageController:
         )
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
+        self._regenerate_console_video_message_fn = regenerate_console_video_message
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -488,6 +498,12 @@ class ConsoleMessageController:
         if self._save_console_video_copy_fn is None:
             raise RuntimeError("Console video save action is not wired")
         return self._save_console_video_copy_fn
+
+    @property
+    def _regenerate_console_video_message(self) -> Any:
+        if self._regenerate_console_video_message_fn is None:
+            raise RuntimeError("Console video regenerate action is not wired")
+        return self._regenerate_console_video_message_fn
 
     # -- Moved cluster methods (byte-for-byte except as documented above) --
 
@@ -763,7 +779,8 @@ class ConsoleMessageController:
             # is preferred here so the round trip cannot strand it either.
             "metadata_json": (
                 video_metadata.to_json()
-                if (video_metadata := getattr(message, "video_metadata", None)) is not None
+                if (video_metadata := getattr(message, "video_metadata", None))
+                is not None
                 else (
                     metadata.to_json()
                     if (metadata := getattr(message, "metadata", None)) is not None

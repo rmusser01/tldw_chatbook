@@ -73,12 +73,13 @@ async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
 
         tray = console.query_one("#console-workspace-context")
 
-        # Workspace status pair: 12-col label + value with the spec's 10-cell
-        # floor (rail IA spec section 8), neither overflowing the row.
+        # Workspace status pair: 13-col label (12 visible characters plus the
+        # required gutter) + value with the spec's 10-cell floor, neither
+        # overflowing the row.
         pair = console.query_one("#console-active-workspace")
         label = console.query_one("#console-active-workspace-label")
         value = console.query_one("#console-active-workspace-value")
-        assert label.region.width == 12
+        assert label.region.width == 13
         assert value.region.width >= 10
         assert value.region.right <= pair.content_region.right, (
             f"Workspace value overflows its row at {size}: value right "

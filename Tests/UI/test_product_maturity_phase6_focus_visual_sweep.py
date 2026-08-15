@@ -300,8 +300,17 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 ),
             )
 
-            if not isinstance(app.focused, Button):
+            for _ in range(24):
+                if isinstance(app.focused, Button) and app.focused.id == "nav-home":
+                    break
                 await pilot.press("tab")
+            await _wait_until(
+                pilot,
+                lambda: (
+                    isinstance(app.focused, Button) and app.focused.id == "nav-home"
+                ),
+                context="focus:nav-home",
+            )
 
             expected_focus_ids = [
                 *(
@@ -309,63 +318,16 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                     for destination_id in TOP_LEVEL_DESTINATION_IDS
                 ),
             ]
-            # Review-round regression (task-3200 fix round 1): before that
-            # round, every nav button stayed Tab-focusable even while
-            # visually "ghosted" (straddling the strip's scroll viewport
-            # edge) -- a real accessibility bug (a keyboard user could land
-            # on an invisible button with no focus ring). The fix makes a
-            # ghosted button `disabled`, which correctly removes it from
-            # Tab's focus chain -- but at this test's 140-col width the
-            # strip overflows badly enough that whichever destination
-            # happens to be straddling the RIGHT edge at the CURRENT scroll
-            # position is transiently disabled and skipped by a single Tab
-            # press, exactly like a sighted user would never be able to
-            # land on it either (the corresponding fix). It is not
-            # permanently unreachable: the skipped button becomes fully
-            # visible (and re-enabled) again once the strip scrolls past
-            # it and a later lap comes back around; live-measured needing
-            # 17-28 extra presses (repeated runs; the exact count is not
-            # deterministic -- it depends on this bar's own settle timing)
-            # to recover a single skip out of this bar's ~14 stops.
-            # Budget generously per destination instead of assuming
-            # exactly one press always lands on the immediately-next
-            # canonical destination; 60 leaves ample margin over the
-            # observed range, and the fallback wait below is generous
-            # too -- this loop runs with no `pilot.pause` between presses,
-            # so under real machine contention (this suite is routinely
-            # run alongside other concurrent test processes) each press's
-            # internal settle can simply take longer, not just need more
-            # of them.
-            _DESTINATION_FOCUS_BUDGET = 60
             observed_focus_ids: list[str] = []
-            for expected_focus_id in expected_focus_ids:
-                found = False
-                for _ in range(_DESTINATION_FOCUS_BUDGET):
-                    if (
-                        isinstance(app.focused, Button)
-                        and app.focused.id == expected_focus_id
-                    ):
-                        found = True
-                        break
-                    await pilot.press("tab")
-                if not found:
-                    # Exhausted the budget without a single extra frame of
-                    # async settle time -- give the last press's settle
-                    # chain a final, more generous chance before failing
-                    # for real.
-                    await _wait_until(
-                        pilot,
-                        lambda: (
-                            isinstance(app.focused, Button)
-                            and app.focused.id == expected_focus_id
-                        ),
-                        timeout_seconds=5.0,
-                        context=f"focus:{expected_focus_id}",
-                    )
+            for _ in range(24):
                 focused = app.focused
                 assert isinstance(focused, Button)
-                observed_focus_ids.append(focused.id or "")
-                assert str(focused.label).strip()
+                assert focused.id is not None
+                if focused.id == "home-primary-action":
+                    break
+                if focused.id.startswith("nav-") and focused.id != "nav-overflow-hint":
+                    assert not focused.has_class("nav-button-clip-ghost")
+                    observed_focus_ids.append(focused.id)
                 await pilot.press("tab")
 
             for _ in range(24):
@@ -385,8 +347,31 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
             )
             focused = app.focused
             assert isinstance(focused, Button)
-            observed_focus_ids.append(focused.id or "")
             assert str(focused.label).strip()
 
-            assert observed_focus_ids == [*expected_focus_ids, "home-primary-action"]
+            assert observed_focus_ids
+            assert observed_focus_ids[0] == "nav-home"
+            assert len(observed_focus_ids) == len(set(observed_focus_ids))
+            assert [
+                expected_focus_ids.index(focus_id) for focus_id in observed_focus_ids
+            ] == sorted(
+                expected_focus_ids.index(focus_id) for focus_id in observed_focus_ids
+            )
+
+            overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
+            overflow_hint.focus()
+            await pilot.press("enter")
+            await _wait_until(
+                pilot,
+                lambda: app.screen.__class__.__name__ == "NavOverflowMenu",
+                context="navigation overflow menu",
+            )
+            assert [
+                button.id
+                for button in app.screen.query(".nav-overflow-destination")
+                if isinstance(button, Button)
+            ] == [
+                f"nav-overflow-{destination_id}"
+                for destination_id in TOP_LEVEL_DESTINATION_IDS
+            ]
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)

@@ -176,10 +176,12 @@ def test_bindings_follow_keybinding_conventions():
         "ctrl+w",
     }
     keys = {binding.key for binding in VideoPlayerScreen.BINDINGS}
-    assert keys == {"space", "s", "left", "right", "q"}
+    assert keys == {"space", "s", "left", "right", "q", "escape"}
     assert not (keys & forbidden_chords)
     # decision 031: single-letter htop-style for letters.
-    assert all(len(key) == 1 or key in {"space", "left", "right"} for key in keys)
+    assert all(
+        len(key) == 1 or key in {"space", "left", "right", "escape"} for key in keys
+    )
 
 
 def test_hints_line_names_only_implemented_actions():
@@ -256,9 +258,11 @@ async def test_seek_relative_clamps_and_delegates(monkeypatch, delta, expected):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_phase", ["probe", "start"])
+@pytest.mark.parametrize("close_key", ["q", "escape"])
 async def test_blocked_activation_keeps_ui_responsive_and_reaps_stale_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     blocked_phase: str,
+    close_key: str,
 ):
     entered = Event()
     release = Event()
@@ -290,7 +294,7 @@ async def test_blocked_activation_keeps_ui_responsive_and_reaps_stale_pipeline(
     app = _PlayerApp()
     async with app.run_test() as pilot:
         await _wait(entered)
-        await pilot.press("q")
+        await pilot.press(close_key)
         await pilot.press("x")
         assert app.action_count == 1
         release.set()
@@ -301,6 +305,24 @@ async def test_blocked_activation_keeps_ui_responsive_and_reaps_stale_pipeline(
     pipeline = BlockedPipeline.instances[0]
     assert pipeline.stop_calls == 1
     assert pipeline.stopped.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selector", ["#video-player-frame", "#video-player-status", "#video-player-hints"]
+)
+async def test_player_cells_are_whole_screen_content_not_backdrop(selector: str):
+    app = _PlayerApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        await pilot.click(selector)
+        await pilot.pause()
+
+        assert app.screen is app.player
+        assert app.player.is_mounted
+
+        await pilot.press("q")
+        await _finish_workers(app, pilot)
 
 
 @pytest.mark.asyncio

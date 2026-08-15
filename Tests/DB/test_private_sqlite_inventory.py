@@ -591,11 +591,14 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # publisher/recovery validation through the centralized SQLite seam;
         # C47 is the exact admitted restore source retained during canonical
         # candidate preparation. C48 is the descriptor-bound exact-current
-        # proof retained through shared live-store use. (task-15481 retired
+        # proof retained through shared live-store use. C49 is the external
+        # Watchlists agent's non-mutating view of existing subscription data.
+        # C50 is the device-private Notes import receipt and future lasting-sync
+        # state owner. (task-15481 retired
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 49)
+        for number in range(1, 51)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18)
@@ -924,6 +927,29 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
         assert row["disposition"].strip()
 
 
+def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
+    row = _inventory_rows("C")[-1]
+
+    assert row == {
+        "id": "C50",
+        "module": "tldw_chatbook/Notes/note_import_receipts",
+        "symbol": "NoteImportReceiptRepository._connect",
+        "owner_id": "notes.sync_state",
+        "classification": "private_file",
+        "intent": "device-private import receipts and future lasting-sync state",
+        "disposition": (
+            "Migrated via `connect_private_sqlite`. The profile-local ledger stores "
+            "only opaque identifiers, private digests, bounded lifecycle state, and "
+            "reconciliation metadata; it is excluded from portable export and "
+            "centralized backup."
+        ),
+    }
+    assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
+    assert "notes.sync_state" not in {
+        backup_row["owner_id"] for backup_row in _inventory_rows("B")
+    }
+
+
 def test_connection_and_backup_rows_record_completed_helper_migrations() -> None:
     connection_rows = _inventory_rows("C")
     backup_rows = _inventory_rows("B")
@@ -991,6 +1017,16 @@ def test_registry_is_immutable_complete_and_points_to_production_modules() -> No
         assert (PROJECT_ROOT / f"{policy.production_module}.py").is_file()
         with pytest.raises(FrozenInstanceError):
             policy.reason = "mutated"  # type: ignore[misc]
+
+
+def test_subscriptions_agent_reader_is_read_only_and_preserves_source_mode() -> None:
+    policy = SQLITE_OWNER_REGISTRY["db.subscriptions.agent_read"]
+
+    assert policy.production_module == "tldw_chatbook/DB/Subscriptions_DB"
+    assert policy.allowed_target_kinds == frozenset(
+        {SQLiteTargetKind.READ_ONLY_URI}
+    )
+    assert policy.preserve_read_only_source_mode is True
 
 
 def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> None:

@@ -2275,6 +2275,23 @@ display-managed widget needs the target to be focusable, or a fallback.
 
 ---
 
+## A responsive focus handoff must cover both directions of widget replacement
+
+**TASK-16220, 2026-08-14.** The first Console rail fix moved focus from a rail
+that disappeared at a resize breakpoint to its reveal handle. That passed both
+single-transition regressions. Independent review then exercised consecutive
+boundaries: 117→118 focused the Context handle correctly, but 118→129 reopened
+Context and hid that focused handle, leaving focus as `None`. The handoff had
+modeled rail→handle replacement but not handle→rail replacement.
+
+**What to do.** When responsive layout replaces one focusable representation
+with another, test both directions and at least one consecutive transition.
+Capture the logical owner before applying visibility, then synchronously focus
+the visible counterpart after the update; two isolated one-way tests do not
+prove keyboard continuity across adjacent bands.
+
+---
+
 ## Bisecting dev-baseline test rot without a checkout: `git archive` trees run against the same venv
 
 **task-3315, 2026-08-09.** `Tests/UI/test_library_shell.py` carried 56 failures on
@@ -4274,3 +4291,27 @@ composition as separate observation boundaries. Do not publish draft state
 until the exact result claim is acknowledged and cleanup authority is released.
 Exercise mounted handoffs with a delayed lease exit; a screen-level idle or
 refresh observation alone does not prove that a recomposing child tree settled.
+
+---
+
+## Authority tests must vary representation and interleave the guarded write (TASK-16309, 2026-08-14)
+
+**Incident.** The one-time Notes import executor passed its focused execution,
+receipt, retry, privacy, and crash-recovery suites, but final adversarial review
+still reproduced two authority escapes. First, the approval digest NFC-normalized
+title, content, keywords, and template name even though execution stored their
+exact Python text. Reusing an approval with composed versus decomposed Unicode
+therefore reached the target instead of conflicting. Second, membership-only
+execution checked a note version before an unversioned membership write. A
+deterministic update inserted between those operations let the stale membership
+complete. The new RED tests respectively observed the substituted target call and
+the stale attached membership despite the earlier suite being green.
+
+**What to do.** An authority digest must encode the exact representation consumed
+by the effect unless the effect itself canonicalizes to the same representation;
+include canonical-equivalence substitutions for every execution-effective text
+field in approval tests. An optimistic check is evidence only when the expected
+version participates in the atomic mutation that grants the effect. Reproduce the
+read/write interleaving deterministically, assert the stale write changes nothing,
+and cover every idempotent write shape (new row, revive, and already-active row).
+Green sequential and crash-recovery suites do not substitute for either probe.

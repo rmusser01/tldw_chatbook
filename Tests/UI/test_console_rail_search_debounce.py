@@ -100,9 +100,7 @@ class _KeystrokeWorkCounter:
             return original_refresh(tray, *args, **kwargs)
 
         ConsoleWorkspaceContextTray.refresh = counting_refresh
-        self._patched.append(
-            (ConsoleWorkspaceContextTray, "refresh", original_refresh)
-        )
+        self._patched.append((ConsoleWorkspaceContextTray, "refresh", original_refresh))
 
         original_sync = type(self._console)._sync_console_workspace_context
 
@@ -249,7 +247,7 @@ async def test_a_superseded_timer_never_searches_for_the_stale_query():
         with _KeystrokeWorkCounter(console) as counter:
             # Fire the superseded callback directly, as its stopped timer
             # would have.
-            console._start_console_conversation_browser_search(
+            console._workspace._start_console_conversation_browser_search(
                 "stale", stale_token
             )
             assert counter.total == 0

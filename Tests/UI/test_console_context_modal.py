@@ -159,6 +159,25 @@ async def test_context_modal_close_dismisses():
         assert not isinstance(app.screen, ConsoleContextModal)
 
 
+@pytest.mark.parametrize("source", ["close", "backdrop"])
+@pytest.mark.asyncio
+async def test_context_modal_close_and_backdrop_return_none(source: str):
+    app = ActionHarness()
+    results: list[object] = []
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(ConsoleContextModal(_snapshot_factory), results.append)
+        await pilot.pause()
+
+        if source == "close":
+            await pilot.click("#console-context-close")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert results == [None]
+
+
 @pytest.mark.asyncio
 async def test_context_modal_copy_json(monkeypatch):
     app = ActionHarness()

@@ -10394,8 +10394,22 @@ class SettingsScreen(BaseAppScreen):
                 ],
             }
         }
-        if load_model_catalog_settings(section_values) == load_model_catalog_settings(
-            load_settings()
+        # Compare every field EXCEPT consent: only the one-time startup
+        # dialog records consent, and the write below never touches it.
+        # Including it here would make a consented config never compare
+        # equal, rewriting config.toml on every toggle/keystroke.
+        candidate = load_model_catalog_settings(section_values)
+        current = load_model_catalog_settings(load_settings())
+        if (
+            candidate.auto_refresh_enabled,
+            candidate.stale_after_hours,
+            candidate.auto_refresh_disabled,
+            candidate.write_to_config,
+        ) == (
+            current.auto_refresh_enabled,
+            current.stale_after_hours,
+            current.auto_refresh_disabled,
+            current.write_to_config,
         ):
             return
         self._persist_model_catalog_section_values(section_values)
@@ -17548,6 +17562,23 @@ class SettingsScreen(BaseAppScreen):
                 "Server could not be bound from the entered URL.", severity="error"
             )
             return
+
+        if auth_token:
+            provider = getattr(app, "server_context_provider", None)
+            if provider is not None:
+                try:
+                    provider.store_static_server_credential(server_id, auth_token)
+                except Exception as exc:
+                    logger.warning(
+                        "Server token could not be stored in the OS credential "
+                        "store (exception_category=%s).",
+                        type(exc).__name__,
+                    )
+                    self.app.notify(
+                        "Server activated, but the token could not be saved to "
+                        "the OS keyring; it remains saved in config.toml only.",
+                        severity="warning",
+                    )
 
         sync_scope_service = getattr(app, "sync_scope_service", None)
         prepare = getattr(sync_scope_service, "prepare_sync_v2_profile_mode", None)

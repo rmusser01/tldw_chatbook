@@ -91,6 +91,7 @@ def _assert_svg_healthy(svg: str) -> None:
 
 def _assert_console_density_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    rendered_text = _rendered_svg_text(svg)
     assert normalized_svg.count("Provider:") == 1
     assert normalized_svg.count("Model:") == 1
     assert normalized_svg.count("Assistant:") == 1
@@ -100,7 +101,7 @@ def _assert_console_density_evidence(svg: str) -> None:
     assert "Settings" in normalized_svg
     assert "Attach" in normalized_svg
     assert "Search Library" in normalized_svg
-    assert "Model: not selected" in normalized_svg
+    assert "Model: gpt-5.6-terra" in rendered_text
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
 
@@ -111,17 +112,12 @@ def _assert_console_inspector_evidence(svg: str) -> None:
     assert "Status: Blocked" in normalized_svg
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
-    assert "Next action" in normalized_svg
-    assert "Choose provider" in normalized_svg
-    assert "Provider: blocked" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
     assert (
         normalized_svg.index("Status: Blocked")
         < normalized_svg.index("Run recipe")
         < normalized_svg.index("Blocked impact")
-        < normalized_svg.index("Next action")
-        < normalized_svg.index("Provider: blocked")
     )
 
 
@@ -146,10 +142,11 @@ def _assert_command_palette_evidence(svg: str) -> None:
 
 def _assert_console_focus_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    rendered_text = _rendered_svg_text(svg)
     assert "Console Workbench Focus State" in normalized_svg
     assert "Settings" in normalized_svg
     assert "Provider:" in normalized_svg
-    assert "Model: not selected" in normalized_svg
+    assert "Model: gpt-5.6-terra" in rendered_text
 
 
 def _assert_visible_ancestors(widget) -> None:
@@ -233,6 +230,8 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
                 simplify=True,
             )
             _assert_svg_healthy(svg)
+            send = app.screen.query_one("#console-send-message", Button)
+            assert send.render_line(0).text.strip() == "Send"
             _assert_console_density_evidence(svg)
 
 
@@ -351,7 +350,7 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
     ),
     (
         ((140, 42), "context-open-inspector-collapsed", True, False, (30, 0)),
-        ((140, 42), "both-open", True, True, (30, 34)),
+        ((140, 42), "inspector-priority-after-both-open", True, True, (0, 34)),
         ((140, 42), "context-collapsed-inspector-open", False, True, (0, 34)),
         ((140, 42), "both-collapsed", False, False, (0, 0)),
         ((160, 45), "context-open-inspector-collapsed", True, False, (30, 0)),
@@ -457,6 +456,9 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             )
             await pilot.pause(0.5)
 
+            effective_context_open = expected_rail_widths[0] > 0
+            effective_inspector_open = expected_rail_widths[1] > 0
+
             assert (
                 app.screen.query_one("#console-left-rail").region.width,
                 app.screen.query_one("#console-right-rail").region.width,
@@ -464,19 +466,19 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
 
             context_selector = (
                 "#console-context-rail-collapse"
-                if context_open
+                if effective_context_open
                 else "#console-context-rail-open"
             )
             inspector_selector = (
                 "#console-inspector-rail-collapse"
-                if inspector_open
+                if effective_inspector_open
                 else "#console-inspector-rail-open"
             )
             context_button, context_header = assert_control_preconditions(
                 rail_selector="#console-left-rail",
                 handle_selector="#console-context-rail-handle",
                 button_selector=context_selector,
-                open_state=context_open,
+                open_state=effective_context_open,
                 handle_width=13,
                 content_width=11,
             )
@@ -484,7 +486,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
                 rail_selector="#console-right-rail",
                 handle_selector="#console-inspector-rail-handle",
                 button_selector=inspector_selector,
-                open_state=inspector_open,
+                open_state=effective_inspector_open,
                 handle_width=11,
                 content_width=9,
             )
@@ -502,13 +504,21 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             assert rendered_text.strip()
             assert "Console" in rendered_text
 
-            context_label = "<---------|Context" if context_open else "Context->"
-            inspector_label = "Inspect|--------->" if inspector_open else "<-Inspect"
+            context_label = (
+                "<---------|Context" if effective_context_open else "Context->"
+            )
+            inspector_label = (
+                "Inspect|--------->" if effective_inspector_open else "<-Inspect"
+            )
             context_tooltip = (
-                "Collapse Console context rail" if context_open else "Open Context rail"
+                "Collapse Console context rail"
+                if effective_context_open
+                else "Open Context rail"
             )
             inspector_tooltip = (
-                "Collapse Inspector rail" if inspector_open else "Open Inspector rail"
+                "Collapse Inspector rail"
+                if effective_inspector_open
+                else "Open Inspector rail"
             )
 
             assert (
@@ -522,14 +532,14 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             assert context_button.tooltip == context_tooltip
             assert inspector_button.tooltip == inspector_tooltip
 
-            if context_open:
+            if effective_context_open:
                 assert context_header is not None
                 assert not app.screen.query("#console-context-rail-title")
                 assert list(context_header.children) == [context_button]
                 assert (
                     context_button.region.width == context_header.content_region.width
                 )
-            if inspector_open:
+            if effective_inspector_open:
                 assert inspector_header is not None
                 assert not app.screen.query("#console-inspector-rail-title")
                 assert list(inspector_header.children) == [inspector_button]
@@ -553,6 +563,10 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
             right_rail = app.screen.query_one("#console-right-rail")
             assert right_rail.display is True
             assert right_rail.region.width > 0
+            next_action = app.screen.query_one("#console-inspector-next-action", Static)
+            assert next_action.render_line(0).text.strip() == (
+                "Next action: Set up provider"
+            )
             svg = app.export_screenshot(
                 title="Console Workbench Standard Width Inspector",
                 simplify=True,

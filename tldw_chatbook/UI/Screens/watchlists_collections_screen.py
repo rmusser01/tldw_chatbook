@@ -9095,11 +9095,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 resolved_key = (*target_key[:-1], resolved_target)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             async with self._items_page_presentation_lock:
                 if not self._items_load_is_current(generation, target_key):
                     return False
-                logger.opt(exception=True).debug("Failed to load watchlist items.")
+                logger.debug(
+                    "Failed to load watchlist items (exception_type={}).",
+                    type(exc).__name__,
+                )
                 self._items_page_loading = False
                 self._push_items_pager_state()
                 if callable(notify):
@@ -9148,13 +9151,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     pane.search_results_authoritative = rollback_authority()
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 raise
-            except Exception:
+            except Exception as exc:
                 if pane is not None:
                     pane.search_results_authoritative = rollback_authority()
                     await pane.apply_page_items(prior_rows, focus_first=False)
                 if not self._items_load_is_current(generation, target_key):
                     return False
-                logger.opt(exception=True).debug("Failed to load watchlist items.")
+                logger.debug(
+                    "Failed to load watchlist items (exception_type={}).",
+                    type(exc).__name__,
+                )
                 self._items_page_loading = False
                 self._push_items_pager_state()
                 if callable(notify):

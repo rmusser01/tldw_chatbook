@@ -4473,10 +4473,13 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
         prepared.accounting.total_input_tokens
         > without_private.accounting.total_input_tokens
     )
-    assert sum(
-        row.get("content") == "ACTIVE-CANONICAL-ONCE"
-        for row in prepared.messages_payload
-    ) == 1
+    assert (
+        sum(
+            row.get("content") == "ACTIVE-CANONICAL-ONCE"
+            for row in prepared.messages_payload
+        )
+        == 1
+    )
 
 
 def test_run_reply_returns_runoutcome_error():

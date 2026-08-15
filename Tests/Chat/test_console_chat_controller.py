@@ -3731,9 +3731,10 @@ async def test_controller_bridge_agent_service_bound_private_history_on_real_sen
 
     assert result.accepted
     assert gateway.prepared is not None
-    assert not any(row.get("content") == "old answer" for row in gateway.prepared)
-    assert any(row.get("content") == "current" for row in gateway.prepared)
-    assert all("_native_message_id" not in row for row in gateway.prepared)
+    prepared = gateway.prepared.messages_payload
+    assert not any(row.get("content") == "old answer" for row in prepared)
+    assert any(row.get("content") == "current" for row in prepared)
+    assert all("_native_message_id" not in row for row in prepared)
     assert "JOINED-PRIVATE-CANARY" not in repr(gateway.prepared)
 
 

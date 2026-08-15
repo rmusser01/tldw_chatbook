@@ -441,6 +441,53 @@ class RuntimeServerContextProvider:
             self._legacy_cleared_server_ids.discard(context.active_server_id)
             self._invalidate_cached_client()
 
+    def store_static_server_credential(
+        self,
+        server_id: str,
+        secret: str,
+        *,
+        auth_mode: str | None = None,
+    ) -> str:
+        """Persist a user-entered static token to the credential store eagerly.
+
+        Unlike the lazy legacy-config import, this write is authoritative for
+        the server profile: it also clears any sign-out marker so a re-entered
+        token resolves immediately without the legacy config fallback.
+
+        Args:
+            server_id: Server profile the secret belongs to.
+            secret: User-entered token value; must be non-empty.
+            auth_mode: Optional auth mode override; resolved from the
+                configured target when omitted.
+
+        Returns:
+            The credential purpose the secret was stored under.
+
+        Raises:
+            ValueError: If ``server_id`` or ``secret`` is empty.
+            CredentialStoreUnavailable: If no secure credential store exists.
+        """
+        normalized_server_id = str(server_id or "").strip()
+        normalized_secret = str(secret or "").strip()
+        if not normalized_server_id or not normalized_secret:
+            raise ValueError("server_id and secret must be non-empty")
+
+        resolved_auth_mode = auth_mode
+        if resolved_auth_mode is None:
+            target = self.target_store.get_target(normalized_server_id)
+            resolved_auth_mode = str(getattr(target, "auth_mode", "") or "")
+        purposes = self._purposes_for_auth_mode(resolved_auth_mode) or (
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        purpose = purposes[0]
+        self.credential_store.set_secret(
+            normalized_server_id, purpose, normalized_secret
+        )
+        self._legacy_cleared_server_ids.discard(normalized_server_id)
+        self._invalidate_cached_client()
+        return purpose
+
     def resolve_target(self) -> ConfiguredServerTarget | None:
         active_server_id = self._require_active_server_id()
         target = self.target_store.get_target(active_server_id)
@@ -748,7 +795,20 @@ class RuntimeServerContextProvider:
         purpose = purposes[0]
         try:
             self.credential_store.set_secret(server_id, purpose, token)
-        except Exception:
+        except CredentialStoreUnavailable as exc:
+            logger.warning(
+                "Legacy token keyring import skipped; credential store "
+                "unavailable (reason_code={}).",
+                exc.reason_code,
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "Legacy token keyring import failed "
+                "(purpose={}, exception_category={}).",
+                purpose,
+                type(exc).__name__,
+            )
             return None
         return purpose
 

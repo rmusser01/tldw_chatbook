@@ -190,7 +190,7 @@ def test_no_persistent_state_is_ever_written_for_builtins():
     gate = BuiltinToolGate(svc)
     gate.begin_turn(RUN)
     gate.stamp(RUN, "write_thing", "always_allow")
-    gate.check(_Mutating(), RUN)          # must not raise via set_tool_state
+    gate.check(_Mutating(), RUN)  # must not raise via set_tool_state
 
 
 def test_deny_state_blocks():
@@ -339,23 +339,31 @@ def test_stamp_scope_is_reentrant_for_nested_scopes():
 def test_builtin_permission_rows_lists_live_tools_with_resolved_state():
     from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
 
-    rows = builtin_permission_rows({})          # empty payload -> the allow floor
+    rows = builtin_permission_rows({})  # empty payload -> the allow floor
     by_name = {r.name: r for r in rows}
     assert "calculator" in by_name and "get_current_datetime" in by_name
     # Untagged tools resolve to the built-in floor, not the MCP "ask" default.
     assert by_name["calculator"].effective.state == "allow"
     assert by_name["calculator"].effective.origin == "builtin_default"
     assert by_name["calculator"].orphaned is False
-    assert by_name["calculator"].description        # carried for display
+    assert by_name["calculator"].description  # carried for display
 
 
 def test_builtin_permission_rows_reflects_a_stored_override():
     from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
     from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 
-    payload = {"profiles": {"default": {"servers": {
-        BUILTIN_TOOL_SERVER_KEY: {"tools": {"calculator": {"state": "deny"}}}
-    }}}}
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {
+                    BUILTIN_TOOL_SERVER_KEY: {
+                        "tools": {"calculator": {"state": "deny"}}
+                    }
+                }
+            }
+        }
+    }
     row = {r.name: r for r in builtin_permission_rows(payload)}["calculator"]
     assert row.effective.state == "deny"
     assert row.effective.origin == "tool_override"
@@ -367,9 +375,17 @@ def test_builtin_permission_rows_surfaces_orphaned_stored_entries():
     from tldw_chatbook.Agents.builtin_tool_gate import builtin_permission_rows
     from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 
-    payload = {"profiles": {"default": {"servers": {
-        BUILTIN_TOOL_SERVER_KEY: {"tools": {"tool_that_no_longer_exists": {"state": "allow"}}}
-    }}}}
+    payload = {
+        "profiles": {
+            "default": {
+                "servers": {
+                    BUILTIN_TOOL_SERVER_KEY: {
+                        "tools": {"tool_that_no_longer_exists": {"state": "allow"}}
+                    }
+                }
+            }
+        }
+    }
     rows = {r.name: r for r in builtin_permission_rows(payload)}
     assert rows["tool_that_no_longer_exists"].orphaned is True
     assert rows["calculator"].orphaned is False
@@ -387,7 +403,7 @@ def test_builtin_permission_rows_needs_no_agent_run():
         builtin_permission_rows({})
     finally:
         tc.build_builtin_gate = original
-    assert calls == []          # the lazy gate was never built
+    assert calls == []  # the lazy gate was never built
 
 
 def test_network_tag_floors_inherited_allow_to_ask():
@@ -440,18 +456,24 @@ def test_all_tool_gates_enumerates_nine_gates_with_sections_and_groups(monkeypat
     # moment _GATEABLE_BUILTINS gains or reorders an entry).
     builtin_gates = gates[: len(_GATEABLE_BUILTINS)]
     assert [g.key for g in builtin_gates] == [e.gate_key for e in _GATEABLE_BUILTINS]
-    assert [g.tool_name for g in builtin_gates] == [e.tool_name for e in _GATEABLE_BUILTINS]
+    assert [g.tool_name for g in builtin_gates] == [
+        e.tool_name for e in _GATEABLE_BUILTINS
+    ]
     assert all(g.section == "tools" and g.group == "builtin" for g in builtin_gates)
-    assert all(g.description for g in builtin_gates)  # real tool descriptions, never blank
+    assert all(
+        g.description for g in builtin_gates
+    )  # real tool descriptions, never blank
     assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
 
     # The local group: master switch FIRST, then web_deep_search.
-    local_gates = gates[len(_GATEABLE_BUILTINS):]
+    local_gates = gates[len(_GATEABLE_BUILTINS) :]
     assert len(local_gates) == 2
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
     assert local_gates[0].group == "local"
     assert local_gates[0].enabled is True  # missing key -> available by default
+    assert "workspace, web, and Watchlists" in local_gates[0].description
+    assert "standard web research" not in local_gates[0].description
     assert local_gates[1].section == "tools"
     assert local_gates[1].key == WEB_DEEP_SEARCH_GATE_KEY
     assert local_gates[1].group == "local"
@@ -538,7 +560,10 @@ def test_tool_gate_breadcrumb_absent_when_all_gates_are_on(monkeypatch):
 
 def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
     import tldw_chatbook.config as config_module
-    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates, tool_gate_breadcrumb
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        all_tool_gates,
+        tool_gate_breadcrumb,
+    )
 
     monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
     gates = all_tool_gates()  # master defaults on; the other 8 gates default off
@@ -547,6 +572,26 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
     assert "8" in text
     assert "Tools mode" in text
     assert "web_search, web_fetch, web_crawl" not in text
+
+
+def test_tool_gate_breadcrumb_names_expanded_principal_when_master_is_off(
+    monkeypatch,
+):
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_MASTER_KEY,
+        tool_gate_breadcrumb,
+    )
+
+    def only_master_off(section, key=None, default=None):
+        return False if key == LOCAL_TOOLS_MASTER_KEY else True
+
+    monkeypatch.setattr(config_module, "get_cli_setting", only_master_off)
+
+    text = tool_gate_breadcrumb()
+    assert text is not None
+    assert "Enable 'Local workspace, web, and Watchlists tools'" in text
+    assert "local/web" not in text
 
 
 def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
@@ -568,14 +613,13 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
         raise AssertionError(f"count path constructed a tool: {entry}")
 
     monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d
-    )
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d)
     assert builtin_tool_gate.count_off_tool_gates() == 8
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
     assert breadcrumb is not None
     assert "8 tool gate(s)" in breadcrumb
-    assert "local/web master switch in Tools mode" in breadcrumb
+    assert "workspace, web, and Watchlists master switch in Tools mode" in breadcrumb
+    assert "local/web" not in breadcrumb
     assert "built-in server detail" in breadcrumb
 
 

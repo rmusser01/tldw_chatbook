@@ -14,6 +14,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -61,6 +62,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.model_capabilities import is_vision_capable
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from .console_context_controls import (
@@ -92,6 +94,7 @@ AllMemoryResetter = Callable[[], int]
 ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
 STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +229,9 @@ class ConsoleSettingsInput(Input):
         self.release_mouse()
 
 
-class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
+class ConsoleSettingsModal(
+    SafeModalDismissMixin, ModalScreen[ConsoleSettingsResult | None]
+):
     """Edit a draft of the current Console session settings."""
 
     DEFAULT_CSS = f"""
@@ -293,9 +298,45 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         height: auto;
         min-height: 3;
     }}
+
+    ConsoleSettingsModal #console-settings-close-guard {{
+        display: none;
+        position: absolute;
+        offset: 0 0;
+        width: 100%;
+        height: 100%;
+        align: center middle;
+        padding: 2;
+        background: $panel;
+    }}
+
+    ConsoleSettingsModal #console-settings-close-guard.visible {{
+        display: block;
+    }}
+
+    ConsoleSettingsModal #console-settings-close-actions {{
+        width: 100%;
+        height: auto;
+        align: center middle;
+    }}
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    BINDINGS = [
+        ("escape", "request_safe_cancel", "Cancel"),
+        Binding(
+            "tab",
+            "settings_focus_next",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "shift+tab",
+            "settings_focus_previous",
+            show=False,
+            priority=True,
+        ),
+    ]
+    SAFE_MODAL_CONTENT = "#console-settings-modal"
 
     def __init__(
         self,
@@ -364,6 +405,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         if initial_base_url:
             self._provider_base_url_drafts[settings.provider] = initial_base_url
         self._readiness_debounce_timer: Timer | None = None
+        self._settings_close_guard_mode: str | None = None
+        self._settings_close_guard_focus: Widget | None = None
+        self._compaction_wait_worker: Any | None = None
+        self._compaction_provider_task: asyncio.Task[tuple[bool, str]] | None = None
+        self._compaction_result_definitive = False
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -1029,6 +1075,28 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
                     variant="primary",
                     disabled=not self._can_save,
                 )
+            guard = Vertical(
+                Static("", id="console-settings-close-message", markup=False),
+                Horizontal(
+                    Button(
+                        "Undo and close",
+                        id="console-settings-close-undo",
+                    ),
+                    Button(
+                        "Keep reset and close",
+                        id="console-settings-close-keep",
+                    ),
+                    Button(
+                        "Close anyway",
+                        id="console-settings-close-anyway",
+                    ),
+                    Button("Return", id="console-settings-close-return"),
+                    id="console-settings-close-actions",
+                ),
+                id="console-settings-close-guard",
+            )
+            guard.display = False
+            yield guard
 
     def on_mount(self) -> None:
         self._show_settings_view(self._active_view)
@@ -1097,7 +1165,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         self._show_settings_view("context")
         self.query_one("#console-context-budget-mode", Select).focus()
 
-    def on_click(self, event: events.Click) -> None:
+    # Textual 8 composes same-named sync/async MRO message handlers; this is not
+    # an ordinary OO override of the mixin hook.
+    def on_click(self, event: events.Click) -> None:  # type: ignore[override]
         """Recover select clicks redirected through focused Textual Web inputs.
 
         Args:
@@ -1187,12 +1257,150 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         return label
 
     def action_dismiss(self) -> None:
-        self.dismiss(None)
+        """Route the dismiss action through the applicable close guard."""
+        self._request_settings_close()
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        self._request_settings_close()
+
+    def _request_settings_close(self) -> None:
+        """Dismiss cleanly or reveal the one applicable side-effect guard."""
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        if guard.display:
+            self._focus_settings_close_guard()
+            return
+        if self._memory_reset_token is not None:
+            self._show_settings_close_guard("reset")
+            return
+        if self._compaction_is_active():
+            self._show_settings_close_guard("compaction")
+            return
+        self.dismiss_safe_once(None)
+
+    def _show_settings_close_guard(self, mode: str) -> None:
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        if guard.display and self._settings_close_guard_mode == mode:
+            self._focus_settings_close_guard()
+            return
+        if not guard.display:
+            self._settings_close_guard_focus = self.focused
+        self._settings_close_guard_mode = mode
+        is_reset = mode == "reset"
+        self.query_one("#console-settings-close-undo", Button).display = is_reset
+        self.query_one("#console-settings-close-keep", Button).display = is_reset
+        self.query_one("#console-settings-close-anyway", Button).display = not is_reset
+        message = self.query_one("#console-settings-close-message", Static)
+        message.update(
+            (
+                "Current branch memory was reset. Undo it before closing, "
+                "keep the reset, or return to Settings."
+                if is_reset
+                else "Compaction is still running. Closing stops waiting here. "
+                f"{COMPACTION_CLOSE_WARNING}"
+            )
+        )
+        guard.add_class("visible")
+        guard.display = True
+        self.call_after_refresh(self._focus_settings_close_guard)
+
+    def _focus_settings_close_guard(self) -> None:
+        selector = (
+            "#console-settings-close-undo"
+            if self._settings_close_guard_mode == "reset"
+            else "#console-settings-close-anyway"
+        )
+        self.query_one(selector, Button).focus()
+
+    def action_settings_focus_next(self) -> None:
+        """Move focus forward within the active close guard or Settings."""
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        selector = "#console-settings-close-guard Button" if guard.display else "*"
+        self.focus_next(selector)
+
+    def action_settings_focus_previous(self) -> None:
+        """Move focus backward within the active close guard or Settings."""
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        selector = "#console-settings-close-guard Button" if guard.display else "*"
+        self.focus_previous(selector)
+
+    def _hide_settings_close_guard(self) -> str | None:
+        guard = self.query_one("#console-settings-close-guard", Vertical)
+        mode = self._settings_close_guard_mode
+        guard.remove_class("visible")
+        guard.display = False
+        self._settings_close_guard_mode = None
+        return mode
+
+    def _restore_settings_close_focus(self, widget: Widget | None) -> None:
+        if widget is not None and widget.is_mounted and widget.is_attached:
+            widget.focus()
+
+    def _compaction_is_active(self) -> bool:
+        task = self._compaction_provider_task
+        worker = self._compaction_wait_worker
+        return bool(
+            (task is not None and not task.done())
+            or (worker is not None and not worker.is_finished)
+        )
 
     @on(Button.Pressed, "#console-settings-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
+
+    @on(Button.Pressed, "#console-settings-close-undo")
+    def _close_after_undo(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._undo_memory_reset():
+            self._finish_reset_close_choice()
+
+    @on(Button.Pressed, "#console-settings-close-keep")
+    def _keep_reset_and_close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._memory_reset_token = None
+        undo = self.query_one("#console-context-undo-reset", Button)
+        undo.display = False
+        undo.disabled = True
+        self._finish_reset_close_choice()
+
+    def _finish_reset_close_choice(self) -> None:
+        if self._compaction_is_active():
+            self.query_one("#console-context-action-status", Static).update(
+                "Compacting… one additional model call may be billed."
+            )
+            self._show_settings_close_guard("compaction")
+            return
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#console-settings-close-anyway")
+    def _close_during_compaction(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._compaction_result_definitive:
+            self.dismiss_safe_once(None)
+            return
+        worker = self._compaction_wait_worker
+        if not self.dismiss_safe_once(None):
+            return
+        self._compaction_wait_worker = None
+        if worker is not None and not worker.is_finished:
+            worker.cancel()
+        self.notify(
+            COMPACTION_CLOSE_WARNING,
+            severity="warning",
+            markup=False,
+        )
+
+    @on(Button.Pressed, "#console-settings-close-return")
+    def _return_from_close_guard(self, event: Button.Pressed) -> None:
+        event.stop()
+        mode = self._hide_settings_close_guard()
+        if mode == "reset":
+            focus = self.query_one("#console-context-undo-reset", Button)
+        else:
+            focus = self._settings_close_guard_focus
+        self._settings_close_guard_focus = None
+        self.call_after_refresh(self._restore_settings_close_focus, focus)
 
     @on(Button.Pressed, "#console-settings-save")
     def _save(self, event: Button.Pressed) -> None:
@@ -1300,20 +1508,28 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         if self._compact_now is None:
             return
         event.button.disabled = True
+        self._compaction_result_definitive = False
         self.query_one("#console-context-action-status", Static).update(
             "Compacting… one additional model call may be billed."
         )
-        self.run_worker(self._compact_context_now_worker(), exclusive=True)
+        self._compaction_wait_worker = self.run_worker(
+            self._compact_context_now_worker(),
+            exclusive=True,
+            group="console-settings-compaction",
+        )
 
     async def _compact_context_now_worker(self) -> None:
         """Run the supplied controller action and restore the modal controls."""
         if self._compact_now is None:
             return
+        provider_task = asyncio.create_task(self._run_context_compaction())
+        self._compaction_provider_task = provider_task
+        provider_task.add_done_callback(self._context_compaction_finished)
         try:
-            succeeded, message = await self._compact_now()
-        except Exception:
-            succeeded = False
-            message = "Conversation compaction failed before memory was updated."
+            succeeded, message = await asyncio.shield(provider_task)
+        except asyncio.CancelledError:
+            return
+        self._compaction_wait_worker = None
         if not self.is_mounted:
             return
         self.query_one("#console-context-action-status", Static).update(message)
@@ -1323,19 +1539,50 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
             self.query_one("#console-context-memory-metadata", Static).update(
                 "Generated memory updated; transcript unchanged. Reopen to review provenance."
             )
+        if self._settings_close_guard_mode == "compaction":
+            focus = self._settings_close_guard_focus
+            self.query_one("#console-settings-close-message", Static).update(message)
+            self._hide_settings_close_guard()
+            self._settings_close_guard_focus = None
+            self.call_after_refresh(self._restore_settings_close_focus, focus)
+
+    async def _run_context_compaction(self) -> tuple[bool, str]:
+        """Run provider work independently of the modal-owned wait worker."""
+        if self._compact_now is None:
+            return False, "Conversation compaction is unavailable."
+        try:
+            return await self._compact_now()
+        except Exception:
+            return False, "Conversation compaction failed before memory was updated."
+
+    def _context_compaction_finished(
+        self, task: asyncio.Task[tuple[bool, str]]
+    ) -> None:
+        if self._compaction_provider_task is task:
+            self._compaction_result_definitive = True
+            self._compaction_provider_task = None
 
     @on(Button.Pressed, "#console-context-undo-reset")
     def _undo_current_branch_memory_reset(self, event: Button.Pressed) -> None:
         """Reactivate the exact reset revision when it has not changed again."""
         event.stop()
+        self._undo_memory_reset()
+
+    def _undo_memory_reset(self) -> bool:
+        """Reactivate the optimistic reset token and refresh its controls."""
         token = self._memory_reset_token
         if token is None or self._undo_current_memory_reset is None:
-            return
+            return False
         restored = self._undo_current_memory_reset(*token)
         status = self.query_one("#console-context-action-status", Static)
         if not restored:
-            status.update("Undo expired because conversation memory changed.")
-            return
+            recovery = "Undo expired because conversation memory changed."
+            status.update(recovery)
+            if self._settings_close_guard_mode == "reset":
+                self.query_one("#console-settings-close-message", Static).update(
+                    recovery
+                )
+            return False
         self._memory_reset_token = None
         self.query_one("#console-settings-memory-review", Static).update(
             self._memory_review_text()
@@ -1346,9 +1593,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSettingsResult | None]):
         reset = self.query_one("#console-context-reset-current", Button)
         reset.display = True
         reset.disabled = False
-        event.button.display = False
-        event.button.disabled = True
+        undo = self.query_one("#console-context-undo-reset", Button)
+        undo.display = False
+        undo.disabled = True
         status.update("Current branch memory restored; transcript was unchanged.")
+        return True
 
     @on(Button.Pressed, "#console-context-reset-all")
     def _request_reset_all_memories(self, event: Button.Pressed) -> None:

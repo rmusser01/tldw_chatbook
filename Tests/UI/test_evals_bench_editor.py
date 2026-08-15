@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 from rich.markup import escape as escape_markup
-from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
 import tldw_chatbook
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
 from tldw_chatbook.Evals.word_bench.storage import (
@@ -73,7 +73,7 @@ class _FakeAppInstance:
         self.notifications.append((message, severity))
 
 
-class EvalsHarness(App):
+class EvalsHarness(ConsolidatedCSSApp):
     CSS_PATH = _BUNDLED_CSS_PATH
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:

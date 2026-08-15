@@ -967,7 +967,10 @@ class ArtifactAcquisitionService:
             )
             entries.append(entry)
             if not already_installed:
-                if descriptor.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,):
+                if (
+                    descriptor.provenance == (ProvenanceClass.LOCAL_INTEGRITY_RECORDED,)
+                    and descriptor.source_url == ""
+                ):
                     raise CatalogError(
                         f"{ref.artifact_id}@{ref.revision} local integrity "
                         "descriptors cannot be acquired"

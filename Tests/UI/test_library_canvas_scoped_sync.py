@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -259,14 +259,17 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _library_prompts_mutation_in_flight=False,
         _flush_library_prompt_save=permitted,
         _invalidate_library_prompts_browse=Mock(),
+        _clear_library_prompt_selection=Mock(),
         _reset_library_prompt_editor_state=Mock(),
+        _refresh_library_prompt_detail=Mock(return_value=object()),
         _selected_prompt_id=None,
+        _library_prompt_select_mode=False,
         _library_selected_row_id="",
         _library_prompts_view="list",
         run_worker=Mock(),
     )
     prompt_event = SimpleNamespace(
-        stop=Mock(), button=SimpleNamespace(prompt_id=None)
+        stop=Mock(), button=SimpleNamespace(prompt_id=1)
     )
 
     with patch.object(
@@ -420,6 +423,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
     prompt_screen = SimpleNamespace(
         is_mounted=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_PROMPTS,
+        _library_prompts_mutation_in_flight=False,
         _library_prompts_import_status="",
         query_one=Mock(return_value=prompt_line),
     )
@@ -457,7 +461,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
 
     prompt_line.update.assert_called_once_with("2 imported")
     skill_line.update.assert_called_once_with("Imported")
-    assert prompt_screen._library_prompts_import_status == "Imported after navigation"
+    assert prompt_screen._library_prompts_import_status == "2 imported"
     assert skill_screen._library_skills_import_status == "Imported after navigation"
 
 

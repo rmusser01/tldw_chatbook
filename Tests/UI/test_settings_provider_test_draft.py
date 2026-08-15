@@ -1,7 +1,7 @@
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from textual.widgets import Input, Static
@@ -1187,6 +1187,16 @@ def _provider_test_result_text(screen) -> str:
     return _static_text(screen.query_one("#settings-provider-test-result", Static))
 
 
+async def _reachable_endpoint_probe(
+    _base_url: str, **_kwargs: object
+) -> SettingsEndpointProbeOutcome:
+    return SettingsEndpointProbeOutcome(
+        state="reachable",
+        summary="reachable (1 model)",
+        model_ids=("llama-3",),
+    )
+
+
 @pytest.mark.asyncio
 async def test_test_provider_button_click_runs_the_check():
     """AC#2: clicking #settings-test-provider (not the 't' hotkey) runs the test."""
@@ -1202,19 +1212,14 @@ async def test_test_provider_button_click_runs_the_check():
         # Sanity: the test has not run yet (mount-time default copy only).
         assert _provider_test_result_text(screen) == "Provider test has not run."
 
-        probe = AsyncMock(
-            return_value=SimpleNamespace(
-                summary="reachable (1 model)", reachable=True
-            )
-        )
         with patch(
             "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
-            probe,
+            _reachable_endpoint_probe,
         ):
             await _click_scrolled_settings_button(
                 screen, pilot, "#settings-test-provider"
             )
-            await _wait_for_settings_text(screen, pilot, "Provider test")
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         result_text = _provider_test_result_text(screen)
         assert "Provider test" in result_text
@@ -1253,19 +1258,14 @@ async def test_test_provider_button_runs_with_provider_input_focused():
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.
         assert screen._settings_text_entry_has_focus() is True
 
-        probe = AsyncMock(
-            return_value=SimpleNamespace(
-                summary="reachable (1 model)", reachable=True
-            )
-        )
         with patch(
             "tldw_chatbook.UI.Screens.settings_screen.probe_settings_endpoint",
-            probe,
+            _reachable_endpoint_probe,
         ):
             await _click_scrolled_settings_button(
                 screen, pilot, "#settings-test-provider"
             )
-            await _wait_for_settings_text(screen, pilot, "Provider test")
+            await _wait_for_settings_text(screen, pilot, "endpoint reachable")
 
         assert "Provider test" in _provider_test_result_text(screen)
 

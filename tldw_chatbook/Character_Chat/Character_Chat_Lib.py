@@ -4499,10 +4499,7 @@ def export_conversation_to_json(
                 try:
                     entry["usage"] = json.loads(usage_json)
                 except (TypeError, ValueError):
-                    logger.debug(
-                        f"Skipping malformed usage_json on message export "
-                        f"for conversation {conversation_id}"
-                    )
+                    logger.debug("Skipping malformed usage_json on message export")
             export_data["messages"].append(entry)
 
         return json.dumps(export_data, indent=2, ensure_ascii=False)

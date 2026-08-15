@@ -28,6 +28,8 @@ from tldw_chatbook.Model_Artifacts.service import (
     ModelArtifactService,
 )
 
+_MODEL_IMPORT_SELECTOR = ".model-import"
+
 
 class _InstalledApp(ConsolidatedCSSApp):
     def __init__(self, view) -> None:
@@ -159,13 +161,23 @@ def _unmanaged_inventory(source: Path):
     )
 
 
-async def _wait_until(pilot, predicate, *, attempts: int = 120) -> None:
-    """Pump Textual until a cross-thread observation becomes true."""
-    for _ in range(attempts):
-        if predicate():
-            return
-        await pilot.pause()
-    assert predicate()
+async def _wait_until(pilot, predicate, *, timeout_seconds: float = 10.0) -> None:
+    """Pump Textual until a cross-thread observation becomes true.
+
+    Args:
+        pilot: Mounted Textual test pilot used to process deferred work.
+        predicate: Zero-argument condition that signals completion.
+        timeout_seconds: Maximum wall-clock time to wait.
+
+    Raises:
+        AssertionError: If the condition does not settle before the timeout.
+    """
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            while not predicate():
+                await pilot.pause()
+    except TimeoutError:
+        assert predicate()
 
 
 def _rendered_static_text(view) -> str:
@@ -452,7 +464,7 @@ async def test_header_and_unmanaged_row_open_real_gguf_picker(
             lambda screen, callback=None: pushed.append((screen, callback)),
         )
         header = view.query_one("#installed-models-import-gguf", Button)
-        row_action = view.query_one(".model-import", Button)
+        row_action = view.query_one(_MODEL_IMPORT_SELECTOR, Button)
         for action in (header, row_action):
             assert action in app.screen._compositor.visible_widgets
             assert action.region.right <= app.size.width
@@ -481,7 +493,7 @@ async def test_header_and_unmanaged_row_open_real_gguf_picker(
         decided(False)
         await pilot.pause()
 
-        row_action = view.query_one(".model-import", Button)
+        row_action = view.query_one(_MODEL_IMPORT_SELECTOR, Button)
         row_action.focus()
         await pilot.press("enter")
         await pilot.pause()
@@ -530,7 +542,7 @@ async def test_declined_consent_performs_no_service_call(
             "push_screen",
             lambda screen, callback=None: pushed.append((screen, callback)),
         )
-        await pilot.click(".model-import")
+        await pilot.click(_MODEL_IMPORT_SELECTOR)
         await pilot.pause()
         picker, picked = pushed.pop()
         assert isinstance(picker, EnhancedFileOpen)
@@ -541,7 +553,7 @@ async def test_declined_consent_performs_no_service_call(
         await pilot.pause()
 
         assert view._pending_import_path is None
-        assert len(view.query(".model-import")) == 1
+        assert len(view.query(_MODEL_IMPORT_SELECTOR)) == 1
         assert source.name in _rendered_static_text(view)
 
     assert service.import_sources == []
@@ -603,7 +615,7 @@ async def test_picker_reserves_lane_and_blocks_second_selection_and_lifecycle(
             "#installed-models-refresh",
             "#installed-models-repair",
             "#installed-models-import-gguf",
-            ".model-import",
+            _MODEL_IMPORT_SELECTOR,
             ".model-activate",
             ".model-delete",
         ):
@@ -712,7 +724,7 @@ async def test_decline_releases_selection_lane_and_restores_controls(
         assert view.query_one("#installed-models-refresh", Button).disabled is False
         assert view.query_one("#installed-models-repair", Button).disabled is False
         assert view.query_one("#installed-models-import-gguf", Button).disabled is False
-        assert view.query_one(".model-import", Button).disabled is False
+        assert view.query_one(_MODEL_IMPORT_SELECTOR, Button).disabled is False
         assert source.name in _rendered_static_text(view)
 
         view._header_import_pressed()
@@ -1074,7 +1086,7 @@ def test_local_import_failure_message_uses_stable_path_free_taxonomy(
             "_delete_model",
             "delete",
             (ArtifactRef("parakeet-v2", "rev", "int8"),),
-            ("parakeet-v2", "rev", "int8"),
+            (),
         ),
         ("_repair_store", "reconcile", (), ("store", "shared")),
     ),
@@ -2034,10 +2046,11 @@ async def test_physical_cancel_sets_service_probe_and_preserves_source(
         finally:
             release_cancel.set()
         await _wait_until(pilot, lambda: not view._import_active)
+        await _wait_until(pilot, lambda: len(view.query(_MODEL_IMPORT_SELECTOR)) == 1)
 
         assert view._import_cancel_event is not None
         assert view._import_cancel_event.is_set() is True
-        assert len(view.query(".model-import")) == 1
+        assert len(view.query(_MODEL_IMPORT_SELECTOR)) == 1
 
     assert source.read_bytes() == original
     assert source.stat().st_mtime_ns == before.st_mtime_ns
@@ -2123,7 +2136,7 @@ async def test_attached_queued_cancel_settles_without_entering_service(
             "#installed-models-refresh",
             "#installed-models-repair",
             "#installed-models-import-gguf",
-            ".model-import",
+            _MODEL_IMPORT_SELECTOR,
         ):
             assert view.query_one(selector, Button).disabled is False
 
@@ -2449,7 +2462,7 @@ async def test_real_import_lease_timeout_offers_busy_retry_without_publication(
                 "#installed-models-refresh",
                 "#installed-models-repair",
                 "#installed-models-import-gguf",
-                ".model-import",
+                _MODEL_IMPORT_SELECTOR,
             ):
                 assert view.query_one(selector, Button).disabled is False
             combined_ui = rendered + " ".join(notices) + "".join(logs)
@@ -2585,7 +2598,7 @@ async def test_import_lane_disables_every_lifecycle_action_at_80_columns(
             "#installed-models-refresh",
             "#installed-models-repair",
             "#installed-models-import-gguf",
-            ".model-import",
+            _MODEL_IMPORT_SELECTOR,
             ".model-activate",
             ".model-delete",
         )

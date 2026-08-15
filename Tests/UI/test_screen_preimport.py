@@ -66,10 +66,11 @@ def _isolate_screen_modules():
     unarchive_flow`` when this file's end-to-end test ran first in the same
     process. ``ScreenRoute.load_screen_class()`` does a fresh ``import_
     module()`` + ``getattr()`` per call rather than caching anything of its
-    own, so restoring the exact original ``sys.modules`` entries (or their
-    absence) is sufficient -- nothing else needs to be undone. Autouse and
-    scoped to every test in this file (not opt-in per test) so a future test
-    added here can't reintroduce the same leak by omission.
+    own. Import machinery also publishes each child module on its parent
+    package, so both that attribute and the exact original ``sys.modules``
+    entry (or absence) must be restored. Autouse and scoped to every test in
+    this file (not opt-in per test) so a future test added here can't
+    reintroduce the same leak by omission.
     """
     before = {
         name: module
@@ -80,10 +81,18 @@ def _isolate_screen_modules():
     after_names = {
         name for name in sys.modules if name.startswith(_SCREEN_MODULE_PREFIX)
     }
-    for name in after_names - before.keys():
-        sys.modules.pop(name, None)
+    for name in sorted(after_names - before.keys(), reverse=True):
+        replacement = sys.modules.pop(name, None)
+        parent_name, _, attribute = name.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if parent is not None and getattr(parent, attribute, None) is replacement:
+            delattr(parent, attribute)
     for name, module in before.items():
         sys.modules[name] = module
+        parent_name, _, attribute = name.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if parent is not None:
+            setattr(parent, attribute, module)
 
 
 async def _wait_until(condition, *, pause, timeout_seconds: float = 5.0) -> None:

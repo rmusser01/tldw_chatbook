@@ -1174,11 +1174,22 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
             await pilot.press("down")
         await pilot.pause()
         await pilot.press("enter")
-        await pilot.pause()
-        assert mode.value == "managed"
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                mode.value == "managed"
+                and managed in app.screen._compositor.visible_widgets
+                and not managed.disabled
+            ),
+            message=f"{provider} managed source controls did not settle",
+        )
 
         await pilot.press("tab")
-        await pilot.pause()
+        await _settle_pilot_until(
+            pilot,
+            lambda: managed.has_focus,
+            message=f"{provider} managed selector did not receive focus",
+        )
         assert managed.has_focus
         assert not managed.expanded
         _assert_painted_inside(app, managed, view)
@@ -1296,7 +1307,15 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         assert "Stop" in stop_svg
         status = window.query_one(f"#{provider}-gguf-source-status", Static)
         status.scroll_visible(animate=False)
-        await pilot.pause()
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                status in app.screen._compositor.visible_widgets
+                and status.region.y >= view.content_region.y
+                and status.region.bottom <= view.content_region.bottom
+            ),
+            message=f"{provider} source status did not settle inside its view",
+        )
         _assert_painted_inside(app, status, view)
         assert "Pending" in app.export_screenshot(simplify=True)
 
