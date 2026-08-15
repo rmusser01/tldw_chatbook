@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 from PIL import Image
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
@@ -82,6 +83,55 @@ class PickerHarness(App[None]):
     @on(ReactionCleared)
     def capture_clear(self, _event: ReactionCleared) -> None:
         self.cleared += 1
+
+
+class _FilterApplyBarrier:
+    def __init__(self, blocked_query: str, latest_query: str | None = None) -> None:
+        self.blocked_query = blocked_query
+        self.latest_query = latest_query
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.latest_finished = asyncio.Event()
+        self.calls: list[str] = []
+        self.finished: list[str] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def run(self, modal, query: str, original_apply) -> None:
+        self.calls.append(query)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if query == self.blocked_query:
+                self.started.set()
+                try:
+                    await self.release.wait()
+                except asyncio.CancelledError:
+                    self.cancelled.set()
+                    raise
+            await original_apply(modal, query)
+            self.finished.append(query)
+            if query == self.latest_query:
+                self.latest_finished.set()
+        finally:
+            self.active -= 1
+
+
+def _install_filter_apply_barrier(
+    monkeypatch,
+    *,
+    blocked_query: str,
+    latest_query: str | None = None,
+) -> _FilterApplyBarrier:
+    original_apply = ConsoleReactionPickerModal._apply_filter
+    barrier = _FilterApplyBarrier(blocked_query, latest_query)
+
+    async def blocked_apply(modal, query: str) -> None:
+        await barrier.run(modal, query, original_apply)
+
+    monkeypatch.setattr(ConsoleReactionPickerModal, "_apply_filter", blocked_apply)
+    return barrier
 
 
 def test_reaction_option_is_small_frozen_metadata_only_value() -> None:
@@ -208,6 +258,134 @@ async def test_pending_filter_is_flushed_before_navigation_and_enter(
 
     assert app.selected == [options[expected_index]]
     assert app.previews == [options[0]]
+
+
+@pytest.mark.parametrize("action", ["down", "enter"])
+@pytest.mark.asyncio
+async def test_timer_filter_and_flush_share_one_inflight_apply(
+    monkeypatch,
+    action: str,
+) -> None:
+    barrier = _install_filter_apply_barrier(
+        monkeypatch,
+        blocked_query="custom:re",
+    )
+    flush_started = asyncio.Event()
+    original_flush = ConsoleReactionPickerModal._flush_pending_filter
+
+    async def observed_flush(modal: ConsoleReactionPickerModal) -> None:
+        flush_started.set()
+        await original_flush(modal)
+
+    monkeypatch.setattr(
+        ConsoleReactionPickerModal,
+        "_flush_pending_filter",
+        observed_flush,
+    )
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        modal = app.screen
+        filter_input = modal.query_one(f"#{FILTER_INPUT_ID}", Input)
+        filter_input.value = "custom:re"
+        await asyncio.wait_for(barrier.started.wait(), timeout=1)
+        if action == "down":
+            action_task = asyncio.create_task(modal.on_key(events.Key("down", None)))
+        else:
+            action_task = asyncio.create_task(
+                modal._filter_submitted(
+                    Input.Submitted(filter_input, filter_input.value)
+                )
+            )
+        await asyncio.wait_for(flush_started.wait(), timeout=1)
+        observed_max_active = barrier.max_active
+        barrier.release.set()
+        await action_task
+        await pilot.pause()
+
+        assert observed_max_active == 1
+        assert barrier.max_active == 1
+        assert barrier.calls.count("custom:re") == 1
+        if action == "down":
+            assert (
+                str(
+                    app.screen.query_one(
+                        "#console-reaction-picker-count", Static
+                    ).renderable
+                )
+                == "2 / 3 reactions"
+            )
+            assert app.screen.query_one(f"#{FILTER_INPUT_ID}", Input).has_focus
+            await pilot.press("escape")
+
+    if action == "enter":
+        assert app.selected == [options[23]]
+
+
+@pytest.mark.asyncio
+async def test_new_query_waits_for_old_apply_then_owns_final_dom(monkeypatch) -> None:
+    barrier = _install_filter_apply_barrier(
+        monkeypatch,
+        blocked_query="rel",
+        latest_query="custom:re",
+    )
+    app = PickerHarness(_samira_options())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+        filter_input.value = "rel"
+        await asyncio.wait_for(barrier.started.wait(), timeout=1)
+        filter_input.value = "custom:re"
+        observed_max_active: list[int] = []
+
+        async def release_after_latest_timer() -> None:
+            await asyncio.sleep(FILTER_SETTLE_SECONDS)
+            observed_max_active.append(barrier.max_active)
+            barrier.release.set()
+
+        release_task = asyncio.create_task(release_after_latest_timer())
+        await asyncio.wait_for(barrier.latest_finished.wait(), timeout=1)
+        await release_task
+        await pilot.pause()
+
+        assert observed_max_active == [1]
+        assert barrier.max_active == 1
+        assert barrier.calls.count("rel") == 1
+        assert barrier.calls.count("custom:re") == 1
+        assert len(app.screen.query(f".{ROW_CLASS}")) == 3
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "1 / 3 reactions"
+        )
+        assert filter_input.has_focus
+
+
+@pytest.mark.asyncio
+async def test_dismiss_cancels_inflight_filter_before_barrier_release(
+    monkeypatch,
+) -> None:
+    barrier = _install_filter_apply_barrier(monkeypatch, blocked_query="rel")
+    app = PickerHarness(_samira_options())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        app.screen.query_one(f"#{FILTER_INPUT_ID}", Input).value = "rel"
+        await asyncio.wait_for(barrier.started.wait(), timeout=1)
+        try:
+            await app.screen._perform_safe_cancel(source="test")
+            await asyncio.wait_for(barrier.cancelled.wait(), timeout=1)
+        finally:
+            barrier.release.set()
+        await asyncio.sleep(0)
+
+    assert "rel" not in barrier.finished
 
 
 @pytest.mark.asyncio

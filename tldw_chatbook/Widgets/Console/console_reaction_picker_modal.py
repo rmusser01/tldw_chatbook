@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -221,7 +222,9 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._last_preview_key: str | None = None
         self._filter_debounce_timer: Timer | None = None
         self._pending_filter_query: str | None = None
+        self._pending_filter_token: int | None = None
         self._filter_generation = 0
+        self._filter_apply_task: asyncio.Task[None] | None = None
         self._preview_debounce_timer: Timer | None = None
         self._pending_preview_key: str | None = None
         self._preview_generation = 0
@@ -297,9 +300,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         token = self._filter_generation
         query = event.value
         self._pending_filter_query = query
+        self._pending_filter_token = token
         self._filter_debounce_timer = self.set_timer(
             FILTER_DEBOUNCE_SECONDS,
-            lambda: self._apply_pending_filter(query=query, token=token),
+            lambda: self._settle_filter_timer(token=token),
         )
 
     @on(Input.Submitted, f"#{FILTER_INPUT_ID}")
@@ -323,30 +327,79 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
             self._filter_debounce_timer.stop()
             self._filter_debounce_timer = None
 
-    async def _apply_pending_filter(self, *, query: str, token: int) -> None:
-        if (
-            not self.is_mounted
-            or token != self._filter_generation
-            or query != self._pending_filter_query
-        ):
-            return
-        try:
-            if self.query_one(f"#{FILTER_INPUT_ID}", Input).value != query:
-                return
-        except (NoMatches, QueryError):
+    async def _settle_filter_timer(self, *, token: int) -> None:
+        if not self.is_mounted or token != self._filter_generation:
             return
         self._filter_debounce_timer = None
-        await self._apply_filter(query)
-        if token == self._filter_generation and query == self._pending_filter_query:
-            self._pending_filter_query = None
+        await self._drain_filter_updates(expected_token=token)
+
+    def _claim_pending_filter(self) -> tuple[int, str] | None:
+        query = self._pending_filter_query
+        token = self._pending_filter_token
+        if (
+            query is None
+            or token is None
+            or token != self._filter_generation
+            or not self.is_mounted
+        ):
+            return None
+        try:
+            if self.query_one(f"#{FILTER_INPUT_ID}", Input).value != query:
+                self._pending_filter_query = None
+                self._pending_filter_token = None
+                return None
+        except (NoMatches, QueryError):
+            return None
+        self._pending_filter_query = None
+        self._pending_filter_token = None
+        return token, query
+
+    async def _run_claimed_filter(self, *, token: int, query: str) -> None:
+        task = asyncio.current_task()
+        try:
+            if self.is_mounted:
+                await self._apply_filter(query)
+                if token != self._filter_generation:
+                    self._cancel_preview_debounce()
+        finally:
+            if self._filter_apply_task is task:
+                self._filter_apply_task = None
+
+    async def _drain_filter_updates(self, *, expected_token: int | None = None) -> None:
+        while self.is_mounted:
+            task = self._filter_apply_task
+            if task is asyncio.current_task():
+                return
+            if task is None:
+                if (
+                    expected_token is not None
+                    and expected_token != self._filter_generation
+                ):
+                    return
+                claimed = self._claim_pending_filter()
+                if claimed is None:
+                    return
+                token, query = claimed
+                task = asyncio.create_task(
+                    self._run_claimed_filter(token=token, query=query),
+                    name="console-reaction-picker-filter",
+                )
+                self._filter_apply_task = task
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.cancelled() or not self.is_mounted:
+                    return
+                raise
 
     async def _flush_pending_filter(self) -> None:
-        query = self._pending_filter_query
-        if query is None:
-            return
-        token = self._filter_generation
         self._cancel_filter_debounce()
-        await self._apply_pending_filter(query=query, token=token)
+        await self._drain_filter_updates()
+
+    def _cancel_filter_apply(self) -> None:
+        task = self._filter_apply_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            task.cancel()
 
     async def _apply_filter(self, query: str) -> None:
         self._filtered = filter_reaction_options(self._options, query)
@@ -528,6 +581,8 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._cancel_filter_debounce()
         self._filter_generation += 1
         self._pending_filter_query = None
+        self._pending_filter_token = None
+        self._cancel_filter_apply()
         self._cancel_preview_debounce()
 
     def _emit(self, message: Message) -> None:
