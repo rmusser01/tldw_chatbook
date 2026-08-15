@@ -34,3 +34,22 @@ Make every modal transitively reachable from Library safely dismissible from the
 
 - Design: `Docs/superpowers/specs/2026-08-14-task-16350-library-modal-dismissal-design.md`
 - ADR: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
+
+## Implementation Plan
+
+Detailed executable plan:
+`Docs/superpowers/plans/2026-08-14-task-16350-library-modal-dismissal.md`.
+
+1. Extend the shared safe-dismiss boundary to restore only an eligible opener or its single eligible stable-ID replacement.
+2. Adopt the shared file-picker base, reconcile Textual full-MRO lifecycle/navigation dispatch, and preserve EnhancedFileOpen/EnhancedFileSave compatibility.
+3. Add exact typed safe dismissal to ordinary Library skill, model, Prompt-delete, and Note-folder modals.
+4. Add the same contract to File Notes and Git detail/trust/authorization surfaces without changing trust or push policy.
+5. Move Prompt collection create/rename/retry callbacks to a screen worker, keep visible Cancel enabled as a guarded request, and reject stale same-instance remount completions.
+6. Enforce a narrow bidirectional launch-edge inventory and independently mount every concrete reachable modal for visible Cancel, Escape, and backdrop behavior.
+7. Run only the named touched/related test and static matrices, record mutation RED/GREEN evidence, complete review/documentation hygiene, and close the task.
+
+ADR required: yes; amend the existing ADR.
+
+ADR path: `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`.
+
+Reason: Library adoption changes the established cross-module modal cancellation, shared file-picker, and focus-restoration contracts. ADR-031 already owns this interaction grammar and was amended by the approved design work.
