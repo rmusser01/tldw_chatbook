@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 import errno
 import hashlib
-from importlib import resources
-from io import BytesIO
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import stat
-from typing import Any
 import warnings
 import zipfile
+from collections.abc import Mapping
+from dataclasses import dataclass
+from importlib import resources
+from io import BytesIO
+from pathlib import Path, PurePosixPath
+from typing import Any
 
+from loguru import logger
 from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.config import get_user_data_dir
@@ -1083,3 +1084,380 @@ def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
         image.load()
         duration_ms += int(image.info.get("duration") or 0)
     return duration_ms
+
+
+_SAMIRA_CARD_NAME = "Samira “Sammy” Vadem"
+_SAMIRA_RESOURCE_ROOT = ("assets", "characters", "samira")
+_SAMIRA_TOP_LEVEL_FILES = frozenset(
+    {
+        "ASSET_LICENSE.md",
+        "Samira.character.json",
+        "Sammy.png",
+        "visual_identity_pack.json",
+    }
+)
+_SAMIRA_TEXT_LIMIT = 2 * 1024 * 1024
+_SAMIRA_PORTRAIT_LIMIT = 10 * 1024 * 1024
+
+
+def ensure_builtin_samira(
+    db: Any,
+    package_root: str | Path | None = None,
+    user_data_dir: str | Path | None = None,
+) -> None:
+    """Create the bundled Samira card and pack once without rewriting user state.
+
+    Args:
+        db: Initialized profile-local ``CharactersRAGDB``.
+        package_root: Injectable package root used by isolated tests.
+        user_data_dir: Reserved profile root for the later copy-on-write path.
+    """
+    del user_data_dir
+    state = _samira_seed_preflight(db)
+    if state["terminal"]:
+        return
+
+    card = state["card"]
+    try:
+        card_json, portrait, parsed_card = _load_samira_card(package_root)
+    except Exception as exc:  # noqa: BLE001 - startup seed must not prevent boot
+        logger.warning("samira_card_seed_failed category={}", type(exc).__name__)
+        return
+
+    if card is None:
+        parsed_card["name"] = _available_samira_name(db)
+        parsed_card["image"] = portrait
+        character_id = db.add_character_card(parsed_card)
+        if character_id is None:
+            logger.warning("samira_card_seed_failed category=insert")
+            return
+    else:
+        character_id = int(card["id"])
+
+    try:
+        manifest_data, manifest, loaded_assets = _load_samira_pack(
+            package_root,
+            card_bytes=len(card_json),
+            portrait_bytes=len(portrait),
+        )
+        from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+        VisualIdentityRepository(db).activate_pack(
+            pack={
+                "title": manifest.title,
+                "description": "Bundled Samira reaction pack.",
+                "default_expression_key": manifest.default_expression_key,
+                "source_kind": "builtin",
+                "source_context": {
+                    "source_id": SAMIRA_PACK_ID,
+                    "pack_content_sha256": manifest.pack_content_sha256,
+                },
+            },
+            manifest=manifest_data,
+            assets=[
+                {
+                    "expression_key": loaded.asset.expression_key,
+                    "original_expression_key": loaded.asset.original_label,
+                    "display_label": loaded.asset.display_label,
+                    "source_filename": PurePosixPath(loaded.asset.storage_relpath).name,
+                    "storage_relpath": loaded.asset.storage_relpath,
+                    "content_type": loaded.asset.content_type,
+                    "bytes": loaded.asset.bytes,
+                    "sha256": loaded.asset.sha256,
+                    "width": loaded.asset.width,
+                    "height": loaded.asset.height,
+                    "source_context": _asset_generation_context(
+                        manifest_data, loaded.asset.original_label
+                    ),
+                    "is_animated": loaded.asset.is_animated,
+                    "frame_count": loaded.asset.frame_count,
+                    "duration_ms": loaded.asset.duration_ms,
+                }
+                for loaded in loaded_assets
+            ],
+            actor_kind="character",
+            actor_id=character_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - card remains usable on pack failure
+        logger.warning("samira_pack_activation_failed category={}", type(exc).__name__)
+
+
+def _samira_seed_preflight(db: Any) -> dict[str, Any]:
+    card = _find_builtin_samira_card(db)
+    pack = _find_builtin_samira_pack(db)
+    if card is not None and int(card["deleted"]):
+        return {"terminal": True, "card": card}
+    if card is not None:
+        bindings = [
+            dict(row)
+            for row in db.execute_query(
+                """SELECT * FROM visual_identity_bindings
+                     WHERE owner_user_id = 0 AND actor_kind = 'character'
+                       AND actor_id = ? ORDER BY id""",
+                (str(card["id"]),),
+            ).fetchall()
+        ]
+        if any(binding["status"] == "deleted" for binding in bindings):
+            return {"terminal": True, "card": card}
+        active = next(
+            (binding for binding in bindings if binding["status"] == "active"), None
+        )
+        if active is not None and _binding_is_terminal(db, active):
+            return {"terminal": True, "card": card}
+    if pack is not None:
+        return {"terminal": True, "card": card}
+    return {"terminal": False, "card": card}
+
+
+def _find_builtin_samira_card(db: Any) -> dict[str, Any] | None:
+    rows = db.execute_query(
+        "SELECT id, name, extensions, deleted FROM character_cards ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        candidate = dict(row)
+        try:
+            extensions = json.loads(
+                candidate.get("extensions") or "{}",
+                parse_constant=_reject_json_constant,
+            )
+        except (TypeError, ValueError):
+            continue
+        if (
+            isinstance(extensions, dict)
+            and extensions.get("tldw/builtin_id") == "samira"
+        ):
+            return candidate
+    return None
+
+
+def _find_builtin_samira_pack(db: Any) -> dict[str, Any] | None:
+    rows = db.execute_query(
+        """SELECT * FROM visual_identity_packs
+             WHERE owner_user_id = 0 AND source_kind = 'builtin' ORDER BY id"""
+    ).fetchall()
+    for row in rows:
+        candidate = dict(row)
+        try:
+            context = json.loads(
+                candidate.get("source_context_json") or "{}",
+                parse_constant=_reject_json_constant,
+            )
+        except (TypeError, ValueError):
+            continue
+        if isinstance(context, dict) and context.get("source_id") == SAMIRA_PACK_ID:
+            return candidate
+    return None
+
+
+def _binding_is_terminal(db: Any, binding: Mapping[str, Any]) -> bool:
+    row = db.execute_query(
+        """SELECT p.*, v.pack_id AS version_pack_id,
+                  (SELECT COUNT(*) FROM visual_identity_assets a
+                    WHERE a.pack_version_id = v.id AND a.deleted = 0) AS asset_count,
+                  (SELECT COUNT(*) FROM visual_identity_assets a
+                    WHERE a.pack_version_id = v.id AND a.deleted = 0
+                      AND a.expression_key = v.default_expression_key) AS default_count
+             FROM visual_identity_packs p
+             JOIN visual_identity_pack_versions v ON v.id = ?
+            WHERE p.id = ? AND p.owner_user_id = 0 AND p.status = 'active'""",
+        (binding["active_version_id"], binding["pack_id"]),
+    ).fetchone()
+    if row is None:
+        return False
+    pack = dict(row)
+    if int(pack["version_pack_id"]) != int(pack["id"]):
+        return False
+    if int(pack["asset_count"]) < 1 or int(pack["default_count"]) != 1:
+        return False
+    if pack["source_kind"] == "manual":
+        return True
+    if pack["source_kind"] != "builtin" or int(pack["asset_count"]) != len(
+        SAMIRA_REACTION_LABELS
+    ):
+        return False
+    try:
+        context = json.loads(
+            pack["source_context_json"], parse_constant=_reject_json_constant
+        )
+    except (TypeError, ValueError):
+        return False
+    return isinstance(context, dict) and context.get("source_id") == SAMIRA_PACK_ID
+
+
+def _available_samira_name(db: Any) -> str:
+    occupied = {
+        str(row[0])
+        for row in db.execute_query("SELECT name FROM character_cards").fetchall()
+    }
+    if _SAMIRA_CARD_NAME not in occupied:
+        return _SAMIRA_CARD_NAME
+    fallback = f"{_SAMIRA_CARD_NAME} (Built-in)"
+    if fallback not in occupied:
+        return fallback
+    suffix = 2
+    while f"{fallback} {suffix}" in occupied:
+        suffix += 1
+    return f"{fallback} {suffix}"
+
+
+def _load_samira_card(
+    package_root: str | Path | None,
+) -> tuple[bytes, bytes, dict[str, Any]]:
+    card_bytes = _read_samira_resource(
+        package_root, "Samira.character.json", max_bytes=_SAMIRA_TEXT_LIMIT
+    )
+    portrait = _read_samira_resource(
+        package_root, "Sammy.png", max_bytes=_SAMIRA_PORTRAIT_LIMIT
+    )
+    card = _strict_json_object(card_bytes)
+    data = card.get("data")
+    if (
+        card.get("spec") != "chara_card_v2"
+        or card.get("spec_version") != "2.0"
+        or not isinstance(data, dict)
+        or not isinstance(data.get("extensions"), dict)
+        or data["extensions"].get("tldw/builtin_id") != "samira"
+        or data["extensions"].get("tldw/visual_identity_pack_id") != SAMIRA_PACK_ID
+    ):
+        raise ValueError("samira_card_invalid")
+
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        extract_json_from_image_file,
+        parse_v2_card,
+    )
+
+    embedded = extract_json_from_image_file(BytesIO(portrait))
+    if embedded is None or _strict_json_object(embedded) != card:
+        raise ValueError("samira_card_mismatch")
+    parsed = parse_v2_card(card)
+    if parsed is None:
+        raise ValueError("samira_card_invalid")
+    return card_bytes, portrait, parsed
+
+
+def _load_samira_pack(
+    package_root: str | Path | None,
+    *,
+    card_bytes: int,
+    portrait_bytes: int,
+) -> tuple[
+    dict[str, Any],
+    VisualIdentityManifest,
+    tuple[LoadedVisualIdentityAsset, ...],
+]:
+    _validate_samira_resource_inventory(package_root)
+    manifest_raw = _read_samira_resource(
+        package_root, "visual_identity_pack.json", max_bytes=_SAMIRA_TEXT_LIMIT
+    )
+    license_raw = _read_samira_resource(
+        package_root, "ASSET_LICENSE.md", max_bytes=_SAMIRA_TEXT_LIMIT
+    )
+    manifest_data = _strict_json_object(manifest_raw)
+    raw_assets = manifest_data.get("assets")
+    if not isinstance(raw_assets, list):  # noqa: TRY004 - stable validation category
+        raise ValueError("samira_manifest_invalid")
+
+    asset_bytes: dict[str, bytes] = {}
+    directory_bytes = card_bytes + portrait_bytes + len(manifest_raw) + len(license_raw)
+    for raw_asset in raw_assets:
+        if not isinstance(raw_asset, dict):  # noqa: TRY004 - stable validation category
+            raise ValueError("samira_manifest_invalid")
+        relpath = str(raw_asset.get("storage_relpath", ""))
+        parts = _safe_relative_parts(relpath)
+        if parts[:3] != ("characters", "samira", "expressions"):
+            raise ValueError("samira_manifest_invalid")
+        data = _read_samira_resource(
+            package_root,
+            "/".join(parts[2:]),
+            max_bytes=SAMIRA_MAX_REACTION_BYTES + 1,
+        )
+        asset_bytes[relpath] = data
+        directory_bytes += len(data)
+
+    manifest = parse_visual_identity_manifest_json(
+        manifest_raw,
+        require_samira_bundle=True,
+        directory_bytes=directory_bytes,
+    )
+    loaded: list[LoadedVisualIdentityAsset] = []
+    decoded_pixels = 0
+    for asset in manifest.assets:
+        data = asset_bytes[asset.storage_relpath]
+        if len(data) != asset.bytes:
+            raise ValueError("visual_identity_asset_size_mismatch")
+        if hashlib.sha256(data).hexdigest() != asset.sha256:
+            raise ValueError("visual_identity_asset_sha256_mismatch")
+        item = LoadedVisualIdentityAsset(asset=asset, data=data)
+        decoded_pixels += _validate_image_bytes(
+            item, decoded_pixels_before=decoded_pixels
+        )
+        loaded.append(item)
+    return manifest_data, manifest, tuple(loaded)
+
+
+def _read_samira_resource(
+    package_root: str | Path | None,
+    relative_path: str,
+    *,
+    max_bytes: int,
+) -> bytes:
+    parts = _safe_relative_parts(relative_path)
+    try:
+        root = (
+            Path(package_root)
+            if package_root is not None
+            else resources.files("tldw_chatbook")
+        )
+        candidate = root.joinpath(*_SAMIRA_RESOURCE_ROOT, *parts)
+        with candidate.open("rb") as stream:
+            data = stream.read(max_bytes + 1)
+    except (OSError, RuntimeError, TypeError, AttributeError):
+        raise ValueError("samira_resource_unavailable") from None
+    if not isinstance(data, bytes) or len(data) > max_bytes:
+        raise ValueError("samira_resource_invalid")
+    return data
+
+
+def _validate_samira_resource_inventory(package_root: str | Path | None) -> None:
+    try:
+        root = (
+            Path(package_root)
+            if package_root is not None
+            else resources.files("tldw_chatbook")
+        ).joinpath(*_SAMIRA_RESOURCE_ROOT)
+        top_level = {entry.name for entry in root.iterdir()}
+        expressions = {entry.name for entry in root.joinpath("expressions").iterdir()}
+    except (OSError, RuntimeError, TypeError, AttributeError):
+        raise ValueError("samira_resource_unavailable") from None
+    if top_level != _SAMIRA_TOP_LEVEL_FILES | {"expressions"}:
+        raise ValueError("samira_resource_inventory_invalid")
+    if expressions != {f"{label}.webp" for label in SAMIRA_REACTION_LABELS}:
+        raise ValueError("samira_resource_inventory_invalid")
+
+
+def _strict_json_object(raw: bytes | str) -> dict[str, Any]:
+    try:
+        text = raw.decode("utf-8", errors="strict") if isinstance(raw, bytes) else raw
+        value = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_json_constant,
+        )
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        raise ValueError("samira_json_invalid") from None
+    if not isinstance(value, dict):  # noqa: TRY004 - stable validation category
+        raise ValueError("samira_json_invalid")
+    return value
+
+
+def _asset_generation_context(
+    manifest: Mapping[str, Any], original_label: str
+) -> dict[str, Any]:
+    assets = manifest.get("assets")
+    if not isinstance(assets, list):
+        return {}
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("original_label") == original_label:
+            generation = asset.get("generation")
+            return dict(generation) if isinstance(generation, dict) else {}
+    return {}
