@@ -19833,6 +19833,14 @@ class ChatScreen(BaseAppScreen):
         menu action.
         """
         event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as ``_console_selection_quote_
+            # requested`` above: the row range was cleared while the menu
+            # was open (streaming replace, reconciliation), so there is
+            # nothing to ask about -- pushing the modal (or auto-sending
+            # a contentless More Details prompt) would be a lie (T5 final
+            # review).
+            return
         sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
         template = str(
             get_cli_setting(

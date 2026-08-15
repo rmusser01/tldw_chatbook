@@ -9,7 +9,7 @@ messages/streaming flags handed to the provider gateway.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -28,7 +28,6 @@ from tldw_chatbook.Chat.console_side_chat import (
 from tldw_chatbook.config import (
     DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE as CONFIG_DEFAULT_TEMPLATE,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes

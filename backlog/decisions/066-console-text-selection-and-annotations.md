@@ -100,6 +100,12 @@ across the stack.
   streaming append that grows the markdown source re-snaps the stored
   line range, so a selection touching the last line intentionally GROWS
   with the stream, while plain rows hold their last stable range.
+- Phase 2 (ephemeral side chat) landed: `More Details` / `Ask in Side
+  Chat` push `ConsoleSideChatModal`, whose `ConsoleSideChatService` is
+  gateway-only and persistence-free (`stream_chat` alone; the reply
+  never leaves the modal), and whose worker runs in the
+  non-exclusive `console-side-chat` group so it never cancels or
+  blocks `console-run-{session_id}` session workers.
 
 ## Links
 

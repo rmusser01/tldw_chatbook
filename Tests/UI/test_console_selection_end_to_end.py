@@ -315,6 +315,46 @@ async def test_screen_pushes_ask_mode_modal_without_auto_prompt(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_empty_side_chat_quote_pushes_no_modal(monkeypatch):
+    """A cleared row range opens nothing -- no modal, no send (T5 review).
+
+    Same blank-selection window as the add-to-chat guard: if the row
+    range was cleared while the menu was open (streaming replace,
+    reconciliation), More Details posts an empty quote, and the screen
+    must not push a modal (let alone auto-send a contentless prompt).
+    Mirrors ``test_empty_quote_request_notifies_nothing``.
+    """
+    gateway = _FakeSideChatGateway()
+    _patch_side_chat_config(
+        monkeypatch,
+        model="",
+        template="Give me more details about: {selection}",
+    )
+    async with _side_chat_console_pilot(gateway) as (pilot, console):
+        pushed = _capture_side_chat_pushes(pilot.app)
+        console.post_message(
+            ConsoleSideChatRequested(quote="   \n  ", mode="more-details")
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pushed == []  # whitespace-only quote: no modal at all
+        assert gateway.stream_calls == 0
+
+        # Control: a real quote still pushes exactly one modal.
+        console.post_message(
+            ConsoleSideChatRequested(quote="real text", mode="more-details")
+        )
+        await pilot.pause()
+        modals = [item for item in pushed if isinstance(item, ConsoleSideChatModal)]
+        assert len(pushed) == 1
+        assert len(modals) == 1
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_drag_more_details_opens_side_chat_modal_end_to_end():
     """Drag → menu → More Details: the modal mounts showing the selection."""
     gateway = _FakeSideChatGateway()

@@ -7,8 +7,9 @@ list never leaves the calling modal.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
-from typing import Any, AsyncIterator
+from typing import Any
 
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
