@@ -29,6 +29,24 @@ class ConsoleSelectionQuoteRequested(Message):
         self.quote = quote
 
 
+class ConsoleSideChatRequested(Message):
+    """Bubbled when the user opens an ephemeral side chat about a selection.
+
+    Console selection phase 2: the transcript posts this after the menu's
+    "More Details" (``mode="more-details"``) or "Ask in Side Chat"
+    (``mode="ask"``) action; the owning ``ChatScreen`` resolves config +
+    gateway and pushes ``ConsoleSideChatModal``.
+    """
+
+    MODE_MORE_DETAILS = "more-details"
+    MODE_ASK = "ask"
+
+    def __init__(self, quote: str, mode: str) -> None:
+        super().__init__()
+        self.quote = quote
+        self.mode = mode
+
+
 class ConsoleSelectionMenu(Vertical):
     """Floating stacked menu anchored at the selection release cell."""
 
@@ -50,6 +68,12 @@ class ConsoleSelectionMenu(Vertical):
 
     class AddToChat(Message):
         """User chose 'Add to chat' for the active selection."""
+
+    class MoreDetails(Message):
+        """User chose 'More Details' (auto-send side chat) for the selection."""
+
+    class AskInSideChat(Message):
+        """User chose 'Ask in Side Chat' (freeform) for the selection."""
 
     def __init__(self, *, local_x: int, local_y: int, has_add_to_chat: bool = True) -> None:
         """Anchor the menu at transcript-local coordinates.
@@ -73,6 +97,8 @@ class ConsoleSelectionMenu(Vertical):
     def compose(self):
         if self._has_add_to_chat:
             yield Button("Add to chat", id="console-selection-add-to-chat", variant="primary")
+        yield Button("More Details", id="console-selection-more-details")
+        yield Button("Ask in Side Chat", id="console-selection-ask-side-chat")
 
     def on_mount(self) -> None:
         x, y = self._anchor
@@ -130,6 +156,14 @@ class ConsoleSelectionMenu(Vertical):
     @on(Button.Pressed, "#console-selection-add-to-chat")
     def _add_to_chat(self) -> None:
         self.post_message(self.AddToChat())
+
+    @on(Button.Pressed, "#console-selection-more-details")
+    def _more_details(self) -> None:
+        self.post_message(self.MoreDetails())
+
+    @on(Button.Pressed, "#console-selection-ask-side-chat")
+    def _ask_side_chat(self) -> None:
+        self.post_message(self.AskInSideChat())
 
     def action_dismiss(self) -> None:
         self.remove()

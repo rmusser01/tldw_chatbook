@@ -796,16 +796,14 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
         )
     ),
 )
-# The side-chat modal is contracted and inventoried but has no launch site
-# yet: the Console selection-menu wiring lands with phase 2 task 5, so it is
-# excluded from the declared root launches (the AST walk would otherwise
-# report it missing).
-_SIDE_CHAT_MODAL_NOT_YET_LAUNCHED = {ConsoleSideChatModal}
+# The side-chat modal launches from the Console root (phase 2 task 5:
+# ChatScreen's ConsoleSideChatRequested handler pushes it after the
+# selection menu's More Details / Ask in Side Chat actions), so it rides
+# the declared root launches like every other root-owned modal.
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
     if contract.modal_type is not ConsoleWorkspaceRenameModal
-    and contract.modal_type is not ConsoleSideChatModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1061,14 +1059,11 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 37
+    assert len(reachable_modal_types) == 38
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
-    assert (
-        reachable_modal_types
-        == all_contract_types - _SIDE_CHAT_MODAL_NOT_YET_LAUNCHED
-    )
+    assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types

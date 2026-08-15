@@ -70,6 +70,7 @@ from tldw_chatbook.Widgets.Console.console_selection import (
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
 )
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
@@ -3502,27 +3503,69 @@ class ConsoleTranscript(VerticalScroll):
     def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:
         """Quote the active row selection up to the owning screen and clean up."""
         event.stop()
-        manager = self.selection_manager
-        sel = manager.state.selection
-        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage | None = None
-        if sel is not None:
-            # Query by id without a type expectation: the selected row may be
-            # a plain OR a markdown row (task G), and a typed query_one would
-            # raise WrongType on the other kind.
-            try:
-                widget = self.query_one(f"#{sel.row_key}")
-            except NoMatches:
-                widget = None
-            if isinstance(widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
-                row = widget
+        row = self._active_selection_row()
         if row is not None:
             self.post_message(
                 ConsoleSelectionQuoteRequested(quote=cap_quote(row.get_selection_text()))
             )
             row.clear_selection()
-        manager.cancel()
+        self.selection_manager.cancel()
         self._selection_origin_row = None
         self._remove_selection_menu()
+
+    @on(ConsoleSelectionMenu.MoreDetails)
+    def _selection_more_details(
+        self, event: ConsoleSelectionMenu.MoreDetails
+    ) -> None:
+        """Open a More Details side chat about the active selection."""
+        event.stop()
+        self._request_side_chat(ConsoleSideChatRequested.MODE_MORE_DETAILS)
+
+    @on(ConsoleSelectionMenu.AskInSideChat)
+    def _selection_ask_side_chat(
+        self, event: ConsoleSelectionMenu.AskInSideChat
+    ) -> None:
+        """Open a freeform Ask in Side Chat about the active selection."""
+        event.stop()
+        self._request_side_chat(ConsoleSideChatRequested.MODE_ASK)
+
+    def _request_side_chat(self, mode: str) -> None:
+        """Post a capped-selection side-chat request and clean up (phase 2).
+
+        Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
+        selection text is capped by ``cap_quote`` before it leaves the
+        transcript, the row range is cleared, the drag manager cancelled,
+        and the menu removed.
+        """
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSideChatRequested(
+                    quote=cap_quote(row.get_selection_text()), mode=mode
+                )
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    def _active_selection_row(
+        self,
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | None:
+        """Resolve the row widget holding the active selection, if any."""
+        sel = self.selection_manager.state.selection
+        if sel is None:
+            return None
+        # Query by id without a type expectation: the selected row may be
+        # a plain OR a markdown row (task G), and a typed query_one would
+        # raise WrongType on the other kind.
+        try:
+            widget = self.query_one(f"#{sel.row_key}")
+        except NoMatches:
+            return None
+        if isinstance(widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+            return widget
+        return None
 
     def _attached_selection_menus(self) -> list[ConsoleSelectionMenu]:
         """Menus still attached whose removal is not already scheduled.

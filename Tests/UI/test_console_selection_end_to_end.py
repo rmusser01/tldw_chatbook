@@ -5,20 +5,46 @@ bubbles from the transcript to ``ChatScreen``, which inserts the selection
 as a block quote into the native composer at the caret. Also covers the
 screen-level click-outside dismissal of a mounted selection menu (a click
 on any non-transcript widget, e.g. the composer, folds the menu).
+
+Phase 2 (task 5): ``ConsoleSideChatRequested`` bubbles from the transcript
+to ``ChatScreen``, which resolves the configured side-chat model + prompt
+template, builds the ephemeral side-chat service over the (fake) provider
+gateway, and pushes ``ConsoleSideChatModal`` exactly once -- More Details
+with the rendered template auto-sent, Ask in Side Chat freeform.
 """
 
 from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 import pytest
 from textual.app import App, ComposeResult
 
 from Tests.UI.test_console_left_rail import make_console_pilot
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
 )
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
+from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleTranscript,
+    ConsoleTranscriptMessage,
+)
 
 
 class _ComposerApp(App[None]):
@@ -138,3 +164,248 @@ async def test_click_outside_transcript_dismisses_selection_menu():
         await pilot.click("#console-native-composer")
         await pilot.pause()
         assert not screen.query(ConsoleSelectionMenu)
+
+
+# ---------------------------------------------------------------------------
+# Side chat (phase 2, task 5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeResolution:
+    provider: str = "llama_cpp"
+    model: str = "local-model"
+    ready: bool = True
+    visible_copy: str = ""
+
+
+class _FakeSideChatGateway:
+    """Offline provider gateway: records sends, streams one short reply."""
+
+    def __init__(self) -> None:
+        self.messages: list[list[dict[str, str]]] = []
+        self.stream_calls = 0
+
+    async def resolve_for_send(self, selection):
+        del selection
+        return _FakeResolution()
+
+    async def stream_chat(self, resolution, messages):
+        self.stream_calls += 1
+        self.messages.append(messages)
+        del resolution
+        yield "ok"
+
+
+@asynccontextmanager
+async def _side_chat_console_pilot(gateway: _FakeSideChatGateway):
+    """Real ChatScreen console with the provider gateway injected offline."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(140, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.pause(0.2)
+        yield pilot, console
+
+
+def _capture_side_chat_pushes(app) -> list[ConsoleSideChatModal]:
+    """Wrap ``app.push_screen`` so each pushed screen lands in a list."""
+    pushed: list[object] = []
+    original_push = app.push_screen
+
+    def capturing_push(screen_arg, *args, **kwargs):
+        pushed.append(screen_arg)
+        return original_push(screen_arg, *args, **kwargs)
+
+    app.push_screen = capturing_push  # type: ignore[method-assign]
+    return pushed
+
+
+def _patch_side_chat_config(monkeypatch, *, model: str, template: str) -> None:
+    """Pin the two side-chat config reads the screen handler makes."""
+    real_get = chat_screen_module.get_cli_setting
+
+    def pinned_get(section, *args, **kwargs):
+        if section == "console" and args:
+            if args[0] == "sidechat_model":
+                return model
+            if args[0] == "sidechat_prompt_template":
+                return template
+        return real_get(section, *args, **kwargs)
+
+    monkeypatch.setattr(chat_screen_module, "get_cli_setting", pinned_get)
+
+
+async def _await_condition(condition, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        if asyncio.get_running_loop().time() > deadline:
+            pytest.fail("condition was not met in time")
+        await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+async def test_screen_pushes_one_side_chat_modal_with_rendered_template(
+    monkeypatch,
+):
+    """More Details: one modal, auto-sending the rendered prompt template."""
+    gateway = _FakeSideChatGateway()
+    _patch_side_chat_config(
+        monkeypatch,
+        model="zai/glm-test",
+        template="Explain {selection} in depth",
+    )
+    async with _side_chat_console_pilot(gateway) as (pilot, console):
+        pushed = _capture_side_chat_pushes(pilot.app)
+        console.post_message(
+            ConsoleSideChatRequested(quote="hello world", mode="more-details")
+        )
+        await pilot.pause()
+
+        modals = [item for item in pushed if isinstance(item, ConsoleSideChatModal)]
+        assert len(pushed) == 1
+        assert len(modals) == 1
+        modal = modals[0]
+        assert modal._auto_send_prompt == "Explain hello world in depth"
+        assert modal._quote == "hello world"
+        assert modal._sidechat_model == "zai/glm-test"
+        assert modal._service.gateway is gateway
+        # Session fallback: derived from the ready llama.cpp session config.
+        assert modal._provider_selection.provider == "llama_cpp"
+
+        # More Details auto-sends on mount (offline fake gateway).
+        await _await_condition(lambda: gateway.stream_calls == 1)
+        user_content = gateway.messages[0][1]["content"]
+        assert "Explain hello world in depth" in user_content
+        assert "hello world" in user_content
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_screen_pushes_ask_mode_modal_without_auto_prompt(monkeypatch):
+    """Ask in Side Chat: one modal, no auto-send, freeform prompt visible."""
+    gateway = _FakeSideChatGateway()
+    _patch_side_chat_config(
+        monkeypatch,
+        model="",
+        template="Give me more details about: {selection}",
+    )
+    async with _side_chat_console_pilot(gateway) as (pilot, console):
+        pushed = _capture_side_chat_pushes(pilot.app)
+        console.post_message(ConsoleSideChatRequested(quote="a quote", mode="ask"))
+        await pilot.pause()
+        await pilot.pause()
+
+        modals = [item for item in pushed if isinstance(item, ConsoleSideChatModal)]
+        assert len(pushed) == 1
+        assert len(modals) == 1
+        modal = modals[0]
+        assert modal._auto_send_prompt is None
+        assert modal._quote == "a quote"
+        assert modal._sidechat_model == ""
+        assert gateway.stream_calls == 0  # nothing sent until the user asks
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_drag_more_details_opens_side_chat_modal_end_to_end():
+    """Drag → menu → More Details: the modal mounts showing the selection."""
+    gateway = _FakeSideChatGateway()
+    async with _side_chat_console_pilot(gateway) as (pilot, console):
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="hello selectable world",
+                    id="m1",
+                )
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = console.query_one("#console-message-m1", ConsoleTranscriptMessage)
+        region = transcript.region
+
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=region.y + 2,
+            )
+        )
+        await pilot.pause()
+        assert console.query_one(ConsoleSelectionMenu)  # menu mounted at release
+
+        await pilot.click("#console-selection-more-details")
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleSideChatModal)
+        assert modal._quote == "hello"
+        assert modal._auto_send_prompt is not None
+        assert "hello" in modal._auto_send_prompt
+        assert not console.query(ConsoleSelectionMenu)  # menu cleaned up
+        await _await_condition(lambda: gateway.stream_calls == 1)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_drag_ask_mode_opens_side_chat_modal_end_to_end():
+    """Drag → menu → Ask in Side Chat: modal mounts waiting for a question."""
+    gateway = _FakeSideChatGateway()
+    async with _side_chat_console_pilot(gateway) as (pilot, console):
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="hello selectable world",
+                    id="m1",
+                )
+            ]
+        )
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = console.query_one("#console-message-m1", ConsoleTranscriptMessage)
+        region = transcript.region
+
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=region.y + 2,
+            )
+        )
+        await pilot.pause()
+
+        await pilot.click("#console-selection-ask-side-chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleSideChatModal)
+        assert modal._quote == "hello"
+        assert modal._auto_send_prompt is None
+        assert gateway.stream_calls == 0
+
+        await pilot.press("escape")
+        await pilot.pause()

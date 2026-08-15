@@ -358,7 +358,10 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
             self._set_action_visible(_RETRY, False)
 
     def _append_delta(self, delta: str) -> None:
-        self._reply_text += delta
+        # Cap the in-memory accumulator too, not just the rendered copy: a
+        # multi-gigabyte stream would otherwise grow ``_reply_text``
+        # without bound between renders (T4 review).
+        self._reply_text = cap_reply_buffer(self._reply_text + delta)
         self._update_reply(cap_reply_buffer(self._reply_text))
 
     def _update_reply(self, text: str) -> None:

@@ -185,6 +185,7 @@ from ...Chat.console_prefill import (
     parse_prefill_args,
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
+from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_skill_resolver import (
     MENTION_SIGIL,
     SKILL_UNTRUSTED_REFUSE,
@@ -382,6 +383,7 @@ from ...Chat.console_rail_state import (
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     _get_effective_config_path,
@@ -478,7 +480,9 @@ from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
 )
+from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
@@ -19810,6 +19814,48 @@ class ChatScreen(BaseAppScreen):
             # review).
             return
         self.notify("Added selection to composer")
+
+    @on(ConsoleSideChatRequested)
+    def _console_side_chat_requested(self, event: ConsoleSideChatRequested) -> None:
+        """Open the ephemeral side-chat modal about a transcript selection.
+
+        Console selection phase 2: the transcript's floating menu posted
+        this after its "More Details" / "Ask in Side Chat" action. More
+        Details renders the configured prompt template with the capped
+        quote and auto-sends on mount; Ask opens the modal freeform. The
+        model resolves from ``[console] sidechat_model`` when set, else
+        falls back to the active session's provider selection (the modal's
+        identity line shows the request; the service applies the
+        precedence). Nothing is persisted: the side-chat service streams
+        through the provider gateway only, and the reply never leaves the
+        modal. ``event.stop()`` because nothing above this screen
+        subscribes -- the transcript already consumed the originating
+        menu action.
+        """
+        event.stop()
+        sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
+        template = str(
+            get_cli_setting(
+                "console",
+                "sidechat_prompt_template",
+                DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+            )
+            or ""
+        )
+        auto_send_prompt = (
+            render_prompt(template, event.quote)
+            if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
+            else None
+        )
+        self.app.push_screen(
+            ConsoleSideChatModal(
+                service=ConsoleSideChatService(self._ensure_console_provider_gateway()),
+                provider_selection=self._build_console_provider_selection(),
+                sidechat_model=sidechat_model,
+                quote=event.quote,
+                auto_send_prompt=auto_send_prompt,
+            )
+        )
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"

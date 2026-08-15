@@ -18,10 +18,15 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
-from tldw_chatbook.Widgets.Console.console_selection import TextSelection
+from tldw_chatbook.Widgets.Console.console_selection import (
+    SELECTION_QUOTE_CAP,
+    TextSelection,
+    cap_quote,
+)
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -33,6 +38,8 @@ class _MenuApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.add_to_chat_events: list[ConsoleSelectionMenu.AddToChat] = []
+        self.more_details_events: list[ConsoleSelectionMenu.MoreDetails] = []
+        self.ask_side_chat_events: list[ConsoleSelectionMenu.AskInSideChat] = []
 
     def compose(self) -> ComposeResult:
         yield ConsoleSelectionMenu(local_x=4, local_y=6)
@@ -42,6 +49,16 @@ class _MenuApp(App[None]):
     ) -> None:
         self.add_to_chat_events.append(event)
 
+    def on_console_selection_menu_more_details(
+        self, event: ConsoleSelectionMenu.MoreDetails
+    ) -> None:
+        self.more_details_events.append(event)
+
+    def on_console_selection_menu_ask_in_side_chat(
+        self, event: ConsoleSelectionMenu.AskInSideChat
+    ) -> None:
+        self.ask_side_chat_events.append(event)
+
 
 @pytest.mark.asyncio
 async def test_menu_offers_add_to_chat_and_posts_message():
@@ -50,6 +67,47 @@ async def test_menu_offers_add_to_chat_and_posts_message():
         await pilot.click("#console-selection-add-to-chat")
         await pilot.pause()
         assert len(app.add_to_chat_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_menu_offers_three_stacked_options_in_order():
+    """Phase 2: Add to chat, More Details, Ask in Side Chat stack in order."""
+    app = _MenuApp()
+    async with app.run_test() as pilot:
+        del pilot
+        buttons = app.query_one(ConsoleSelectionMenu).query("Button")
+        assert [button.id for button in buttons] == [
+            "console-selection-add-to-chat",
+            "console-selection-more-details",
+            "console-selection-ask-side-chat",
+        ]
+        assert [str(button.label) for button in buttons] == [
+            "Add to chat",
+            "More Details",
+            "Ask in Side Chat",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_more_details_button_posts_more_details_message():
+    app = _MenuApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#console-selection-more-details")
+        await pilot.pause()
+        assert len(app.more_details_events) == 1
+        assert app.add_to_chat_events == []
+        assert app.ask_side_chat_events == []
+
+
+@pytest.mark.asyncio
+async def test_ask_side_chat_button_posts_ask_message():
+    app = _MenuApp()
+    async with app.run_test() as pilot:
+        await pilot.click("#console-selection-ask-side-chat")
+        await pilot.pause()
+        assert len(app.ask_side_chat_events) == 1
+        assert app.add_to_chat_events == []
+        assert app.more_details_events == []
 
 
 @pytest.mark.asyncio
@@ -78,6 +136,7 @@ class _TranscriptMenuApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.quote_requests: list[ConsoleSelectionQuoteRequested] = []
+        self.side_chat_requests: list[ConsoleSideChatRequested] = []
 
     def compose(self) -> ComposeResult:
         transcript = ConsoleTranscript(id="console-native-transcript")
@@ -94,6 +153,11 @@ class _TranscriptMenuApp(App[None]):
         self, event: ConsoleSelectionQuoteRequested
     ) -> None:
         self.quote_requests.append(event)
+
+    def on_console_side_chat_requested(
+        self, event: ConsoleSideChatRequested
+    ) -> None:
+        self.side_chat_requests.append(event)
 
 
 async def _finish_drag_selection(pilot) -> None:
@@ -191,6 +255,113 @@ async def test_click_outside_removes_menu():
         await pilot.click(ConsoleTranscript)
         await pilot.pause()
         assert not app.query(ConsoleSelectionMenu)
+
+
+class _LongTranscriptMenuApp(_TranscriptMenuApp):
+    """Transcript whose single row dwarfs the selection quote cap."""
+
+    _LONG_CONTENT = "x" * (SELECTION_QUOTE_CAP + 1000)
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content=self._LONG_CONTENT, id="m1"
+                )
+            ]
+        )
+        yield transcript
+
+
+async def _select_whole_row(pilot) -> None:
+    """Drag-select the entire first row and mount the selection menu."""
+    transcript = pilot.app.query_one(ConsoleTranscript)
+    row = pilot.app.query_one("#console-message-m1", ConsoleTranscriptMessage)
+    length = len(_LongTranscriptMenuApp._LONG_CONTENT)
+    transcript.selection_manager.begin_drag(row.id, 0)
+    transcript.selection_manager.extend_drag(row.id, length)
+    row.set_selection_range(0, length)
+    transcript.selection_manager.finish_drag()
+    region = transcript.region
+    transcript.post_message(
+        ConsoleTranscript.TranscriptTextSelected(
+            selection=TextSelection(row.id, 0, length),
+            screen_x=region.x + 4,
+            screen_y=region.y + 2,
+        )
+    )
+    await pilot.pause()
+    await pilot.pause()
+
+
+def _assert_side_chat_cleanup(app: _TranscriptMenuApp) -> None:
+    assert not app.query(ConsoleSelectionMenu)  # menu removed
+    transcript = app.query_one(ConsoleTranscript)
+    assert transcript.selection_manager.state.selection is None
+    assert (
+        app.query_one(
+            "#console-message-m1", ConsoleTranscriptMessage
+        ).get_selection_text()
+        == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_more_details_requests_side_chat_and_cleans_up():
+    """More Details posts ConsoleSideChatRequested(mode="more-details")."""
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        await pilot.click("#console-selection-more-details")
+        await pilot.pause()
+        assert len(app.side_chat_requests) == 1
+        assert app.side_chat_requests[0].mode == "more-details"
+        assert app.side_chat_requests[0].quote == "hello"
+        assert app.quote_requests == []
+        _assert_side_chat_cleanup(app)
+
+
+@pytest.mark.asyncio
+async def test_ask_side_chat_requests_side_chat_and_cleans_up():
+    """Ask in Side Chat posts ConsoleSideChatRequested(mode="ask")."""
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        await pilot.click("#console-selection-ask-side-chat")
+        await pilot.pause()
+        assert len(app.side_chat_requests) == 1
+        assert app.side_chat_requests[0].mode == "ask"
+        assert app.side_chat_requests[0].quote == "hello"
+        assert app.quote_requests == []
+        _assert_side_chat_cleanup(app)
+
+
+@pytest.mark.asyncio
+async def test_side_chat_quote_is_capped_more_details():
+    """A row longer than the quote cap reaches the side chat capped."""
+    app = _LongTranscriptMenuApp()
+    async with app.run_test(size=(120, 32)) as pilot:
+        await _select_whole_row(pilot)
+        await pilot.click("#console-selection-more-details")
+        await pilot.pause()
+        assert len(app.side_chat_requests) == 1
+        expected = cap_quote(_LongTranscriptMenuApp._LONG_CONTENT)
+        assert app.side_chat_requests[0].quote == expected
+        assert len(app.side_chat_requests[0].quote) <= SELECTION_QUOTE_CAP
+
+
+@pytest.mark.asyncio
+async def test_side_chat_quote_is_capped_ask():
+    app = _LongTranscriptMenuApp()
+    async with app.run_test(size=(120, 32)) as pilot:
+        await _select_whole_row(pilot)
+        await pilot.click("#console-selection-ask-side-chat")
+        await pilot.pause()
+        assert len(app.side_chat_requests) == 1
+        assert app.side_chat_requests[0].quote == cap_quote(
+            _LongTranscriptMenuApp._LONG_CONTENT
+        )
 
 
 class _TallTranscriptMenuApp(App[None]):
