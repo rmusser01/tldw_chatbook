@@ -32,7 +32,7 @@
 - Create `Tests/Notes/test_note_import_executor.py`.
 - Modify `Tests/Notes/test_note_folder_repository.py`.
 - Modify `Tests/DB/test_private_sqlite.py` and `Tests/DB/test_private_sqlite_inventory.py` only where the generic registry/inventory ratchets require explicit coverage.
-- Modify `backlog/tasks/task-16301 - Execute-approved-one-time-Database-Notes-import-plans-with-durable-receipts.md` for closeout evidence.
+- Modify `backlog/tasks/task-16309 - Execute-approved-one-time-Database-Notes-import-plans-with-durable-receipts.md` for closeout evidence.
 
 ---
 
@@ -452,7 +452,7 @@ Commit `feat(notes): make import execution resumable`.
 
 **Files:**
 
-- Modify: `backlog/tasks/task-16301 - Execute-approved-one-time-Database-Notes-import-plans-with-durable-receipts.md`
+- Modify: `backlog/tasks/task-16309 - Execute-approved-one-time-Database-Notes-import-plans-with-durable-receipts.md`
 - Modify: `backlog/docs/lessons-testing-evidence.md` only if this task produces a genuinely reusable incident.
 
 - [ ] **Step 1: Run the focused gate**
@@ -488,7 +488,7 @@ Review the full `origin/dev...HEAD` diff for approval authority, deterministic i
 
 - [ ] **Step 5: Close task documentation**
 
-Check every acceptance criterion, add concise implementation notes with exact verification counts and the ADR-059/060 decision, state whether a lesson was warranted, and change TASK-16301 to Done only after all Definition-of-Done gates pass.
+Check every acceptance criterion, add concise implementation notes with exact verification counts and the ADR-059/060 decision, state whether a lesson was warranted, and change TASK-16309 to Done only after all Definition-of-Done gates pass.
 
 - [ ] **Step 6: Commit closeout**
 

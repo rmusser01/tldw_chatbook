@@ -4294,7 +4294,7 @@ refresh observation alone does not prove that a recomposing child tree settled.
 
 ---
 
-## Authority tests must vary representation and interleave the guarded write (TASK-16301, 2026-08-14)
+## Authority tests must vary representation and interleave the guarded write (TASK-16309, 2026-08-14)
 
 **Incident.** The one-time Notes import executor passed its focused execution,
 receipt, retry, privacy, and crash-recovery suites, but final adversarial review

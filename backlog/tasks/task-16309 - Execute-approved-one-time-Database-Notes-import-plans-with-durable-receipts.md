@@ -1,5 +1,5 @@
 ---
-id: TASK-16301
+id: TASK-16309
 title: Execute approved one-time Database Notes import plans with durable receipts
 status: Done
 assignee:
@@ -56,7 +56,7 @@ Reason: ADR-059 already assigns one-time import receipts and provenance to the d
 5. Reconcile crash windows and implement failure-only retry plus device-private prior-observation lookup without persisting or logging source content or paths.
 6. Run focused and affected regressions, static checks, privacy/backup audits, and closeout review before marking the task Done.
 
-Detailed executable plan: `Docs/superpowers/plans/2026-08-14-task-16301-notes-import-executor.md`
+Detailed executable plan: `Docs/superpowers/plans/2026-08-14-task-16309-notes-import-executor.md`
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
