@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -197,20 +198,57 @@ async def test_selected_preview_is_screen_supplied_and_replaces_the_prior_child(
         browser = app.query_one(_browser_class())
         holder = browser.query_one("#personas-visual-identity-preview-image", Container)
 
-        browser.set_preview("preview one", expression_key="custom:admiration")
+        browser.set_preview("preview one", asset_id=1)
         await pilot.pause()
         assert len(holder.children) == 1
         assert _text(holder.children[0]) == "preview one"
 
-        browser.set_preview("preview two", expression_key="custom:admiration")
+        browser.set_preview("preview two", asset_id=1)
         await pilot.pause()
         assert len(holder.children) == 1
         assert _text(holder.children[0]) == "preview two"
 
-        browser.set_preview("stale", expression_key="happy")
+        browser.set_preview("stale", asset_id=2)
         await pilot.pause()
         assert len(holder.children) == 1
         assert _text(holder.children[0]) == "preview two"
+
+
+@pytest.mark.asyncio
+async def test_changed_selection_replaces_prior_pixels_with_loading_state():
+    app = _browser_host(_samira_pack())
+    async with app.run_test(size=(120, 40)) as pilot:
+        browser = app.query_one(_browser_class())
+        holder = browser.query_one("#personas-visual-identity-preview-image", Container)
+        browser.set_preview("admiration pixels", asset_id=1)
+        await pilot.pause()
+        assert _text(holder.children[0]) == "admiration pixels"
+
+        browser.apply_filter("joy")
+        await pilot.pause()
+
+        assert (
+            _text(browser.query_one("#personas-visual-identity-label", Static)) == "Joy"
+        )
+        assert len(holder.children) == 1
+        assert _text(holder.children[0]) == "Loading…"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_expression_keys_use_unique_asset_row_options():
+    pack = _samira_pack()
+    duplicate = replace(
+        pack.assets[0],
+        asset_id=999,
+        original_label="duplicate admiration",
+        display_label="Duplicate Admiration",
+    )
+    app = _browser_host(replace(pack, assets=(pack.assets[0], duplicate)))
+
+    async with app.run_test(size=(120, 40)):
+        options = app.query_one("#personas-visual-identity-results", OptionList)
+        assert options.option_count == 2
+        assert options.get_option_at_index(0).id != options.get_option_at_index(1).id
 
 
 @pytest.mark.asyncio
@@ -221,7 +259,7 @@ async def test_textual_graphics_widget_preview_mounts_directly():
         holder = browser.query_one("#personas-visual-identity-preview-image", Container)
         graphics_widget = Static("graphics preview")
 
-        browser.set_preview(graphics_widget, expression_key="custom:admiration")
+        browser.set_preview(graphics_widget, asset_id=1)
         await pilot.pause()
 
         assert isinstance(graphics_widget, Widget)

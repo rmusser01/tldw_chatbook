@@ -6079,7 +6079,7 @@ class PersonasScreen(BaseAppScreen):
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         editor = self.query_one(PersonasCharacterEditorWidget)
-        editor.load_character(record)
+        editor.load_character(record, visual_identity_pending=True)
         # Read only active-pack metadata first. Bound characters mount the
         # lazy pack browser; unbound characters take the legacy three-slot
         # path byte-for-behavior. DB work stays off the message pump.
@@ -6128,7 +6128,14 @@ class PersonasScreen(BaseAppScreen):
                     "Personas Visual Identity metadata read failed for character {}.",
                     snapshot.character_id,
                 )
+                await self._show_visual_identity_unavailable(snapshot)
+                return
         if not self._character_visual_identity_load_is_current(snapshot):
+            return
+        try:
+            metadata = self._visual_identity_pack_metadata(graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            await self._show_visual_identity_unavailable(snapshot)
             return
         try:
             live_graph = (
@@ -6141,15 +6148,19 @@ class PersonasScreen(BaseAppScreen):
                 else None
             )
         except (TypeError, ValueError, OverflowError):
+            await self._show_visual_identity_unavailable(snapshot)
             return
-        if not self._character_visual_identity_load_is_current(
-            snapshot
-        ) or self._visual_identity_pack_metadata(graph) != (
-            self._visual_identity_pack_metadata(live_graph)
+        try:
+            live_metadata = self._visual_identity_pack_metadata(live_graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        if (
+            not self._character_visual_identity_load_is_current(snapshot)
+            or metadata != live_metadata
         ):
             return
 
-        metadata = self._visual_identity_pack_metadata(graph)
         mounted = await editor.show_visual_identity_pack(metadata)
         if not self._character_visual_identity_load_is_current(snapshot):
             await editor.discard_visual_identity_pack(mounted)
@@ -6166,10 +6177,17 @@ class PersonasScreen(BaseAppScreen):
             )
         except (TypeError, ValueError, OverflowError):
             await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
+            return
+        try:
+            final_metadata = self._visual_identity_pack_metadata(final_graph)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            await editor.discard_visual_identity_pack(mounted)
+            await self._show_visual_identity_unavailable(snapshot)
             return
         if (
             not self._character_visual_identity_load_is_current(snapshot)
-            or self._visual_identity_pack_metadata(final_graph) != metadata
+            or final_metadata != metadata
         ):
             await editor.discard_visual_identity_pack(mounted)
             return
@@ -6177,6 +6195,20 @@ class PersonasScreen(BaseAppScreen):
             await self._render_all_character_editor_thumbnails(snapshot.character_id)
             if not self._character_visual_identity_load_is_current(snapshot):
                 return
+
+    async def _show_visual_identity_unavailable(
+        self, snapshot: _CharacterVisualIdentityLoadSnapshot
+    ) -> None:
+        """Present a fenced, non-authoring metadata failure state."""
+
+        editor = snapshot.editor_ref()
+        if editor is None or not self._character_visual_identity_load_is_current(
+            snapshot
+        ):
+            return
+        status = await editor.show_visual_identity_unavailable()
+        if not self._character_visual_identity_load_is_current(snapshot):
+            await editor.discard_visual_identity_pack(status)
 
     def _character_visual_identity_load_is_current(
         self, snapshot: _CharacterVisualIdentityLoadSnapshot
@@ -6965,6 +6997,13 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         """Resolve and decode one selected preview without exposing paths."""
 
+        def show_unavailable() -> None:
+            if not self._visual_identity_snapshot_is_current(snapshot):
+                return
+            browser = snapshot.browser_ref()
+            if browser is not None:
+                browser.set_preview_unavailable(asset_id=snapshot.asset.asset_id)
+
         coordinator = get_personas_preview_coordinator(self.app_instance)
         async with coordinator.serialize():
             if not self._visual_identity_snapshot_is_current(snapshot):
@@ -6983,8 +7022,10 @@ class PersonasScreen(BaseAppScreen):
                     "Personas Visual Identity preview resolution failed for character {}.",
                     snapshot.character_id,
                 )
+                show_unavailable()
                 return
             if not self._visual_identity_snapshot_is_current(snapshot, resolution):
+                show_unavailable()
                 return
 
             from ...Chat.console_image_view import (
@@ -7008,10 +7049,12 @@ class PersonasScreen(BaseAppScreen):
                 logger.opt(exception=True).debug(
                     "Personas Visual Identity preview decode failed."
                 )
+                show_unavailable()
                 return
             if not ok or not self._visual_identity_snapshot_is_current(
                 snapshot, resolution
             ):
+                show_unavailable()
                 return
             try:
                 graph = await coordinator.run_sync(
@@ -7020,10 +7063,12 @@ class PersonasScreen(BaseAppScreen):
                     snapshot.character_id,
                 )
             except (TypeError, ValueError, OverflowError):
+                show_unavailable()
                 return
             if not self._visual_identity_snapshot_is_current(
                 snapshot, resolution
             ) or not self._visual_identity_graph_matches_snapshot(snapshot, graph):
+                show_unavailable()
                 return
             try:
                 latest = await coordinator.run_sync(
@@ -7035,12 +7080,14 @@ class PersonasScreen(BaseAppScreen):
                     manual_expression_key=snapshot.asset.expression_key,
                 )
             except (TypeError, ValueError, OverflowError):
+                show_unavailable()
                 return
             if not self._visual_identity_snapshot_is_current(
                 snapshot, latest
             ) or self._visual_identity_resolution_identity(
                 latest
             ) != self._visual_identity_resolution_identity(resolution):
+                show_unavailable()
                 return
 
             mode = resolve_default_mode(
@@ -7066,12 +7113,11 @@ class PersonasScreen(BaseAppScreen):
             if renderable is None or not self._visual_identity_snapshot_is_current(
                 snapshot, latest
             ):
+                show_unavailable()
                 return
             browser = snapshot.browser_ref()
             if browser is not None:
-                browser.set_preview(
-                    renderable, expression_key=snapshot.asset.expression_key
-                )
+                browser.set_preview(renderable, asset_id=snapshot.asset.asset_id)
 
     async def _render_character_expression_slot(
         self, character_id: int, state: str

@@ -27,7 +27,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
@@ -46,6 +46,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_visual_identity_pack_widget 
     PersonasVisualIdentityPackWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterExpressionUploadRequested,
     EditCharacterRequested,
 )
 
@@ -309,6 +310,76 @@ async def test_bound_pack_decodes_only_the_selected_lazy_preview(
 
 
 @pytest.mark.asyncio
+async def test_failed_selected_preview_replaces_old_pixels_with_unavailable(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    holder = browser.query_one("#personas-visual-identity-preview-image")
+    original_resolve = personas_screen_module.resolve_visual_identity
+    started = Event()
+    release = Event()
+
+    def fail_joy(*args, **kwargs):
+        if kwargs["manual_expression_key"] == "happy":
+            started.set()
+            assert release.wait(2)
+            raise ValueError("corrupt selected asset")
+        return original_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "resolve_visual_identity", fail_joy)
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(started.wait, 2)
+    try:
+        await asyncio.sleep(0)
+        assert (
+            str(browser.query_one("#personas-visual-identity-label", Static).renderable)
+            == "Joy"
+        )
+        assert len(holder.children) == 1
+        assert str(holder.children[0].renderable) == "Loading…"
+    finally:
+        release.set()
+    await app.workers.wait_for_complete()
+
+    assert len(holder.children) == 1
+    assert str(holder.children[0].renderable) == "Unavailable"
+
+
+@pytest.mark.asyncio
+async def test_failed_stale_preview_cannot_clear_newer_selection(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    holder = browser.query_one("#personas-visual-identity-preview-image")
+    original_resolve = personas_screen_module.resolve_visual_identity
+    started = Event()
+    release = Event()
+
+    def fail_joy(*args, **kwargs):
+        if kwargs["manual_expression_key"] == "happy":
+            started.set()
+            assert release.wait(2)
+            raise ValueError("corrupt stale asset")
+        return original_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "resolve_visual_identity", fail_joy)
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(started.wait, 2)
+    browser.apply_filter("fear")
+    release.set()
+    await app.workers.wait_for_complete()
+
+    assert (
+        str(browser.query_one("#personas-visual-identity-label", Static).renderable)
+        == "Fear"
+    )
+    assert len(holder.children) == 1
+    assert str(holder.children[0].renderable) != "Unavailable"
+
+
+@pytest.mark.asyncio
 async def test_rapid_preview_selection_never_overlaps_sync_resolution(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -496,7 +567,7 @@ async def test_late_preview_cannot_paint_a_newer_editor_session(
     monkeypatch.setattr(
         PersonasVisualIdentityPackWidget,
         "set_preview",
-        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+        lambda self, _renderable, *, asset_id: applied.append(str(asset_id)),
     )
 
     browser.apply_filter("joy")
@@ -530,7 +601,7 @@ async def test_preview_cannot_paint_after_character_editor_mode_exit(
     monkeypatch.setattr(
         PersonasVisualIdentityPackWidget,
         "set_preview",
-        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+        lambda self, _renderable, *, asset_id: applied.append(str(asset_id)),
     )
 
     browser.apply_filter("joy")
@@ -567,7 +638,7 @@ async def test_preview_cannot_paint_after_same_character_editor_session_reload(
     monkeypatch.setattr(
         PersonasVisualIdentityPackWidget,
         "set_preview",
-        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+        lambda self, _renderable, *, asset_id: applied.append(str(asset_id)),
     )
 
     browser.apply_filter("joy")
@@ -619,7 +690,7 @@ async def test_preview_rechecks_active_asset_identity_after_decode(
     monkeypatch.setattr(
         PersonasVisualIdentityPackWidget,
         "set_preview",
-        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+        lambda self, _renderable, *, asset_id: applied.append(str(asset_id)),
     )
 
     browser.apply_filter("joy")
@@ -653,7 +724,7 @@ async def test_preview_rejects_binding_transition_during_decode(
     monkeypatch.setattr(
         PersonasVisualIdentityPackWidget,
         "set_preview",
-        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+        lambda self, _renderable, *, asset_id: applied.append(str(asset_id)),
     )
 
     browser.apply_filter("joy")
@@ -692,9 +763,16 @@ async def test_late_pack_metadata_cannot_remount_over_a_newer_character(
     )
     assert await asyncio.to_thread(started.wait, 2)
     screen._character_editor_generation += 1
-    editor.load_character({"id": char_id + 1, "name": "Newer"})
+    editor.load_character(
+        {"id": char_id + 1, "name": "Newer"}, visual_identity_pending=True
+    )
     host = editor.query_one("#personas-char-editor-visual-identity-host")
-    assert not host.display
+    assert host.display
+    assert any(
+        isinstance(child, Static)
+        and str(child.renderable) == "Loading visual identity…"
+        for child in host.children
+    )
     release.set()
     await task
     await asyncio.sleep(0.1)
@@ -851,7 +929,7 @@ async def test_pack_browser_mounted_during_mode_exit_is_removed(
     await task
 
     assert not editor.query(PersonasVisualIdentityPackWidget)
-    assert not editor.query_one("#personas-char-editor-visual-identity-host").display
+    assert editor.query_one("#personas-char-editor-visual-identity-host").display
 
 
 @pytest.mark.asyncio
@@ -900,7 +978,90 @@ async def test_pack_browser_mounted_during_binding_change_is_removed(
     await task
 
     assert not editor.query(PersonasVisualIdentityPackWidget)
-    assert not editor.query_one("#personas-char-editor-visual-identity-host").display
+    assert editor.query_one("#personas-char-editor-visual-identity-host").display
+
+
+@pytest.mark.asyncio
+async def test_active_binding_read_hides_and_disables_legacy_authoring(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    started = Event()
+    release = Event()
+
+    def delayed_graph(_self, _kind, _actor_id):
+        started.set()
+        assert release.wait(2)
+        return graph
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", delayed_graph
+    )
+    editor.load_character(
+        {"id": char_id, "name": "Reloaded bound character"},
+        visual_identity_pending=True,
+    )
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    captured: list[object] = []
+    original_post_message = editor.post_message
+    monkeypatch.setattr(editor, "post_message", captured.append)
+    upload = editor.query_one("#personas-char-editor-expr-thinking-upload", Button)
+    try:
+        assert not editor.query_one("#personas-char-editor-legacy-expressions").display
+        assert upload.disabled
+        upload.press()
+        await asyncio.sleep(0)
+        assert not any(
+            isinstance(message, CharacterExpressionUploadRequested)
+            for message in captured
+        )
+    finally:
+        monkeypatch.setattr(editor, "post_message", original_post_message)
+        release.set()
+    await task
+    await app.workers.wait_for_complete()
+
+
+@pytest.mark.asyncio
+async def test_active_binding_read_failure_shows_non_authoring_unavailable(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+
+    def failed_graph(_self, _kind, _actor_id):
+        raise ValueError("visual identity graph unavailable")
+
+    monkeypatch.setattr(VisualIdentityRepository, "get_active_actor_pack", failed_graph)
+    editor.load_character(
+        {"id": char_id, "name": "Reloaded bound character"},
+        visual_identity_pending=True,
+    )
+    await asyncio.sleep(0)
+    await screen._configure_character_visual_identity(
+        _visual_identity_load_snapshot(screen, editor, char_id)
+    )
+
+    legacy = editor.query_one("#personas-char-editor-legacy-expressions")
+    host = editor.query_one("#personas-char-editor-visual-identity-host")
+    assert not legacy.display
+    assert host.display
+    assert not editor.query(PersonasVisualIdentityPackWidget)
+    assert any(
+        isinstance(child, Static) and str(child.renderable) == "Unavailable"
+        for child in host.children
+    )
+    assert editor.query_one(
+        "#personas-char-editor-expr-thinking-upload", Button
+    ).disabled
+    await app.workers.wait_for_complete()
 
 
 @pytest.mark.asyncio

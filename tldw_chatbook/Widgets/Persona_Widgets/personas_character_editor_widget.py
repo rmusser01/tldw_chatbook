@@ -19,6 +19,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 
 from ...Character_Chat.character_generation import GENERATABLE_FIELDS
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
@@ -722,15 +723,18 @@ class PersonasCharacterEditorWidget(Container):
 
     # ===== Public API =====
 
-    def load_character(self, data: Dict[str, Any]) -> None:
+    def load_character(
+        self, data: Dict[str, Any], *, visual_identity_pending: bool = False
+    ) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
         self._visual_identity_session_token += 1
-        self._reset_visual_identity_browser()
         self._loading = True
         try:
             self._populate_form(data)
         finally:
             self._loading = False
+        if visual_identity_pending:
+            self._reset_visual_identity_browser()
         # Re-arm dirty tracking for the new session. The Changed events fired
         # by the programmatic sets above are delivered after this method
         # returns, so the handler compares against this snapshot (taken from
@@ -816,14 +820,29 @@ class PersonasCharacterEditorWidget(Container):
         return self._visual_identity_session_token
 
     def _reset_visual_identity_browser(self) -> None:
-        """Return immediately to legacy controls while a new binding loads."""
+        """Gate all expression authoring while a new binding loads."""
 
         if not self.is_mounted:
             return
-        self.query_one("#personas-char-editor-legacy-expressions").display = True
+        self.query_one("#personas-char-editor-legacy-expressions").display = False
+        self._set_legacy_expression_authoring_enabled(False)
         host = self.query_one("#personas-char-editor-visual-identity-host")
-        host.display = False
+        host.display = True
         host.remove_children()
+        host.mount(Static("Loading visual identity…"))
+
+    def _set_legacy_expression_authoring_enabled(self, enabled: bool) -> None:
+        """Enable or disable every legacy expression mutation control."""
+
+        for action in ("import", "export", "generate-all"):
+            self.query_one(
+                f"#personas-char-editor-expr-{action}", Button
+            ).disabled = not enabled
+        for state in EXPRESSION_IMAGE_STATES:
+            for action in ("upload", "generate", "clear"):
+                self.query_one(
+                    f"#personas-char-editor-expr-{state}-{action}", Button
+                ).disabled = not enabled
 
     async def show_visual_identity_pack(
         self, pack: VisualIdentityPackMetadata | None
@@ -836,24 +855,34 @@ class PersonasCharacterEditorWidget(Container):
         legacy.display = pack is None
         host.display = pack is not None
         if pack is None:
+            self._sync_expression_slots_enabled()
             return None
         browser = PersonasVisualIdentityPackWidget(pack)
         await host.mount(browser)
         return browser
 
-    async def discard_visual_identity_pack(
-        self, browser: PersonasVisualIdentityPackWidget | None
-    ) -> None:
+    async def show_visual_identity_unavailable(self) -> Static:
+        """Show a non-authoring state when binding metadata cannot be read."""
+
+        self.query_one("#personas-char-editor-legacy-expressions").display = False
+        self._set_legacy_expression_authoring_enabled(False)
+        host = self.query_one("#personas-char-editor-visual-identity-host", Container)
+        host.display = True
+        await host.remove_children()
+        status = Static("Unavailable")
+        await host.mount(status)
+        return status
+
+    async def discard_visual_identity_pack(self, content: Widget | None) -> None:
         """Remove one stale mount without disturbing a newer editor session."""
 
-        if browser is None:
+        if content is None:
             return
         host = self.query_one("#personas-char-editor-visual-identity-host", Container)
-        if browser.parent is host:
-            await browser.remove()
+        if content.parent is host:
+            await content.remove()
         if not host.children:
-            self.query_one("#personas-char-editor-legacy-expressions").display = True
-            host.display = False
+            self._reset_visual_identity_browser()
 
     def set_avatar_image(self, image_data: bytes) -> None:
         """Stage avatar image bytes for persistence on the next Save.

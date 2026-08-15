@@ -187,7 +187,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
         options = self.query_one("#personas-visual-identity-results", OptionList)
         options.clear_options()
         options.add_options(
-            Option(asset.display_label, id=asset.expression_key)
+            Option(asset.display_label, id=f"asset-{asset.asset_id}")
             for asset in self._filtered
         )
         if self._filtered:
@@ -196,6 +196,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
         else:
             self._selected = None
             self._sync_selection_copy()
+            self._replace_preview("Unavailable")
 
     def _select_index(self, index: int) -> None:
         if not (0 <= index < len(self._filtered)):
@@ -205,6 +206,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
         self._selected = selected
         self._sync_selection_copy()
         if changed:
+            self._replace_preview("Loading…")
             self.post_message(VisualIdentityPackPreviewRequested(selected))
 
     def _sync_selection_copy(self) -> None:
@@ -226,16 +228,27 @@ class PersonasVisualIdentityPackWidget(Vertical):
                 f"#personas-visual-identity-{action}", Button
             ).disabled = disabled
 
-    def set_preview(self, renderable: object, *, expression_key: str) -> None:
-        """Mount one already-decoded preview when it still matches selection."""
+    def _replace_preview(self, renderable: object) -> None:
+        """Replace the preview holder with one renderable or status."""
 
-        if self._selected is None or self._selected.expression_key != expression_key:
-            return
         holder = self.query_one("#personas-visual-identity-preview-image", Container)
         holder.remove_children()
         holder.mount(
             renderable if isinstance(renderable, Widget) else Static(renderable)
         )
+
+    def set_preview(self, renderable: object, *, asset_id: int) -> None:
+        """Mount one already-decoded preview when it still matches selection."""
+
+        if self._selected is None or self._selected.asset_id != asset_id:
+            return
+        self._replace_preview(renderable)
+
+    def set_preview_unavailable(self, *, asset_id: int) -> None:
+        """Show failure only when the failed asset remains selected."""
+
+        if self._selected is not None and self._selected.asset_id == asset_id:
+            self._replace_preview("Unavailable")
 
     @property
     def selected_asset(self) -> VisualIdentityAssetMetadata | None:
