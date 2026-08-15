@@ -159,7 +159,7 @@ def validate_library_conversation_page(
 
     if limit != expected_limit or offset != expected_offset:
         raise ValueError("conversation page coordinate echo does not match the request")
-    if total and offset >= total:
+    if offset > 0 and offset >= total:
         raise ValueError("conversation page offset is out of range for its total")
 
     expected_count = min(limit, max(total - offset, 0))

@@ -613,6 +613,15 @@ def test_validation_rejects_ordinary_offset_past_the_owning_page():
         )
 
 
+def test_validation_rejects_empty_collection_displaced_from_offset_zero():
+    with pytest.raises(ValueError, match="offset.*range"):
+        validate_library_conversation_page(
+            _conversation_response([], offset=20, total=0),
+            requested_limit=20,
+            requested_offset=20,
+        )
+
+
 @pytest.mark.parametrize(
     ("items", "total", "has_more"),
     [
