@@ -4332,6 +4332,35 @@ class ConsoleChatStore:
                         self._bump_payload_revision(session.id)
         return result is not False
 
+    def variant_sets_for_conversation(
+        self, conversation_id: str
+    ) -> list[ConsoleVariantSet]:
+        """Collect the live in-memory variant sets for one conversation.
+
+        Variant CONTENTS are process-local (only selection metadata
+        persists), so this covers sessions currently open in THIS store; a
+        cold conversation restored purely from the DB legitimately
+        contributes no variant contents and the trajectory ledger renders
+        without superseded variants. Deduplicated per ``turn_id``, newest
+        selection state last (the projection over-attaches a set to every
+        assistant record of its turn; duplicates would double the contents).
+        """
+        sets_by_turn: dict[str, ConsoleVariantSet] = {}
+        for session in self._sessions.values():
+            if session.persisted_conversation_id != conversation_id:
+                continue
+            for message in self._nodes_by_session.get(session.id, {}).values():
+                variants = getattr(message, "variants", None)
+                if variants is None:
+                    continue
+                turn_id = getattr(variants, "turn_id", None) or getattr(
+                    message, "turn_id", None
+                )
+                if not turn_id:
+                    continue
+                sets_by_turn[str(turn_id)] = variants
+        return list(sets_by_turn.values())
+
     def _nodes_lookup(self, message_id: str) -> ConsoleChatMessage | None:
         session_id = self._message_session_index.get(message_id)
         if session_id is None:

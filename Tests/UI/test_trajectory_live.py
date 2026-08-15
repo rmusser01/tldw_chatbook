@@ -24,10 +24,16 @@ from dataclasses import dataclass
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_context_repository import (
+    AuxiliaryAttemptStart,
+    ConsoleContextRepository,
+)
 from tldw_chatbook.Chat.trajectory import derive_trajectory
-from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen, _build_trajectory_snapshot
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
 # ---------------------------------------------------------------------------
@@ -289,10 +295,80 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
 
 def test_console_binds_single_letter_trajectory_launch():
     bindings = {b.key: b.action for b in ChatScreen.BINDINGS}
-    assert bindings.get("j") == "open_trajectory_view"
+    assert bindings.get("y") == "open_trajectory_view"
     assert hasattr(ChatScreen, "action_open_trajectory_view")
+    # 'j' stays owned by the focused transcript (next-message selection in
+    # console_transcript.on_key); the launch key must not collide with it.
+    assert "j" not in bindings
     # ADR-031: single-letter htop-style key, no terminal-convention chord.
-    assert len("j") == 1
+    assert len("y") == 1
+
+
+def test_build_trajectory_snapshot_renders_compaction_and_variants(tmp_path):
+    """Real-seam integration: no getattr-probed phantom sources.
+
+    Drives ``_build_trajectory_snapshot`` against a real temp DB + store:
+    message/tool rows land via the Task 2 write path, a compaction attempt
+    via ``ConsoleContextRepository``, and a variant set in-memory -- then
+    asserts compaction and superseded variants actually reach the snapshot.
+    """
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    try:
+        session = store.ensure_session(title="Trajectory")
+        conversation_id = store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="hello",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="first draft",
+            persist=True,
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ fs_list → (3 files)",
+            tool_output_full="file-a\nfile-b\nfile-c",
+        )
+        # In-memory variant: 'first draft' becomes superseded content.
+        store.add_variant(assistant.id, "second draft wins")
+
+        # Durable compaction attempt through the real repository seam.
+        ConsoleContextRepository(db).start_auxiliary_attempt(
+            AuxiliaryAttemptStart(
+                operation_id="op-compaction-1",
+                conversation_id=conversation_id,
+                purpose="conversation_compaction",
+                provider="test-provider",
+                model="test-model",
+                requested_output_cap=100,
+                estimated_input_tokens=50,
+                started_at="2026-08-14T00:00:00Z",
+            )
+        )
+
+        snapshot = _build_trajectory_snapshot(store, conversation_id)
+
+        kinds = [r.kind for turn in snapshot.turns for r in turn.records]
+        assert "user" in kinds and "assistant" in kinds
+        assert "tool_call" in kinds and "tool_result" in kinds
+        assert "compaction" in kinds
+
+        superseded = [
+            variant
+            for turn in snapshot.turns
+            for record in turn.records
+            for variant in record.variants
+        ]
+        assert "first draft" in superseded
+        assert "second draft wins" not in superseded  # selected == current
+    finally:
+        db.close()
 
 
 def test_trajectory_launch_action_presents_screen():

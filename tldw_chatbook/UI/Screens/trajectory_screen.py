@@ -270,11 +270,17 @@ class TrajectoryScreen(ModalScreen[None]):
         if revision == self._last_revision:
             return
         self._last_revision = revision
+        # exclusive: a slow rebuild from an older revision cannot be
+        # overtaken and land after a newer one started; the revision guard
+        # below additionally drops results built for a stale revision.
         self.run_worker(
-            self._live_rebuild_worker, thread=True, group="trajectory-live"
+            lambda: self._live_rebuild_worker(revision),
+            thread=True,
+            group="trajectory-live",
+            exclusive=True,
         )
 
-    def _live_rebuild_worker(self) -> None:
+    def _live_rebuild_worker(self, revision: int) -> None:
         """Worker-thread half of the live rebuild (video-player pattern)."""
         builder = self._snapshot_builder
         if builder is None:
@@ -289,13 +295,22 @@ class TrajectoryScreen(ModalScreen[None]):
             )
             return
         try:
-            self.app.call_from_thread(self._apply_live_snapshot, snapshot)
+            self.app.call_from_thread(self._apply_live_snapshot, snapshot, revision)
         except Exception:  # noqa: BLE001 - worker boundary
             return
 
-    def _apply_live_snapshot(self, snapshot: TrajectorySnapshot) -> None:
-        """Swap in a rebuilt snapshot, preserving reader state; follow tail."""
+    def _apply_live_snapshot(
+        self, snapshot: TrajectorySnapshot, revision: int | None = None
+    ) -> None:
+        """Swap in a rebuilt snapshot, preserving reader state; follow tail.
+
+        ``revision`` is the store revision the snapshot was built for; a
+        result arriving after a NEWER revision was observed is dropped so
+        out-of-order workers can never regress the ledger.
+        """
         if not self._alive:
+            return
+        if revision is not None and revision != self._last_revision:
             return
         self._snapshot = snapshot
         self._turns = snapshot.turns

@@ -1136,7 +1136,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send / queue"),
-    ("J", "trajectory"),
+    ("Y", "trajectory"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -1158,6 +1158,9 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
     task-5 (console trajectory view). Best-effort at every seam: any source
     that is unavailable contributes an empty iterable rather than failing
     the launch -- the ledger degrades to fewer records, never to no screen.
+    Variant contents are process-local (see
+    ``ConsoleChatStore.variant_sets_for_conversation``): cold conversations
+    render without superseded variants by design.
     """
     messages: list[Any] = []
     traj_rows: list[Any] = []
@@ -1188,20 +1191,19 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
         usage = ProviderUsage.from_json(message.get("usage_json"))
         if usage is not None:
             usage_by_id[str(message.get("id"))] = usage
-    variant_provider = getattr(store, "variant_sets_for_conversation", None)
-    if callable(variant_provider):
+    try:
+        variant_sets = list(store.variant_sets_for_conversation(conversation_id))
+    except Exception:  # noqa: BLE001
+        variant_sets = []
+    context_repository = getattr(persistence, "context_repository", None)
+    if context_repository is not None:
         try:
-            variant_sets = list(variant_provider(conversation_id))
-        except Exception:  # noqa: BLE001
-            variant_sets = []
-    compaction_lister = getattr(
-        getattr(persistence, "context_repository", None),
-        "list_compaction_records",
-        None,
-    )
-    if callable(compaction_lister):
-        try:
-            compaction_records = list(compaction_lister(conversation_id))
+            # The projection itself filters purpose == "conversation_compaction".
+            compaction_records = list(
+                context_repository.list_auxiliary_attempts(
+                    conversation_id, limit=500
+                )
+            )
         except Exception:  # noqa: BLE001
             compaction_records = []
     return derive_trajectory(
@@ -1787,10 +1789,13 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
         # task-5 (console trajectory view): single-letter htop-style launch
-        # key per ADR-031; 'j' was unbound on this screen. The footer hint is
-        # registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest of the
-        # Console vocabulary.
-        Binding("j", "open_trajectory_view", "Trajectory", show=True),
+        # key per ADR-031. 'y', NOT 'j': the focused transcript consumes
+        # j/k for next/previous-message selection (console_transcript.py
+        # on_key), which would make the advertised footer hint a lie in
+        # exactly the surface a trajectory reader comes from. The footer
+        # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
+        # of the Console vocabulary.
+        Binding("y", "open_trajectory_view", "Trajectory", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
