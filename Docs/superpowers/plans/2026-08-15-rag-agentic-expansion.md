@@ -153,3 +153,29 @@ def test_sealed_payload_survives_hints()              # normal 10-row payload wi
 - **Placeholder scan:** clean — every test named with its assertion, every decision pre-registered.
 - **Type consistency:** `expand_document`/`ExpandDocumentTool`/`expand_document_enabled` and the return shape identical in T2's Interfaces and T3/T4's consumption; `expand_hint` shape identical in T3's Interfaces and tests.
 - **Ordering:** T1 first so no dead surface coexists with the new tool even transiently; T2 before T3 (hints reference the tool's existence in description wording); T4 last (measures the assembled loop; gate proves zero retrieval change).
+
+---
+
+### Task 3b (added 2026-08-15, after Task 3's report): close the identity loop in the payload
+
+**Why (T3's disclosed concern):** the provider row carries `expand_hint`
+but not the `source_type`/`source_id` that `expand_document` REQUIRES —
+for label-only rows `result_id` merely happens to equal `source_id`, and
+the seam is only inferable from label prose. The policy must be
+actionable BY CONTRACT, or Task 4's tool-ON arm measures the model's
+inference ability, not expansion's value.
+
+**Files:** Modify `Agents/library_rag_tool_provider.py` (`_project_row`);
+extend `Tests/Agents/test_library_tool_provider.py`.
+
+- [ ] **Step 1 (RED):** tests: every projected row carries `source_type`
+  and `source_id` matching the service row's `provenance.source_type` /
+  `source_id`; a semantic row additionally carries its non-empty
+  `chunk_id`; a label-only row's `source_id` equals what the row already
+  exposed as `result_id`; the sealed-payload test still passes with the
+  added keys (re-measure the per-row byte cost and state it).
+- [ ] **Step 2:** implement (payload ADDITION only — `expand_hint`'s
+  pinned `{expandable, reason}` interface and all existing keys
+  unchanged). **Step 3:** GREEN + battery counts read. **Step 4:** commit
+  `feat(agents): payload rows carry the identity expand_document requires (TASK-16174)`
+  + trailer; push.
