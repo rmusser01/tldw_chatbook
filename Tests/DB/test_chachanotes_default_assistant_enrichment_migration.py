@@ -455,8 +455,8 @@ def test_conversation_and_message_against_character_id_1_still_works(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_current_schema_version_is_37():
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 37
+def test_current_schema_version_is_39():
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 39
 
 
 def test_migrate_from_v31_to_v32_requires_version_31(tmp_path):

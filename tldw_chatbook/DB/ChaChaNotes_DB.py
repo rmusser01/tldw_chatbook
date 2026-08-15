@@ -244,7 +244,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 38  # Message trajectory metadata sidecar.
+    _CURRENT_SCHEMA_VERSION = 39  # Local Visual Identity pack metadata.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5120,6 +5120,45 @@ UPDATE db_schema_version
                 f"Migration from V37 to V38 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v38_to_v39(self, conn: sqlite3.Connection) -> None:
+        """Add local Visual Identity packs, versions, assets, and bindings."""
+        if self._get_db_version(conn) != 38:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V38→V39] Migration requires schema version 38"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v38_to_v39_visual_identity.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    cursor.execute(pending)
+                    pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Visual Identity migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 39:
+                    raise SchemaError(
+                        "Visual Identity schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V38 to V39 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5289,6 +5328,7 @@ UPDATE db_schema_version
                     35: self._migrate_from_v35_to_v36,
                     36: self._migrate_from_v36_to_v37,
                     37: self._migrate_from_v37_to_v38,
+                    38: self._migrate_from_v38_to_v39,
                 }
 
                 if current_db_version == 0:

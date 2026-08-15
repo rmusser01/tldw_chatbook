@@ -60,6 +60,13 @@ NOTE_FOLDER_MIGRATION_PATH = (
 PROVIDER_CONTINUATION_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql"
 )
+VISUAL_IDENTITY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql"
+)
+MESSAGE_TRAJECTORY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v37_to_v38_message_trajectory_metadata.sql"
+)
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -71,6 +78,8 @@ RUNTIME_MIGRATION_PATHS = {
     DICTIONARY_ATTACHMENTS_MIGRATION_PATH,
     NOTE_FOLDER_MIGRATION_PATH,
     PROVIDER_CONTINUATION_MIGRATION_PATH,
+    MESSAGE_TRAJECTORY_MIGRATION_PATH,
+    VISUAL_IDENTITY_MIGRATION_PATH,
 }
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",
@@ -701,7 +710,7 @@ assert package_file.is_relative_to(expected_target), (package_file, expected_tar
 home_path = Path(os.environ["HOME"]).resolve(strict=True)
 migration_path = validate_path("installed-migration-probe.sqlite", home_path)
 current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
-assert current_schema_version == 37
+assert current_schema_version == 39
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
 try:
     legacy_db = CharactersRAGDB(migration_path, client_id="installed-probe-v35")
@@ -720,8 +729,14 @@ installed_tables = {
     )
 }
 assert {"note_folders", "note_folder_memberships"} <= installed_tables
+assert {
+    "visual_identity_packs",
+    "visual_identity_pack_versions",
+    "visual_identity_assets",
+    "visual_identity_bindings",
+} <= installed_tables
 upgraded_db.close_connection()
-print("installed-wheel-v35-to-v37-ok")
+print("installed-wheel-v35-to-v39-ok")
 """
 
 
@@ -1112,7 +1127,7 @@ def test_built_artifacts_match_distribution_contract(
     }
 
 
-def test_installed_wheel_migrates_v35_database_to_v37(
+def test_installed_wheel_migrates_v35_database_to_v38(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
 ) -> None:
@@ -1134,7 +1149,7 @@ def test_installed_wheel_migrates_v35_database_to_v37(
         env,
     )
 
-    assert "installed-wheel-v35-to-v37-ok" in result.stdout
+    assert "installed-wheel-v35-to-v38-ok" in result.stdout
 
 
 def test_installed_wheel_loads_pinned_audio_cpp_artifact_manifest(
