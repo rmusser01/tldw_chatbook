@@ -189,6 +189,18 @@ jobs:
         pip install -e .
         pip install pytest pytest-asyncio pytest-timeout
 
+    - name: Parse provisioned UAT wrapper
+      shell: pwsh
+      run: |
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile(
+          (Resolve-Path "scripts/uat_audio_cpp_windows.ps1"),
+          [ref]$tokens,
+          [ref]$errors
+        ) | Out-Null
+        if ($errors.Count -ne 0) { throw "The Windows UAT wrapper is invalid." }
+
     - name: Verify Windows audio.cpp lifecycle
       shell: pwsh
       run: |
@@ -200,6 +212,7 @@ jobs:
           Tests/TTS/test_audio_cpp_supervisor.py `
           Tests/TTS/test_audio_cpp_recipes.py `
           Tests/TTS/test_audio_cpp_managed_config.py `
+          Tests/TTS/test_audio_cpp_windows_uat_harness.py `
           Tests/UI/test_settings_speech_tts_panel.py::test_windows_managed_ui_gate_uses_shared_platform_capability `
           Tests/UI/test_settings_speech_tts_panel.py::test_supported_windows_offers_managed_mode_with_bounded_privacy_copy `
           Tests/UI/test_speech_playground_pane_lifecycle.py::test_ready_clone_model_mounts_and_canonicalizes_path_free_setup `

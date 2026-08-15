@@ -17,6 +17,7 @@ WINDOWS_AUDIO_CPP_TEST_TARGETS = (
     "Tests/TTS/test_audio_cpp_supervisor.py",
     "Tests/TTS/test_audio_cpp_recipes.py",
     "Tests/TTS/test_audio_cpp_managed_config.py",
+    "Tests/TTS/test_audio_cpp_windows_uat_harness.py",
     "Tests/UI/test_settings_speech_tts_panel.py::test_windows_managed_ui_gate_uses_shared_platform_capability",
     "Tests/UI/test_settings_speech_tts_panel.py::test_supported_windows_offers_managed_mode_with_bounded_privacy_copy",
     "Tests/UI/test_speech_playground_pane_lifecycle.py::test_ready_clone_model_mounts_and_canonicalizes_path_free_setup",
@@ -271,6 +272,7 @@ def test_windows_audio_cpp_lifecycle_is_a_required_hermetic_x86_x64_gate() -> No
     assert "architecture: ${{ matrix.architecture }}" in block
     assert "timeout-minutes:" in block
     assert "shell: pwsh" in block
+    assert "[System.Management.Automation.Language.Parser]::ParseFile" in block
     assert "pip install -e ." in block
     assert "pip install pytest pytest-asyncio pytest-timeout" in block
     assert "requirements-test.txt" not in block
