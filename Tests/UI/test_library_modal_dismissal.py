@@ -9,10 +9,97 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Input, Static
 
+from tldw_chatbook.UI.Screens.skills_screen import (
+    SkillTrustBootstrapModal,
+    SkillTrustPassphraseModal,
+)
+from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
+    LibraryNoteFolderNameDialog,
+    LibraryNoteFolderTargetDialog,
+)
+from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteConfirmationModal,
+)
+from tldw_chatbook.Widgets.ModelArtifacts.install_modal import ModelInstallModal
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 _STABLE_OPENER_ID = "library-stable-opener"
+
+
+ORDINARY_LIBRARY_MODAL_CONTRACTS = (
+    (SkillTrustPassphraseModal, "#skill-trust-passphrase-modal"),
+    (SkillTrustBootstrapModal, "#skill-trust-bootstrap-modal"),
+    (ModelInstallModal, ".model-install-modal"),
+    (PromptDeleteConfirmationModal, "#prompt-delete-modal"),
+    (LibraryNoteFolderNameDialog, "#library-note-folder-name-dialog"),
+    (LibraryNoteFolderTargetDialog, "#library-note-folder-target-dialog"),
+)
+
+
+def _binding_key_action(binding: object) -> tuple[str, str]:
+    if isinstance(binding, tuple):
+        return str(binding[0]), str(binding[1])
+    return str(binding.key), str(binding.action)  # type: ignore[attr-defined]
+
+
+def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
+    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 6
+    for modal_type, content_selector in ORDINARY_LIBRARY_MODAL_CONTRACTS:
+        assert issubclass(modal_type, SafeModalDismissMixin)
+        assert modal_type.SAFE_MODAL_CONTENT == content_selector
+        escape_actions = [
+            action
+            for binding in modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ]
+        assert escape_actions == ["request_safe_cancel"]
+
+
+@pytest.mark.parametrize(
+    "modal_type",
+    [SkillTrustPassphraseModal, SkillTrustBootstrapModal],
+    ids=["passphrase", "bootstrap"],
+)
+@pytest.mark.asyncio
+async def test_ordinary_modal_lifecycle_runs_skill_and_mixin_handlers_once(
+    modal_type,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mixin_mount_calls = 0
+    mixin_unmount_calls = 0
+    original_mount = SafeModalDismissMixin.on_mount
+    original_unmount = SafeModalDismissMixin.on_unmount
+
+    def count_mount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_mount_calls
+        mixin_mount_calls += 1
+        original_mount(self)
+
+    def count_unmount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mixin_unmount_calls
+        mixin_unmount_calls += 1
+        original_unmount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mount)
+    monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_unmount)
+    app = App()
+    modal = (
+        modal_type(confirm_bootstrap=False)
+        if modal_type is SkillTrustPassphraseModal
+        else modal_type()
+    )
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert mixin_mount_calls == 1
+        assert isinstance(modal.focused, Input)
+
+        modal.dismiss(None)
+        await pilot.pause()
+        assert mixin_unmount_calls == 1
 
 
 class _LibraryLikeHost(Screen[None]):

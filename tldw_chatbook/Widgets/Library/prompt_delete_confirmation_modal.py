@@ -11,6 +11,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
+from ..modal_dismissal import SafeModalDismissMixin
+
 
 ArtifactType = Literal["prompt", "recipe"]
 _ARTIFACT_TYPES = frozenset(("prompt", "recipe"))
@@ -76,7 +78,9 @@ class PromptDeleteDecision:
             raise TypeError("Prompt deletion decision fingerprints must be strings or None.")
 
 
-class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
+class PromptDeleteConfirmationModal(
+    SafeModalDismissMixin, ModalScreen[PromptDeleteDecision]
+):
     """Render a safe, reusable Prompt/Recipe deletion confirmation.
 
     The modal deliberately owns no deletion or scope-service behavior. Hosts capture
@@ -121,7 +125,8 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
     }
     """
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#prompt-delete-modal"
 
     def __init__(self, request: PromptDeleteRequest) -> None:
         super().__init__()
@@ -189,11 +194,12 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
                 parts.append(f"{count} {label}")
         return " and ".join(parts)
 
-    def action_cancel(self) -> None:
+    async def _perform_safe_cancel(self, *, source: str) -> None:
         """Dismiss safely, preserving the captured stale-result fingerprint."""
-        self.dismiss(PromptDeleteDecision(False, self.request.fingerprint))
+        del source
+        self.dismiss_safe_once(PromptDeleteDecision(False, self.request.fingerprint))
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Return a typed decision without invoking deletion infrastructure.
 
         Args:
@@ -201,7 +207,7 @@ class PromptDeleteConfirmationModal(ModalScreen[PromptDeleteDecision]):
         """
         if event.button.id == "prompt-delete-cancel":
             event.stop()
-            self.action_cancel()
+            await self.request_safe_cancel(source="visible")
         elif event.button.id == "prompt-delete-confirm":
             event.stop()
             self.dismiss(PromptDeleteDecision(True, self.request.fingerprint))
