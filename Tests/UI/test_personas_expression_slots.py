@@ -1093,6 +1093,56 @@ async def test_stale_final_read_failure_cannot_replace_new_character_legacy_stat
 
 
 @pytest.mark.asyncio
+async def test_stale_final_read_failure_discards_exact_mount_after_mode_exit(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    assert graph is not None
+    final_started = Event()
+    release_final = Event()
+    calls = 0
+
+    def fail_final_read(_self, _kind, _actor_id):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            final_started.set()
+            assert release_final.wait(2)
+            raise sqlite3.OperationalError("private stale mode-exit detail")
+        return graph
+
+    async def no_preview(_snapshot):
+        return None
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", fail_final_read
+    )
+    monkeypatch.setattr(screen, "_render_visual_identity_pack_preview", no_preview)
+    editor.load_character(
+        {"id": char_id, "name": "Blocked mode-exit read"},
+        visual_identity_pending=True,
+    )
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(
+            _visual_identity_load_snapshot(screen, editor, char_id)
+        )
+    )
+    assert await asyncio.to_thread(final_started.wait, 2)
+    old_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+
+    screen.state.active_mode = "personas"
+    screen._show_center("#ccp-persona-card-view")
+    release_final.set()
+    await task
+
+    assert old_browser.parent is None
+    assert screen.state.active_mode == "personas"
+    assert screen.query_one("#ccp-persona-card-view").display
+
+
+@pytest.mark.asyncio
 async def test_pack_browser_mounted_during_mode_exit_is_removed(
     personas_editor_with_bound_pack, monkeypatch
 ):
