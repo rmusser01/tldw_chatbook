@@ -450,6 +450,24 @@ def test_invalid_message_counts_use_harmless_fallback(
     assert state.rows[0].secondary == secondary
 
 
+@pytest.mark.parametrize(
+    "message_count",
+    [
+        pytest.param("²", id="superscript-digit"),
+        pytest.param("⑦", id="circled-digit"),
+        pytest.param("9" * 5000, id="oversized-ascii-digits"),
+    ],
+)
+def test_unparseable_digit_strings_use_harmless_fallback(message_count: str):
+    state = build_library_conversations_state(
+        [{"id": "conv-a", "message_count": message_count}],
+        total_count=1,
+        now=NOW,
+    )
+
+    assert state.rows[0].secondary == "conversation"
+
+
 def test_valid_identified_record_preserves_harmless_field_fallbacks():
     records = [
         {

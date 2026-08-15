@@ -203,7 +203,10 @@ def _record_message_count(record: Mapping[str, Any]) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
         if isinstance(value, str) and value.strip().isdigit():
-            return int(value.strip())
+            try:
+                return int(value.strip())
+            except ValueError:
+                continue
     return None
 
 
