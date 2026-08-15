@@ -36,7 +36,7 @@
   - `get_trajectory_rows(conversation_id: str) -> list[TrajectoryRowRead]` ordered by `seq` (includes rows whose message was soft-deleted; the projection filters).
   - `get_next_trajectory_seq(conversation_id: str) -> int` (used inside transactions by the store).
 
-- [ ] **Step 1: Write the failing migration test**
+- [ ] **Step 1: Write the failing migration test** (NOTE: `db.get_schema_version`/`db.create_conversation`/`db.add_message`/`db.execute` below are illustrative — match the real signatures in `ChaChaNotes_DB.py` and existing `Tests/DB/test_chachanotes_*_migration.py` files)
 
 ```python
 # tldw_chatbook/Tests/DB/test_chachanotes_trajectory_metadata_migration.py
@@ -96,7 +96,7 @@ def test_upsert_and_read_roundtrip(tmp_path):
 
 - [ ] **Step 1: Write failing tests** — unit tests with an in-memory store + temp DB: (a) persisted user message produces a `user` row with `turn_id == message.turn_id`; (b) tool marker append produces `tool_call` + `tool_result` rows with full payload and parent assistant `message_id`; (c) a simulated stream (fake chunk callback) yields `first_token_at` set and `first_token_at - step_started_at > 0`, `completed_at >= first_token_at`; (d) concurrent `upsert_trajectory_rows` calls (two threads, same conversation) produce unique seqs.
 - [ ] **Step 2: Verify they fail.**
-- [ ] **Step 3: Implement** — timing stamps as module-level mutable capture attached to the turn in the controller (plain dict on the streamSignals-like object passed to `_attach_stream_usage`); sidecar writes batched at finalize (same place usage is attached) so one turn = one upsert call; tool payload written at marker-append time using the existing `tool_output_full` argument. Guard all writes in try/except that logs with context and never fails the turn.
+- [ ] **Step 3: Implement** — timing stamps as module-level mutable capture attached to the turn in the controller (plain dict on the streamSignals-like object passed to `_attach_stream_usage`); sidecar writes batched at finalize (same place usage is attached) so one turn = one upsert call; tool payload written at marker-append time using the existing `tool_output_full` argument. **Cap the stored result** at 256 KiB with a `{"truncated": true}` marker in `payload_json` (full output remains available live in-session via `tool_output_full`). Guard all writes in try/except that logs with context and never fails the turn.
 - [ ] **Step 4: Run** — new tests pass; `pytest Tests/Chat/ -q` green.
 - [ ] **Step 5: Commit** — `git commit -m "feat(console): capture trajectory timing and tool records to sidecar"`
 
@@ -107,7 +107,7 @@ def test_upsert_and_read_roundtrip(tmp_path):
 - Test: `tldw_chatbook/Tests/Chat/test_trajectory_projection.py`
 
 **Interfaces:**
-- Consumes: message rows from DB (or `ConsoleChatMessage` models), `ProviderUsage.from_json(usage_json)`, `TrajectoryRowRead`, variant sets, compaction records from `console_context_repository`.
+- Consumes: message rows from DB (or `ConsoleChatMessage` models), `ProviderUsage.from_json(usage_json)`, `TrajectoryRowRead`, variant sets, compaction records from `console_context_repository`, and the conversation's **`active_leaf_message_id`** (local-only column from the v23→24 migration). Active path = walk `parent_message_id` from that leaf to the root; siblings off that chain are variants.
 - Produces:
 
 ```python
@@ -172,12 +172,12 @@ def derive_trajectory(messages, usage_by_id, traj_rows, variant_sets, compaction
 - Test: `tldw_chatbook/Tests/UI/test_trajectory_live.py`
 
 **Interfaces:**
-- Consumes: Console store revision events for the open conversation.
+- Consumes: a **public revision getter on the store** — `get_payload_revision(session_id) -> int` (expose the existing `_payload_revisions` counter; there is no observer bus, and streaming does not bump it, so the screen must ALSO treat `len(session messages)` as part of its revision check, or bump `_bump_payload_revision` in the Task 2 write path — do the latter: make the trajectory write path call `_bump_payload_revision(session_id)` so the counter moves on every trajectory-visible change).
 - Produces: trajectory refreshes on revision; follows tail (scroll to bottom) unless the user scrolled up; footer action `f` re-enables follow.
 
 - [ ] **Step 1: Write failing tests** — appending a message to the open conversation updates the open trajectory screen; scrolling up suspends follow (new records do not scroll); `f` resumes follow.
 - [ ] **Step 2: Verify failure.**
-- [ ] **Step 3: Implement** — refresh recomputes only the affected conversation's snapshot in a worker; DataTable diffed by row key `(seq)` so selection survives refresh; escape pops the screen and clears footer shortcuts.
+- [ ] **Step 3: Implement** — `TrajectoryScreen` polls `get_payload_revision(conversation_id)` via `set_interval(0.5)`; on change, recompute the snapshot in a worker; DataTable diffed by row key `(seq)` so selection survives refresh; escape pops the screen and clears footer shortcuts.
 - [ ] **Step 4: Run** — new tests pass; `pytest Tests/UI/ Tests/Chat/ -q`.
 - [ ] **Step 5: Full suite + commit** — `pytest` (whole suite), then `git commit -m "feat(console): trajectory screen launch + live tail-follow"`.
 

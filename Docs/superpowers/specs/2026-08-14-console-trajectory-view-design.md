@@ -82,10 +82,12 @@ Design points:
   TOOL-marker invariant), and `tool_output_full` is likewise session-only.
   Writing tool records into `messages` would violate that invariant, so
   `tool_call`/`tool_result` rows live entirely in this table, with
-  `payload_json` carrying the full untruncated result. The trajectory view
-  becomes the only place historical tool output is reviewable — a feature,
-  not a workaround. Both kinds key on the *parent assistant message's*
-  `message_id`; `seq` orders multiple tool calls within one assistant step.
+  `payload_json` carrying the tool result, capped at 256 KiB with a
+  `{"truncated": true}` marker beyond that (full output stays available live
+  in-session). The trajectory view becomes the only place historical tool
+  output is reviewable — a feature, not a workaround. Both kinds key on the
+  *parent assistant message's* `message_id`; `seq` orders multiple tool calls
+  within one assistant step.
 - **PK is `(message_id, event_kind, seq)`**: one assistant message may emit
   several tool calls, so `(message_id, event_kind)` alone would collide. The
   unique `(conversation_id, seq)` index enforces ledger ordering; writes are
@@ -101,7 +103,9 @@ Design points:
   produces no persisted message row; the projection reads compaction
   transactions from `console_context_repository` and renders them as
   between-turn markers.
-- **Branch semantics**: the ledger renders the **active path** by default.
+- **Branch semantics**: the ledger renders the **active path** by default —
+  derived by walking `parent_message_id` from the persisted local-only
+  `conversations.active_leaf_message_id` (v23→24) to the root.
   Superseded variants (tree siblings off the active path) are not top-level
   rows; the inspector of a record with variants lists them (contents +
   selection state), keeping forking history visible without cluttering the
@@ -152,9 +156,11 @@ ADR-031; footer hint registered via `register_footer_shortcuts`):
   for history; the live in-memory `tool_output_full` while the session is
   open).
 - Search box filtering rows (turn headers match if any child matches).
-- Live tail-follow: subscribes to the Console store/stream completion events;
-  follows the tail unless the user has scrolled up (follow suspends, resumes
-  via a footer action).
+- Live tail-follow: the screen polls a public payload-revision getter on the
+  Console store via `set_interval` (there is no observer bus; the trajectory
+  write path bumps the existing per-session revision counter so polling sees
+  changes) and refreshes in a worker; follows the tail unless the user has
+  scrolled up (follow suspends, resumes via a footer action).
 - Keybindings/footer per ADR-031; modal opens with safe Escape.
 
 ## Error handling & performance
