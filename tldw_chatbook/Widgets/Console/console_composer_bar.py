@@ -3600,6 +3600,32 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def insert_quote(self, text: str) -> None:
+        """Insert a transcript selection as a block quote at the caret.
+
+        Public seam for the console selection menu's "Add to chat" action
+        (console selection phase 1): every non-empty line gains a ``> ``
+        prefix (blank lines become a bare ``>``, as a real block quote
+        renders), then the block splices in wherever the caret sits. The
+        caret always exists in the segment model -- it is not focus-bound
+        -- so an unfocused composer inserts at the end of the draft (the
+        phase spec's fallback). Delegates to ``insert_text`` so the quote
+        takes the ordinary typing path verbatim: undo entry (never
+        coalesced -- a multi-character insert always opens a fresh one),
+        segment lazy-init, paste-token boundary handling, and the standard
+        post-edit refresh chain.
+
+        Args:
+            text: The raw selection text to quote; blank-only input is a
+                no-op (there is nothing worth quoting).
+        """
+        if not text.strip():
+            return
+        quoted = "\n".join(
+            f"> {line}" if line.strip() else ">" for line in text.splitlines()
+        )
+        self.insert_text(quoted)
+
     def insert_pasted_text(self, text: str) -> None:
         """Insert pasted text at the caret, collapsing only large chunks for display.
 

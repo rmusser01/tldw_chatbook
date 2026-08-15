@@ -475,6 +475,10 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
+from ...Widgets.Console.console_selection_menu import (
+    ConsoleSelectionMenu,
+    ConsoleSelectionQuoteRequested,
+)
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
@@ -19781,6 +19785,25 @@ class ChatScreen(BaseAppScreen):
         if event.is_insertion:
             self._dismiss_console_guidance()
 
+    @on(ConsoleSelectionQuoteRequested)
+    def _console_selection_quote_requested(
+        self, event: ConsoleSelectionQuoteRequested
+    ) -> None:
+        """Insert a transcript selection into the composer as a block quote.
+
+        Console selection phase 1: the transcript's floating menu posted
+        this after its "Add to chat" action; the quote lands at the
+        composer's caret (end of draft when unfocused). ``event.stop()``
+        because nothing above this screen subscribes -- the transcript
+        already consumed the originating ``AddToChat``.
+        """
+        event.stop()
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        composer.insert_quote(event.quote)
+        self.notify("Added selection to composer")
+
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"
     ) -> None:
@@ -19873,9 +19896,38 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         event.prevent_default()
 
+    def _dismiss_console_selection_menus_outside_transcript(self, target: object) -> None:
+        """Fold selection menus when a click lands outside every transcript.
+
+        Console selection phase 1 (click-outside dismissal, screen half).
+        Clicks that stay INSIDE a transcript are handled there (rows stop
+        their own clicks; the transcript's ``on_click`` owns the in-area
+        dismissal), so this only fires for clicks that bubbled up from
+        elsewhere -- the composer, the control bar, the rail: the user
+        moved on, and a menu left floating over the transcript folds with
+        no side effects (ADR-066's dismiss contract). The ancestor walk is
+        the guard: a transcript-area click that somehow reached this
+        screen handler finds its ``ConsoleTranscript`` ancestor and is
+        left alone. Menus whose removal is already scheduled (Textual
+        marks them ``_pruning`` synchronously) are skipped so a repeated
+        dismissal stays single-shot per menu.
+
+        Args:
+            target: The clicked widget (``event.widget``/``event.control``).
+        """
+        node: object = target
+        while node is not None:
+            if isinstance(node, ConsoleTranscript):
+                return
+            node = getattr(node, "parent", None)
+        for menu in self.query(ConsoleSelectionMenu):
+            if not getattr(menu, "_pruning", False):
+                menu.remove()
+
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
         target = getattr(event, "widget", None) or getattr(event, "control", None)
+        self._dismiss_console_selection_menus_outside_transcript(target)
         if getattr(target, "id", None) == "console-command-visible-text":
             return
         if getattr(target, "id", None) == "console-rail-system-line":

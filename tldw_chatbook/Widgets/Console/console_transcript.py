@@ -3251,13 +3251,19 @@ class ConsoleTranscript(VerticalScroll):
         row).
 
         Async and awaiting the previous menu's removal is load-bearing:
-        ``Widget.remove()`` only SCHEDULES removal, so a synchronous same-id
-        remount while the old menu is still in the DOM raises Textual's
-        app-fatal ``DuplicateIds`` (consecutive selections crashed before).
-        The message pump awaits this handler before processing the next
-        message, so the remount ordering versus the release Click is stable.
+        ``Widget.remove()`` only SCHEDULES removal while ``mount()``
+        registers the new menu into the DOM synchronously, so a same-id
+        remount over a still-attached old menu raises Textual's app-fatal
+        ``DuplicateIds`` (consecutive selections crashed before). Menus
+        whose removal was merely scheduled (``_pruning``) are awaited too
+        rather than skipped: a skipped one can still be attached at the
+        remount, and awaiting an already-pruning node's ``remove()`` is
+        harmless (it waits out the prune already in flight). The freshly
+        mounted menu survives the drag-release Click because that Click is
+        stopped by the row's ``on_click`` (drag-release suppression), so it
+        never reaches this transcript's own ``on_click`` removal.
         """
-        for menu in self._attached_selection_menus():
+        for menu in self.query(ConsoleSelectionMenu):
             await menu.remove()
         region = self.region
         self.mount(
