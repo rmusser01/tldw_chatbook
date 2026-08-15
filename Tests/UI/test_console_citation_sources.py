@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console as RichConsole
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -492,6 +492,7 @@ def _bare_screen(
         screen,
         context="test_console_citation_sources._bare_screen",
     )
+    screen._video = SimpleNamespace(_build_video_card_specs=lambda _messages: {})
     return screen
 
 
@@ -989,7 +990,6 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_presentation_context = lambda: None
     screen._image._build_console_image_specs = lambda _messages: {}
     screen._image._build_generation_card_specs = lambda _messages: {}
-    screen._build_video_card_specs = lambda _messages: {}
     screen._ensure_console_image_view = lambda: (
         None,
         SimpleNamespace(pending_ids=lambda _message_ids: ()),
