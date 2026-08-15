@@ -35,7 +35,7 @@ class PersonasCharacterCardWidget(Container):
     """Flat read-only character card with an Edit action."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
     BUNDLED_CSS = """
     PersonasCharacterCardWidget {
         width: 100%;

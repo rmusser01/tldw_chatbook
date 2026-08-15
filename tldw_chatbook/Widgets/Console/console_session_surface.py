@@ -304,7 +304,7 @@ class ConsoleSessionSurface(Vertical):
         (``console_chat_models.py``, the auto-title helper this label
         usually renders) -- one truncation convention, not two. TASK-375's
         own word-wrap fix (``ConsoleSessionTabButton``'s ``text-wrap:
-        nowrap`` DEFAULT_CSS above) is untouched and still what keeps a
+        nowrap`` BUNDLED_CSS above) is untouched and still what keeps a
         single-line label from hiding the ellipsis off-screen; only the
         cut POSITION changes here. Trade-off accepted: two conversations
         sharing a long common prefix can once again render identical tab

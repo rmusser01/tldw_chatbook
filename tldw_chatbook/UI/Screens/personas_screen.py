@@ -669,7 +669,7 @@ class PersonasScreen(BaseAppScreen):
        card entirely at 100x30, and left a dead void between the panels at
        170x50. Each section is now a one-line collapsed header by default,
        so no explicit max-height cap is needed here (the panels' own
-       DEFAULT_CSS keeps every part height: auto, which the old cap existed
+       BUNDLED_CSS keeps every part height: auto, which the old cap existed
        to force). */
     #personas-character-attachments {
         height: auto;
@@ -9788,7 +9788,7 @@ class PersonasScreen(BaseAppScreen):
         # conversation-actions early-return below (and not depend on it
         # succeeding) - otherwise a failed actions lookup would skip setting
         # `.display` here, and the panel (which has no `display: none` of its
-        # own in DEFAULT_CSS) would default visible in every mode.
+        # own in BUNDLED_CSS) would default visible in every mode.
         try:
             dict_panel = self.query_one(PersonasCharacterDictionariesWidget)
         except Exception:
