@@ -4,7 +4,7 @@ Event handlers for the Multi-Item Review functionality.
 Handles batch analysis generation and result management.
 """
 
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING, Callable, List, Dict, Any, Optional
 from textual.message import Message
 from loguru import logger
 from datetime import datetime
@@ -12,6 +12,25 @@ import asyncio
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+
+async def _media_db_off_loop(
+    app: "TldwCli", func: Callable, /, *args: Any, **kwargs: Any
+) -> Any:
+    """Run one sync media-DB call off the event loop.
+
+    task-16194: every handler below called ``app.run_in_thread``, which does
+    not exist -- neither Textual 8.x's ``App`` nor ``TldwCli`` defines it --
+    so batch-analysis save/load died in ``AttributeError`` the moment either
+    path was reached. Mirrors ``collections_tag_events._media_db_off_loop``
+    (task-15471): ``asyncio.to_thread`` for the general case (the DB uses
+    thread-local connections, so a pool thread opens its own), guarded so a
+    per-connection ``:memory:`` DB -- only visible to the thread that
+    migrated it -- stays on the loop thread.
+    """
+    if bool(getattr(app.media_db, "is_memory_db", False)):
+        return func(*args, **kwargs)
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 class BatchAnalysisStartEvent(Message):
@@ -168,8 +187,10 @@ Content:
                 temperature = app.llm_temperature_var
                 max_tokens = app.llm_context_size_var
 
-                # Generate response
-                response = await app.run_in_thread(
+                # Generate response. Not a media_db call, so no memory-db
+                # guard is needed here -- straight to a worker thread
+                # (task-16194; `app.run_in_thread` doesn't exist).
+                response = await asyncio.to_thread(
                     app.llm_api_client.chat_with_model,
                     messages=messages,
                     model=model,
@@ -248,18 +269,26 @@ async def save_analysis_to_db(app: "TldwCli", media_id: int, analysis: str) -> b
 
         # Update the analysis_content field
         query = """
-            UPDATE Media 
+            UPDATE Media
             SET analysis_content = ?, last_modified = ?
             WHERE id = ?
         """
 
-        await app.run_in_thread(
+        # task-16194: this used to be two broken calls -- `app.run_in_thread`
+        # doesn't exist, and even patched to a real off-loop call,
+        # `app.media_db.commit` doesn't exist either (MediaDatabase has no
+        # `commit` method), so the UPDATE would raise AttributeError before
+        # ever reaching sqlite, or -- had that second call been a no-op --
+        # never actually commit (execute_query's own `commit` kwarg
+        # defaults to False). Pass `commit=True` in one call instead, same
+        # as Prompts_DB.execute_query_with_retry's use of the kwarg.
+        await _media_db_off_loop(
+            app,
             app.media_db.execute_query,
             query,
             (analysis, datetime.now().isoformat(), media_id),
+            commit=True,
         )
-
-        await app.run_in_thread(app.media_db.commit)
 
         logger.debug(f"Saved analysis for media ID {media_id}")
         return True
@@ -288,12 +317,14 @@ async def load_existing_analyses(
 
         placeholders = ",".join("?" * len(media_ids))
         query = f"""
-            SELECT id, analysis_content 
-            FROM Media 
+            SELECT id, analysis_content
+            FROM Media
             WHERE id IN ({placeholders})
         """
 
-        cursor = await app.run_in_thread(app.media_db.execute_query, query, media_ids)
+        cursor = await _media_db_off_loop(
+            app, app.media_db.execute_query, query, media_ids
+        )
 
         results = {}
         for row in cursor.fetchall():
