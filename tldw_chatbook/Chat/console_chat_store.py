@@ -753,7 +753,6 @@ class ConsoleChatStore:
         # stopped terminal must advance the context epoch when the row becomes
         # provider-visible history. A repeat failure stays excluded and stable.
         self._failed_retry_message_ids: set[str] = set()
-<<<<<<< HEAD
         # Process-local observers for the first LIVE transition of a message
         # into the complete state. Restored/already-complete rows never pass
         # through the publisher, so hydration cannot replay speech.
@@ -762,6 +761,22 @@ class ConsoleChatStore:
         ] = {}
         self._next_message_completed_subscriber_id = 1
         self._speech_preference_epochs: dict[str, int] = {}
+
+        # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
+        # ``message_trajectory_metadata`` table is never synced. Timing is
+        # armed by the controller (step start / completion) and stamped here
+        # (first token, at the chunk seam); rows are written through the
+        # persistence adapter in ONE batched upsert per turn. Every write is
+        # best-effort: a sidecar failure must never fail the turn.
+        self._trajectory_lock = threading.Lock()
+        self._trajectory_timing: dict[str, dict[str, Any]] = {}
+        self._trajectory_written_ids: set[str] = set()
+        self._session_turn_ids: dict[str, str] = {}
+        # TOOL markers appended while their parent assistant row is still
+        # streaming (no durable id yet): payload captured at marker-append
+        # time, flushed -- remapped to the parent's persisted id -- when the
+        # parent message persists. Keyed by the parent's NATIVE message id.
+        self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
 
     def subscribe_message_completed(
         self,
@@ -810,23 +825,6 @@ class ConsoleChatStore:
         """Return the process-local generation of a live successful completion."""
         self._message_or_raise(message_id)
         return self._message_completion_generations[message_id]
-=======
-        # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
-        # ``message_trajectory_metadata`` table is never synced. Timing is
-        # armed by the controller (step start / completion) and stamped here
-        # (first token, at the chunk seam); rows are written through the
-        # persistence adapter in ONE batched upsert per turn. Every write is
-        # best-effort: a sidecar failure must never fail the turn.
-        self._trajectory_lock = threading.Lock()
-        self._trajectory_timing: dict[str, dict[str, Any]] = {}
-        self._trajectory_written_ids: set[str] = set()
-        self._session_turn_ids: dict[str, str] = {}
-        # TOOL markers appended while their parent assistant row is still
-        # streaming (no durable id yet): payload captured at marker-append
-        # time, flushed -- remapped to the parent's persisted id -- when the
-        # parent message persists. Keyed by the parent's NATIVE message id.
-        self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
->>>>>>> 517d34b6d (feat(console): capture trajectory timing and tool records to sidecar)
 
     def ensure_session(
         self,
