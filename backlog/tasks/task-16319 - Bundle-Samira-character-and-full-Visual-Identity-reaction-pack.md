@@ -16,7 +16,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Ship Samira "Sammy" Vadem as an included public character card and demonstrate character reactions through a complete, server-aligned Visual Identity expression pack without changing the default assistant or default persona.
+Ship Samira "Sammy" Vadem as an included public character card and demonstrate character reactions through a complete, server-aligned Visual Identity expression pack without changing the default assistant or default persona. This is the umbrella task for TASK-16319.1 through TASK-16319.3.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -29,4 +29,5 @@ Ship Samira "Sammy" Vadem as an included public character card and demonstrate c
 - [ ] #6 The JSON card and PNG-embedded V2 card are equivalent, every reaction is a valid 1024x1024 WebP, all bundled assets declare AGPL-3.0-or-later, and the installed wheel and sdist contain the verified bounded asset inventory.
 - [ ] #7 Local persistence and normalization match the pinned tldw_server development contract while local IDs and message override state remain explicitly non-syncable until a later authenticated sync contract.
 - [ ] #8 Automated database, resolver, packaging, and Textual UI tests plus real installed-artifact and live TUI verification pass.
+- [ ] #9 Users can stage replacement or generated reactions for a bound pack; editing a built-in pack creates a private copy, and one Save creates one immutable version while cancellation or failure leaves the active version unchanged.
 <!-- AC:END -->

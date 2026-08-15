@@ -76,8 +76,9 @@ The bridge has five bounded responsibilities:
 
 1. **Expression contract** — exact server normalization plus the Samira manifest's
    explicit standard-label mappings.
-2. **Persistence** — packs, immutable versions, assets, and active character/Persona
-   bindings using the server's core schema shapes.
+2. **Persistence** — packs, immutable versions, version-bound assets, and active
+   character/Persona bindings using a documented four-table semantic subset of the
+   server contract.
 3. **Asset loading** — immutable package-resource reads and profile-owned user-asset
    reads behind one validated loader.
 4. **Resolution** — one structured result with deterministic fallbacks.
@@ -252,18 +253,22 @@ asset per expression key and exactly the 31 labels above.
 
 ## Persistence Contract
 
-The ChaChaNotes schema gains the server-shaped core tables:
+The ChaChaNotes schema gains a local four-table semantic subset of the server model:
 
 - `visual_identity_packs`;
 - `visual_identity_pack_versions`;
 - `visual_identity_assets`; and
 - `visual_identity_bindings`.
 
-Their columns, status values, foreign keys, checks, and active-binding uniqueness
-match the pinned server implementation. The omitted server tables are drafts and
-idempotency; no local empty facsimiles are created for them. The local owner sentinel
-is `0` because each Chatbook database is already profile-owned. It is documented as
-local-only and must never be sent as a server user ID.
+Shared fields retain the pinned server's names, meanings, status vocabulary, checks,
+and active-binding uniqueness where the local lifecycle implements them. The local
+asset table represents only activated immutable assets: `pack_version_id` is required,
+and the server's draft-only `draft_id` column and foreign key are omitted. The local
+schema is therefore deliberately not PRAGMA-identical to the server schema. Server
+drafts and idempotency tables receive no empty local facsimiles. The local owner
+sentinel is `0` because each Chatbook database is already profile-owned. It is
+documented as local-only, must never be sent as a server user ID, and must be
+translated by any future sync adapter.
 
 The shared schema retains the server's `actor_kind IN ('character', 'persona')`
 compatibility constraint, but TASK-16319 creates, resolves, and presents only
@@ -271,17 +276,23 @@ compatibility constraint, but TASK-16319 creates, resolves, and presents only
 runtime are not extended by this task.
 
 Built-in asset rows store package-relative `storage_relpath` values such as
-`characters/samira/expressions/joy.webp`. `source_kind = 'builtin'` selects the
-immutable package-resource root. User-owned packs resolve beneath a private
-`get_user_data_dir()/visual_identities/` root. The loader validates every relative
-path against its selected root before reading.
+`characters/samira/expressions/joy.webp`. `source_kind` belongs to the owning pack,
+not the asset row; the loader follows asset → immutable version → pack and uses the
+pack's `source_kind = 'builtin'` to select the immutable package-resource root.
+User-owned packs resolve beneath a private `get_user_data_dir()/visual_identities/`
+root. The loader validates every relative path against its selected root before
+reading. Built-in resources are opened through
+`importlib.resources.files("tldw_chatbook")` and its `Traversable`/byte APIs; callers
+must not assume a source-tree `Path(__file__)` or a directly addressable wheel path.
 
 Activated versions are immutable by service contract. Pack editing stages all
-changes in a private temporary directory, validates the complete candidate, atomically
-moves new files into profile-owned storage, and commits one version plus its asset
-rows and binding update in one database transaction. “Generate all” therefore makes
-one version, not 31 partial versions. A failed candidate leaves the active version
-and packaged assets untouched.
+changes in a private, mode-restricted directory inside the final profile-owned
+Visual Identity filesystem, validates the complete candidate, atomically replaces
+the destination, and commits one version plus its asset rows and binding update in
+one database transaction. Same-filesystem staging is required so publication does
+not silently degrade into a non-atomic cross-device copy. “Generate all” therefore
+makes one version, not 31 partial versions. A failed candidate leaves the active
+version and packaged assets untouched.
 
 Editing a built-in pack first copies its complete active asset set into the staged
 user-owned candidate, creates a new user-owned pack/version, and changes only that
@@ -292,23 +303,33 @@ actor's binding. Packaged rows and files remain immutable.
 Seeding runs after schema and FTS trigger initialization. It is bounded and
 idempotent:
 
-1. Read and validate the packaged V2 JSON, embedded PNG card, pack manifest, and
-   required resource inventory.
-2. Locate a character by `tldw/builtin_id = samira`, including soft-deleted rows.
-3. If an active built-in row exists, preserve every card field and use its stable
+1. Perform a cheap database preflight using the stable card and pack identifiers,
+   including soft-deleted rows and binding state.
+2. If an active built-in card has either its expected healthy built-in binding or a
+   valid active binding to a profile-owned fork, preserve that terminal state and
+   return without opening or hashing the 31 reaction assets. A user-owned binding is
+   never revalidated against, rebound to, or warned about as an incomplete built-in
+   seed.
+3. Only for first install or an eligible incomplete seed, read and validate the
+   packaged V2 JSON, embedded PNG card, pack manifest, and required resource
+   inventory.
+4. If an active built-in row exists, preserve every card field and use its stable
    numeric actor ID.
-4. If the row is soft-deleted, do not restore it and do not activate a binding.
-5. If no built-in row exists, insert the card and portrait. If its preferred name is
+5. If the row is soft-deleted, do not restore it and do not activate its dormant
+   binding.
+6. If no built-in row exists, insert the card and portrait. If its preferred name is
    occupied by any row, use `Samira “Sammy” Vadem (Built-in)`; if that is also
    occupied, append the lowest available deterministic integer suffix.
-6. Validate the complete pack before creating pack metadata. Then create the pack,
+7. Validate the complete pack before creating pack metadata. Then create the pack,
    version, 31 assets, and binding in one transaction.
-7. If pack validation or activation fails, keep the usable character/avatar, report a
+8. If pack validation or activation fails, keep the usable character/avatar, report a
    bounded warning, and retry only the absent built-in pack on next startup.
 
 A renamed or edited built-in card is never replaced because identity comes from its
-extension and existing binding, not its name or byte equality. A deleted pack,
-deleted binding, or deleted character is a tombstone and is never resurrected by
+extension and existing binding, not its name or byte equality. Soft-deleting the
+character leaves its binding row intact but dormant: the resolver rejects unavailable
+actors, and an explicit character restore naturally reuses the prior binding. An
+explicitly deleted pack or binding is a tombstone and is never resurrected by
 startup. An archived pack remains archived. A missing pack after an interrupted
 pre-activation failure may be retried because no tombstone exists.
 
@@ -327,7 +348,10 @@ optional session-local manual key. It returns a frozen structured result contain
 - storage source and relative path;
 - content type and animation flag;
 - fallback reason; and
-- resolution source.
+- resolution source; and
+- a stable cache identity containing actor, source, requested/manual key, and—when
+  pack-backed—the immutable pack-version and asset IDs (or an equivalent digest for
+  legacy/card sources).
 
 Priority is deterministic:
 
@@ -361,7 +385,9 @@ pack-aware browser/editor:
 - replace/generate/clear staging actions;
 - a dirty-state summary and one Save action that creates one version;
 - Generate All stages the candidate and remains cancellable without changing the
-  active version; and
+  active version; before starting, it requires explicit confirmation that the
+  operation makes 31 provider calls, then runs with bounded concurrency and supports
+  cancellation; and
 - built-in status and the copy-on-write consequence are stated before the first edit.
 
 The screen must not decode 31 full images or compose 31 thumbnails at once. It keeps
@@ -384,6 +410,14 @@ hotkey or advertise an unimplemented footer action. The existing reaction-enable
 configuration still controls automatic operational switching; manual selection is an
 explicit user action and remains available when the pack is visible.
 
+Avatar refresh and decode caches key on the resolver's full cache identity, not only
+`(character_id, state)`. A manual selection, active-version change, asset change,
+actor change, or fallback-source change must miss or invalidate the old entry. Every
+asynchronous load rechecks the current session, actor, requested/manual key, and
+resolved identity after `await` before applying pixels, preventing a late result from
+overwriting a newer selection. Publishing a pack version explicitly invalidates the
+bound actor's resolved-avatar entries.
+
 At narrow terminal sizes, the selector remains keyboard-operable, the preview may be
 hidden before labels/actions, and neighboring controls stay within the screen. No
 `/emote` command is added in this tranche.
@@ -399,6 +433,8 @@ hidden before labels/actions, and neighboring controls stay within the screen. N
 - Existing built-in tombstone: preserve it and suppress reseeding.
 - Pack-save generation/upload failure: retain the staged error and old active
   version; do not publish partial assets.
+- Generate All cancellation: stop scheduling new provider calls, await or cancel
+  in-flight work where supported, and discard the unpublished candidate.
 - Database commit failure after staged asset move: leave the previous binding active
   and make unreferenced staged files eligible for bounded cleanup on the next pack
   operation; never delete an active version's files.
@@ -450,8 +486,14 @@ and are not package data.
 - The first real edit of the seeded card succeeds and leaves FTS healthy.
 - An upgraded database gains Samira without changing existing cards.
 - Repeated startup creates no duplicates or new versions.
-- Name collision, renamed card, customized card, deleted card, deleted binding,
-  archived pack, and partial pack failure follow the lifecycle rules above.
+- Name collision, renamed card, customized card, dormant binding on character delete
+  and restore, explicit binding tombstone, archived pack, and partial pack failure
+  follow the lifecycle rules above.
+- A complete healthy seed exits after the database preflight without reading or
+  hashing packaged reaction bytes; first install and eligible repair perform full
+  validation.
+- A valid active binding to a user-owned fork is preserved without package
+  validation, rebinding, or startup warning.
 - One staged multi-asset save creates exactly one immutable version.
 - Built-in edits fork into the active profile and never write to package resources.
 
@@ -459,8 +501,9 @@ and are not package data.
 
 - Run the same normalization fixture matrix against the local module and the pinned
   server behavior.
-- Assert the four local table schemas match the pinned server columns, constraints,
-  indexes, and status vocabulary selected by this design.
+- Assert every shared local field maps to the pinned server field name, meaning,
+  constraint, and status vocabulary selected by this design; assert local assets
+  require `pack_version_id` and carry no broken or implied draft foreign key.
 - Assert structured resolver fields and fallback categories retain the planned sync
   seam while local IDs and owner `0` remain marked local-only.
 
@@ -468,6 +511,8 @@ and are not package data.
 
 - Manual override wins, Clear restores operational behavior, actor changes clear the
   override, and restart does not persist it.
+- Manual changes, version publication, actor changes, fallback-source changes, and
+  deliberately reordered asynchronous loads cannot reuse or apply stale avatar data.
 - `idle`, `thinking`, `speaking`, and `error` choose the expected pack assets.
 - Missing pack assets fall through to legacy BLOBs and card portraits.
 - The Personas browser filters all 31 labels, decodes one preview, and stages without
@@ -487,6 +532,25 @@ and are not package data.
 - Mutation-check the seed idempotency guard, path-boundary guard, fallback order, and
   lazy-preview assertion so each test demonstrably fails when its protection is
   removed.
+
+## Implementation Phasing
+
+TASK-16319 is an umbrella and is delivered through three atomic child tasks:
+
+1. **TASK-16319.1 — assets and persistence:** schema migration, package-resource
+   loader, sanitized card and reaction assets, manifest validation, and lifecycle
+   seeding.
+2. **TASK-16319.2 — resolver and Console:** structured fallback resolver, complete
+   cache identity and post-await fencing, plus session-local selection in Console.
+3. **TASK-16319.3 — browse and author (depends on .1 and .2):** Personas pack
+   browser, same-filesystem copy-on-write staging, immutable Save, publication-time
+   Console cache invalidation, and explicitly confirmed/cancellable Generate All.
+
+Each child remains `To Do` until its own implementation session adds the mandatory
+Backlog implementation plan. Implementation must begin in a clean worktree created
+from a freshly fetched `origin/dev`; the current long-lived feature branch is not an
+acceptable code baseline. The approved design commits are carried into that worktree
+without bringing unrelated working-tree changes.
 
 ## Scope Deferred to Follow-up Work
 
