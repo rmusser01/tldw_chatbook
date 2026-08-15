@@ -5,15 +5,17 @@ plumbing: a left-button press on a plain row arms a drag, moves map screen
 cells to body-text character offsets (wrap-aware over the body Static's
 content lines), and the release finishes the drag -- posting
 ``ConsoleTranscript.TranscriptTextSelected`` for menu-worthy (non-empty)
-selections. A drag release must not toggle message selection (click
-suppression), a genuine plain click still must, protected controls never
-arm a drag, and reconciliation cancels state whose row was removed/rebuilt.
+selections. Markdown rows arm the same drag at LINE granularity (task G):
+cells map to whole markdown source lines. A drag release must not toggle
+message selection (click suppression), a genuine plain click still must,
+protected controls never arm a drag, and reconciliation cancels state whose
+row was removed/rebuilt.
 """
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.events import Click, MouseDown, MouseMove, MouseUp
-from textual.widgets import Static
+from textual.widgets import Markdown, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -119,7 +121,7 @@ async def _drag_over_body(
 @pytest.mark.asyncio
 async def test_transcript_exposes_selection_manager():
     app = _SelectionTranscriptApp()
-    async with app.run_test(size=(40, 30)) as pilot:
+    async with app.run_test(size=(40, 30)):
         transcript = app.query_one(ConsoleTranscript)
         assert transcript.selection_manager.state.active is False
         assert transcript.selection_manager.state.selection is None
@@ -337,19 +339,90 @@ async def test_non_message_controls_never_start_selection():
 
 
 @pytest.mark.asyncio
-async def test_markdown_rows_do_not_start_selection():
+async def test_markdown_rows_start_line_selection():
+    """Task G flip: markdown rows arm drags and select whole source lines."""
     app = _SelectionTranscriptApp()
     async with app.run_test(size=(40, 30)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
         await _mounted_row(pilot, "m1")
         markdown_row = app.query_one("#console-message-m3")
+        body = markdown_row.query_one(Markdown)
 
         markdown_row.post_message(
-            _mouse_event(MouseDown, markdown_row, screen_x=1, screen_y=1)
+            _mouse_event(
+                MouseDown, markdown_row, screen_x=body.region.x, screen_y=body.region.y
+            )
+        )
+        await pilot.pause()
+        assert transcript.selection_manager.state.active is True
+
+        # Any drag on a markdown row snaps to whole source lines: "answer
+        # text" is one source line, so a 2-cell drag selects all of it.
+        transcript.post_message(
+            _mouse_event(
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 2,
+                screen_y=body.region.y,
+            )
+        )
+        await pilot.pause()
+        assert markdown_row.get_selection_text() == "answer text"
+
+        transcript.post_message(
+            _mouse_event(
+                MouseUp,
+                transcript,
+                screen_x=body.region.x + 2,
+                screen_y=body.region.y,
+            )
+        )
+        await pilot.pause()
+        assert transcript.selection_manager.state.active is False
+        assert len(app.selected_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_markdown_drag_release_does_not_toggle_message_selection():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "m1")
+        markdown_row = app.query_one("#console-message-m3")
+        body = markdown_row.query_one(Markdown)
+
+        markdown_row.post_message(
+            _mouse_event(
+                MouseDown, markdown_row, screen_x=body.region.x, screen_y=body.region.y
+            )
+        )
+        await pilot.pause()
+        transcript.post_message(
+            _mouse_event(
+                MouseMove,
+                transcript,
+                screen_x=body.region.x + 2,
+                screen_y=body.region.y,
+            )
+        )
+        await pilot.pause()
+        transcript.post_message(
+            _mouse_event(
+                MouseUp,
+                transcript,
+                screen_x=body.region.x + 2,
+                screen_y=body.region.y,
+            )
         )
         await pilot.pause()
 
-        assert transcript.selection_manager.state.active is False
+        # The drag-release Click (suppression) must not have toggled the
+        # markdown row's message selection...
+        assert transcript.selected_message_id is None
+        # ...and the next genuine click on the markdown row still toggles.
+        await pilot.click("#console-message-m3")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m3"
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ class _ComposerApp(App[None]):
 @pytest.mark.asyncio
 async def test_insert_quote_prepends_quote_markers():
     app = _ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
         composer.insert_quote("line one\nline two")
         assert "> line one\n> line two" in composer.draft_text()
@@ -39,7 +39,7 @@ async def test_insert_quote_prepends_quote_markers():
 async def test_insert_quote_blank_lines_get_bare_marker():
     """An empty selection line quotes as a bare ``>`` (a real block quote)."""
     app = _ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
         composer.insert_quote("first\n\nlast")
         assert composer.draft_text().endswith("> first\n>\n> last")
@@ -48,7 +48,7 @@ async def test_insert_quote_blank_lines_get_bare_marker():
 @pytest.mark.asyncio
 async def test_insert_quote_empty_selection_is_noop():
     app = _ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
         composer.insert_text("existing")
         composer.insert_quote("")
@@ -60,7 +60,7 @@ async def test_insert_quote_empty_selection_is_noop():
 async def test_insert_quote_lands_at_caret_not_end():
     """The quote splices at the caret, wherever it sits in the draft."""
     app = _ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
         composer.insert_text("hello world")
         for _ in range(6):
@@ -77,7 +77,7 @@ async def test_insert_quote_unfocused_composer_lands_at_end():
     the end of a freshly initialised (never focused) draft.
     """
     app = _ComposerApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         composer = app.query_one(ConsoleComposerBar)
         composer.insert_quote("tail insert")
         assert composer.draft_text().endswith("> tail insert")

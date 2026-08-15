@@ -1156,6 +1156,13 @@ class ConsoleMarkdownMessage(Vertical):
     Link policy (task AC#6): links never auto-open (``open_links=False``). A
     click on an http(s) link opens the system browser and notifies; any other
     scheme notifies with the href and does nothing else.
+
+    Text selection (console selection phase 1, task G): implements the same
+    four-method row protocol as ``ConsoleTranscriptMessage`` at LINE
+    granularity -- the domain is the markdown SOURCE (``_body_text``), ranges
+    snap outward to whole source lines, and the highlight is a reverse-video
+    ``Static`` strip below the Markdown widget instead of restyling the
+    Markdown renderer's internals (which would fight its block widgets).
     """
 
     can_focus = False
@@ -1196,6 +1203,9 @@ class ConsoleMarkdownMessage(Vertical):
         self._message = message
         self._speech_state = speech_state
         self._body_text = _assistant_markdown_body(message, self._presentation)
+        # Text-selection range over the markdown SOURCE at line granularity
+        # (task G): offsets are always whole-line bounds. None = no highlight.
+        self._selection_line_range: tuple[int, int] | None = None
         # TASK-15456: text appended to ``self._body_text`` above but not yet
         # handed to the Markdown widget (deferred while streaming inside an
         # open fence), plus the monotonic deadline by which it must flush.
@@ -1214,6 +1224,16 @@ class ConsoleMarkdownMessage(Vertical):
             classes="console-markdown-body",
             open_links=False,
         )
+        # Selection highlight strip (task G): hidden until a selection exists.
+        # Composed once and toggled via ``display`` so selection updates never
+        # mount/remove widgets (no DuplicateIds / async-remove lifecycle).
+        selection_strip = Static(
+            "",
+            classes="console-markdown-selection-strip",
+            markup=False,
+        )
+        selection_strip.display = False
+        yield selection_strip
         footer_content = _assistant_markdown_footer(self._message)
         footer = Static(
             footer_content or "",
@@ -1221,6 +1241,76 @@ class ConsoleMarkdownMessage(Vertical):
         )
         footer.display = footer_content is not None
         yield footer
+
+    # -- Text-selection protocol (console selection phase 1, task G) ----------
+
+    def get_display_text(self) -> str:
+        """Return the markdown source this row renders (selection domain)."""
+        return self._body_text
+
+    def get_selection_text(self) -> str:
+        """Return the selected whole source lines, capped for quoting."""
+        if self._selection_line_range is None:
+            return ""
+        start, end = self._selection_line_range
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight every whole source line spanned by ``[start, end)``."""
+        start, end = sorted((start, end))
+        if end <= start:
+            self.clear_selection()
+            return
+        self._selection_line_range = _snap_to_line_bounds(
+            self.get_display_text(), start, end
+        )
+        self._refresh_selection_strip()
+
+    def clear_selection(self) -> None:
+        """Remove the highlight strip."""
+        if self._selection_line_range is None:
+            return
+        self._selection_line_range = None
+        self._refresh_selection_strip()
+
+    def _clamp_selection_to_text(self) -> None:
+        """Clamp the stored line range to the current source length.
+
+        Streaming updates grow/replace the markdown source; if the new text
+        no longer contains the range start, drop the selection entirely
+        (mirrors ``ConsoleTranscriptMessage``'s clamp-on-sync).
+        """
+        if self._selection_line_range is None:
+            return
+        start, end = self._selection_line_range
+        new_len = len(self._body_text)
+        if start >= new_len:
+            self._selection_line_range = None
+        else:
+            self._selection_line_range = (start, min(end, new_len))
+        self._refresh_selection_strip()
+
+    def _refresh_selection_strip(self) -> None:
+        """Show/hide the reverse-video strip of selected source lines.
+
+        The strip is the visually equivalent highlight: the Markdown widget
+        owns its block layout and is left untouched, while the strip spells
+        the selected source lines out below it in reverse video.
+        """
+        try:
+            strip = self.query_one(".console-markdown-selection-strip", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_line_range is None:
+            strip.display = False
+            return
+        start, end = self._selection_line_range
+        text = self.get_display_text()
+        selected = text[max(0, start) : min(end, len(text))]
+        strip.update(Text(selected, style="reverse"))
+        strip.display = bool(selected)
 
     def sync_message(
         self,
@@ -1273,6 +1363,10 @@ class ConsoleMarkdownMessage(Vertical):
             delta = new_body[len(self._body_text) :]
             self._body_text = new_body
             self._append_or_defer_body_delta(markdown, delta, message)
+            # Selection clamp-on-sync (task G): the source grew under a live
+            # selection; the stored line bounds stay valid but the strip must
+            # re-derive from the new source.
+            self._clamp_selection_to_text()
         else:
             # Non-append edit (variant switch, retry, DB-resume rebind): the
             # prior diff base no longer applies, so any deferred fence
@@ -1284,6 +1378,9 @@ class ConsoleMarkdownMessage(Vertical):
             self._fence_defer_deadline = None
             markdown.update(new_body)
             self._body_text = new_body
+            # Selection clamp-on-sync (task G): a replaced body may no longer
+            # contain the selected lines -- clamp or clear like the plain row.
+            self._clamp_selection_to_text()
 
     def _flush_pending_fence_delta(self, markdown: Markdown) -> None:
         """Hand any buffered fence-interior text to the widget and clear state.
@@ -1367,12 +1464,10 @@ class ConsoleMarkdownMessage(Vertical):
             manager = transcript.selection_manager
             if manager.state.active or manager.just_finished:
                 # This click completed (or landed during) a text-selection
-                # drag; it must not toggle message selection (console
+                # drag on this selectable row (markdown rows arm drags too,
+                # task G); it must not toggle message selection (console
                 # selection phase 1). Consume the finish flag so the
-                # suppression swallows exactly this one click -- presses on
-                # this row type cannot arm a drag, so without consuming here
-                # these clicks would stay suppressed until some other
-                # transcript-layer click cleared the flag.
+                # suppression swallows exactly this one click.
                 manager.consume_just_finished()
                 return
             transcript.toggle_message_selection(self.message_id)
@@ -1553,10 +1648,10 @@ class ConsoleTranscriptMessage(Vertical):
             if manager.state.active or manager.just_finished:
                 # This click completed (or landed during) a text-selection
                 # drag; it must not toggle message selection (console
-                # selection phase 1). Markdown rows are not selectable yet,
-                # but their click must still be suppressed on drag release --
-                # and the flag consumed here, because a markdown press never
-                # arms a drag so nothing else would clear the suppression.
+                # selection phase 1). Markdown rows arm drags too (task G),
+                # so a genuine markdown click reaches here only after its
+                # empty drag finish consumed the flag -- this branch stays
+                # for drag releases and cross-row leftover suppression.
                 manager.consume_just_finished()
                 return
             transcript.toggle_message_selection(self.message_id)
@@ -1895,6 +1990,67 @@ def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int
     return len(text)
 
 
+def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Snap ``[start, end)`` outward to whole ``'\\n'``-delimited lines.
+
+    Console selection phase 1 (task G): markdown-row granularity is the whole
+    source line, so a character range grows to cover every line it touches.
+    The trailing newline of the last touched line is excluded, so the quoted
+    text is exactly the selected lines.
+    """
+    start, end = sorted((start, end))
+    start = max(0, min(start, len(text)))
+    end = max(0, min(end, len(text)))
+    line_start = text.rfind("\n", 0, start) + 1
+    newline = text.find("\n", end)
+    line_end = len(text) if newline == -1 else newline
+    return line_start, line_end
+
+
+def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a markdown-body-local cell to a source-line character offset.
+
+    Console selection phase 1 (task G). The ``Markdown`` widget does not
+    expose which rendered line belongs to which SOURCE line (blocks re-flow,
+    wrap, and pad internally), so the body-local ``cell_y`` is distributed
+    evenly across the source lines and clamped to the nearest line -- the
+    recorded phase-1 approximation (ADR-066). ``set_selection_range`` then
+    snaps outward to whole lines, which bounds the damage of a coarse y map:
+    the quoted text is always whole lines regardless.
+
+    Two clamp details keep drags useful when the render COLLAPSES source
+    lines (soft-wrapped paragraphs render several source lines as one row,
+    so ``height < line count``): cells above the body map to the first line,
+    and the LAST rendered row maps to the last source line -- otherwise a
+    drag that ends on the bottom row could never reach the final lines.
+    ``cell_x`` maps within the target line via ``offset_for_cell``.
+
+    Args:
+        text: The row's markdown source text -- the selection domain.
+        height: The Markdown widget's rendered height (cells).
+        cell_x: Body-local column of the pointer.
+        cell_y: Body-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    lines = text.split("\n")
+    if height <= 0 or len(lines) <= 1:
+        # Not laid out (or a single source line): monotone single-line map.
+        return offset_for_cell(text, cell_x)
+    if cell_y < 0:
+        line_index = 0
+    elif cell_y >= height:
+        return len(text)
+    elif cell_y == height - 1:
+        line_index = len(lines) - 1
+    else:
+        line_index = min(int(cell_y * len(lines) / height), len(lines) - 1)
+    line_start = sum(len(line) + 1 for line in lines[:line_index])
+    return line_start + offset_for_cell(lines[line_index], cell_x)
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -2040,7 +2196,10 @@ class ConsoleTranscript(VerticalScroll):
         #: transcript itself), so extension resolves the origin row here
         #: instead of from the event's control. Cleared on finish/cancel and
         #: by the reconciliation guard when the row is removed/rebuilt.
-        self._selection_origin_row: ConsoleTranscriptMessage | None = None
+        #: Plain or markdown row (both implement the selection protocol).
+        self._selection_origin_row: (
+            ConsoleTranscriptMessage | ConsoleMarkdownMessage | None
+        ) = None
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -3114,15 +3273,17 @@ class ConsoleTranscript(VerticalScroll):
         button.press()
         return True
 
-    def _selection_row_for(self, widget: Widget | None) -> ConsoleTranscriptMessage | None:
+    def _selection_row_for(
+        self, widget: Widget | None
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | None:
         """Return the selectable message row for a pressed widget, if any.
 
         Console selection phase 1. Walks parents from the event control to
-        the nearest ``ConsoleTranscriptMessage`` (the Task-3 selection
-        protocol). Protected controls (``PROTECTED_CLICK_CLASSES`` -- action
-        rows, speech controls, rules, banners, scrollbars) never start a
-        selection. Markdown rows are excluded until phase 1 task G wires
-        them (``ConsoleMarkdownMessage`` is not a protocol row).
+        the nearest selection-protocol row: plain rows (character
+        granularity) and markdown rows (line granularity, task G).
+        Protected controls (``PROTECTED_CLICK_CLASSES`` -- action rows,
+        speech controls, rules, banners, scrollbars) never start a
+        selection.
         """
         if widget is None:
             return None
@@ -3135,22 +3296,28 @@ class ConsoleTranscript(VerticalScroll):
         while node is not None:
             if node is self:
                 return None
-            if isinstance(node, ConsoleTranscriptMessage):
+            if isinstance(node, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
                 return node
             node = node.parent
         return None
 
     def _selection_offset_for(
-        self, row: ConsoleTranscriptMessage, screen_x: int, screen_y: int
+        self,
+        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage,
+        screen_x: int,
+        screen_y: int,
     ) -> int:
-        """Map a screen cell to a character offset in ``row``'s body text.
+        """Map a screen cell to a character offset in ``row``'s text domain.
 
-        The body is a child Static with its own (screen-space) region, so
-        the cell is resolved body-local and mapped wrap-aware through
-        ``_body_cell_to_offset``. Cells outside the body clamp to the text
-        bounds (above -> 0, below -> end), which is the single-row clamp
+        Plain rows resolve body-local cells wrap-aware through
+        ``_body_cell_to_offset``. Markdown rows (task G) resolve against the
+        Markdown widget's region at line granularity through
+        ``_markdown_cell_to_offset``. Cells outside the body clamp to the
+        text bounds (above -> 0, below -> end), which is the single-row clamp
         rule for drags that leave the row.
         """
+        if isinstance(row, ConsoleMarkdownMessage):
+            return self._markdown_selection_offset_for(row, screen_x, screen_y)
         text = row.get_display_text()
         try:
             body = row.query_one(".console-transcript-message-body", Static)
@@ -3164,18 +3331,36 @@ class ConsoleTranscript(VerticalScroll):
             text, width, screen_x - region.x, screen_y - region.y
         )
 
+    def _markdown_selection_offset_for(
+        self, row: ConsoleMarkdownMessage, screen_x: int, screen_y: int
+    ) -> int:
+        """Map a screen cell to a markdown row's source-line offset (task G)."""
+        text = row.get_display_text()
+        try:
+            markdown = row.query_one(Markdown)
+        except NoMatches:
+            return 0  # row not composed; anchor at the source start
+        region = markdown.region
+        # The transcript CSS zeroes the Markdown child's margin/padding, so
+        # its region is the rendered body; height <= 0 means not laid out.
+        if region.height <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _markdown_cell_to_offset(
+            text, region.height, screen_x - region.x, screen_y - region.y
+        )
+
     def on_mouse_down(self, event: MouseDown) -> None:
-        """Arm a text-selection drag on a left press over a plain row."""
+        """Arm a text-selection drag on a left press over a selectable row."""
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
         row = self._selection_row_for(event.control) if event.button == 1 else None
         if row is None:
             # A fresh press that cannot arm a drag (non-left button, or a
-            # markdown/protected/non-row control) ends the drag-release
-            # suppression window: the NEXT genuine click must behave
-            # normally. The drag's own release Click arrives with no
-            # intervening MouseDown, so same-press suppression is intact.
+            # protected/non-row control) ends the drag-release suppression
+            # window: the NEXT genuine click must behave normally. The drag's
+            # own release Click arrives with no intervening MouseDown, so
+            # same-press suppression is intact.
             self.selection_manager.consume_just_finished()
             return
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
@@ -3207,7 +3392,10 @@ class ConsoleTranscript(VerticalScroll):
         if updated is None:
             return
         for other in self._row_widgets.values():
-            if isinstance(other, ConsoleTranscriptMessage) and other.id != row.id:
+            if (
+                isinstance(other, (ConsoleTranscriptMessage, ConsoleMarkdownMessage))
+                and other.id != row.id
+            ):
                 other.clear_selection()
         row.set_selection_range(updated.start, updated.end)
 
@@ -3288,12 +3476,17 @@ class ConsoleTranscript(VerticalScroll):
         event.stop()
         manager = self.selection_manager
         sel = manager.state.selection
-        row: ConsoleTranscriptMessage | None = None
+        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage | None = None
         if sel is not None:
+            # Query by id without a type expectation: the selected row may be
+            # a plain OR a markdown row (task G), and a typed query_one would
+            # raise WrongType on the other kind.
             try:
-                row = self.query_one(f"#{sel.row_key}", ConsoleTranscriptMessage)
+                widget = self.query_one(f"#{sel.row_key}")
             except NoMatches:
-                row = None
+                widget = None
+            if isinstance(widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+                row = widget
         if row is not None:
             self.post_message(
                 ConsoleSelectionQuoteRequested(quote=cap_quote(row.get_selection_text()))
@@ -3608,7 +3801,9 @@ class ConsoleTranscript(VerticalScroll):
         """
         selection = self.selection_manager.state.selection
         if (
-            isinstance(widget, ConsoleTranscriptMessage)
+            isinstance(
+                widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)
+            )
             and selection is not None
             and selection.row_key == widget.id
         ):

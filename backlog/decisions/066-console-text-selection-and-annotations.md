@@ -88,7 +88,15 @@ across the stack.
   without schema changes.
 - Markdown rows are selectable at line granularity only until a later
   phase tightens cell-to-offset mapping; this is a recorded phase-1
-  simplification, not a permanent ceiling.
+  simplification, not a permanent ceiling. Implemented as decided in
+  phase 1 (TASK-16311): `ConsoleMarkdownMessage` snaps selections outward
+  to whole markdown source lines (`_snap_to_line_bounds`) and renders the
+  highlight as a reverse-video `Static` strip below the Markdown widget
+  (the Markdown renderer's block widgets are left untouched); pointer
+  cells map to source lines by distributing the body-local row evenly
+  across the source lines with a nearest-line clamp, because the
+  `Markdown` widget does not expose per-source-line layout — the
+  whole-line snap bounds the quoting error of that approximation.
 
 ## Links
 

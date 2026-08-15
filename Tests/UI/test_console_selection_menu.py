@@ -10,6 +10,8 @@ click-outside.
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.events import MouseDown, MouseMove, MouseUp
+from textual.widgets import Markdown
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -284,3 +286,87 @@ async def test_far_right_release_keeps_menu_inside_transcript():
         assert menu.region.right <= region.right
         assert region.y <= menu.region.y
         assert menu.region.bottom <= region.bottom
+
+
+class _MarkdownTranscriptMenuApp(App[None]):
+    """Transcript whose only row is a markdown (ASSISTANT) row (task G)."""
+
+    _MARKDOWN_SOURCE = "line one\nline two\nline three"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.quote_requests: list[ConsoleSelectionQuoteRequested] = []
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=self._MARKDOWN_SOURCE,
+                    id="m1",
+                )
+            ]
+        )
+        yield transcript
+
+    def on_console_selection_quote_requested(
+        self, event: ConsoleSelectionQuoteRequested
+    ) -> None:
+        self.quote_requests.append(event)
+
+
+@pytest.mark.asyncio
+async def test_markdown_drag_menu_add_to_chat_quotes_whole_lines():
+    """Task G: a real markdown-row drag mounts the menu; Add to chat quotes
+    whole source lines (the line-snap), never partial lines."""
+    app = _MarkdownTranscriptMenuApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(transcript._messages)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = app.query_one("#console-message-m1")
+        body = row.query_one(Markdown)
+
+        # Press on the first rendered markdown line, release on the last:
+        # even with the y-distribution approximation the snap must yield
+        # every whole source line.
+        row.post_message(_markdown_mouse(MouseDown, body, dy=0))
+        await pilot.pause()
+        transcript.post_message(
+            _markdown_mouse(MouseMove, body, dy=max(0, body.region.height - 1))
+        )
+        await pilot.pause()
+        transcript.post_message(
+            _markdown_mouse(MouseUp, body, dy=max(0, body.region.height - 1))
+        )
+        await pilot.pause()
+
+        assert app.query_one(ConsoleSelectionMenu)  # menu mounted at release
+        await pilot.click("#console-selection-add-to-chat")
+        await pilot.pause()
+
+        assert len(app.quote_requests) == 1
+        assert app.quote_requests[0].quote == _MarkdownTranscriptMenuApp._MARKDOWN_SOURCE
+        assert row.get_selection_text() == ""  # cleaned up
+        assert not app.query(ConsoleSelectionMenu)
+
+
+def _markdown_mouse(event_cls, body: Markdown, *, dy: int, dx: int = 2):
+    """Build a mouse event over the markdown body at ``dy`` lines down."""
+    screen_x = body.region.x + dx
+    screen_y = body.region.y + dy
+    return event_cls(
+        widget=body,
+        x=screen_x - body.region.x,
+        y=screen_y - body.region.y,
+        delta_x=0,
+        delta_y=0,
+        button=1,
+        shift=False,
+        meta=False,
+        ctrl=False,
+        screen_x=screen_x,
+        screen_y=screen_y,
+    )
