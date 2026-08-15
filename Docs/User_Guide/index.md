@@ -35,7 +35,7 @@ can sync with a tldw server you configure).
 | Ctrl+2 | [Console](console.md) | Live agent conversations, approvals, tools, RAG, and runs. |
 | Ctrl+3 | [Library](library.md) | Source material, imports, notes, media, conversations, prompts, skills, Search/RAG — plus hand-offs to Study for flashcards and quizzes. |
 | Ctrl+4 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
-| Ctrl+5 | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
+| Ctrl+5 | [Roleplay](roleplay-chat-dictionaries.md) | Characters, personas, chat dictionaries, and lore/world books. |
 | Ctrl+6 | [Watchlists](watchlists.md) 🚧 | Monitored sources, runs, alerts, and recovery. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
@@ -74,7 +74,7 @@ navigation shortcuts (typing `2` in the composer just types "2"). Clicking
 the nav label and **Ctrl+P** work everywhere too.
 
 One screen claims some of these digits for itself: on
-[Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), **Ctrl+1 –
+[Roleplay](roleplay-chat-dictionaries.md), **Ctrl+1 –
 Ctrl+4 switch that screen's four modes** instead of changing screens.
 Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 **Ctrl+P**.
@@ -86,10 +86,10 @@ Ctrl+5 … Ctrl+0 still navigate from there, as do the nav bar and
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
 | Ctrl+Q | Quit the app |
-| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
+| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above). Exception: on [Roleplay](roleplay-chat-dictionaries.md), Ctrl+1 – Ctrl+4 switch that screen's modes instead |
 | F7 / F8 / F9 | Switch to Lab / Logs / Settings — the three destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
-| Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md); elsewhere it does nothing |
+| Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
@@ -140,13 +140,13 @@ Full detail on runs, approvals, and tools:
 | Subscriptions | [Watchlists](watchlists.md) 🚧 |
 | Coding | [Console](console.md) |
 | Conversations | [Library ▸ Media & conversations](library/media-and-conversations.md) |
-| CCP (Conversations, Characters & Prompts) | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
+| CCP (Conversations, Characters & Prompts) | [Roleplay](roleplay-chat-dictionaries.md) for characters and personas; prompts moved to [Library ▸ Prompts](library/prompts.md) |
 | LLM management | [Lab](lab.md) 🚧 |
 | Research | [Library](library.md) |
 | Ingest | [Library ▸ Import & export](library/import-and-export.md) |
 | Writing | [Library](library.md) |
 | Chatbooks | [Artifacts](artifacts.md) 🚧 |
-| Characters / Roleplay | [Roleplay & Chat Dictionaries](roleplay-chat-dictionaries.md) |
+| Characters / Roleplay | [Roleplay](roleplay-chat-dictionaries.md) |
 | Speech (STTS) / Evals | [Lab](lab.md) 🚧 |
 | Tools & Settings | [MCP](mcp.md) 🚧 |
 | Stats | [Settings](settings.md) (the palette's "Show Database Stats" opens the separate Statistics screen) |
