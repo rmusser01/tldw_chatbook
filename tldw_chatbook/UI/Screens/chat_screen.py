@@ -1,6 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import asyncio
@@ -13,7 +13,7 @@ import re
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Dict, Iterable, Literal, Optional, TYPE_CHECKING
+from typing import Any, Dict, Literal, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import toml
@@ -27,7 +27,6 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
-from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -51,7 +50,6 @@ from .provider_model_resolution import (
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
     CONSOLE_FRAME_BORDER,
-    CONSOLE_FRAME_COLOR,
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
@@ -195,7 +193,6 @@ from ...Chat.console_skill_resolver import (
 )
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
-    CONSOLE_RUN_MARKER_GLYPHS,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleFleetCompletionTarget,
@@ -213,9 +210,7 @@ from ...Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     fleet_unseen_conversation_ids,
 )
-from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...UI.character_display_text import sanitize_character_display_label
-from ...Widgets.glyph_fallback import resolve_glyph
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -243,32 +238,7 @@ from ...Chat.console_provider_gateway import (
 from ...Chat.console_provider_endpoints import first_configured_endpoint
 
 from ...Chat.console_voice_input import (
-    NO_CAPTURE_MESSAGE,
-    NO_SPEECH_MESSAGE,
-    STATE_LISTENING,
-    TRANSCRIPTION_INCOMPLETE_REASON,
-    TRANSCRIPTION_INCOMPLETE_REMEDY,
-    VAD_UNAVAILABLE_MESSAGE,
-    ConsoleVoiceInputController,
-    VoiceCommand,
-    VoiceDictationModelDefaulted,
-    VoiceFailed,
-    VoiceFinal,
-    VoiceModelPreparing,
-    VoiceModelWarmupFailed,
-    VoicePartial,
-    VoiceProviderOverridden,
-    VoiceSegmentNoFinal,
-    VoiceSegmentTranscribing,
-    VoiceSpeechResumed,
-    VoiceVadUnavailable,
-    # `acoustic_barge_in_enabled` is dual-use: the realtime engine's own
-    # `_enter_console_realtime_loop` reads it directly, in addition to
-    # `ConsoleHandsFreeController`'s own separate copy of this import for
-    # the pipeline engine's `_enter_console_hands_free_pipeline_loop`
-    # (wave-2 console decomposition, task 1) -- see that module's docstring.
     acoustic_barge_in_enabled,
-    default_service_factory,
     realtime_idle_timeout_seconds,
     realtime_model,
     realtime_provider,
@@ -306,7 +276,6 @@ from ...Chat.console_hands_free import (
 )
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
-    CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
@@ -546,19 +515,10 @@ from ...Widgets.Console.console_rewind_modal import (
     ConsoleRewindModal,
     RewindPromptRow,
 )
-from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
-)
-from ...Workspaces import (
-    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
-    ConsoleConversationBrowserInputRow,
-    ConsoleConversationBrowserRow,
-    DEFAULT_WORKSPACE_ID,
-    build_console_conversation_browser_state,
-    console_persisted_row_updated_sort,
 )
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
@@ -571,6 +531,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
 #: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
@@ -643,7 +604,7 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
-# `_sync_persisted_console_browser_rows` re-query the DB per scope (global +
+# `_refresh_console_persisted_rows_cache` queries the DB per scope (global +
 # every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
 # directly on the sub-agent badge-count TTL cache above (same staleness
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
@@ -1670,13 +1631,9 @@ class ChatScreen(BaseAppScreen):
     _console_videogen_inflight = _ControllerState(
         "_video", "_console_videogen_inflight"
     )
-    _console_videogen_cancels = _ControllerState(
-        "_video", "_console_videogen_cancels"
-    )
+    _console_videogen_cancels = _ControllerState("_video", "_console_videogen_cancels")
     _console_video_store = _ControllerState("_video", "_console_video_store")
-    _pending_video_artifacts = _ControllerState(
-        "_video", "_pending_video_artifacts"
-    )
+    _pending_video_artifacts = _ControllerState("_video", "_pending_video_artifacts")
     _pending_video_artifacts_closed = _ControllerState(
         "_video", "_pending_video_artifacts_closed"
     )
@@ -1688,6 +1645,33 @@ class ChatScreen(BaseAppScreen):
     )
     _pending_video_deferred_closes = _ControllerState(
         "_video", "_pending_video_deferred_closes"
+    )
+    _console_persisted_rows_cache = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache"
+    )
+    _console_persisted_rows_cache_key = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache_key"
+    )
+    _console_persisted_rows_cache_at = _ControllerState(
+        "_workspace", "_console_persisted_rows_cache_at"
+    )
+    _console_conversation_browser_query = _ControllerState(
+        "_workspace", "_console_conversation_browser_query"
+    )
+    _console_conversation_browser_search_timer = _ControllerState(
+        "_workspace", "_console_conversation_browser_search_timer"
+    )
+    _console_conversation_browser_search_token = _ControllerState(
+        "_workspace", "_console_conversation_browser_search_token"
+    )
+    _console_conversation_browser_rows = _ControllerState(
+        "_workspace", "_console_conversation_browser_rows"
+    )
+    _console_conversation_browser_total = _ControllerState(
+        "_workspace", "_console_conversation_browser_total"
+    )
+    _console_conversation_browser_error = _ControllerState(
+        "_workspace", "_console_conversation_browser_error"
     )
 
     # TASK-352: Textual docks notification toasts bottom-right by default —
@@ -1913,130 +1897,11 @@ class ChatScreen(BaseAppScreen):
         return
 
     @on(Input.Changed, "#console-workspace-conversation-search")
-    def on_console_workspace_conversation_search_changed(
-        self, event: Input.Changed
-    ) -> None:
-        """Debounce grouped conversation-browser search in the Console rail.
-
-        TASK-15454: everything this handler does is now either a pure
-        attribute write or an in-memory filter over rows already held in
-        the screen. The DB work the 0.2s timer was supposed to be
-        debouncing -- the persisted-rows TTL invalidation, the
-        workspace-record/label reads (``ensure_default_workspace`` can open
-        a WRITE transaction), one ``list_workspace_conversations`` SELECT
-        per workspace, the starred-id SELECTs, and the workspace-context
-        tray sync that repeats all of it plus a 3-instance recompose --
-        used to run in front of the timer, so it ran once per KEYSTROKE and
-        the debounce only ever spared the persisted-row worker. It now runs
-        in ``_start_console_conversation_browser_search``, behind the timer.
-
-        The one non-bookkeeping line left here is the in-memory re-filter of
-        the rows the rail is already showing: it touches no service and no
-        DB, and it keeps a tick-driven sync landing inside the debounce
-        window from painting rows that contradict the search box. It can
-        only narrow the visible set; the debounced pass refills it.
-        """
+    def on_console_workspace_conversation_search_changed(self, event: Changed) -> None:
         event.stop()
-        event_input = getattr(event, "input", None)
-        if getattr(event_input, "disabled", False):
-            return
-        next_query = str(event.value or "")
-        if next_query == self._console_conversation_browser_query:
-            return
-        self._console_conversation_browser_query = next_query
-        self._console_workspace_conversation_query = (
-            self._console_conversation_browser_query
-        )
-        self._console_conversation_browser_search_token += 1
-        self._console_workspace_conversation_search_token = (
-            self._console_conversation_browser_search_token
-        )
-        token = self._console_conversation_browser_search_token
-        query = self._console_conversation_browser_query
-        if self._console_conversation_browser_search_timer is not None:
-            self._console_conversation_browser_search_timer.stop()
-            self._console_conversation_browser_search_timer = None
-        if self._console_workspace_conversation_search_timer is not None:
-            self._console_workspace_conversation_search_timer.stop()
-            self._console_workspace_conversation_search_timer = None
-        self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
-                self._console_conversation_browser_rows,
-                query,
-            )
-        )
-        self._console_conversation_browser_search_timer = self.set_timer(
-            0.2,
-            partial(
-                self._start_console_conversation_browser_search,
-                query,
-                token,
-            ),
-        )
-        self._console_workspace_conversation_search_timer = (
-            self._console_conversation_browser_search_timer
-        )
-
-    def _start_console_conversation_browser_search(
-        self,
-        query: str,
-        token: int,
-    ) -> None:
-        """Run the debounced half of a rail conversation-search keystroke.
-
-        TASK-15454: the deferred body of
-        ``on_console_workspace_conversation_search_changed``. Everything
-        here was previously executed synchronously, per keystroke, in front
-        of the timer that schedules this.
-
-        The token/query re-check is belt-and-braces -- a superseded timer is
-        already stopped by the next keystroke -- but this callback now opens
-        transactions, so it re-asserts the same cancellation contract
-        ``_refresh_console_conversation_browser_search`` asserts before its
-        own work.
-
-        Args:
-            query: Search text captured when the timer was armed.
-            token: Search token captured when the timer was armed.
-
-        Returns:
-            None.
-        """
-        if token != self._console_conversation_browser_search_token:
-            return
-        if query != self._console_conversation_browser_query:
-            return
-        # TASK-251: invalidate before kicking the refresh -- a same-text
-        # re-search within the TTL window (e.g. clear then retype) must not
-        # be served a stale persisted-rows cache entry.
-        self._invalidate_console_persisted_rows_cache()
-        if not query.strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-            return
-        self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
-                self._merge_console_browser_rows(
-                    self._native_console_browser_rows(),
-                    self._membership_console_browser_rows(),
-                ),
-                query,
-            )
-        )
-        self._console_conversation_browser_total = None
-        self._console_conversation_browser_error = ""
-        self._sync_console_workspace_context()
-        self.run_worker(
-            self._refresh_console_conversation_browser_search(
-                query,
-                token,
-            ),
-            group="console-workspace-conversation-search",
-            exclusive=True,
-        )
+        query = str(event.value or "")
+        disabled = bool(getattr(getattr(event, "input", None), "disabled", False))
+        self._workspace.transition_browser_search(query, disabled)
 
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
@@ -3031,10 +2896,14 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         rows = [
-            *self._native_console_browser_rows(),
-            *self._membership_console_browser_rows(),
+            *self._workspace._native_console_browser_rows(),
+            *self._workspace._membership_console_browser_rows(),
         ]
-        persisted_rows, _total, _error = self._sync_persisted_console_browser_rows()
+        persisted_rows, _total, _error = (
+            self._workspace._sync_persisted_console_browser_rows(
+                current_conversation_id=self._current_console_conversation_id()
+            )
+        )
         rows.extend(persisted_rows)
         self.app.push_screen(
             ConsoleSessionSwitcherModal(rows=tuple(rows)),
@@ -3473,13 +3342,6 @@ class ChatScreen(BaseAppScreen):
         #: for the same "bounded by distinct sessions ever parked" reason
         #: as `_console_toasted_park_round_ids` above.
         self._console_last_parked_round_ids: dict[str, frozenset[str]] = {}
-        # TASK-251: TTL cache for `_sync_persisted_console_browser_rows` --
-        # see `CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS`.
-        self._console_persisted_rows_cache: (
-            tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None
-        ) = None
-        self._console_persisted_rows_cache_key: tuple[str, str | None] | None = None
-        self._console_persisted_rows_cache_at: float = 0.0
         # TASK-251: last-applied payload for the equality-guarded Agent
         # rail sub-sync (skip Static.update()/style work when the payload
         # `ConsoleAgentController._console_agent_section_payload` computes
@@ -3511,14 +3373,6 @@ class ChatScreen(BaseAppScreen):
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
         )
-        self._console_conversation_browser_query = ""
-        self._console_conversation_browser_search_timer: Any | None = None
-        self._console_conversation_browser_search_token = 0
-        self._console_conversation_browser_rows: tuple[
-            ConsoleConversationBrowserInputRow, ...
-        ] = ()
-        self._console_conversation_browser_total: int | None = None
-        self._console_conversation_browser_error = ""
         #: The realtime (V4) hands-free loop's live session, or None when
         #: that loop is not running. Mutually exclusive with
         #: `_console_hands_free` by construction: the engine fork in
@@ -4412,10 +4266,7 @@ class ChatScreen(BaseAppScreen):
         await self._sync_native_console_chat_ui()
         if not self.is_mounted:
             return
-        if (
-            prior_focused_widget is not None
-            and prior_focused_widget.is_mounted
-        ):
+        if prior_focused_widget is not None and prior_focused_widget.is_mounted:
             prior_focused_widget.focus()
 
     def _resync_mounted_console_after_first_chat_rollback(
@@ -4471,11 +4322,14 @@ class ChatScreen(BaseAppScreen):
         prior_control_model = self._console_control_model
         prior_focused_widget = self.app.focused if self.is_mounted else None
         created_target = None
-        refreshed_prior: tuple[
-            ConsoleSessionSettings,
-            ConsoleSessionSettings,
-            str,
-        ] | None = None
+        refreshed_prior: (
+            tuple[
+                ConsoleSessionSettings,
+                ConsoleSessionSettings,
+                str,
+            ]
+            | None
+        ) = None
 
         def rollback_mutation() -> None:
             if created_target is not None:
@@ -4520,12 +4374,14 @@ class ChatScreen(BaseAppScreen):
             )
 
         reserves_new_target = (
-            self.app_instance.pending_handoffs.claim_reserves_new_console_session(
-                claim
-            )
+            self.app_instance.pending_handoffs.claim_reserves_new_console_session(claim)
         )
         target = next(
-            (session for session in store.sessions() if session.id == intent.session_id),
+            (
+                session
+                for session in store.sessions()
+                if session.id == intent.session_id
+            ),
             None,
         )
         if target is None:
@@ -4620,9 +4476,7 @@ class ChatScreen(BaseAppScreen):
         try:
             acknowledged = run_if_runtime_config_generation_current(
                 intent.config_revision,
-                lambda: self.app_instance.pending_handoffs.acknowledge_current(
-                    claim
-                ),
+                lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
             )
         except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
             self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
@@ -5922,19 +5776,12 @@ class ChatScreen(BaseAppScreen):
     def _agent_section_user_dismissed_while_busy(self, value: bool) -> None:
         self._agent._agent_section_user_dismissed_while_busy = value
 
-    # Workspace conversation-search state moved to `ConsoleWorkspaceController`
-    # (wave-2 console decomposition, task 2). These six properties keep
-    # `self._console_workspace_conversation_query`/`_search_timer`/
-    # `_search_token`/`_search_rows`/`_search_total`/`_search_error` readable
-    # AND writable exactly as before, for the two screen methods that are
-    # not part of the workspace cluster but still touch this state
-    # (`on_console_workspace_conversation_search_changed`, a sibling
-    # conversation-browser handler that mirrors three of them, and
-    # `on_button_pressed`'s workspace-search branches) and for tests that
-    # poke it directly -- each proxies straight through to `self._workspace`,
-    # so none of those call sites needed to change. `_console_workspace_
-    # conversation_workspace_id` needs no proxy: it is read and written only
-    # inside `_with_console_workspace_conversation_section`, itself moved.
+    # Legacy Workspace-search names remain assignable compatibility aliases.
+    # Scalar reads/writes share Workspace's canonical browser state; row reads
+    # project rich rows to the legacy shape and row writes convert back to rich
+    # rows. The bounded Input handler passes only query/disabled values, and the
+    # Clear button delegates the complete transition to Workspace, so the screen
+    # owns no duplicate browser backing state or refresh writer.
     @property
     def _console_workspace_conversation_query(self) -> str:
         return self._workspace._console_workspace_conversation_query
@@ -6249,10 +6096,9 @@ class ChatScreen(BaseAppScreen):
         store = self._ensure_console_chat_store()
         session_id = store.active_session_id
         composer = self._console_composer_or_none()
-        if composer is not None and not (
-            getattr(self, "_console_visible_draft_session_id", None)
-            in (None, session_id)
-        ):
+        if composer is not None and getattr(
+            self, "_console_visible_draft_session_id", None
+        ) not in (None, session_id):
             composer = None
         if composer is not None:
             current = composer.draft_text()
@@ -9806,10 +9652,13 @@ class ChatScreen(BaseAppScreen):
             self._fetch_character_card_for_avatar, choice.character_id
         )
         if card is None:
-            display_name = sanitize_character_display_label(
-                choice.name,
-                max_characters=180,
-            ) or "that character"
+            display_name = (
+                sanitize_character_display_label(
+                    choice.name,
+                    max_characters=180,
+                )
+                or "that character"
+            )
             self.app.notify(
                 f"Could not load {escape_markup(display_name)}.",
                 severity="error",
@@ -9834,10 +9683,13 @@ class ChatScreen(BaseAppScreen):
             choice.name,
             user_name=effective_name,
         )
-        display_name = sanitize_character_display_label(
-            seed.name,
-            max_characters=180,
-        ) or "that character"
+        display_name = (
+            sanitize_character_display_label(
+                seed.name,
+                max_characters=180,
+            )
+            or "that character"
+        )
         notification_name = escape_markup(display_name)
         if choice.placement == "new":
             # cubic PR #1153 P1: the card's system prompt was computed and
@@ -10391,866 +10243,6 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
                 group="console-effective-scope-refresh",
             )
-
-    @staticmethod
-    def _console_browser_row_key(row: ConsoleConversationBrowserInputRow) -> str:
-        return str(row.row_key or row.conversation_id or "").strip()
-
-    @staticmethod
-    def _console_browser_row_scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
-        if row.scope_type == "global":
-            return "global chats"
-        if row.workspace_id == DEFAULT_WORKSPACE_ID:
-            return "default workspace chats"
-        if row.workspace_id:
-            return f"workspace {row.workspace_label}"
-        return "chats"
-
-    @staticmethod
-    def _console_browser_row_matches_query(
-        row: ConsoleConversationBrowserInputRow,
-        normalized_query: str,
-    ) -> bool:
-        haystack = " ".join(
-            (
-                str(row.title or ""),
-                str(row.workspace_label or ""),
-                str(row.status or ""),
-                ChatScreen._console_browser_row_scope_copy(row),
-            )
-        ).lower()
-        return normalized_query in haystack
-
-    def _filter_console_browser_rows_for_query(
-        self,
-        rows: Iterable[ConsoleConversationBrowserInputRow],
-        query: str,
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Return the rows matching ``query``; pure, no service or DB access.
-
-        Called from two places with different jobs. The debounced pass filters
-        freshly derived rows. The keystroke handler filters the rows already
-        on screen, which is the only work it does beyond bookkeeping
-        (TASK-15454) -- and that carries a documented tradeoff worth stating
-        where the filter lives:
-
-        **An empty query returns the rows unchanged**, so backspacing the
-        search box to empty leaves the PRIOR result set visible for up to the
-        0.2 s debounce, until ``_start_console_conversation_browser_search``
-        clears it. (Every non-empty query narrows instead, so the visible rows
-        never contradict the search box; only the emptied box does, and only
-        by showing more than it should.) Clicking a row in that window was
-        checked and is safe: ``on_button_pressed`` carries the row's own
-        ``conversation_id``/``row_key`` on the button, and when
-        ``_find_console_browser_row`` no longer finds the row in freshly built
-        state it falls back to that id and resumes the conversation anyway --
-        so a stale row still opens the conversation it names, it does not dead-
-        click. The "Clear" BUTTON does not go through this window at all; it
-        clears immediately.
-
-        Args:
-            rows: Rows to filter.
-            query: Raw search text; blank means "no filtering".
-
-        Returns:
-            The matching rows, in input order.
-        """
-        normalized_query = str(query or "").strip().lower()
-        row_tuple = tuple(rows)
-        if not normalized_query:
-            return row_tuple
-        return tuple(
-            row
-            for row in row_tuple
-            if self._console_browser_row_matches_query(row, normalized_query)
-        )
-
-    def _find_console_browser_row(
-        self,
-        row_key: str,
-        *,
-        conversation_id: str | None = None,
-    ) -> ConsoleConversationBrowserRow | None:
-        """Return the current grouped browser row for a rendered row key."""
-        target_row_key = str(row_key or "").strip()
-        target_conversation_id = str(conversation_id or "").strip()
-        if not target_row_key and not target_conversation_id:
-            return None
-        state = self._workspace._build_console_workspace_context_state()
-        browser = state.conversation_browser
-        if browser is None:
-            return None
-        allow_conversation_fallback = not target_row_key
-        fallback: ConsoleConversationBrowserRow | None = None
-        for section in browser.sections:
-            for row in section.rows:
-                if target_row_key and row.row_key == target_row_key:
-                    return row
-                if (
-                    allow_conversation_fallback
-                    and fallback is None
-                    and target_conversation_id
-                    and row.conversation_id == target_conversation_id
-                ):
-                    fallback = row
-            for group in section.groups:
-                for row in group.rows:
-                    if target_row_key and row.row_key == target_row_key:
-                        return row
-                    if (
-                        allow_conversation_fallback
-                        and fallback is None
-                        and target_conversation_id
-                        and row.conversation_id == target_conversation_id
-                    ):
-                        fallback = row
-        return fallback
-
-    @staticmethod
-    def _console_browser_display_identity(
-        row: ConsoleConversationBrowserInputRow,
-    ) -> tuple[str, str, str, str] | tuple[str, str]:
-        """Return the display identity used to dedupe grouped browser rows."""
-        conversation_id = str(row.conversation_id or "").strip()
-        if conversation_id:
-            scope_type = str(row.scope_type or "").strip() or "workspace"
-            workspace_id = (
-                "" if scope_type == "global" else str(row.workspace_id or "").strip()
-            )
-            return ("conversation", scope_type, workspace_id, conversation_id)
-        return ("row", ChatScreen._console_browser_row_key(row))
-
-    def _starred_console_conversation_ids(self) -> set[str]:
-        """Return locally starred durable conversation ids."""
-        service = getattr(self.app_instance, "conversation_local_marks_service", None)
-        list_marked = getattr(service, "list_marked_conversation_ids", None)
-        if not callable(list_marked):
-            return set()
-        try:
-            return {str(conversation_id) for conversation_id in list_marked()}
-        except Exception:
-            logger.opt(exception=True).debug("Unable to read local conversation stars")
-            return set()
-
-    def _apply_console_browser_star_state(
-        self,
-        row: ConsoleConversationBrowserInputRow,
-        starred_ids: set[str] | None = None,
-    ) -> ConsoleConversationBrowserInputRow:
-        """Apply local star state and star eligibility to one browser row."""
-        conversation_id = str(row.conversation_id or "").strip()
-        ids = (
-            starred_ids
-            if starred_ids is not None
-            else self._starred_console_conversation_ids()
-        )
-        star_enabled = bool(conversation_id) and not str(row.row_key or "").startswith(
-            "native:"
-        )
-        return replace(
-            row,
-            conversation_id=conversation_id or None,
-            starred=bool(conversation_id and conversation_id in ids),
-            star_enabled=bool(star_enabled),
-        )
-
-    def _native_console_browser_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> list[ConsoleConversationBrowserInputRow]:
-        """Return open native Console sessions across all workspaces."""
-        store = self._console_chat_store
-        if store is None:
-            return []
-        labels = self._workspace._console_browser_workspace_labels()
-        starred_ids = self._starred_console_conversation_ids()
-        active_session_id = store.active_session_id
-        controller = getattr(self, "_console_chat_controller", None)
-        rows: list[ConsoleConversationBrowserInputRow] = []
-        for session in store.sessions():
-            session_workspace_id = str(session.workspace_id or "").strip()
-            scope_type = (
-                "global"
-                if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-                else "workspace"
-            )
-            workspace_id = None if scope_type == "global" else session_workspace_id
-            persisted_id = (
-                str(session.persisted_conversation_id).strip()
-                if session.persisted_conversation_id
-                else ""
-            )
-            row_key = persisted_id or f"native:{session.id}"
-            selected = session.id == active_session_id
-            # Parallel-agents spec PA-T8: resolved here (glyph string, not the
-            # raw `ConsoleRunMarker`) so `conversation_browser_state.py` and
-            # the tray widget stay free of a model-layer import -- threaded
-            # like TASK-717 threaded `openable` (input row -> normalize ->
-            # display row -> row label). PR3a-2 Task 4: the durable
-            # unseen-completion mark rides the same pipeline via
-            # `_console_run_marker_with_unseen`.
-            run_marker = (
-                resolve_glyph(
-                    CONSOLE_RUN_MARKER_GLYPHS.get(
-                        self._console_run_marker_with_unseen(
-                            controller, session, self._console_fleet_unseen_ids()
-                        ),
-                        "",
-                    )
-                )
-                if controller is not None
-                else ""
-            )
-            queued_count = (
-                controller.activity_for(session.id).queued_count
-                if controller is not None
-                else 0
-            )
-            row = ConsoleConversationBrowserInputRow(
-                row_key=row_key,
-                conversation_id=persisted_id or None,
-                native_session_id=session.id,
-                title=str(session.title or "Untitled conversation"),
-                scope_type=scope_type,
-                workspace_id=workspace_id,
-                workspace_label=self._workspace._console_browser_workspace_label(
-                    workspace_id, labels
-                ),
-                status="active session" if selected else "open session",
-                selected=selected,
-                source_kind="native",
-                updated_sort=str(session.updated_at or ""),
-                run_marker=run_marker,
-                queued_count=queued_count,
-            )
-            rows.append(self._apply_console_browser_star_state(row, starred_ids))
-        return rows
-
-    def _console_browser_unseen_marker(self, conversation_id: str | None) -> str:
-        """Resolved ◈ glyph for a marked conversation's sessionless row.
-
-        task-15864 AC#1: the unseen-badge derivation lived only on the
-        open-session (native) row path
-        (``_console_run_marker_with_unseen``), so after a restart --
-        session tabs do not restore, making no-open-session the NORMAL
-        restart shape -- the marked conversation's sidebar row rendered no
-        ◈ at all. Membership and persisted rows thread this through the
-        same durable-mark backing; when a native row also exists for the
-        conversation it wins the merge's identity slot with its full
-        precedence chain, so this cannot mask a live turn glyph.
-
-        Args:
-            conversation_id: The row's persisted conversation id.
-
-        Returns:
-            The resolved unseen glyph, or ``""`` when unmarked.
-        """
-        conversation_key = str(conversation_id or "").strip()
-        if not conversation_key:
-            return ""
-        if conversation_key not in self._console_fleet_unseen_ids():
-            return ""
-        return resolve_glyph(
-            CONSOLE_RUN_MARKER_GLYPHS.get(ConsoleRunMarker.SUBAGENT_UNSEEN, "")
-        )
-
-    def _membership_console_browser_rows(
-        self,
-        current_conversation_id: str | None = None,
-    ) -> list[ConsoleConversationBrowserInputRow]:
-        """Return conversation membership rows across every local workspace."""
-        service = getattr(self.app_instance, "workspace_registry_service", None)
-        list_conversations = getattr(service, "list_workspace_conversations", None)
-        if not callable(list_conversations):
-            return []
-        labels = self._workspace._console_browser_workspace_labels()
-        starred_ids = self._starred_console_conversation_ids()
-        current_conversation = (
-            current_conversation_id or self._session._current_console_conversation_id()
-        )
-        active_session = self._session._active_native_console_session()
-        active_workspace_id = (
-            str(active_session.workspace_id or "").strip()
-            if active_session is not None
-            else str(
-                self._workspace._current_console_workspace_context().active_workspace_id
-                or ""
-            ).strip()
-        )
-        rows: list[ConsoleConversationBrowserInputRow] = []
-        for record in self._workspace._console_browser_workspace_records():
-            workspace_id = str(record.workspace_id or "").strip()
-            if not workspace_id:
-                continue
-            try:
-                memberships = list_conversations(workspace_id)
-            except Exception:
-                logger.opt(exception=True).debug(
-                    "Unable to list Console browser workspace conversations "
-                    "workspace_id={}",
-                    workspace_id,
-                )
-                continue
-            for membership in memberships:
-                conversation_id = str(getattr(membership, "item_id", "") or "").strip()
-                if not conversation_id:
-                    continue
-                title = str(getattr(membership, "title", "") or conversation_id)
-                row = ConsoleConversationBrowserInputRow(
-                    row_key=f"workspace:{workspace_id}:conversation:{conversation_id}",
-                    conversation_id=conversation_id,
-                    native_session_id=None,
-                    title=title,
-                    scope_type="workspace",
-                    workspace_id=workspace_id,
-                    workspace_label=self._workspace._console_browser_workspace_label(
-                        workspace_id, labels
-                    ),
-                    status=str(getattr(membership, "role", "") or "workspace-thread"),
-                    selected=bool(
-                        current_conversation
-                        and current_conversation == conversation_id
-                        and active_workspace_id == workspace_id
-                    ),
-                    source_kind="membership",
-                    updated_sort=str(getattr(membership, "created_at", "") or ""),
-                    # task-15864 AC#1: sessionless rows still surface the
-                    # durable unseen mark (the restart shape).
-                    run_marker=self._console_browser_unseen_marker(
-                        conversation_id
-                    ),
-                    openable=conversation_id
-                    not in getattr(self, "_console_broken_conversation_ids", set()),
-                )
-                rows.append(self._apply_console_browser_star_state(row, starred_ids))
-        return rows
-
-    async def _persisted_console_browser_rows(
-        self,
-        query: str = "",
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted global/workspace rows for grouped browser search."""
-        services: list[tuple[Any, bool]] = []
-        scope_service = getattr(
-            self.app_instance,
-            "chat_conversation_scope_service",
-            None,
-        )
-        local_service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
-
-        def add_service(candidate: Any, *, include_mode: bool) -> None:
-            if candidate is None:
-                return
-            if any(candidate is existing for existing, _include_mode in services):
-                return
-            services.append((candidate, include_mode))
-
-        add_service(scope_service, include_mode=True)
-        add_service(getattr(scope_service, "local_service", None), include_mode=False)
-        add_service(local_service, include_mode=False)
-        if not services:
-            return [], None, ""
-
-        labels = self._workspace._console_browser_workspace_labels()
-        scopes: list[tuple[str, str | None]] = [("global", None)]
-        scopes.extend(
-            ("workspace", str(record.workspace_id))
-            for record in self._workspace._console_browser_workspace_records()
-            if str(record.workspace_id or "").strip()
-        )
-        last_error = ""
-        for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
-            if not callable(list_conversations):
-                continue
-            rows: list[ConsoleConversationBrowserInputRow] = []
-            total_count = 0
-            saw_total = False
-            saw_result = False
-            current_conversation = self._session._current_console_conversation_id()
-            starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in scopes:
-                list_kwargs: dict[str, Any] = {
-                    "query": query,
-                    "scope_type": scope_type,
-                    "workspace_id": workspace_id,
-                    "limit": 25,
-                    "offset": 0,
-                }
-                if include_mode:
-                    list_kwargs["mode"] = "local"
-                try:
-                    if include_mode:
-                        # Routed through ChatConversationScopeService, which
-                        # already threads its own local-mode sync DB call
-                        # internally (B4/task-283) -- just await it.
-                        result = list_conversations(**list_kwargs)
-                        result = await result if inspect.isawaitable(result) else result
-                    else:
-                        # Raw ChatConversationService (scope_service.local_service
-                        # or app.local_chat_conversation_service): a plain sync
-                        # sqlite/FTS call that bypasses the scope service's own
-                        # threading. run_worker(coroutine) is not a thread, so
-                        # this used to block the event loop on every debounce
-                        # fire -- thread it directly, same is_memory_db guard as
-                        # ChatConversationScopeService._is_memory_backed (a
-                        # per-connection :memory: DB is only visible to the
-                        # thread that migrated it).
-                        db = getattr(service, "db", None)
-                        if bool(getattr(db, "is_memory_db", False)):
-                            result = list_conversations(**list_kwargs)
-                        else:
-                            result = await asyncio.to_thread(
-                                list_conversations, **list_kwargs
-                            )
-                except Exception as exc:
-                    if (
-                        isinstance(exc, ValueError)
-                        and "service is unavailable" in str(exc).lower()
-                    ):
-                        logger.debug(
-                            "Local persisted conversation service is unavailable"
-                        )
-                        last_error = ""
-                        break
-                    logger.exception(
-                        "Unable to search Console conversation browser "
-                        "query={!r} scope_type={} workspace_id={} include_mode={}",
-                        query,
-                        scope_type,
-                        workspace_id,
-                        include_mode,
-                    )
-                    return (
-                        rows,
-                        None if not saw_total else total_count,
-                        ("Workspace conversation search is unavailable."),
-                    )
-                saw_result = True
-                if not isinstance(result, dict):
-                    continue
-                items = result.get("items")
-                if not isinstance(items, list):
-                    items = []
-                total = result.get("total")
-                if total is None:
-                    pagination = result.get("pagination")
-                    if isinstance(pagination, dict):
-                        total = pagination.get("total")
-                try:
-                    total_count += int(total)
-                    saw_total = True
-                except (TypeError, ValueError):
-                    total_count += len(items)
-                    saw_total = True
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    conversation_id = str(item.get("id") or "").strip()
-                    if not conversation_id:
-                        continue
-                    item_scope_type = str(
-                        item.get("scope_type") or scope_type or "workspace"
-                    )
-                    item_workspace_id = item.get("workspace_id", workspace_id)
-                    normalized_workspace_id = (
-                        None
-                        if item_scope_type == "global"
-                        else str(item_workspace_id or workspace_id or "").strip()
-                    )
-                    row = ConsoleConversationBrowserInputRow(
-                        row_key=conversation_id,
-                        conversation_id=conversation_id,
-                        native_session_id=None,
-                        title=str(item.get("title") or "Untitled conversation"),
-                        scope_type=item_scope_type,
-                        workspace_id=normalized_workspace_id,
-                        workspace_label=self._workspace._console_browser_workspace_label(
-                            normalized_workspace_id,
-                            labels,
-                        ),
-                        status=str(item.get("state") or "workspace-thread"),
-                        selected=bool(
-                            current_conversation
-                            and current_conversation == conversation_id
-                        ),
-                        source_kind="persisted",
-                        # TASK-355: recency-first ordering / age labels must come
-                        # from last_modified (normalize_conversation_row exposes
-                        # no updated_at) or the rail degrades to creation order.
-                        updated_sort=console_persisted_row_updated_sort(item),
-                        # task-15864 AC#1: sessionless rows still surface
-                        # the durable unseen mark (the restart shape).
-                        run_marker=self._console_browser_unseen_marker(
-                            conversation_id
-                        ),
-                    )
-                    rows.append(
-                        self._apply_console_browser_star_state(row, starred_ids)
-                    )
-            if saw_result:
-                return rows, total_count if saw_total else None, last_error
-        return [], None, last_error
-
-    def _invalidate_console_persisted_rows_cache(self) -> None:
-        """Clear the TTL-cached persisted conversation-browser rows.
-
-        TASK-251: a dumb clear only -- callers that mutate the persisted
-        conversation set call this so the very next sync reflects the
-        change immediately, but nothing here tries to enumerate every
-        theoretical mutation site. ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``
-        is the correctness backstop for whatever this misses (mirrors the
-        sub-agent badge-count cache's condition 3).
-        """
-        self._console_persisted_rows_cache = None
-        self._console_persisted_rows_cache_key = None
-        self._console_persisted_rows_cache_at = 0.0
-
-    def _sync_persisted_console_browser_rows(
-        self,
-        query: str = "",
-        current_conversation_id: str | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Return persisted rows when the local listing seam is synchronous.
-
-        TASK-251 (audit P1 B1): TTL-cached (see
-        ``CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS``) keyed on
-        ``(query, current_conversation_id)`` -- the 0.2s Console poll tick
-        used to re-issue this per-scope DB query chain unconditionally,
-        measured 11-70ms/tick. Explicit invalidation sites exist (see
-        ``_invalidate_console_persisted_rows_cache`` callers) but the TTL is
-        the correctness backstop, not those sites.
-        """
-        cache_key = (query, current_conversation_id)
-        if (
-            self._console_persisted_rows_cache is not None
-            and self._console_persisted_rows_cache_key == cache_key
-            and (time.monotonic() - self._console_persisted_rows_cache_at)
-            < CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS
-        ):
-            return self._console_persisted_rows_cache
-        result = self._compute_persisted_console_browser_rows(
-            query,
-            current_conversation_id,
-        )
-        self._console_persisted_rows_cache = result
-        self._console_persisted_rows_cache_key = cache_key
-        self._console_persisted_rows_cache_at = time.monotonic()
-        return result
-
-    def _compute_persisted_console_browser_rows(
-        self,
-        query: str = "",
-        current_conversation_id: str | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
-        """Uncached implementation behind ``_sync_persisted_console_browser_rows``."""
-        services: list[tuple[Any, bool]] = []
-        local_service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
-        scope_service = getattr(
-            self.app_instance,
-            "chat_conversation_scope_service",
-            None,
-        )
-
-        def add_service(candidate: Any, *, include_mode: bool) -> None:
-            if candidate is None:
-                return
-            if any(candidate is existing for existing, _include_mode in services):
-                return
-            services.append((candidate, include_mode))
-
-        add_service(local_service, include_mode=False)
-        add_service(getattr(scope_service, "local_service", None), include_mode=False)
-        add_service(scope_service, include_mode=True)
-        if not services:
-            return [], None, ""
-
-        labels = self._workspace._console_browser_workspace_labels()
-        scopes: list[tuple[str, str | None]] = [("global", None)]
-        scopes.extend(
-            ("workspace", str(record.workspace_id))
-            for record in self._workspace._console_browser_workspace_records()
-            if str(record.workspace_id or "").strip()
-        )
-        last_error = ""
-        for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
-            if not callable(list_conversations):
-                continue
-            rows: list[ConsoleConversationBrowserInputRow] = []
-            total_count = 0
-            saw_total = False
-            saw_sync_result = False
-            current_conversation = (
-                current_conversation_id
-                or self._session._current_console_conversation_id()
-            )
-            starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in scopes:
-                list_kwargs: dict[str, Any] = {
-                    "query": query,
-                    "scope_type": scope_type,
-                    "workspace_id": workspace_id,
-                    "limit": 25,
-                    "offset": 0,
-                }
-                if include_mode:
-                    list_kwargs["mode"] = "local"
-                try:
-                    result = list_conversations(**list_kwargs)
-                except Exception as exc:
-                    if (
-                        isinstance(exc, ValueError)
-                        and "service is unavailable" in str(exc).lower()
-                    ):
-                        logger.debug(
-                            "Local persisted conversation service is unavailable"
-                        )
-                        last_error = ""
-                        break
-                    logger.exception(
-                        "Unable to list Console conversation browser "
-                        "query={!r} scope_type={} workspace_id={} include_mode={}",
-                        query,
-                        scope_type,
-                        workspace_id,
-                        include_mode,
-                    )
-                    return (
-                        rows,
-                        None if not saw_total else total_count,
-                        ("Workspace conversation search is unavailable."),
-                    )
-                if inspect.isawaitable(result):
-                    try:
-                        result.close()
-                    except AttributeError:
-                        pass
-                    continue
-                saw_sync_result = True
-                if not isinstance(result, dict):
-                    continue
-                items = result.get("items")
-                if not isinstance(items, list):
-                    items = []
-                total = result.get("total")
-                if total is None:
-                    pagination = result.get("pagination")
-                    if isinstance(pagination, dict):
-                        total = pagination.get("total")
-                try:
-                    total_count += int(total)
-                    saw_total = True
-                except (TypeError, ValueError):
-                    total_count += len(items)
-                    saw_total = True
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    conversation_id = str(item.get("id") or "").strip()
-                    if not conversation_id:
-                        continue
-                    item_scope_type = str(
-                        item.get("scope_type") or scope_type or "workspace"
-                    )
-                    item_workspace_id = item.get("workspace_id", workspace_id)
-                    normalized_workspace_id = (
-                        None
-                        if item_scope_type == "global"
-                        else str(item_workspace_id or workspace_id or "").strip()
-                    )
-                    row = ConsoleConversationBrowserInputRow(
-                        row_key=conversation_id,
-                        conversation_id=conversation_id,
-                        native_session_id=None,
-                        title=str(item.get("title") or "Untitled conversation"),
-                        scope_type=item_scope_type,
-                        workspace_id=normalized_workspace_id,
-                        workspace_label=self._workspace._console_browser_workspace_label(
-                            normalized_workspace_id,
-                            labels,
-                        ),
-                        status=str(item.get("state") or "workspace-thread"),
-                        selected=bool(
-                            current_conversation
-                            and current_conversation == conversation_id
-                        ),
-                        source_kind="persisted",
-                        # TASK-355: recency-first ordering / age labels must come
-                        # from last_modified (normalize_conversation_row exposes
-                        # no updated_at) or the rail degrades to creation order.
-                        updated_sort=console_persisted_row_updated_sort(item),
-                        # task-15864 AC#1: sessionless rows still surface
-                        # the durable unseen mark (the restart shape).
-                        run_marker=self._console_browser_unseen_marker(
-                            conversation_id
-                        ),
-                    )
-                    rows.append(
-                        self._apply_console_browser_star_state(row, starred_ids)
-                    )
-            if saw_sync_result:
-                return rows, total_count if saw_total else None, last_error
-        return [], None, last_error
-
-    def _merge_console_browser_rows(
-        self,
-        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
-    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-        """Merge browser rows with native, membership, then persisted precedence."""
-        merged: list[ConsoleConversationBrowserInputRow] = []
-        seen: set[tuple[str, ...]] = set()
-        starred_ids = self._starred_console_conversation_ids()
-        for group in row_groups:
-            for raw_row in group:
-                row = self._apply_console_browser_star_state(raw_row, starred_ids)
-                identity = self._console_browser_display_identity(row)
-                if not identity[-1] or identity in seen:
-                    continue
-                seen.add(identity)
-                merged.append(row)
-        return tuple(merged)
-
-    def _current_console_browser_rows(
-        self,
-        query: str,
-        current_conversation_id: str | None = None,
-    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
-        """Return current grouped browser rows plus optional search metadata."""
-        local_rows = self._merge_console_browser_rows(
-            self._native_console_browser_rows(current_conversation_id),
-            self._membership_console_browser_rows(current_conversation_id),
-        )
-        persisted_rows, persisted_total, sync_error = (
-            self._sync_persisted_console_browser_rows(
-                query,
-                current_conversation_id=current_conversation_id,
-            )
-        )
-        cached_rows = self._console_conversation_browser_rows
-        rows = self._merge_console_browser_rows(local_rows, persisted_rows, cached_rows)
-        if str(query or "").strip():
-            total = (
-                self._console_conversation_browser_total
-                if self._console_conversation_browser_total is not None
-                else persisted_total
-            )
-        else:
-            total = None
-        return rows, total, self._console_conversation_browser_error or sync_error
-
-    async def _refresh_console_conversation_browser_search(
-        self,
-        query: str,
-        token: int,
-    ) -> None:
-        """Refresh grouped browser search rows if query and token are current."""
-        if token != self._console_conversation_browser_search_token:
-            return
-        if query != self._console_conversation_browser_query:
-            return
-        if not str(query or "").strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
-            return
-
-        local_rows = self._filter_console_browser_rows_for_query(
-            self._merge_console_browser_rows(
-                self._native_console_browser_rows(),
-                self._membership_console_browser_rows(),
-            ),
-            query,
-        )
-        self._console_conversation_browser_rows = local_rows
-        self._console_conversation_browser_total = None
-        self._console_conversation_browser_error = ""
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-
-        (
-            persisted_rows,
-            persisted_total,
-            error_copy,
-        ) = await self._persisted_console_browser_rows(query)
-        if token != self._console_conversation_browser_search_token:
-            return
-        if query != self._console_conversation_browser_query:
-            return
-        merged = self._merge_console_browser_rows(local_rows, persisted_rows)
-        result_total = persisted_total
-        if result_total is None or result_total < len(merged):
-            result_total = len(merged)
-        self._console_conversation_browser_rows = merged
-        self._console_conversation_browser_total = result_total
-        self._console_conversation_browser_error = error_copy
-        self._sync_console_workspace_context()
-        self.call_after_refresh(self._focus_console_workspace_conversation_search)
-
-    async def _refresh_console_conversation_browser_after_selection(self) -> None:
-        """Refresh grouped browser rows after selection/star state changes."""
-        query = self._console_conversation_browser_query
-        if not query.strip():
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._sync_console_workspace_context()
-            return
-        if self._console_conversation_browser_search_timer is not None:
-            self._console_conversation_browser_search_timer.stop()
-            self._console_conversation_browser_search_timer = None
-        self._console_conversation_browser_search_token += 1
-        self._console_workspace_conversation_search_token = (
-            self._console_conversation_browser_search_token
-        )
-        token = self._console_conversation_browser_search_token
-        await self._refresh_console_conversation_browser_search(query, token)
-
-    def _with_console_conversation_browser_state(
-        self,
-        state: ConsoleWorkspaceContextState,
-        current_conversation_id: str | None = None,
-    ) -> ConsoleWorkspaceContextState:
-        """Attach grouped all-workspaces conversation browser state."""
-        marks_service = getattr(
-            self.app_instance,
-            "conversation_local_marks_service",
-            None,
-        )
-        query = self._console_conversation_browser_query
-        rows, total, error_copy = self._current_console_browser_rows(
-            query,
-            current_conversation_id=current_conversation_id,
-        )
-        bridge = self._ensure_console_agent_bridge()
-        subagent_counts = self._agent._console_subagent_counts_for_rows(bridge, rows)
-        browser = build_console_conversation_browser_state(
-            rows=rows,
-            active_workspace_id=self._workspace._current_console_workspace_context().active_workspace_id,
-            group_collapse_preferences=(
-                self._console_conversation_browser_collapse_preferences()
-            ),
-            query=query,
-            marks_available=marks_service is not None,
-            error_copy=error_copy or self._console_conversation_browser_error,
-            result_total_count=total,
-            result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
-            subagent_counts=subagent_counts,
-        )
-        legacy_state = self._workspace._with_console_workspace_conversation_section(
-            state
-        )
-        return replace(
-            state,
-            conversation_browser=browser,
-            conversation_section=legacy_state.conversation_section,
-        )
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""
@@ -12994,13 +11986,17 @@ class ChatScreen(BaseAppScreen):
             "Workspace: "
         ):
             workspace_value = workspace_value.removeprefix("Workspace: ")
-        workspace_label = sanitize_character_display_label(
-            workspace_value,
-            max_characters=500,
-        ) or sanitize_character_display_label(
-            active_session.workspace_id,
-            max_characters=500,
-        ) or "Default"
+        workspace_label = (
+            sanitize_character_display_label(
+                workspace_value,
+                max_characters=500,
+            )
+            or sanitize_character_display_label(
+                active_session.workspace_id,
+                max_characters=500,
+            )
+            or "Default"
+        )
         persisted_id = str(active_session.persisted_conversation_id or "").strip()
         source = "saved conversation" if persisted_id else "native Console session"
         resume_state = (
@@ -14594,7 +13590,7 @@ class ChatScreen(BaseAppScreen):
                 # `self._active_character_avatar` rather than re-yielding a
                 # stale instance `_render_character_avatar_into_section` may
                 # already have removed from the DOM (final review finding 1).
-                # The lambda closes over `self` and reads
+                # The callable closes over `self` and reads
                 # `self._active_character_avatar` at CALL time, matching
                 # `ConsoleDictationController`'s late-binding constructor rule
                 # (see `dictation.py`'s module docstring) -- not a bound
@@ -14603,11 +13599,12 @@ class ChatScreen(BaseAppScreen):
                 character_avatar_widget_builder = None
                 character_avatar_name = ""
                 if show_character_section:
-                    character_avatar_widget_builder = lambda: (
-                        self._build_character_avatar_widget(
+
+                    def character_avatar_widget_builder():
+                        return self._build_character_avatar_widget(
                             self._active_character_avatar
                         )
-                    )
+
                     character_avatar_name = (
                         sanitize_character_display_label(
                             self._active_character_avatar_name,
@@ -15213,9 +14210,7 @@ class ChatScreen(BaseAppScreen):
         store = self._console_chat_store
         if store is None:
             return False
-        session = next(
-            (s for s in store.sessions() if s.id == session_id), None
-        )
+        session = next((s for s in store.sessions() if s.id == session_id), None)
         if session is None:
             return False
         return delivering in (session.persisted_conversation_id, session.id)
@@ -16627,9 +15622,7 @@ class ChatScreen(BaseAppScreen):
                 (s for s in sessions if s.id == store.active_session_id), None
             )
             if active is not None:
-                active_conversation_id = (
-                    active.persisted_conversation_id or active.id
-                )
+                active_conversation_id = active.persisted_conversation_id or active.id
                 # task-15864 AC#3: the view-clear YIELDS while the wake
                 # coordinator still owes this conversation. The mark is
                 # both the unseen INDICATOR (viewing satisfies that) and
@@ -16716,7 +15709,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
             if controller is None:
-                self._invalidate_console_persisted_rows_cache()
+                self._workspace._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
                 return
             # Fix round 1 / Critical 1 (parallel-agents spec PA-T8 review):
@@ -16760,7 +15753,7 @@ class ChatScreen(BaseAppScreen):
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
                 # the browser promptly instead of waiting out the TTL.
-                self._invalidate_console_persisted_rows_cache()
+                self._workspace._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
                 # PR3a-2 Task 4 (task-15664): this stop edge is EXACTLY
                 # where the UI used to go blind on a surviving sub-agent
@@ -16915,7 +15908,7 @@ class ChatScreen(BaseAppScreen):
         # TASK-251: a submit may have created/updated a persisted
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
-        self._invalidate_console_persisted_rows_cache()
+        self._workspace._invalidate_console_persisted_rows_cache()
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -19198,8 +18191,7 @@ class ChatScreen(BaseAppScreen):
         )
         videogen_active = (
             active_session_id is not None
-            and active_session_id
-            in self._video._console_videogen_inflight_sessions()
+            and active_session_id in self._video._console_videogen_inflight_sessions()
         )
         image_edit_active = (
             active_session_id is not None
@@ -20511,24 +19503,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-workspace-conversation-search-clear":
             event.stop()
-            if self._console_conversation_browser_search_timer is not None:
-                self._console_conversation_browser_search_timer.stop()
-                self._console_conversation_browser_search_timer = None
-            if self._console_workspace_conversation_search_timer is not None:
-                self._console_workspace_conversation_search_timer.stop()
-                self._console_workspace_conversation_search_timer = None
-            self._console_conversation_browser_query = ""
-            self._console_conversation_browser_search_token += 1
-            self._console_conversation_browser_rows = ()
-            self._console_conversation_browser_total = None
-            self._console_conversation_browser_error = ""
-            self._console_workspace_conversation_query = ""
-            self._console_workspace_conversation_search_token += 1
-            self._console_workspace_conversation_search_rows = ()
-            self._console_workspace_conversation_search_total = None
-            self._console_workspace_conversation_search_error = ""
-            self._sync_console_workspace_context()
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            self._workspace.clear_console_conversation_browser_search()
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
@@ -20536,7 +19511,7 @@ class ChatScreen(BaseAppScreen):
                 getattr(event.button, "conversation_id", "") or ""
             ).strip()
             row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._find_console_browser_row(
+            browser_row = self._workspace._find_console_browser_row(
                 row_key or conversation_id,
                 conversation_id=conversation_id,
             )
@@ -20587,7 +19562,7 @@ class ChatScreen(BaseAppScreen):
                         row_conversation_id, False
                     )
                 if resumed:
-                    await self._refresh_console_conversation_browser_after_selection()
+                    await self._workspace._refresh_console_conversation_browser_after_selection()
                     return
                 if resumed is None:
                     # Transient failure; the resume path already explained it.
@@ -20619,7 +19594,9 @@ class ChatScreen(BaseAppScreen):
                 # saved conversation.
                 self._sync_console_temporary_chip()
             self._focus_console_composer_if_needed(force=True)
-            await self._refresh_console_conversation_browser_after_selection()
+            await (
+                self._workspace._refresh_console_conversation_browser_after_selection()
+            )
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()

@@ -15,7 +15,6 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
@@ -38,6 +37,7 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+from tldw_chatbook.Workspaces import ConsoleConversationBrowserInputRow
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -210,43 +210,75 @@ def test_console_workspace_conversation_search_worker_uses_dedicated_group():
     # contract this test pins (the search runs in its own exclusive worker
     # group, so a newer search cancels an in-flight one) is unchanged; only
     # the function that expresses it moved.
-    source = inspect.getsource(ChatScreen._start_console_conversation_browser_search)
+    source = inspect.getsource(
+        ConsoleWorkspaceController._start_console_conversation_browser_search
+    )
 
     assert 'group="console-workspace-conversation-search"' in source
     assert "exclusive=True" in source
 
-    handler = inspect.getsource(
-        ChatScreen.on_console_workspace_conversation_search_changed
+    transition = inspect.getsource(ConsoleWorkspaceController.transition_browser_search)
+    assert "_start_console_conversation_browser_search" in transition
+    assert "_schedule_console_browser_timer(" in transition
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
+    app = _build_test_app()
+    console = ChatScreen(app)
+    timer = Mock()
+    sync_calls: list[None] = []
+    focus_calls: list[None] = []
+    console._sync_console_workspace_context = lambda: sync_calls.append(None)
+    console._focus_console_workspace_conversation_search = lambda: focus_calls.append(
+        None
     )
-    assert "_start_console_conversation_browser_search" in handler
-    assert "self.set_timer(" in handler
+    console.call_after_refresh = lambda callback: callback()
+    console._console_conversation_browser_query = "alpha"
+    console._console_conversation_browser_search_token = 6
+    console._console_conversation_browser_search_timer = timer
+    console._console_conversation_browser_rows = (
+        ConsoleConversationBrowserInputRow(
+            row_key="conv-alpha",
+            conversation_id="conv-alpha",
+            native_session_id=None,
+            title="Alpha",
+            scope_type="workspace",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+            workspace_label="Chats",
+            status="saved",
+            selected=False,
+            source_kind="persisted",
+        ),
+    )
+    console._console_conversation_browser_total = 3
+    console._console_conversation_browser_error = "old"
+    event = Button.Pressed(Button(id="console-workspace-conversation-search-clear"))
 
+    await console.on_button_pressed(event)
 
-def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
-    source = inspect.getsource(ChatScreen.on_button_pressed)
-    clear_branch = source.split(
-        'if button_id == "console-workspace-conversation-search-clear":',
-        1,
-    )[1].split(
-        'if button_id and button_id.startswith("console-workspace-conversation-")',
-        1,
-    )[0]
-
-    assert "_console_workspace_conversation_search_timer.stop()" in clear_branch
-    assert "_console_workspace_conversation_search_timer = None" in clear_branch
+    timer.stop.assert_called_once_with()
+    assert console._console_conversation_browser_search_timer is None
+    assert console._console_conversation_browser_search_token == 7
+    assert console._console_conversation_browser_query == ""
+    assert console._console_conversation_browser_rows == ()
+    assert console._console_conversation_browser_total is None
+    assert console._console_conversation_browser_error == ""
+    assert sync_calls == [None]
+    assert focus_calls == [None]
 
 
 def test_console_workspace_conversation_search_selection_refresh_invalidates_token():
     source = inspect.getsource(
-        ConsoleWorkspaceController._refresh_console_workspace_conversation_search_after_selection
+        ConsoleWorkspaceController._refresh_console_conversation_browser_after_selection
     )
     active_query_branch = source.split("if not query.strip():", 1)[1]
     before_refresh = active_query_branch.split(
-        "await self._refresh_console_workspace_conversation_search",
+        "await self._refresh_console_conversation_browser_search",
         1,
     )[0]
 
-    assert "_console_workspace_conversation_search_token += 1" in before_refresh
+    assert "_console_conversation_browser_search_token += 1" in before_refresh
 
 
 class _ReadyResolutionGateway:
@@ -6918,7 +6950,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         assert ws_b_row is not None
         assert not _row_is_selected(ws_b_row)
         assert (
-            console._find_console_browser_row(
+            console._workspace._find_console_browser_row(
                 "workspace:missing:conversation:shared-open-chat",
                 conversation_id="shared-open-chat",
             )
@@ -6953,14 +6985,18 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         )
         selected_native_rows = [
             row
-            for row in console._native_console_browser_rows("shared-open-chat")
+            for row in console._workspace._native_console_browser_rows(
+                "shared-open-chat"
+            )
             if row.conversation_id == "shared-open-chat" and row.selected
         ]
         assert len(selected_native_rows) == 1
         assert selected_native_rows[0].native_session_id == active_session.id
         selected_membership_rows = [
             row
-            for row in console._membership_console_browser_rows("shared-open-chat")
+            for row in console._workspace._membership_console_browser_rows(
+                "shared-open-chat"
+            )
             if row.conversation_id == "shared-open-chat" and row.selected
         ]
         assert len(selected_membership_rows) == 1
@@ -7362,7 +7398,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         console._console_conversation_browser_search_token += 1
         stale_token = console._console_conversation_browser_search_token
         stale_task = asyncio.create_task(
-            console._refresh_console_conversation_browser_search("alpha", stale_token)
+            console._workspace._refresh_console_conversation_browser_search(
+                "alpha", stale_token
+            )
         )
         for _ in range(40):
             if app.chat_conversation_scope_service.started.is_set():
@@ -7378,7 +7416,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         console._console_conversation_browser_query = "beta"
         console._console_conversation_browser_search_token += 1
         fresh_token = console._console_conversation_browser_search_token
-        await console._refresh_console_conversation_browser_search("beta", fresh_token)
+        await console._workspace._refresh_console_conversation_browser_search(
+            "beta", fresh_token
+        )
 
         # TASK-1900: assert the CLAIM first, on state that is correct
         # synchronously once the refresh returns. The widget check below waits
@@ -8192,14 +8232,23 @@ async def test_console_workspace_switch_clears_conversation_search_and_restores_
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversation-search")) == 1
+        stale_token = console._console_conversation_browser_search_token
 
         service.set_active_workspace(workspace_b.workspace_id)
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
+        state = console._workspace._build_console_workspace_context_state()
         assert len(console.query("#console-workspace-conversation-search")) == 1
+        assert console._console_conversation_browser_search_token == stale_token + 1
+        assert console._console_conversation_browser_search_timer is None
+        assert console._console_conversation_browser_query == ""
+        assert state.conversation_browser is not None
+        assert state.conversation_browser.query == ""
+        assert state.conversation_section is not None
+        assert state.conversation_section.query == ""
         assert (
             console.query_one("#console-workspace-conversation-search", Input).value
-            == "alpha"
+            == ""
         )
 
         service.set_active_workspace(workspace_a.workspace_id)
@@ -8250,7 +8299,7 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.create_workspace(workspace_id="ws-stale-b", name="Stale B")
-    app.chat_conversation_scope_service = SearchableConversationService(
+    slow_service = SlowFirstSearchableConversationService(
         {
             "stale-a": {
                 "conversation": {
@@ -8271,16 +8320,25 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
             pilot,
             "#console-workspace-conversation-search",
         )
-        console._console_workspace_conversation_query = "Alpha"
-        stale_token = console._console_workspace_conversation_search_token + 1
-        console._console_workspace_conversation_search_token = stale_token
-        service.set_active_workspace("ws-stale-b")
-        await console._workspace._refresh_console_workspace_conversation_search(
-            active_workspace.workspace_id,
-            "Alpha",
-            stale_token,
+        await pilot.pause()
+        app.chat_conversation_scope_service = slow_service
+        await _set_console_conversation_browser_search(console, pilot, "Alpha")
+        await asyncio.wait_for(
+            slow_service.started.wait(),
+            timeout=_ASYNC_SETTLE_TIMEOUT,
         )
-        assert "Stale Alpha" not in _visible_text(console)
+        stale_token = console._console_workspace_conversation_search_token
+
+        service.set_active_workspace("ws-stale-b")
+        console._sync_console_workspace_context()
+        assert console._console_workspace_conversation_search_token > stale_token
+
+        slow_service.release.set()
+        await pilot.pause(0.5)
+        assert all(
+            row.title != "Stale Alpha"
+            for row in console._console_conversation_browser_rows
+        )
 
 
 @pytest.mark.asyncio
@@ -8307,9 +8365,6 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "")
 
-        assert "Workspace conversation search is unavailable." not in _visible_text(
-            console
-        )
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""
