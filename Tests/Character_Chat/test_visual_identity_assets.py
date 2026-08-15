@@ -5,21 +5,32 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 import zipfile
 
 import pytest
 from PIL import Image
 
 import tldw_chatbook.Character_Chat.visual_identity as visual_identity
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    extract_json_from_image_file,
+    load_character_card_from_file,
+)
 from tldw_chatbook.Character_Chat.visual_identity import (
+    SAMIRA_EXPRESSION_KEYS,
+    SAMIRA_LICENSE,
     SAMIRA_MANIFEST_SCHEMA_ID,
+    SAMIRA_PACK_ID,
+    SAMIRA_REACTION_LABELS,
     SAMIRA_SERVER_COMMIT,
     compute_pack_content_sha256,
     load_visual_identity_asset,
+    parse_visual_identity_manifest_json,
     validate_visual_identity_assets,
     validate_visual_identity_manifest,
 )
@@ -27,6 +38,54 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 MAX_EXPRESSION_ASSET_BYTES = 25 * 1024 * 1024
 MAX_EXPRESSION_IMAGE_DIMENSION = 4096
 MAX_EXPRESSION_FRAME_COUNT = 512
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = REPOSITORY_ROOT / "tldw_chatbook"
+SAMIRA_ASSET_DIR = PACKAGE_ROOT / "assets/characters/samira"
+SAMIRA_SOURCE_PORTRAIT_SHA256 = (
+    "0b86569c3f419836a8e867b035136195a95345b2704ffc28d640849629905bed"
+)
+SAMIRA_RGB_SHA256 = "77452a48101e437834dedaa09ec5121d524c39ea9a13b02f87a158af80d3185f"
+EXPECTED_SAMIRA_TOP_LEVEL = {
+    "ASSET_LICENSE.md",
+    "Samira.character.json",
+    "Sammy.png",
+    "expressions",
+    "visual_identity_pack.json",
+}
+EXPECTED_VISUAL_DIRECTIONS = {
+    "admiration": "softened eyes and quiet impressed respect",
+    "amusement": "restrained closed-mouth smile and bright eyes",
+    "anger": "controlled lowered brow and firm jaw, never rage",
+    "annoyance": "slight brow pinch and restrained exasperation, milder than anger",
+    "approval": "small affirming nod and composed positive regard",
+    "caring": "attentive concern and gentle protective warmth",
+    "confusion": "asymmetrical brow and searching focus",
+    "curiosity": "alert eyes, slight head angle, investigative interest",
+    "desire": "focused yearning toward an idea or objective, never flirtation",
+    "disappointment": "lowered gaze and restrained letdown",
+    "disapproval": "steady evaluative gaze and lightly pressed lips",
+    "disgust": "subtle nose tension and aversion without caricature",
+    "embarrassment": "averted gaze and contained self-consciousness",
+    "excitement": "widened bright eyes and energized posture, not theatrical",
+    "fear": "guarded eyes and contained alarm",
+    "gratitude": "softened eyes and sincere appreciative warmth",
+    "grief": "heavy eyes and controlled deep loss, no melodrama",
+    "joy": "genuine warm smile and open eyes",
+    "love": "deep warm regard and trust, explicitly nonromantic",
+    "nervousness": "slight tension and uncertain focus, no cartoon cues",
+    "neutral": "canonical quiet recognition and composed warmth",
+    "optimism": "lifted focus and restrained confidence about what comes next",
+    "pride": "upright composure and earned satisfaction, never smugness",
+    "realization": "newly focused eyes and subtle I see it recognition",
+    "relief": "released facial tension and a small exhale",
+    "remorse": "lowered gaze and accountable regret",
+    "sadness": "quiet sorrow and softened posture",
+    "surprise": "widened eyes and subtly parted lips, controlled intensity",
+    "thinking": "pensive focus and slight off-axis gaze",
+    "speaking": "natural mid-sentence engagement with restrained mouth opening",
+    "error": "concerned, apologetic recovery focus without a sweatdrop or symbol",
+}
 
 
 def _image_bytes(
@@ -938,3 +997,258 @@ def test_complete_validation_accepts_consistent_animation_fields(
     )
 
     assert loaded[0].data == image_bytes
+
+
+def _samira_directory_bytes() -> int:
+    return sum(
+        path.stat().st_size for path in SAMIRA_ASSET_DIR.rglob("*") if path.is_file()
+    )
+
+
+def _samira_manifest_data() -> dict[str, object]:
+    return json.loads(
+        (SAMIRA_ASSET_DIR / "visual_identity_pack.json").read_text(encoding="utf-8")
+    )
+
+
+def _walk_mapping_keys(value: object):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            yield str(key)
+            yield from _walk_mapping_keys(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _walk_mapping_keys(nested)
+
+
+def test_bundled_samira_package_inventory_is_exact() -> None:
+    assert {
+        path.name for path in SAMIRA_ASSET_DIR.iterdir()
+    } == EXPECTED_SAMIRA_TOP_LEVEL
+    assert {path.name for path in (SAMIRA_ASSET_DIR / "expressions").iterdir()} == {
+        f"{label}.webp" for label in SAMIRA_REACTION_LABELS
+    }
+
+
+def test_bundled_samira_manifest_is_strict_valid_and_content_addressed() -> None:
+    raw = (SAMIRA_ASSET_DIR / "visual_identity_pack.json").read_bytes()
+    directory_bytes = _samira_directory_bytes()
+    manifest = parse_visual_identity_manifest_json(
+        raw,
+        require_samira_bundle=True,
+        directory_bytes=directory_bytes,
+    )
+    data = _samira_manifest_data()
+
+    assert manifest.pack_content_sha256 == compute_pack_content_sha256(data)
+    assert manifest.pack_content_sha256 == (
+        "5993ec841ca635d99ca83691c3ac284db1b14bff35978c72edad12df04a917c8"
+    )
+    assert directory_bytes <= 20 * 1024 * 1024
+    assert data["normalization_contract"] == {
+        "source_commit": SAMIRA_SERVER_COMMIT,
+        "source_module": "app/core/Visual_Identities/expression_slots.py",
+        "source_repository": "tldw_server",
+    }
+    assert validate_visual_identity_assets(
+        manifest,
+        source_kind="builtin",
+        directory_bytes=directory_bytes,
+    )
+
+
+def test_bundled_samira_manifest_rows_match_packaged_webps() -> None:
+    data = _samira_manifest_data()
+    assets = data["assets"]
+    assert isinstance(assets, list)
+    assert [asset["original_label"] for asset in assets] == list(SAMIRA_REACTION_LABELS)
+    assert {
+        asset["original_label"]: asset["expression_key"] for asset in assets
+    } == SAMIRA_EXPRESSION_KEYS
+
+    total_expression_bytes = 0
+    for asset in assets:
+        label = asset["original_label"]
+        path = SAMIRA_ASSET_DIR / "expressions" / f"{label}.webp"
+        raw = path.read_bytes()
+        total_expression_bytes += len(raw)
+        with Image.open(BytesIO(raw)) as image:
+            image.load()
+            assert image.format == "WEBP"
+            assert image.size == (1024, 1024)
+            assert image.mode == "RGB"
+            assert getattr(image, "n_frames", 1) == 1
+
+        assert asset == {
+            "bytes": len(raw),
+            "content_type": "image/webp",
+            "display_label": visual_identity.display_label_for_expression_key(
+                SAMIRA_EXPRESSION_KEYS[label]
+            ),
+            "duration_ms": None,
+            "expression_key": SAMIRA_EXPRESSION_KEYS[label],
+            "frame_count": 1,
+            "generation": asset["generation"],
+            "height": 1024,
+            "is_animated": False,
+            "original_label": label,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "storage_relpath": f"characters/samira/expressions/{label}.webp",
+            "width": 1024,
+        }
+        assert len(raw) <= 1024 * 1024
+        generation = asset["generation"]
+        assert generation["date"] == "2026-08-15"
+        assert generation["source_portrait"] == {
+            "filename": "Sammy.png",
+            "sha256": SAMIRA_SOURCE_PORTRAIT_SHA256,
+        }
+        assert generation["visual_direction"] == EXPECTED_VISUAL_DIRECTIONS[label]
+        if label == "neutral":
+            assert generation["strategy"] == (
+                "deterministic 1024x1024 LANCZOS derivative of the source portrait"
+            )
+            assert generation["tool"] == "Pillow 11.2.1"
+        else:
+            assert generation["strategy"] == (
+                "independent edit from the original source portrait"
+            )
+            assert generation["tool"] == "built-in image_gen"
+
+    assert total_expression_bytes <= 16 * 1024 * 1024
+
+
+def test_bundled_samira_json_and_png_cards_are_exactly_equivalent() -> None:
+    json_path = SAMIRA_ASSET_DIR / "Samira.character.json"
+    png_path = SAMIRA_ASSET_DIR / "Sammy.png"
+    card_text = json_path.read_text(encoding="utf-8")
+    card = json.loads(card_text)
+    embedded_text = extract_json_from_image_file(png_path.read_bytes())
+
+    assert (
+        card_text
+        == json.dumps(card, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    assert embedded_text == card_text
+    assert json.loads(embedded_text) == card
+
+    parsed_json = load_character_card_from_file(json_path)
+    parsed_png = load_character_card_from_file(png_path)
+    assert parsed_json is not None
+    assert parsed_png == parsed_json
+
+    with Image.open(png_path) as image:
+        image.load()
+        assert image.format == "PNG"
+        assert image.size == (1254, 1254)
+        assert image.mode == "RGB"
+        assert set(image.info) == {"chara"}
+        assert hashlib.sha256(image.convert("RGB").tobytes()).hexdigest() == (
+            SAMIRA_RGB_SHA256
+        )
+
+
+def test_bundled_samira_card_has_only_public_namespaced_metadata() -> None:
+    card = json.loads(
+        (SAMIRA_ASSET_DIR / "Samira.character.json").read_text(encoding="utf-8")
+    )
+    assert card["spec"] == "chara_card_v2"
+    assert card["spec_version"] == "2.0"
+    data = card["data"]
+    assert data["name"] == "Samira “Sammy” Vadem"
+    assert data["creator"] == "tldw_chatbook"
+    assert data["creator_notes"] == (
+        "An included, editable demonstration character for tldw_chatbook with a "
+        "complete Visual Identity reaction pack."
+    )
+    assert set(data["tags"]) == {
+        "built-in",
+        "character",
+        "demonstration",
+        "editable",
+        "editorial",
+        "knowledge",
+        "reaction-pack",
+        "research",
+        "samira",
+        "synthesis",
+        "visual-identity",
+        "writing",
+        "ambiguous-ai",
+        "chatbook",
+        "collaborator",
+        "curator",
+    }
+    assert data["extensions"] == {
+        "tldw/builtin_id": "samira",
+        "tldw/license": SAMIRA_LICENSE,
+        "tldw/nature": "ambiguous-living-index",
+        "tldw/personality_mix": {
+            "curious_collaborator": 25,
+            "dry_wit": 15,
+            "knowing_curator": 60,
+        },
+        "tldw/role": "curator-collaborator",
+        "tldw/visual_identity_pack_id": SAMIRA_PACK_ID,
+    }
+    assert "image" not in data
+    assert "data:image" not in json.dumps(card)
+    assert not any(
+        key.casefold().startswith("vademhq/") or "private" in key.casefold()
+        for key in _walk_mapping_keys(card)
+    )
+
+
+def test_bundled_samira_assets_have_public_license_and_no_legacy_provenance() -> None:
+    license_text = (SAMIRA_ASSET_DIR / "ASSET_LICENSE.md").read_text(encoding="utf-8")
+    manifest = _samira_manifest_data()
+    card = json.loads(
+        (SAMIRA_ASSET_DIR / "Samira.character.json").read_text(encoding="utf-8")
+    )
+    inventory = {
+        "ASSET_LICENSE.md",
+        "Samira.character.json",
+        "Sammy.png",
+        "visual_identity_pack.json",
+        *(f"expressions/{label}.webp" for label in SAMIRA_REACTION_LABELS),
+    }
+
+    assert "SPDX-License-Identifier: AGPL-3.0-or-later" in license_text
+    assert "Sammy.png" in license_text
+    assert SAMIRA_SOURCE_PORTRAIT_SHA256 in license_text
+    assert "built-in image_gen" in license_text
+    assert "2026-08-15" in license_text
+    assert "independent edit from the original source portrait" in license_text
+    declared_inventory = {
+        line.removeprefix("- `").removesuffix("`")
+        for line in license_text.splitlines()
+        if line.startswith("- `") and line.endswith("`")
+    }
+    assert declared_inventory == inventory
+    assert manifest["license"] == SAMIRA_LICENSE
+    assert card["data"]["extensions"]["tldw/license"] == SAMIRA_LICENSE
+
+    forbidden = (b"vademhq", b"vademhq/", b"private_is_canonical", b"private_source")
+    for path in SAMIRA_ASSET_DIR.rglob("*"):
+        if path.is_file():
+            lowered = path.read_bytes().lower()
+            assert not any(token in lowered for token in forbidden), path.name
+    png_metadata = extract_json_from_image_file(
+        (SAMIRA_ASSET_DIR / "Sammy.png").read_bytes()
+    )
+    assert png_metadata is not None
+    assert not any(token in png_metadata.lower().encode() for token in forbidden)
+
+
+def test_samira_package_data_patterns_are_explicit_and_bounded() -> None:
+    pyproject = tomllib.loads(
+        (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    setuptools = pyproject["tool"]["setuptools"]
+    assert setuptools["include-package-data"] is False
+    assert setuptools["package-data"]["tldw_chatbook"] == [
+        "assets/characters/samira/*.json",
+        "assets/characters/samira/*.png",
+        "assets/characters/samira/*.md",
+        "assets/characters/samira/expressions/*.webp",
+    ]

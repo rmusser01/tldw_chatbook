@@ -473,6 +473,13 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+# Bundle only the reviewed Samira character and Visual Identity pack inventory.
+"tldw_chatbook" = [
+    "assets/characters/samira/*.json",
+    "assets/characters/samira/*.png",
+    "assets/characters/samira/*.md",
+    "assets/characters/samira/expressions/*.webp",
+]
 # Include all .tcss files in css directory and subdirectories
 "tldw_chatbook.css" = ["*.tcss", "**/*.tcss"]
 # Include theme files
