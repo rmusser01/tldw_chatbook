@@ -8630,24 +8630,31 @@ async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypat
 
 @pytest.mark.asyncio
 async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
-    """A conversation lookup error keeps its recoverable canvas available."""
+    """A dedicated Conversation lookup error stays in its recoverable canvas."""
     app = _build_test_app()
     _seed_conversations(app, [])
+
+    class FailingConversationService:
+        async def list_conversations(self, **kwargs):
+            raise RuntimeError("offline")
+
+    app.chat_conversation_scope_service = FailingConversationService()
 
     monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
 
     screen = LibraryScreen(app)
     screen.apply_navigation_context({"mode": "conversations"})
     screen._library_lookup_error = "Library sources are unavailable right now."
-    screen._library_conversation_error = (
-        "Couldn't load conversations. Submit the filter to try again."
-    )
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         active_screen = _active_library_screen(host)
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(active_screen._library_conversation_error)
+            and not active_screen._library_conversation_loading,
+            message="Dedicated Conversation failure never reached retry state.",
+        )
 
         assert active_screen.query_one("#library-conversations-canvas")
         status = str(
@@ -19927,17 +19934,14 @@ def test_library_shell_restore_state_tolerates_garbage_values():
 # --- T164: per-pane filter/sort persistence (PR #595 follow-up) ------------
 #
 # ``save_state``/``restore_state`` already carried selection/view + RAG
-# state; these four attrs -- media type cycle, notes sort, notes substring
-# filter, conversations query -- are VIEW state of the exact same kind (they
-# change what the canvas builders render, not what gets fetched) but were
-# left out of PR #595's contract. See ``LibraryScreen.save_state``.
+# state. Media and Notes restore their direct view attrs, while Conversation
+# restores only its saved request scope and waits for an authoritative page.
 
 
 def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmounted_instance():
     """Mirrors ``test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance``
-    for the four per-pane filter/sort attrs: round-trip through the real
-    ``save_state``/``restore_state`` methods on a freshly-constructed,
-    not-yet-mounted instance -- exactly how the app calls them.
+    for pane filter/sort state: round-trip through the real methods on a
+    freshly-constructed, not-yet-mounted instance, exactly as the app does.
     """
     app = _build_test_app()
     original = LibraryScreen(app)
@@ -19946,6 +19950,8 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     original._library_notes_filter = "retro"
     original._library_notes_filter_records = ["must never be persisted"]
     original._library_conversation_query = "quarterly"
+    original._library_conversation_page_loaded = True
+    original._library_conversation_freshness = "fresh"
     state = original.save_state()
 
     # The recomputed filter-records cache is a derived/bulk snapshot like
@@ -19959,7 +19965,11 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     assert restored._library_media_type_filter == "audio"
     assert restored._library_notes_sort == "oldest"
     assert restored._library_notes_filter == "retro"
-    assert restored._library_conversation_query == "quarterly"
+    assert restored._library_conversation_requested_query == "quarterly"
+    assert restored._library_conversation_query == ""
+    assert restored._library_conversation_page_records == ()
+    assert restored._library_conversation_page_loaded is False
+    assert restored._library_conversation_freshness == "uninitialized"
     # Never restored -- the notes canvas recomputes it fresh from
     # ``_library_notes_filter`` on mount.
     assert restored._library_notes_filter_records is None
@@ -23920,8 +23930,11 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _wait_for_library_notes_compact(screen, pilot, False)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
-        await pilot.pause()
+        screen.query_one(
+            f"#{LIBRARY_RAIL_ROW_PREFIX}{LIBRARY_ROW_BROWSE_CONVERSATIONS}",
+            Button,
+        ).press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
 
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
