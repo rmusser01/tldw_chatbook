@@ -358,8 +358,10 @@ async def test_markdown_rows_start_line_selection():
         await pilot.pause()
         assert transcript.selection_manager.state.active is True
 
-        # Any drag on a markdown row snaps to whole source lines: "answer
-        # text" is one source line, so a 2-cell drag selects all of it.
+        # Markdown drags select at character granularity: a 2-cell drag
+        # over "answer text" selects its first two characters (live-spike:
+        # whole-line snapping made any partial drag grab the entire
+        # message).
         transcript.post_message(
             _mouse_event(
                 MouseMove,
@@ -369,7 +371,7 @@ async def test_markdown_rows_start_line_selection():
             )
         )
         await pilot.pause()
-        assert markdown_row.get_selection_text() == "answer text"
+        assert markdown_row.get_selection_text() == "an"
 
         transcript.post_message(
             _mouse_event(
@@ -421,7 +423,15 @@ async def test_markdown_drag_release_does_not_toggle_message_selection():
         # The drag-release Click (suppression) must not have toggled the
         # markdown row's message selection...
         assert transcript.selected_message_id is None
-        # ...and the next genuine click on the markdown row still toggles.
+        # The menu overlays the row, so the first genuine click lands on the
+        # popover: it dismisses the selection UI (menu + highlight strip)
+        # without toggling...
+        await pilot.click("#console-message-m3")
+        await pilot.pause()
+        assert transcript.selected_message_id is None
+        assert not app.query(ConsoleSelectionMenu)
+        assert markdown_row.get_selection_text() == ""
+        # ...and the next click, with the popover gone, toggles normally.
         await pilot.click("#console-message-m3")
         await pilot.pause()
         assert transcript.selected_message_id == "m3"

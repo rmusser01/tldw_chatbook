@@ -110,10 +110,14 @@ async def test_markdown_drag_add_to_chat_quotes_whole_lines():
         row = screen.query_one("#console-message-smoke-md", ConsoleMarkdownMessage)
         body = row.query_one(Markdown)
         bottom = max(0, body.region.height - 1)
+        # Far-right visible cell of the body row; the offset map clamps
+        # beyond the line length to the line end.
+        bottom_x = max(0, body.region.width - 1)
 
-        # Press on the first rendered line, release on the last: the line
-        # snap must quote every whole source line.
-        await _drag(pilot, body, (2, 0), (2, bottom))
+        # Press at the body origin, release at the last line's far edge
+        # (clamped by the offset map to the line end): the char-level
+        # range covers the entire source.
+        await _drag(pilot, body, (0, 0), (bottom_x, bottom))
 
         assert row.get_selection_text() == _MARKDOWN_SOURCE
         screen.query_one(ConsoleSelectionMenu)

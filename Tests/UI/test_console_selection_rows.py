@@ -217,14 +217,15 @@ async def test_markdown_display_text_is_markdown_source():
 
 
 @pytest.mark.asyncio
-async def test_markdown_row_selects_at_line_granularity():
-    """Offsets INSIDE a line snap outward to the whole source line."""
+async def test_markdown_row_selects_at_char_granularity():
+    """Character ranges map verbatim (live-spike change: whole-line snapping
+    made any partial drag on a one-line reply select the entire message)."""
     app = _MarkdownRowApp()
     async with app.run_test():
         row = app.query_one(ConsoleMarkdownMessage)
         body_start = _MARKDOWN_SOURCE.index("body")
         row.set_selection_range(body_start + 2, body_start + 5)
-        assert row.get_selection_text() == "body line"
+        assert row.get_selection_text() == "dy "
         row.clear_selection()
         assert row.get_selection_text() == ""
 
@@ -237,7 +238,7 @@ async def test_markdown_row_selection_spans_whole_lines():
         body_start = _MARKDOWN_SOURCE.index("body")
         more_start = _MARKDOWN_SOURCE.index("more")
         row.set_selection_range(body_start + 3, more_start + 2)
-        assert row.get_selection_text() == "body line\nmore text"
+        assert row.get_selection_text() == "y line\nmo"
 
 
 @pytest.mark.asyncio
@@ -247,7 +248,7 @@ async def test_markdown_row_selection_accepts_reversed_order():
         row = app.query_one(ConsoleMarkdownMessage)
         body_start = _MARKDOWN_SOURCE.index("body")
         row.set_selection_range(body_start + 5, body_start + 2)
-        assert row.get_selection_text() == "body line"
+        assert row.get_selection_text() == "dy "
 
 
 @pytest.mark.asyncio
@@ -291,7 +292,7 @@ async def test_markdown_row_selection_renders_reverse_strip():
         assert strip.display is True
         renderable = strip.renderable
         assert isinstance(renderable, Text)
-        assert str(renderable) == "body line"
+        assert str(renderable) == "dy "
         assert "reverse" in str(renderable.style)
 
         # The strip sits below the Markdown widget, not inside it.
@@ -315,7 +316,7 @@ async def test_markdown_row_sync_clamps_selection_when_body_shrinks():
             shorter,
             resolve_console_message_presentation(shorter, ConsolePresentationContext()),
         )
-        assert row.get_selection_text() == "body"  # clamped to the new end
+        assert row.get_selection_text() == "dy"  # clamped to the new end
 
 
 @pytest.mark.asyncio
@@ -350,15 +351,14 @@ async def test_markdown_row_sync_keeps_selection_when_body_grows():
             grown,
             resolve_console_message_presentation(grown, ConsolePresentationContext()),
         )
-        assert row.get_selection_text() == "body line"
+        assert row.get_selection_text() == "dy "
 
 
 @pytest.mark.asyncio
-async def test_markdown_row_sync_non_prefix_shrink_resnaps_to_whole_lines():
-    """Regression (fix round 1): a non-prefix body replace shifts line
-    boundaries under the stored range, so clamping offsets alone produced a
-    misaligned quote (stray leading newline, partial line). The clamp must
-    re-snap to the NEW body's whole lines, or clear outright."""
+async def test_markdown_row_sync_non_prefix_shrink_clamps_cleanly():
+    """A non-prefix body replace under a stored char range must clamp to
+    the new length without misalignment (the old whole-line re-snap existed
+    to keep line-aligned quotes; char ranges clamp directly)."""
     app = _MarkdownRowApp()
     async with app.run_test():
         row = app.query_one(ConsoleMarkdownMessage)
@@ -371,21 +371,16 @@ async def test_markdown_row_sync_non_prefix_shrink_resnaps_to_whole_lines():
         two = source.index("line two")
         three = source.index("line three")
         row.set_selection_range(two + 2, three + 2)
-        assert row.get_selection_text() == "line two\nline three"
+        assert row.get_selection_text() == "ne two\nli"
 
-        # Non-prefix replace: "abcdefghi\nXY" puts a newline where the old
-        # selection's start used to be mid-line. Offset-only clamping yields
-        # the misaligned "\nXY"; re-snapping must yield whole lines.
+        # Non-prefix replace: offsets clamp to the new body length; the
+        # slice stays aligned to the stored characters (no stray newline).
         replaced = _make_assistant_message("abcdefghi\nXY")
         row.sync_message(
             replaced,
             resolve_console_message_presentation(replaced, ConsolePresentationContext()),
         )
-        clamped = row.get_selection_text()
-        assert clamped != "\nXY"  # the misalignment this test regresses
-        # Whole-line property: the quote is a run of complete new-body lines
-        # (here both of them), never a partial or misaligned slice.
-        assert clamped == "abcdefghi\nXY"
+        assert row.get_selection_text() == "Y"
 
 
 @pytest.mark.asyncio
@@ -413,6 +408,6 @@ async def test_markdown_selection_strip_caps_huge_selections():
 def test_markdown_selection_protocol_is_safe_before_mount():
     row = ConsoleMarkdownMessage(_make_assistant_message("unmounted"))
     row.set_selection_range(2, 4)  # must not raise (row not composed yet)
-    assert row.get_selection_text() == "unmounted"
+    assert row.get_selection_text() == "mo"
     row.clear_selection()
     assert row.get_selection_text() == ""

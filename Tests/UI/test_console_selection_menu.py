@@ -501,17 +501,21 @@ async def test_markdown_drag_menu_add_to_chat_quotes_whole_lines():
         row = app.query_one("#console-message-m1")
         body = row.query_one(Markdown)
 
-        # Press on the first rendered markdown line, release on the last:
-        # even with the y-distribution approximation the snap must yield
-        # every whole source line.
-        row.post_message(_markdown_mouse(MouseDown, body, dy=0))
+        # Press at the body origin, release past the last line's end: the
+        # char-level range covers the entire source (no whole-line snap
+        # anymore -- live-spike change).
+        row.post_message(_markdown_mouse(MouseDown, body, dy=0, dx=0))
         await pilot.pause()
         transcript.post_message(
-            _markdown_mouse(MouseMove, body, dy=max(0, body.region.height - 1))
+            _markdown_mouse(
+                MouseMove, body, dy=max(0, body.region.height - 1), dx=200
+            )
         )
         await pilot.pause()
         transcript.post_message(
-            _markdown_mouse(MouseUp, body, dy=max(0, body.region.height - 1))
+            _markdown_mouse(
+                MouseUp, body, dy=max(0, body.region.height - 1), dx=200
+            )
         )
         await pilot.pause()
 

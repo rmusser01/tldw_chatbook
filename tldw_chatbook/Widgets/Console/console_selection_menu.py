@@ -165,11 +165,25 @@ class ConsoleSelectionMenu(Vertical):
     def _ask_side_chat(self) -> None:
         self.post_message(self.AskInSideChat())
 
+    class Dismissed(Message):
+        """Escape dismissal: the owning transcript clears the selection UI."""
+
     def action_dismiss(self) -> None:
+        self.post_message(self.Dismissed())
         self.remove()
 
     def _on_click(self, event: Click) -> None:
         event.stop()  # clicks inside the menu must not clear anything
+        # A click on the menu that did NOT land on one of its action
+        # buttons (border/padding/label areas) is a popover dismissal:
+        # clear the selection UI so the next click reaches the row.
+        node = event.control
+        while node is not None and node is not self:
+            if isinstance(node, Button):
+                return
+            node = node.parent
+        self.post_message(self.Dismissed())
+        self.remove()
 
     def _on_unmount(self) -> None:
         self._restore_previous_focus()

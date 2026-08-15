@@ -1259,13 +1259,22 @@ class ConsoleMarkdownMessage(Vertical):
         return cap_quote(text[start:end])
 
     def set_selection_range(self, start: int, end: int) -> None:
-        """Highlight every whole source line spanned by ``[start, end)``."""
+        """Highlight the character range ``[start, end)`` of the source.
+
+        Live-spike feedback: whole-line snapping made any partial drag over
+        a one-line reply select the ENTIRE message. The cell-to-offset map
+        already resolves character positions, so the range is stored
+        as-is; only its visual carrier (the reverse-video strip) still
+        spells the text out below the Markdown body.
+        """
         start, end = sorted((start, end))
         if end <= start:
             self.clear_selection()
             return
-        self._selection_line_range = _snap_to_line_bounds(
-            self.get_display_text(), start, end
+        text = self.get_display_text()
+        self._selection_line_range = (
+            max(0, start),
+            min(end, len(text)),
         )
         self._refresh_selection_strip()
 
@@ -1295,9 +1304,7 @@ class ConsoleMarkdownMessage(Vertical):
         if start >= new_len:
             self._selection_line_range = None
         else:
-            self._selection_line_range = _snap_to_line_bounds(
-                self._body_text, start, min(end, new_len)
-            )
+            self._selection_line_range = (start, min(end, new_len))
         self._refresh_selection_strip()
 
     def _refresh_selection_strip(self) -> None:
@@ -3537,6 +3544,14 @@ class ConsoleTranscript(VerticalScroll):
         self._selection_origin_row = None
         self._remove_selection_menu()
 
+    @on(ConsoleSelectionMenu.Dismissed)
+    def _selection_menu_dismissed(
+        self, event: ConsoleSelectionMenu.Dismissed
+    ) -> None:
+        """Escape dismissal clears the whole selection UI (strip included)."""
+        event.stop()
+        self._remove_selection_menu()
+
     @on(ConsoleSelectionMenu.MoreDetails)
     def _selection_more_details(
         self, event: ConsoleSelectionMenu.MoreDetails
@@ -3607,13 +3622,23 @@ class ConsoleTranscript(VerticalScroll):
         ]
 
     def _remove_selection_menu(self) -> None:
-        """Remove any mounted selection menu (no side effects).
+        """Dismiss the selection UI: remove the menu AND the highlight.
 
-        Fire-and-forget: suitable for dismissal paths (escape,
-        click-outside, add-to-chat cleanup) that never remount a same-id
-        menu afterwards. The remount path (``_text_selected``) must await
-        the removals instead -- see its docstring.
+        Every dismissal path (escape, click-outside, action cleanup)
+        clears the text selection as well -- live-spike feedback: the
+        markdown highlight strip lingered after the menu closed until the
+        user clicked the strip itself. Action handlers read the quote
+        BEFORE calling here, so clearing on removal is safe for them.
+
+        Fire-and-forget: suitable for dismissal paths that never remount
+        a same-id menu afterwards. The remount path (``_text_selected``)
+        must await the removals instead -- see its docstring.
         """
+        row = self._active_selection_row()
+        if row is not None:
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
         for menu in self._attached_selection_menus():
             menu.remove()
 
