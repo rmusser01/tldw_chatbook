@@ -383,12 +383,13 @@ async def test_selection_dialog_opens_without_a_stylesheet_error(
     cannot reparse for the rest of the session, so every later screen with CSS
     raises too. Mounted, not static: it is the push that used to blow up.
 
-    Both dialogs also carry an *unrelated* pre-existing bug -- their ``on_mount``
-    calls ``Vertical.clear()``, which does not exist -- so the push still ends in
-    an ``AttributeError`` from the dialog's own code. That is out of scope here
-    and is deliberately not papered over: the assertions below name the CSS
-    failure mode specifically, and check the stylesheet is still usable
-    afterwards, which is the symptom that actually poisoned the session.
+    Both dialogs also used to carry an *unrelated* pre-existing bug -- their
+    ``on_mount`` called ``Vertical.clear()``, which does not exist -- so the
+    push still ended in an ``AttributeError`` from the dialog's own code.
+    TASK-15992 fixed that, so this now asserts a fully clean open: the
+    StylesheetParseError assertion names the CSS failure mode specifically
+    (the symptom that actually poisoned the session), and any other exception
+    is re-raised unconditionally.
     """
     from importlib import import_module
 
@@ -414,7 +415,7 @@ async def test_selection_dialog_opens_without_a_stylesheet_error(
         "is invalid again, which fails the whole stylesheet and stops the app "
         "reparsing for the rest of the session"
     )
-    if raised is not None and "clear" not in str(raised):
+    if raised is not None:
         raise raised
 
 
