@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 from textual import on
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Character_Chat.visual_identity import (
@@ -185,6 +186,93 @@ async def test_keyboard_down_up_enter_selects_highlight_and_escape_cancels() -> 
     assert cancel_app.selected == []
     assert cancel_app.cleared == 0
     assert cancel_app.dismissed is None
+
+
+@pytest.mark.asyncio
+async def test_narrow_keyboard_keeps_highlight_visible_and_count_synced() -> None:
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        results = app.screen.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
+        initial_scroll_y = results.scroll_y
+
+        for _ in range(20):
+            await pilot.press("down")
+        await pilot.pause()
+
+        highlighted = app.screen.query_one(f".{ROW_HIGHLIGHTED_CLASS}", Button)
+        assert results.content_region.contains_region(highlighted.region)
+        assert results.scroll_y > initial_scroll_y
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "21 / 31 reactions"
+        )
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.selected == [options[20]]
+
+
+@pytest.mark.asyncio
+async def test_narrow_up_reversal_and_filtered_count_preserve_filter_focus() -> None:
+    app = PickerHarness(_samira_options())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        results = app.screen.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+
+        for _ in range(20):
+            await pilot.press("down")
+        await pilot.pause()
+        advanced_scroll_y = results.scroll_y
+
+        for _ in range(20):
+            await pilot.press("up")
+        await pilot.pause()
+
+        highlighted = app.screen.query_one(f".{ROW_HIGHLIGHTED_CLASS}", Button)
+        assert results.content_region.contains_region(highlighted.region)
+        assert results.scroll_y < advanced_scroll_y
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "1 / 31 reactions"
+        )
+        assert filter_input.has_focus
+
+        filter_input.value = "custom:re"
+        await pilot.pause()
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "1 / 3 reactions"
+        )
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "2 / 3 reactions"
+        )
+        assert filter_input.has_focus
 
 
 @pytest.mark.asyncio

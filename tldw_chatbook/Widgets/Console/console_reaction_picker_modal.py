@@ -329,7 +329,6 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
                 rows.append(row)
             await results.mount_all(rows)
         self._sync_highlight()
-        self._sync_count_and_actions()
         self._focus_filter()
 
     def _row_label(self, index: int, option: ReactionOption) -> str:
@@ -346,21 +345,48 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_highlight()
 
     def _sync_highlight(self) -> None:
+        self._sync_count_and_actions()
         try:
             results = self.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
         except (NoMatches, QueryError):
             return
+        highlighted_row_id: str | None = None
         for index, button in enumerate(results.query(f".{ROW_CLASS}")):
-            button.set_class(
-                index == self._highlighted_index,
-                ROW_HIGHLIGHTED_CLASS,
-            )
+            is_highlighted = index == self._highlighted_index
+            button.set_class(is_highlighted, ROW_HIGHLIGHTED_CLASS)
+            if is_highlighted:
+                highlighted_row_id = button.id
             if index < len(self._filtered):
                 button.label = self._row_label(index, self._filtered[index])
+        if highlighted_row_id is not None:
+            self.call_after_refresh(
+                self._scroll_highlighted_into_view,
+                highlighted_row_id,
+            )
         option = self._highlighted_option()
         self._sync_preview_metadata(option)
         if option is not None:
             self._request_preview(option)
+
+    def _scroll_highlighted_into_view(self, row_id: str) -> None:
+        """Reveal the current metadata row after Textual finishes layout."""
+
+        if (
+            not 0 <= self._highlighted_index < len(self._row_ids)
+            or self._row_ids[self._highlighted_index] != row_id
+        ):
+            return
+        try:
+            results = self.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
+            row = results.query_one(f"#{row_id}", Button)
+        except (NoMatches, QueryError):
+            return
+        results.scroll_to_widget(
+            row,
+            animate=False,
+            force=True,
+            immediate=True,
+        )
 
     def _sync_count_and_actions(self) -> None:
         total = len(self._filtered)
