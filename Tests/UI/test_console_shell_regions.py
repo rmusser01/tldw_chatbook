@@ -1,13 +1,9 @@
-"""Painted-geometry baseline for the Console shell's regions.
+"""Painted-geometry contract for the Console shell's production regions.
 
-Written BEFORE the wave-1 extractions (spec rule 3, screen-decomposition
-design). Every extraction task must keep this file green and byte-identical.
-If an extraction needs this file to change, the extraction changed behaviour
--- stop and treat that as a finding.
-
-The expectation table pins what the shell DOES at each size as of the
-baseline commit, including regions that are legitimately hidden in compact
-mode. It does not pin what anyone thinks it should do.
+The expectation table pins the approved shell policy at each size, including
+regions that are legitimately hidden in compact mode. It mounts the production
+hierarchy with the shipped stylesheet so simplified widget geometry cannot
+stand in for application behavior.
 
 Three sizes are pinned:
 
@@ -26,10 +22,12 @@ Three sizes are pinned:
   has a "Run recipe" row plus a companion row (Blocked impact / Next
   action / Sources / Tools / Approvals / Artifacts) -- the fresh harness's
   setup-blocked state supplies exactly that, so at 120x30 the Inspector is
-  OPEN by default where it is closed at the other two sizes. This flips
-  ``#console-inspector-rail-handle`` from hittable to hidden (the "open"
-  handle only shows when the rail is closed) and makes
-  ``#console-run-inspector`` newly present in the DOM with ``display=True``
+  OPEN by default where it is closed at the other two sizes. Inspector-first
+  compact priority then hides the Context rail, exposes its reveal handle,
+  and grants the Inspector compact-override authority. The Transcript's
+  minimum-width waiver keeps all displayed workspace-grid children inside
+  both the grid and viewport. The Inspector reveal handle stays hidden, and
+  ``#console-run-inspector`` is newly present in the DOM with ``display=True``
   -- but see the "clipped" state below before assuming that means visible.
 
 ``#console-mode-bar`` is hidden unconditionally at any size: it is a legacy
@@ -44,17 +42,12 @@ or painted by an unrelated widget. The auto-opened Inspector's
 scrollable body (``#console-inspector-rail-body``) has a real viewport only
 3 rows tall against ~28 rows of virtual content. Textual still reports a
 non-empty, ``display=True`` ``.region`` for ``#console-run-inspector`` (a
-child scrolled below that 3-row viewport), but that region's *unclipped*
-screen coordinates coincidentally overlap unrelated, actually-painted
-widgets elsewhere on screen (verified reproducible across repeated fresh
-mounts: the reported center always resolves to ``ConsoleModelChip``, which
-is nowhere near ``#console-run-inspector`` in the tree). So this region is
-neither cleanly "hidden" (``display`` is True) nor cleanly "hittable" (its
+child scrolled below that viewport), but its *unclipped* center is either
+outside the screen or resolves to an unrelated painted widget. So this region
+is neither cleanly "hidden" (``display`` is True) nor cleanly "hittable" (its
 own reported center never resolves to itself or a descendant) -- pinning it
 as a fabricated "hittable" or "hidden" would misrepresent what the shell
-does today. "clipped" asserts the node is mounted+displayed with a
-purported region, AND that a hit-test at its own center does NOT resolve to
-it or a descendant -- both halves of the observed reality.
+does today. "clipped" asserts both halves of that observed reality.
 """
 
 from contextlib import asynccontextmanager
@@ -67,18 +60,18 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
-# expected is "hittable" | "hidden" | "clipped" -- filled from throwaway
-# probes run against the unmodified shell (see task-1 report, including its
-# fix-round section, for the raw observations).
+# expected is "hittable" | "hidden" | "clipped" -- pinned against the
+# production hierarchy and shipped stylesheet.
 _REGIONS: list[tuple[str, str, str, str]] = [
     ("#console-shell", "hittable", "hittable", "hittable"),
-    ("#console-left-rail", "hittable", "hittable", "clipped"),
-    ("#console-left-rail-body", "hittable", "hittable", "clipped"),
-    ("#console-main-column", "hittable", "hittable", "clipped"),
-    ("#console-context-rail-handle", "hidden", "hidden", "hidden"),
+    ("#console-left-rail", "hittable", "hittable", "hidden"),
+    ("#console-left-rail-body", "hittable", "hittable", "hidden"),
+    ("#console-main-column", "hittable", "hittable", "hittable"),
+    ("#console-context-rail-handle", "hidden", "hidden", "hittable"),
     ("#console-inspector-rail-handle", "hittable", "hittable", "hidden"),
     ("#console-control-bar", "hittable", "hittable", "hittable"),
     ("#console-mode-bar", "hidden", "hidden", "hidden"),
@@ -93,23 +86,33 @@ _EXPECTED_BY_SIZE = {
 }
 
 
+class ProductionCSSConsoleHarness(ConsoleHarness):
+    """Console harness with the exact production stylesheet stack and order."""
+
+    CSS_PATH = TldwCli.CSS_PATH
+
+
 @asynccontextmanager
 async def make_console_pilot(*, size):
     """Mount a fresh Console (ChatScreen) at ``size`` via the production harness.
 
-    Mirrors the idiom used throughout ``test_console_internals_decomposition.py``
-    and friends: build a fresh ``TldwCli`` with every real I/O seam faked out
-    (``_build_test_app``), push a ``ChatScreen`` onto a minimal host app
-    (``ConsoleHarness``), and wait for the composer -- the same "the shell is
-    up" signal every other Console test in this suite waits on -- before
+    Build a fresh ``TldwCli`` with every real I/O seam faked out
+    (``_build_test_app``), push its real ``ChatScreen`` onto a
+    ``ConsoleHarness`` carrying the exact production CSS stack, and wait for
+    the composer -- the same "the shell is up" signal used elsewhere -- before
     handing control to the caller.
     """
     app = _build_test_app()
-    host = ConsoleHarness(app)
+    host = ProductionCSSConsoleHarness(app)
     async with host.run_test(size=size) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.pause(0.2)
+        # The setup-blocked state supplies the Inspector rows that trigger its
+        # production auto-open. Hide only its covering overlay afterward so
+        # hit-tests can inspect the underlying shell geometry.
+        console.query_one("#console-setup-modal").display = False
+        await pilot.pause()
         yield pilot
 
 
@@ -168,6 +171,13 @@ async def test_fresh_console_composes_saved_rail_label_style(
 
 
 @pytest.mark.asyncio
+async def test_console_pilot_uses_the_exact_production_css_stack() -> None:
+    """Geometry evidence loads every production stylesheet in production order."""
+    async with make_console_pilot(size=(120, 30)) as pilot:
+        assert pilot.app.CSS_PATH == pilot.app.app_instance.CSS_PATH
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 45), (235, 52), (120, 30)])
 @pytest.mark.parametrize(
     "region_id,expect_160x45,expect_235x52,expect_120x30", _REGIONS
@@ -194,8 +204,11 @@ async def test_region_geometry_is_stable(
             assert len(nodes) == 1
             node = nodes[0]
             assert node.display and node.region.width > 0
+            center = node.region.center
+            if not pilot.app.screen.region.contains(*center):
+                return
             try:
-                hit = pilot.app.screen.get_widget_at(*node.region.center)[0]
+                hit = pilot.app.screen.get_widget_at(*center)[0]
             except NoWidget:
                 return
             assert not (
@@ -206,3 +219,50 @@ async def test_region_geometry_is_stable(
         assert node.display and node.region.width > 0
         hit = pilot.app.screen.get_widget_at(*node.region.center)[0]
         assert hit is node or node in hit.ancestors or hit in node.walk_children()
+
+
+@pytest.mark.asyncio
+async def test_compact_workspace_grid_children_are_contained() -> None:
+    """The real 120x30 workspace keeps every displayed pane horizontally in bounds."""
+    async with make_console_pilot(size=(120, 30)) as pilot:
+        screen = pilot.app.screen
+        grid = screen.query_one("#console-workspace-grid")
+        children = tuple(grid.children)
+
+        assert {child.id for child in children} == {
+            "console-context-rail-handle",
+            "console-left-rail",
+            "console-main-column",
+            "console-right-rail",
+            "console-inspector-rail-handle",
+        }
+        displayed = tuple(child for child in children if child.display)
+        assert len(displayed) == 3
+
+        for child in displayed:
+            child_id = child.id
+            assert child.region.width > 0 and child.region.height > 0, (
+                f"{child_id} has no painted geometry: child={child.region}"
+            )
+            assert grid.content_region.x <= child.region.x, (
+                f"{child_id} starts before workspace grid content: "
+                f"child={child.region}, grid={grid.content_region}"
+            )
+            assert child.region.right <= grid.content_region.right, (
+                f"{child_id} ends after workspace grid content: "
+                f"child={child.region}, grid={grid.content_region}"
+            )
+            assert screen.region.x <= child.region.x, (
+                f"{child_id} starts before the 120x30 viewport: "
+                f"child={child.region}, screen={screen.region}"
+            )
+            assert child.region.right <= screen.region.right, (
+                f"{child_id} ends after the 120x30 viewport: "
+                f"child={child.region}, screen={screen.region}"
+            )
+
+        assert {child.id for child in displayed} == {
+            "console-context-rail-handle",
+            "console-main-column",
+            "console-right-rail",
+        }

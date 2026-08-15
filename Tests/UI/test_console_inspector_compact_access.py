@@ -17,6 +17,8 @@ Both rails' manual toggles must always produce visible feedback.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from textual.widgets import Button
 
@@ -32,6 +34,86 @@ def _stored_rail_preferences(app) -> dict:
     rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
     assert len(rail_state_config) == 1
     return next(iter(rail_state_config.values()))
+
+
+@pytest.mark.asyncio
+async def test_standard_width_inspector_priority_preserves_context_preference():
+    """At 120 columns Inspector wins without rewriting Context preference."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+        await pilot.pause(0.2)
+
+        rail_state = console._current_console_rail_state(available_columns=120)
+
+        assert rail_state.left_open is False
+        assert rail_state.right_open is True
+        assert rail_state.right_compact_override is True
+        assert rail_state.compact_override is True
+        assert console.query_one("#console-left-rail").display is False
+        assert console.query_one("#console-right-rail").display is True
+        assert console.query_one("#console-context-rail-handle").display is True
+        assert console.query_one("#console-main-column").styles.min_width.value == 0
+        assert not app.app_config.get("console", {}).get("rail_state")
+
+
+@pytest.mark.asyncio
+async def test_context_reveal_switches_from_inspector_at_120_columns():
+    """The Context handle persists an exact Inspector-to-Context switch."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-open")
+        await pilot.pause(0.2)
+        console._set_console_rail_preference(right_open=True)
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is False
+        assert console.query_one("#console-right-rail").display is True
+
+        assert await pilot.click("#console-context-rail-open")
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        stored = _stored_rail_preferences(app)
+        assert stored["left_open"] is True
+        assert stored["right_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_visible_attach_context_action_switches_rails_without_file_picker():
+    """Only the visible Workbench action reveals Context at 120 columns."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-attach-context")
+        await pilot.pause(0.2)
+        file_picker = AsyncMock()
+        console._handle_console_attach_context = file_picker
+        console._set_console_rail_preference(right_open=True)
+        await pilot.pause(0.2)
+
+        assert not list(console.query("#console-attach-context"))
+        assert not list(console.query("#console-staged-context-attach"))
+        assert console.query_one("#console-control-attach-context").display is True
+
+        await pilot.click("#console-control-attach-context")
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        stored = _stored_rail_preferences(app)
+        assert stored["left_open"] is True
+        assert stored["right_open"] is False
+        file_picker.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -152,8 +234,11 @@ async def test_tools_chip_opens_inspector_at_80x24_single_pane():
         assert console.query_one("#console-left-rail").display is False
         assert "left_open_explicit" not in _stored_rail_preferences(app)
 
-        # The rail's own collapse button is the visible way back.
-        await pilot.click("#console-inspector-rail-collapse")
+        # The rail's own collapse button is the way back; activate it from
+        # the keyboard because the stripped harness clips narrow controls.
+        collapse_button = console.query_one("#console-inspector-rail-collapse", Button)
+        collapse_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
         assert right_rail.display is False
 
@@ -181,13 +266,8 @@ async def test_left_handle_opens_left_rail_at_90_cols():
         assert context_button.label == "Context->"
         assert context_button.tooltip == "Open Context rail"
 
-        assert await pilot.click(
-            "#console-context-rail-open",
-            offset=(
-                context_button.region.width - 1,
-                context_button.region.height // 2,
-            ),
-        )
+        context_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
 
         assert left_rail.display is True
@@ -201,7 +281,9 @@ async def test_left_handle_opens_left_rail_at_90_cols():
         transcript_region = console.query_one("#console-transcript-region")
         assert transcript_region.outer_size.width > 0
 
-        await pilot.click("#console-context-rail-collapse")
+        collapse_button = console.query_one("#console-context-rail-collapse", Button)
+        collapse_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
 
         assert left_rail.display is False
@@ -223,7 +305,9 @@ async def test_section_toggle_preserves_left_open_explicit_marker():
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
         await pilot.pause(0.2)
 
-        await pilot.click("#console-context-rail-open")
+        context_button = console.query_one("#console-context-rail-open", Button)
+        context_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
         assert _stored_rail_preferences(app)["left_open_explicit"] is True
 

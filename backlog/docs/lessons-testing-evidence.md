@@ -2275,6 +2275,23 @@ display-managed widget needs the target to be focusable, or a fallback.
 
 ---
 
+## A responsive focus handoff must cover both directions of widget replacement
+
+**TASK-16220, 2026-08-14.** The first Console rail fix moved focus from a rail
+that disappeared at a resize breakpoint to its reveal handle. That passed both
+single-transition regressions. Independent review then exercised consecutive
+boundaries: 117→118 focused the Context handle correctly, but 118→129 reopened
+Context and hid that focused handle, leaving focus as `None`. The handoff had
+modeled rail→handle replacement but not handle→rail replacement.
+
+**What to do.** When responsive layout replaces one focusable representation
+with another, test both directions and at least one consecutive transition.
+Capture the logical owner before applying visibility, then synchronously focus
+the visible counterpart after the update; two isolated one-way tests do not
+prove keyboard continuity across adjacent bands.
+
+---
+
 ## Bisecting dev-baseline test rot without a checkout: `git archive` trees run against the same venv
 
 **task-3315, 2026-08-09.** `Tests/UI/test_library_shell.py` carried 56 failures on
