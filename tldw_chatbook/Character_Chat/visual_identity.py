@@ -275,6 +275,420 @@ class LoadedVisualIdentityAsset:
     data: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class VisualIdentityResolution:
+    """One selected reaction source plus bytes ready for off-thread decoding."""
+
+    actor_kind: str
+    actor_id: str
+    requested_expression_key: str | None
+    manual_expression_key: str | None
+    resolved_expression_key: str | None
+    pack_id: int | None
+    pack_version_id: int | None
+    asset_id: int | None
+    expression_id: int | None
+    storage_source: str
+    storage_relpath: str | None
+    content_type: str | None
+    is_animated: bool
+    resolution_source: str
+    fallback_reason: str
+    cache_identity: tuple[str, ...]
+    image_bytes: bytes | None
+
+
+_OPERATIONAL_EXPRESSION_KEYS = {
+    "idle": "neutral",
+    "thinking": "thinking",
+    "speaking": "custom:speaking",
+    "error": "custom:error",
+}
+_LEGACY_OPERATIONAL_STATES = frozenset({"thinking", "speaking", "error"})
+
+
+def resolve_visual_identity(
+    db: Any,
+    *,
+    actor_kind: str,
+    actor_id: int | str,
+    requested_state: str,
+    manual_expression_key: str | None = None,
+    user_data_dir: str | Path | None = None,
+) -> VisualIdentityResolution:
+    """Resolve one character reaction through pack, legacy, and portrait fallbacks.
+
+    The active graph query is deliberately bounded to the four possible pack
+    candidates. Only candidates reached by the fallback walk are read and decoded.
+    Returned paths are package/profile-relative identifiers, never filesystem paths.
+
+    Args:
+        db: Initialized profile-local ``CharactersRAGDB``.
+        actor_kind: Local actor kind. Character portraits are currently supported.
+        actor_id: Profile-local actor identifier.
+        requested_state: Current Console operational state.
+        manual_expression_key: Optional session-local reaction override.
+        user_data_dir: Injectable profile root for profile-owned pack assets.
+
+    Returns:
+        Frozen resolution metadata and the selected image bytes, if any.
+    """
+    actor_id_text = str(actor_id)
+    requested_state_key = (
+        requested_state.strip().lower() if isinstance(requested_state, str) else ""
+    )
+    requested_key = _OPERATIONAL_EXPRESSION_KEYS.get(requested_state_key)
+    manual_key = (
+        normalize_expression_key(manual_expression_key)
+        if manual_expression_key is not None
+        else None
+    )
+    if actor_kind != "character":
+        return _placeholder_resolution(
+            actor_kind,
+            actor_id_text,
+            requested_key,
+            manual_key,
+            "actor_unavailable",
+        )
+
+    legacy_state = (
+        requested_state_key
+        if requested_state_key in _LEGACY_OPERATIONAL_STATES
+        else None
+    )
+    rows = db.execute_query(
+        """
+        /* visual_identity_resolver */
+        SELECT c.id AS actor_row_id,
+               b.id AS binding_id,
+               p.id AS pack_id,
+               p.source_kind AS pack_source_kind,
+               v.id AS pack_version_id,
+               v.default_expression_key AS version_default_expression_key,
+               a.id AS asset_id,
+               a.expression_key AS asset_expression_key,
+               a.original_expression_key AS asset_original_expression_key,
+               a.display_label AS asset_display_label,
+               a.storage_relpath AS asset_storage_relpath,
+               a.content_type AS asset_content_type,
+               a.bytes AS asset_bytes,
+               a.sha256 AS asset_sha256,
+               a.width AS asset_width,
+               a.height AS asset_height,
+               a.is_animated AS asset_is_animated,
+               a.frame_count AS asset_frame_count,
+               a.duration_ms AS asset_duration_ms
+          FROM character_cards c
+          LEFT JOIN visual_identity_bindings b
+            ON b.owner_user_id = 0
+           AND b.actor_kind = 'character'
+           AND b.actor_id = CAST(c.id AS TEXT)
+           AND b.status = 'active'
+          LEFT JOIN visual_identity_packs p
+            ON p.id = b.pack_id
+           AND p.owner_user_id = 0
+           AND p.status = 'active'
+           AND p.active_version_id = b.active_version_id
+          LEFT JOIN visual_identity_pack_versions v
+            ON v.id = b.active_version_id
+           AND v.pack_id = p.id
+           AND v.owner_user_id = 0
+          LEFT JOIN visual_identity_assets a
+            ON a.pack_id = p.id
+           AND a.pack_version_id = v.id
+           AND a.owner_user_id = 0
+           AND a.deleted = 0
+           AND a.expression_key IN (?, ?, v.default_expression_key, 'neutral')
+         WHERE c.id = ? AND c.deleted = 0
+         ORDER BY CASE
+                    WHEN a.expression_key = ? THEN 0
+                    WHEN a.expression_key = ? THEN 1
+                    WHEN a.expression_key = v.default_expression_key THEN 2
+                    WHEN a.expression_key = 'neutral' THEN 3
+                    ELSE 4
+                  END,
+                  a.id
+         LIMIT 4
+        """,
+        (
+            manual_key,
+            requested_key,
+            actor_id,
+            manual_key,
+            requested_key,
+        ),
+    ).fetchall()
+    if not rows:
+        return _placeholder_resolution(
+            actor_kind,
+            actor_id_text,
+            requested_key,
+            manual_key,
+            "actor_unavailable",
+        )
+
+    candidates = [dict(row) for row in rows]
+    for candidate in candidates:
+        if candidate["asset_id"] is None:
+            continue
+        try:
+            asset = _resolution_manifest_asset(candidate)
+            loaded = load_visual_identity_asset(
+                asset,
+                source_kind=str(candidate["pack_source_kind"]),
+                user_data_dir=user_data_dir,
+            )
+            _validate_image_bytes(loaded, decoded_pixels_before=0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            detail = str(exc)
+            category = (
+                detail
+                if detail.startswith("visual_identity_")
+                else "visual_identity_asset_metadata_invalid"
+            )
+            logger.warning(
+                "visual_identity_resolution_asset_failed pack_id={} version_id={} "
+                "asset_id={} category={}",
+                candidate["pack_id"],
+                candidate["pack_version_id"],
+                candidate["asset_id"],
+                category,
+            )
+            continue
+        source, reason = _pack_resolution_category(
+            str(candidate["asset_expression_key"]),
+            manual_key=manual_key,
+            requested_key=requested_key,
+            default_key=str(candidate["version_default_expression_key"]),
+        )
+        digest = str(candidate["asset_sha256"])
+        return VisualIdentityResolution(
+            actor_kind=actor_kind,
+            actor_id=actor_id_text,
+            requested_expression_key=requested_key,
+            manual_expression_key=manual_key,
+            resolved_expression_key=str(candidate["asset_expression_key"]),
+            pack_id=int(candidate["pack_id"]),
+            pack_version_id=int(candidate["pack_version_id"]),
+            asset_id=int(candidate["asset_id"]),
+            expression_id=None,
+            storage_source=str(candidate["pack_source_kind"]),
+            storage_relpath=str(candidate["asset_storage_relpath"]),
+            content_type=str(candidate["asset_content_type"]),
+            is_animated=bool(candidate["asset_is_animated"]),
+            resolution_source=source,
+            fallback_reason=reason,
+            cache_identity=_resolution_cache_identity(
+                actor_kind,
+                actor_id_text,
+                requested_key,
+                manual_key,
+                source,
+                f"source_kind={candidate['pack_source_kind']}",
+                f"pack_id={candidate['pack_id']}",
+                f"pack_version_id={candidate['pack_version_id']}",
+                f"asset_id={candidate['asset_id']}",
+                f"sha256={digest}",
+            ),
+            image_bytes=loaded.data,
+        )
+
+    if legacy_state is not None:
+        legacy = db.execute_query(
+            """
+            SELECT id, image, mime, updated_at
+              FROM character_expression_images
+             WHERE character_id = ? AND state_id = ? AND deleted = 0
+            """,
+            (actor_id, legacy_state),
+        ).fetchone()
+    else:
+        legacy = None
+    if legacy is not None and legacy["image"] is not None:
+        legacy = dict(legacy)
+        legacy_image = legacy["image"]
+        data = bytes(legacy_image)
+        digest = hashlib.sha256(data).hexdigest()
+        return VisualIdentityResolution(
+            actor_kind=actor_kind,
+            actor_id=actor_id_text,
+            requested_expression_key=requested_key,
+            manual_expression_key=manual_key,
+            resolved_expression_key=requested_key,
+            pack_id=None,
+            pack_version_id=None,
+            asset_id=None,
+            expression_id=int(legacy["id"]),
+            storage_source="database",
+            storage_relpath=None,
+            content_type=legacy["mime"] or _image_content_type(data),
+            is_animated=False,
+            resolution_source="legacy_expression",
+            fallback_reason="pack_assets_unavailable",
+            cache_identity=_resolution_cache_identity(
+                actor_kind,
+                actor_id_text,
+                requested_key,
+                manual_key,
+                "legacy_expression",
+                f"expression_id={legacy['id']}",
+                f"updated_at={legacy['updated_at']}",
+                f"sha256={digest}",
+            ),
+            image_bytes=data,
+        )
+
+    card = db.execute_query(
+        """SELECT image, version FROM character_cards
+             WHERE id = ? AND deleted = 0""",
+        (actor_id,),
+    ).fetchone()
+    if card is not None and card["image"] is not None:
+        card = dict(card)
+        card_image = card["image"]
+        data = bytes(card_image)
+        digest = hashlib.sha256(data).hexdigest()
+        return VisualIdentityResolution(
+            actor_kind=actor_kind,
+            actor_id=actor_id_text,
+            requested_expression_key=requested_key,
+            manual_expression_key=manual_key,
+            resolved_expression_key=requested_key,
+            pack_id=None,
+            pack_version_id=None,
+            asset_id=None,
+            expression_id=None,
+            storage_source="database",
+            storage_relpath=None,
+            content_type=_image_content_type(data),
+            is_animated=False,
+            resolution_source="card_portrait",
+            fallback_reason="legacy_unavailable",
+            cache_identity=_resolution_cache_identity(
+                actor_kind,
+                actor_id_text,
+                requested_key,
+                manual_key,
+                "card_portrait",
+                f"card_version={card['version']}",
+                f"sha256={digest}",
+            ),
+            image_bytes=data,
+        )
+    return _placeholder_resolution(
+        actor_kind,
+        actor_id_text,
+        requested_key,
+        manual_key,
+        "portrait_unavailable",
+    )
+
+
+def _resolution_manifest_asset(row: Mapping[str, Any]) -> VisualIdentityManifestAsset:
+    return VisualIdentityManifestAsset(
+        expression_key=str(row["asset_expression_key"]),
+        original_label=str(row["asset_original_expression_key"]),
+        display_label=str(row["asset_display_label"]),
+        storage_relpath=str(row["asset_storage_relpath"]),
+        content_type=str(row["asset_content_type"]),
+        bytes=int(row["asset_bytes"]),
+        width=int(row["asset_width"]),
+        height=int(row["asset_height"]),
+        sha256=str(row["asset_sha256"]),
+        is_animated=bool(row["asset_is_animated"]),
+        frame_count=int(row["asset_frame_count"] or 1),
+        duration_ms=(
+            int(row["asset_duration_ms"])
+            if row["asset_duration_ms"] is not None
+            else None
+        ),
+    )
+
+
+def _pack_resolution_category(
+    expression_key: str,
+    *,
+    manual_key: str | None,
+    requested_key: str | None,
+    default_key: str,
+) -> tuple[str, str]:
+    if manual_key is not None and expression_key == manual_key:
+        return "pack_manual", "none"
+    if requested_key is not None and expression_key == requested_key:
+        reason = "manual_unavailable" if manual_key is not None else "none"
+        return "pack_operational", reason
+    if expression_key == default_key:
+        return "pack_default", "requested_unavailable"
+    return "pack_neutral", "default_unavailable"
+
+
+def _placeholder_resolution(
+    actor_kind: str,
+    actor_id: str,
+    requested_key: str | None,
+    manual_key: str | None,
+    fallback_reason: str,
+) -> VisualIdentityResolution:
+    return VisualIdentityResolution(
+        actor_kind=actor_kind,
+        actor_id=actor_id,
+        requested_expression_key=requested_key,
+        manual_expression_key=manual_key,
+        resolved_expression_key=requested_key,
+        pack_id=None,
+        pack_version_id=None,
+        asset_id=None,
+        expression_id=None,
+        storage_source="none",
+        storage_relpath=None,
+        content_type=None,
+        is_animated=False,
+        resolution_source="placeholder",
+        fallback_reason=fallback_reason,
+        cache_identity=_resolution_cache_identity(
+            actor_kind,
+            actor_id,
+            requested_key,
+            manual_key,
+            "placeholder",
+            f"fallback_reason={fallback_reason}",
+        ),
+        image_bytes=None,
+    )
+
+
+def _resolution_cache_identity(
+    actor_kind: str,
+    actor_id: str,
+    requested_key: str | None,
+    manual_key: str | None,
+    resolution_source: str,
+    *parts: object,
+) -> tuple[str, ...]:
+    return (
+        "visual-identity-v1",
+        f"actor_kind={actor_kind}",
+        f"actor_id={actor_id}",
+        f"requested={requested_key or ''}",
+        f"manual={manual_key or ''}",
+        f"source={resolution_source}",
+        *("" if part is None else str(part) for part in parts),
+    )
+
+
+def _image_content_type(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 class _VisualIdentityBudgetError(ValueError):
     """Internal sentinel that preserves the public budget category."""
 
