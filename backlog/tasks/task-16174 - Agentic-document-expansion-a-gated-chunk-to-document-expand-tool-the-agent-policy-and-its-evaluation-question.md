@@ -3,10 +3,11 @@ id: TASK-16174
 title: >-
   Agentic document expansion: a gated chunk-to-document expand tool, the agent
   policy, and its evaluation question
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-14 02:40'
-updated_date: '2026-08-14 06:29'
+updated_date: '2026-08-15 21:57'
 labels:
   - rag
   - agents
@@ -61,6 +62,17 @@ Source (repo-reachable): `Tests/RAG_Eval/README.md`'s PRF section prose and its 
 - [ ] #6 The relationship to the re-ranking gap is recorded: whether the expansion loop presumes a working reranker (TASK-3502, cross_encoder unimplemented) or is independent of it
 - [ ] #7 The inert parent-inclusion config surface is resolved, not left standing: include_parent_docs / parent_size_threshold / parent_inclusion_strategy (config.py:559-561, set by three shipped profiles) are either WIRED to the expansion work or RETIRED from config and from those profiles. A user-switchable knob that silently does nothing must not survive alongside a new tool that does the same job
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Executing the four-task plan at Docs/superpowers/plans/2026-08-15-rag-agentic-expansion.md, bound by the design spec at Docs/superpowers/specs/2026-08-15-rag-agentic-expansion-design.md.
+
+1. Task 1 (Phase K, AC#7): retire include_parent_docs / parent_size_threshold / parent_inclusion_strategy from SearchConfig and the three profiles that set them; make RAGConfig.from_dict filter unknown search keys (warn + drop) so saved TOML survives the retirement. Gate: RAG_EVAL=1 pytest Tests/RAG_Eval/ reads 105/105 (+0.000).
+2. Task 2 (Phase T, AC#1/#2/#4): new gated builtin expand_document (ExpandDocumentTool, gate key expand_document_enabled, risk-tagged -> floored to ask) with per-type fetch, budget, chunk-centred window and offset continuation; label-only media/conversation rows are first-class cases.
+3. Task 3 (Phase P, AC#3): pure expand_hint helper wired into Agents/library_rag_tool_provider.py's _project_row so the policy is in the payload the agent actually sees, plus the policy sentence in the tool description.
+4. Task 4 (Phase E, AC#5/#6): author + RUN an answer-level oracle check (tool-OFF vs tool-ON, fact oracles that appear only in media/conversation bodies), record the table honestly, re-run the gate, close all seven ACs on evidence.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
