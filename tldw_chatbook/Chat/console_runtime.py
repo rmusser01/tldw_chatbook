@@ -691,7 +691,18 @@ def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
             CONSOLE_RUNTIME_ATTR,
         )
         return
-    if getattr(app, CONSOLE_RUNTIME_ATTR, None) is not runtime:
+    # Read back inside its own guard: a custom __getattribute__ that raises
+    # must not break _attach's never-raise contract either.
+    try:
+        attached = getattr(app, CONSOLE_RUNTIME_ATTR, None)
+    except Exception:  # noqa: BLE001 - never raise from the post-check
+        logger.opt(exception=True).warning(
+            "Console runtime: could not read back the app's %s attribute "
+            "to confirm the attach.",
+            CONSOLE_RUNTIME_ATTR,
+        )
+        return
+    if attached is not runtime:
         logger.warning(
             "Console runtime: the app's %s attribute is not the runtime "
             "just attached (a property or validator rewrote it); future "
