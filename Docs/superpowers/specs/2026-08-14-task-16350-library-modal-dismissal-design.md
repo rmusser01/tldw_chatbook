@@ -3,9 +3,11 @@
 ## Status
 
 Approved in conversation on 2026-08-14 after two source and interaction review
-passes. The approved refinements cover controller-injected launch paths, shared
-file-picker compatibility, mutation-time close rejection, stable opener-focus
-recovery, concrete-class mounting, and real Textual overlay/key dispatch.
+passes, then hardened after a dual-agent critique. The approved refinements
+cover controller-injected launch paths, enhanced-picker compatibility,
+mutation-time close rejection and feedback, stable opener-focus eligibility,
+concrete-class behavior, deterministic picker precedence, and real Textual
+overlay/key dispatch.
 
 ## Problem
 
@@ -52,7 +54,12 @@ work.
 ## Reachability and inventory
 
 Scope is the fixed-point launch graph rooted at the production Library screen,
-not a filename or import-name heuristic. The inventory walker must inspect:
+not a filename or import-name heuristic. “Fixed point” here is deliberately
+narrow: an explicit table names the production-default owner files/functions,
+their presenter calls, and declared injected presenter seams. The test resolves
+modal values passed through those supported edges and joins them with direct
+production-route tests for controller/factory seams; it is not a generalized
+Python call-graph analyzer. The inventory must inspect:
 
 1. modal constructors in `LibraryScreen`;
 2. helper methods and controller callbacks declared as launch owners, including
@@ -84,6 +91,14 @@ make the inventory test fail. A concrete subclass that overrides `compose()`
 must be mounted even when its parent already participates, because an inherited
 content selector can otherwise fail only at runtime.
 
+Every declared row records the concrete type, production owner and presenter
+edge, factory, stable content selector, visible negative control, exact negative
+result or predicate, positive-result type, active guard, focus postcondition,
+and whether a non-dismissible exception is allowed. Every current Library row
+is dismissible; the exception column exists so a future gate cannot be hidden
+in prose. `EnhancedFileOpen` and `EnhancedFileSave` are compatibility-only
+clients of shared-base adoption rather than Library-reachable inventory rows.
+
 ## Design
 
 ### Reuse the shared dismissal boundary
@@ -113,6 +128,16 @@ also clears the same error twice through `_on_directory_changed()` and a
 separate decorated `_clear_error()` handler. Keep `_on_directory_changed()` as
 the single owner of error clearing and remove the redundant handler rather than
 preserving duplicate work behind the new contract.
+
+Shared-base adoption also changes the inheritance beneath the already-safe
+`EnhancedFileDialog`, which currently declares
+`SafeModalDismissMixin, BaseFileDialog`. After `FileSystemPickerScreen` adopts
+the mixin, `EnhancedFileDialog` must inherit only `BaseFileDialog`; retaining
+the explicit mixin would create an inconsistent MRO and break imports. Its
+`action_smart_dismiss`, `_SUPPRESSED_BASE_HANDLERS`, stable content selector,
+recent-location persistence, typed results, and enhanced open/save behavior
+remain unchanged. `EnhancedFileOpen` and `EnhancedFileSave` are mandatory
+compatibility tests, including an application import smoke test.
 
 ### Backdrop classification
 
@@ -147,8 +172,9 @@ directly.
 
 The shared file-picker base needs source-aware behavior:
 
-- terminal Escape peels the existing path editor, search, recent-locations, or
-  other picker transient state before dismissing the picker;
+- a focused descendant overlay receives Escape first; after that, terminal
+  picker Escape uses the deterministic order path editor, search, then recent
+  locations before dismissing the picker;
 - visible Cancel and a primary-button backdrop click are terminal cancellation
   and return `None` immediately; and
 - clicks on the path editor, search, recent list, picker options, and a real
@@ -186,12 +212,20 @@ screen message pump. That can delay Escape/backdrop dispatch until after
 to execute later as though it were new.
 
 Create, rename, and their mutation retry path will synchronously claim the
-existing in-flight state, disable controls, and start the awaited mutation in a
-screen-owned Textual worker. The message pump stays responsive, so Cancel,
-Escape, and backdrop input can be consumed while the flag is true. Completion
-may repaint only the same mounted generation; a stale completion cannot clear
-or dismiss a remounted instance. The task does not add a generalized operation
-manager.
+existing in-flight state, disable mutating, selection, Done, and retry controls,
+and start the awaited mutation in a screen-owned Textual worker. Visible Cancel
+remains enabled solely as a guarded close request; its handler, Escape, and
+backdrop input are consumed while the flag is true and cannot dismiss the
+modal. Completion may repaint only the same mounted generation; a stale
+completion cannot clear or dismiss a remounted instance. The task does not add
+a generalized operation manager.
+
+The first close request received during one active mutation updates the existing
+outcome/status line to “Finish the current collection change before closing.”
+Later close requests during that same mutation are consumed without stacking
+notifications or changing state. Mutation progress and final success/failure
+still replace that line through the existing outcome path; no toast or second
+guard state machine is added.
 
 Catalog loading keeps its existing independent request-token behavior unless a
 focused regression proves it shares the same close race.
@@ -202,15 +236,21 @@ The shared mixin currently holds only a weak reference to the opener. Library
 can recompose its canvas while a modal is open, replacing that widget with a
 new instance that has the same stable ID. At mount, the mixin will record both
 the weak reference and the opener's non-empty widget ID. After safe dismissal
-it first restores the still-mounted exact object; otherwise it resolves that ID
-on the revealed screen and focuses the matching visible, enabled, focusable
-widget. It never guesses a different Library control.
+it evaluates the exact object and any ID-resolved replacement with the same
+eligibility predicate: mounted and attached, displayed and visible, enabled,
+and focusable. It restores the exact object only when eligible; otherwise it
+resolves that ID on the revealed screen and focuses the single eligible match.
+It never guesses a different Library control.
 
 The existing Console composer fallback remains Console-specific. A Library
 modal with neither the original opener nor one exact ID match leaves focus to
 the revealed screen's normal policy rather than focusing an unrelated action.
 Nested modal cancellation restores focus to the control that opened the nested
 screen when that exact identity remains valid.
+
+Existing File Notes callbacks that also restore focus are removed when the mixin
+becomes the single owner, or are retained only with a mounted exact-once test
+proving the duplicate path is harmless and idempotent.
 
 ### One-shot and stale-input safety
 
@@ -225,12 +265,15 @@ on a later presentation of the same modal instance.
 Use focused Textual tests only; do not run broad test directories or the full
 repository suite for this task.
 
-1. Add an exact fixed-point Library launch inventory covering direct,
-   controller-injected, nested-widget, and modal-to-modal edges. Mutation tests
-   inject an undeclared alias edge into each non-obvious owner category.
-2. Mount every concrete reachable modal and assert that its declared content
-   selector exists. For each result family, verify visible Cancel, terminal
-   Escape, and primary backdrop return the exact same negative value.
+1. Add an explicit, bidirectional Library owner-edge inventory covering direct,
+   controller-injected, nested-widget, and modal-to-modal presenters. Mutation
+   tests inject an undeclared alias edge into each non-obvious owner category.
+   Direct production-route tests cover injected controller/factory seams; do
+   not build a generalized Python call-graph analyzer.
+2. Give every concrete reachable modal one contract row and mount it. For every
+   row, assert the selector exists and verify visible Cancel, terminal Escape,
+   and primary backdrop return its exact negative value or predicate. No result
+   family may stand in for an untested concrete sibling.
 3. Dispatch non-primary and inside-content clicks through Textual and prove no
    dismissal or callback.
 4. Drive a real expanded `SelectOverlay`: first Escape closes the overlay and
@@ -240,14 +283,18 @@ repository suite for this task.
    requests rather than merely peeling the overlay.
 5. Drive real file-picker path/search/recent state and real key dispatch. Verify
    terminal Escape peels transient state, while backdrop and visible Cancel
-   return `None` immediately.
+   return `None` immediately. Include one combined-state case that proves the
+   fixed path-editor, search, recent precedence after descendant overlays.
 6. Gate Prompt collection create/rename callbacks with `asyncio.Event`. During
-   the gate, dispatch Escape, backdrop, and Cancel and prove the modal remains,
+   the gate, dispatch Escape, backdrop, and a real `pilot.click` on the enabled
+   visible Cancel control and prove the modal remains. The first request updates
+   the existing status line exactly once, later requests do not stack feedback,
    the operation settles once, and no queued close fires afterwards. Also prove
    stale completion cannot mutate a remounted presentation.
 7. Recompose the underlying Library canvas while a modal is open and prove
    dismissal focuses the replacement widget with the same ID. Prove that a
-   missing/duplicate/ineligible ID does not focus another control.
+   missing/duplicate/ineligible ID and an ineligible still-mounted original do
+   not focus another control.
 8. Verify Textual full-MRO mount/unmount, cancellation, and decorated inherited
    navigation handlers execute exactly once. Include `SelectDirectory` and any
    existing subclass with its own handlers; assert one breadcrumb/recent-hook
@@ -256,10 +303,16 @@ repository suite for this task.
 9. Run representative non-Library shared-picker regressions alongside the
    Library tests to pin typed success values and existing navigation behavior;
    do not turn the base's no-op recent-location hooks into a new feature.
+10. Run the mounted `EnhancedFileOpen`/`EnhancedFileSave` safe-dismiss suites
+    and an application import smoke test after removing the now-redundant
+    explicit mixin base. Preserve enhanced smart-dismiss order, handler
+    suppression, persistence, and typed results.
 
 Mutation checks must show the tests go red when the backdrop branch, exact
 negative result, mutation guard, stable-ID restoration, or one fixed-point
 inventory edge is removed, then return green after restoration.
+Implementation Notes record the exact mutations performed so the RED evidence
+remains auditable.
 
 ## Alternatives considered
 
