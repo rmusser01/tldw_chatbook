@@ -70,7 +70,7 @@
 - Modify: `Tests/UI/test_console_modal_dismissal.py`
 - Create: `Tests/UI/test_library_modal_dismissal.py`
 
-- [ ] **Step 1: Write focus eligibility RED tests**
+- [x] **Step 1: Write focus eligibility RED tests**
 
 Add a small Library-like host screen that can recompose its opener while the modal is mounted. Cover:
 
@@ -82,7 +82,7 @@ Add a small Library-like host screen that can recompose its opener while the mod
 
 Assert the same eligibility predicate is used for the exact object and the ID replacement. Cases 4 must leave focus to the revealed screen rather than selecting an unrelated Library action. Case 5 must preserve the existing Console-only fallback.
 
-- [ ] **Step 2: Run the focus tests RED**
+- [x] **Step 2: Run the focus tests RED**
 
 Run:
 
@@ -95,7 +95,7 @@ Run:
 
 Expected: the replacement-ID cases fail because the mixin currently stores only a weak reference to the original widget.
 
-- [ ] **Step 3: Add one shared eligibility helper and record the opener ID**
+- [x] **Step 3: Add one shared eligibility helper and record the opener ID**
 
 Keep the change local to `modal_dismissal.py`:
 
@@ -121,7 +121,7 @@ On mount, retain the existing weak reference and record only a non-empty `opener
 
 Clear both reference and ID on unmount. Do not add a Library import or focus registry.
 
-- [ ] **Step 4: Run Task 1 GREEN and shared regression checks**
+- [x] **Step 4: Run Task 1 GREEN and shared regression checks**
 
 Run:
 
@@ -143,7 +143,7 @@ Run:
 
 Expected: all selected tests and static checks pass.
 
-- [ ] **Step 5: Commit the focus boundary**
+- [x] **Step 5: Commit the focus boundary**
 
 ```bash
 git add \
@@ -167,7 +167,7 @@ git commit -m "fix(ui): restore safe modal focus by stable identity"
 - Modify: `Tests/UI/test_fspicker_keyboard_save.py`
 - Modify: `Tests/UI/test_enhanced_file_dialog_mount.py`
 
-- [ ] **Step 1: Write base-picker contract and precedence RED tests**
+- [x] **Step 1: Write base-picker contract and precedence RED tests**
 
 For `FileOpen`, `FileSave`, and `SelectDirectory`, mount each concrete class and assert:
 
@@ -182,7 +182,7 @@ For `FileOpen`, `FileSave`, and `SelectDirectory`, mount each concrete class and
 
 Dispatch keys and clicks through Textual Pilot. Do not call `action_*` methods as the behavior oracle.
 
-- [ ] **Step 2: Write full-MRO and enhanced compatibility RED tests**
+- [x] **Step 2: Write full-MRO and enhanced compatibility RED tests**
 
 Instrument real `DirectoryNavigation.Changed` delivery in `SelectDirectory` and assert exactly one:
 
@@ -192,7 +192,7 @@ Instrument real `DirectoryNavigation.Changed` delivery in `SelectDirectory` and 
 
 Mount `EnhancedFileOpen` and `EnhancedFileSave` and assert their current path → search → recent → bookmarks smart-dismiss order, handler suppression, recent/last-directory persistence, visible Cancel/backdrop terminal result, and typed success results. Add an import smoke test for `tldw_chatbook.app` and `EnhancedFileDialog`.
 
-- [ ] **Step 3: Run picker tests RED**
+- [x] **Step 3: Run picker tests RED**
 
 Run:
 
@@ -211,7 +211,7 @@ Expected failures:
 - `SelectDirectory` manually re-invokes full-MRO handlers; and
 - leaving the explicit mixin on `EnhancedFileDialog` would become an inconsistent MRO after base adoption.
 
-- [ ] **Step 4: Adopt the mixin at `FileSystemPickerScreen`**
+- [x] **Step 4: Adopt the mixin at `FileSystemPickerScreen`**
 
 Make the shared base the single owner:
 
@@ -227,7 +227,7 @@ Give the composed `Dialog` that stable ID. Replace the base Escape binding with 
 
 Route the existing `#cancel` handler through `request_safe_cancel(source="visible")`. Keep selection and success paths unchanged.
 
-- [ ] **Step 5: Reconcile Textual full-MRO behavior minimally**
+- [x] **Step 5: Reconcile Textual full-MRO behavior minimally**
 
 - Remove only the `@on(DirectoryNavigation.Changed)` decorator from the base `_clear_error` helper; retain the callable method because `BaseFileDialog._clear_error()` delegates to it for `Input.Changed`. `_on_directory_changed` remains the sole directory-change error-clear owner.
 - Remove `SelectDirectory.on_mount()`'s manual `super().on_mount()` call. Retain only its subclass-specific `show_files = False` and input initialization in the subclass handler.
@@ -236,7 +236,7 @@ Route the existing `#cancel` handler through `request_safe_cancel(source="visibl
 - Change `EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog)` to `EnhancedFileDialog(BaseFileDialog)`.
 - Keep `SAFE_MODAL_CONTENT = "#enhanced-file-dialog"`, `action_smart_dismiss`, `_SUPPRESSED_BASE_HANDLERS`, its persistence-aware `dismiss`, and typed results unchanged.
 
-- [ ] **Step 6: Run Task 2 GREEN and static checks**
+- [x] **Step 6: Run Task 2 GREEN and static checks**
 
 Run:
 
@@ -264,7 +264,7 @@ python -m compileall -q \
 
 Expected: selected tests pass; new/changed lines introduce no Ruff, MyPy, or import diagnostics. If a legacy whole-file formatter or type baseline is red, compare the exact file at the task base and document only unchanged baseline findings rather than reformatting unrelated code.
 
-- [ ] **Step 7: Commit the shared picker contract**
+- [x] **Step 7: Commit the shared picker contract**
 
 ```bash
 git add \
@@ -294,7 +294,7 @@ git commit -m "fix(ui): make shared file pickers safely dismissible"
 - Modify: `Tests/UI/test_prompt_delete_confirmation_modal.py`
 - Modify: `Tests/Widgets/Library/test_library_note_folder_dialog.py`
 
-- [ ] **Step 1: Add one mounted contract row per concrete class**
+- [x] **Step 1: Add one mounted contract row per concrete class**
 
 Add rows for:
 
@@ -309,7 +309,7 @@ Add rows for:
 
 For every row, independently mount and test visible Cancel, terminal Escape, and primary backdrop. Assert selector existence, one callback, exact negative identity/value, and unchanged positive-result type. Also test one inside click and one non-primary backdrop click per concrete row.
 
-- [ ] **Step 2: Run ordinary-modal tests RED**
+- [x] **Step 2: Run ordinary-modal tests RED**
 
 Run:
 
@@ -325,7 +325,7 @@ Run:
 
 Expected: backdrop/contract failures because these classes have not adopted the mixin; folder selector rows fail because their outer containers are anonymous.
 
-- [ ] **Step 3: Apply mechanical safe adoption**
+- [x] **Step 3: Apply mechanical safe adoption**
 
 For each class:
 
@@ -339,7 +339,7 @@ For each class:
 
 For `PromptDeleteConfirmationModal`, construct the negative using the current request fingerprint inside `_perform_safe_cancel`; do not cache a potentially stale decision. For `ModelInstallModal`, exact `False` must not toggle acknowledgement or start acquisition.
 
-- [ ] **Step 4: Prove lifecycle and result exactness GREEN**
+- [x] **Step 4: Prove lifecycle and result exactness GREEN**
 
 Run the Step 2 command again, plus:
 
@@ -362,7 +362,7 @@ Run the Step 2 command again, plus:
 
 Expected: all focused behavior passes and Textual invokes mixin/class lifecycle handlers exactly once.
 
-- [ ] **Step 5: Commit ordinary Library adoption**
+- [x] **Step 5: Commit ordinary Library adoption**
 
 ```bash
 git add \
@@ -392,7 +392,7 @@ git commit -m "feat(library): dismiss ordinary Library modals safely"
 - Modify: `Tests/UI/test_library_file_notes_git.py`
 - Modify: `Tests/UI/test_library_file_notes_git_push.py`
 
-- [ ] **Step 1: Add concrete File Notes/Git contract RED tests**
+- [x] **Step 1: Add concrete File Notes/Git contract RED tests**
 
 Mount and independently exercise all three gestures for:
 
@@ -408,7 +408,7 @@ Add a real nested flow where authorization opens endpoint details. Cancel the to
 
 Record current explicit focus callbacks in the workspace/Git presenter paths and add an exact-once focus assertion before removing or retaining them.
 
-- [ ] **Step 2: Run File Notes/Git tests RED**
+- [x] **Step 2: Run File Notes/Git tests RED**
 
 Run:
 
@@ -423,7 +423,7 @@ Run:
 
 Expected: unadopted concrete classes lack backdrop behavior/stable selectors; nested focus may show duplicate presenter/mixin restoration.
 
-- [ ] **Step 3: Adopt the mixin without changing trust/push policy**
+- [x] **Step 3: Adopt the mixin without changing trust/push policy**
 
 - Reuse the existing stable IDs on all five bounded outer containers; do not rename them because CSS and focused tests already depend on those selectors.
 - Adopt `SafeModalDismissMixin` on direct `ModalScreen` classes and route exact negative values through `_perform_safe_cancel`/`dismiss_safe_once`.
@@ -432,7 +432,7 @@ Expected: unadopted concrete classes lack backdrop behavior/stable selectors; ne
 - Keep endpoint-detail launch, positive authorization, and Git operations unchanged.
 - Remove presenter-owned post-dismiss focus callbacks when the mixin is the sole owner. If one must remain for a non-modal workflow, retain it only with the mounted exact-once test.
 
-- [ ] **Step 4: Run Task 4 GREEN and static checks**
+- [x] **Step 4: Run Task 4 GREEN and static checks**
 
 Run the Step 2 command again, then:
 
@@ -451,7 +451,7 @@ Run the Step 2 command again, then:
 
 Expected: all focused tests pass, nested top-screen ownership is exact, and no new changed-line diagnostics appear.
 
-- [ ] **Step 5: Commit File Notes/Git adoption**
+- [x] **Step 5: Commit File Notes/Git adoption**
 
 ```bash
 git add \
@@ -475,7 +475,7 @@ git commit -m "feat(library): dismiss File Notes modals safely"
 - Modify: `Tests/UI/test_library_modal_dismissal.py`
 - Modify: `Tests/UI/test_library_prompt_collections.py`
 
-- [ ] **Step 1: Write real mutation-race RED tests**
+- [x] **Step 1: Write real mutation-race RED tests**
 
 Gate create, rename, and mutation-retry callbacks with `asyncio.Event`. Start each through a real mounted button press, then use `await asyncio.wait_for(started.wait(), timeout=1.0)` before delivering close input so a RED test cannot hang behind the currently blocked message pump. While the callback is blocked:
 
@@ -489,7 +489,7 @@ Gate create, rename, and mutation-retry callbacks with `asyncio.Event`. Start ea
 
 Add same-instance unmount/remount tests for both success and failure completion. The callback must catch `asyncio.CancelledError`, wait on a second gate, and then deliberately return or raise. This proves a cancellation-resistant stale completion cannot clear in-flight state, repaint outcome, focus a control, or dismiss the new presentation.
 
-- [ ] **Step 2: Run mutation tests RED**
+- [x] **Step 2: Run mutation tests RED**
 
 Run:
 
@@ -502,7 +502,7 @@ Run:
 
 Expected: current async button handlers occupy the Textual message pump, Cancel is disabled, and close input can be delayed until `_mutation_in_flight` becomes false.
 
-- [ ] **Step 3: Claim synchronously, then run mutation work in a screen worker**
+- [x] **Step 3: Claim synchronously, then run mutation work in a screen worker**
 
 Adopt `SafeModalDismissMixin` with `SAFE_MODAL_CONTENT = "#prompt-collection-manager"`. Refactor only the create/rename/retry mutation path:
 
@@ -516,7 +516,7 @@ Add a local `on_unmount` handler that invalidates the mutation epoch and resets 
 
 Do not add a generalized operation manager. Leave catalog-loading token behavior unchanged unless its focused tests expose a shared defect.
 
-- [ ] **Step 4: Keep visible Cancel enabled as a guarded request**
+- [x] **Step 4: Keep visible Cancel enabled as a guarded request**
 
 During mutation recomposition:
 
@@ -528,7 +528,7 @@ During mutation recomposition:
 
 Reset the feedback latch on the start/end boundary of each mutation. Do not add a toast, nested guard, or second status widget.
 
-- [ ] **Step 5: Run Task 5 GREEN and adjacent collection tests**
+- [x] **Step 5: Run Task 5 GREEN and adjacent collection tests**
 
 Run:
 
@@ -550,7 +550,7 @@ Run:
 
 Expected: focused collection tests pass; real input remains dispatchable during the worker; no stale completion affects a remount.
 
-- [ ] **Step 6: Commit the mutation guard**
+- [x] **Step 6: Commit the mutation guard**
 
 ```bash
 git add \
@@ -569,7 +569,7 @@ git commit -m "fix(library): guard Prompt collection modal dismissal"
 
 - Modify: `Tests/UI/test_library_modal_dismissal.py`
 
-- [ ] **Step 1: Define the explicit owner-edge contract table**
+- [x] **Step 1: Define the explicit owner-edge contract table**
 
 Separate modal behavior from graph ownership. Each concrete behavior row must record:
 
@@ -602,7 +602,7 @@ For example, declare separate `PushEndpointDetailsDialog` edges from `LibraryFil
 
 Populate one row for every concrete type in the approved design, including already-safe reachable `WorkbenchHelpPanel`, `PromptVariablesDialog`, `ConfirmationDialog`, and every concrete reachable confirmation subclass. Keep `EnhancedFileOpen`/`EnhancedFileSave` in a separate compatibility table because they are not Library-reachable rows.
 
-- [ ] **Step 2: Add narrow bidirectional reachability RED tests**
+- [x] **Step 2: Add narrow bidirectional reachability RED tests**
 
 Build a test-only walker that scans only the explicit supported owners:
 
@@ -621,7 +621,7 @@ Add isolated synthetic mutation tests that inject one undeclared aliased modal i
 
 Each mutation must make the exact-set assertion fail.
 
-- [ ] **Step 3: Run inventory RED and close missing rows/edges**
+- [x] **Step 3: Run inventory RED and close missing rows/edges**
 
 Run:
 
@@ -633,7 +633,7 @@ Run:
 
 Expected on first run: failures identify any concrete production edge or already-safe subclass omitted from the explicit table. Add contract rows or supported owner methods until production discovery and declaration are exactly equal. Do not weaken the assertion or broaden into a general analyzer.
 
-- [ ] **Step 4: Run every concrete row through all three gestures**
+- [x] **Step 4: Run every concrete row through all three gestures**
 
 Parameterize the table so each concrete factory independently proves:
 
@@ -647,7 +647,7 @@ Parameterize the table so each concrete factory independently proves:
 
 Add full-MRO mount/unmount exact-once instrumentation for every class that defines its own lifecycle handler or inherits a decorated handler from another participating class.
 
-- [ ] **Step 5: Run inventory/contract GREEN**
+- [x] **Step 5: Run inventory/contract GREEN**
 
 Run:
 
@@ -661,7 +661,7 @@ Run:
 
 Expected: exact inventory equality, every concrete row green for all gestures, and all mutation-oracle tests green after restoring production source.
 
-- [ ] **Step 6: Commit the inventory closure**
+- [x] **Step 6: Commit the inventory closure**
 
 ```bash
 git add Tests/UI/test_library_modal_dismissal.py
@@ -679,7 +679,7 @@ git commit -m "test(library): enforce modal dismissal inventory"
 - Modify: `Docs/superpowers/plans/2026-08-14-task-16350-library-modal-dismissal.md`
 - Modify only if a real reusable incident occurred: `backlog/docs/lessons-testing-evidence.md` or another relevant lessons file.
 
-- [ ] **Step 1: Run the exact touched/related behavior matrix**
+- [x] **Step 1: Run the exact touched/related behavior matrix**
 
 Run only:
 
@@ -701,7 +701,7 @@ Run only:
 
 Expected: all named related tests pass. If an unrelated pre-existing failure appears, reproduce the exact node at the task base before classifying it; do not expand to a broad directory run.
 
-- [ ] **Step 2: Run final targeted static checks**
+- [x] **Step 2: Run final targeted static checks**
 
 Run Ruff check over every changed Python file, Ruff format check over new/already-formatted files, targeted MyPy over changed production files, `compileall` over changed production modules, and `git diff --check`.
 
@@ -762,7 +762,7 @@ git diff --check
 
 Expected: no new/changed-line diagnostics. Record exact base provenance for any unchanged legacy whole-file formatting or type debt rather than rewriting unrelated code.
 
-- [ ] **Step 3: Perform and record mutation RED/GREEN checks**
+- [x] **Step 3: Perform and record mutation RED/GREEN checks**
 
 Temporarily apply and restore these one-at-a-time:
 
@@ -801,7 +801,7 @@ For each mutation, run its single focused test, record the expected failing asse
 # Expected RED: discovered and declared LibraryModalLaunchEdge sets differ.
 ```
 
-- [ ] **Step 4: Self-review against all eight acceptance criteria**
+- [x] **Step 4: Self-review against all eight acceptance criteria**
 
 Review the cumulative diff for:
 
@@ -816,7 +816,7 @@ Review the cumulative diff for:
 
 Request one independent cumulative code review before closeout and resolve all Critical/Important findings. Add focused regressions for accepted findings; do not broaden test scope.
 
-- [ ] **Step 5: Complete Backlog and documentation hygiene**
+- [x] **Step 5: Complete Backlog and documentation hygiene**
 
 In the task file:
 
@@ -828,7 +828,7 @@ In the task file:
 
 Because this repository has documented five-digit Backlog CLI quirks, verify the exact task before any status command. Use the CLI only if it resolves `TASK-16350` correctly; otherwise update the task file directly and record the verified CLI limitation rather than editing a different task.
 
-- [ ] **Step 6: Commit closeout documentation**
+- [x] **Step 6: Commit closeout documentation**
 
 ```bash
 git add \
@@ -838,7 +838,7 @@ git diff --cached --check
 git commit -m "docs(library): complete safe modal dismissal task"
 ```
 
-- [ ] **Step 7: Verify final branch state**
+- [x] **Step 7: Verify final branch state**
 
 Run:
 
