@@ -113,8 +113,51 @@ class ResearchWindow(Vertical):
 
     async def create_run(self, payload: dict[str, Any]) -> Any:
         created = await self.controller.create_run(self.current_source, payload)
+        if self.current_source == "local":
+            created_id = (
+                created.get("id") if isinstance(created, dict) else getattr(created, "id", None)
+            )
+            if created_id:
+                self._start_local_engine(str(created_id))
         await self.load_runs(self.current_source)
         return created
+
+    def _start_local_engine(self, run_id: str) -> None:
+        """Start the local research execution engine for ``run_id``
+        (task-16322, ADR-066) in a Textual worker when mounted.
+
+        A resumed local run re-enters the engine, which restarts the phase
+        machine from the top (phase-level resume is out of scope for v1).
+        Without a mounted app (headless/tests) or without the app's
+        ``local_research_service``, this reports and does nothing -- it must
+        never block the create/resume flow it hangs off of.
+        """
+        local_service = getattr(self.app_instance, "local_research_service", None)
+        if local_service is None:
+            self._set_status("Local research engine unavailable (no local service).")
+            return
+        # Lazy import keeps the window's module import cheap and lets tests
+        # patch LocalResearchEngine on its own module.
+        from tldw_chatbook.Research_Interop.local_research_engine import (
+            LocalResearchEngine,
+        )
+
+        engine = LocalResearchEngine(local_service)
+
+        async def _run_engine() -> None:
+            try:
+                await engine.execute_run(run_id)
+            except Exception as exc:  # noqa: BLE001 - worker must not crash the app
+                self._set_status(f"Local research engine error: {exc}")
+
+        if self.is_mounted:
+            self.run_worker(
+                _run_engine(),
+                group=f"research-engine-{run_id}",
+                exclusive=True,
+                description=f"Local research engine: {run_id}",
+            )
+            self._set_status(f"Local research engine started for {run_id}.")
 
     def select_run(self, run: Any) -> None:
         self._set_selected_run(run, reset_payload_state=True)
@@ -129,7 +172,19 @@ class ResearchWindow(Vertical):
         run_id = self._selected_run_id()
         updated = await self.controller.resume_run(self.current_source, run_id)
         self._set_selected_run(updated, reset_payload_state=False)
+        if self.current_source == "local":
+            status = self._record_field(updated, "status")
+            if status not in {"completed", "failed", "cancelled"}:
+                self._start_local_engine(run_id)
         return updated
+
+    @staticmethod
+    def _record_field(record: Any, field: str, default: str = "") -> str:
+        if isinstance(record, dict):
+            value = record.get(field)
+        else:
+            value = getattr(record, field, None)
+        return str(value) if value is not None else default
 
     async def cancel_selected_run(self) -> Any:
         run_id = self._selected_run_id()

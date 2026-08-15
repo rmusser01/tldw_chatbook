@@ -652,6 +652,69 @@ class LocalResearchService:
             fields["progress_message"] = error_msg
         return self._update_run_state(run_id, "failed", **fields)
 
+    def update_run_progress(
+        self,
+        run_id: str,
+        *,
+        phase: str | None = None,
+        progress_percent: float | None = None,
+        progress_message: str | None = None,
+        status: str | None = None,
+        control_state: str | None = None,
+        event: str = "progress",
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Engine-facing non-terminal transition (task-16322): update phase/
+       progress (and optionally status/control when a draft is started)
+        while recording an event with the same data the UI will stream.
+
+        Terminal and control transitions (pause/resume/cancel/complete/fail)
+        stay on their dedicated methods; this one never dispatches terminal
+        notifications because it never sets a terminal status.
+        """
+        if self._uses_external_db:
+            fields: dict[str, Any] = {}
+            if phase is not None:
+                fields["phase"] = phase
+            if progress_percent is not None:
+                fields["progress_percent"] = progress_percent
+            if progress_message is not None:
+                fields["progress_message"] = progress_message
+            if status is not None:
+                fields["status"] = status
+            if control_state is not None:
+                fields["control_state"] = control_state
+            return self._as_local_run(self.db.update_run_state(run_id, **fields))
+        fields = {
+            key: value
+            for key, value in (
+                ("phase", phase),
+                ("progress_percent", progress_percent),
+                ("progress_message", progress_message),
+                ("status", status),
+                ("control_state", control_state),
+            )
+            if value is not None
+        }
+        row = self._require_one("research_runs", run_id, "research run")
+        updates = dict(fields)
+        updates["updated_at"] = self._now()
+        updates["version"] = int(row["version"]) + 1
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        event_data = dict(data or {})
+        for key in ("phase", "progress_percent"):
+            if fields.get(key) is not None:
+                event_data.setdefault(key, fields[key])
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE research_runs SET {assignments} WHERE id = ?",
+                (*updates.values(), run_id),
+            )
+            self._record_event(conn, run_id, event, event_data or None)
+        return self._normalize_run(
+            self._require_one("research_runs", run_id, "research run")
+        )
+
     def _dispatch_terminal_run_notification(self, run: dict[str, Any]) -> None:
         status = str(run.get("status") or "").strip()
         if status not in {"completed", "failed", "cancelled"}:
