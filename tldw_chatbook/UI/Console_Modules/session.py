@@ -849,7 +849,7 @@ class ConsoleSessionController:
                 manual_expression_key=manual_expression_key,
             )
         except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
-            logger.debug(
+            logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
                 "Console reaction resolution failed for actor_kind={} actor_id={} "
                 "error_type={}",
                 actor_kind,
@@ -872,7 +872,7 @@ class ConsoleSessionController:
                 actor_kind, actor_id
             )
         except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
-            logger.debug(
+            logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
                 "Console reaction inventory failed for actor_kind={} actor_id={} "
                 "error_type={}",
                 actor_kind,

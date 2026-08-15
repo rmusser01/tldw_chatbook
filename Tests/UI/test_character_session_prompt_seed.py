@@ -217,7 +217,9 @@ def _character_screen(monkeypatch, card: dict) -> ChatScreen:
         screen, "_focus_console_composer_if_needed", lambda **_kwargs: None
     )
     monkeypatch.setattr(
-        screen, "_refresh_active_character_avatar_if_scope_changed", AsyncMock()
+        screen._character,
+        "_refresh_active_character_avatar_if_scope_changed",
+        AsyncMock(),
     )
     monkeypatch.setattr(screen, "_sync_console_temporary_chip", lambda: None)
     return screen
