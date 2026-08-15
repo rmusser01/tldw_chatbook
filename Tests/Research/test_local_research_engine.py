@@ -325,10 +325,19 @@ def _iter_pipeline(question):
 
     async def analyze_fn(wsr, sqd, params, cancel_event=None):
         state["analyze"] += 1
-        state["merged_results"] = list(wsr.get("results") or [])
+        merged = list(wsr.get("results") or [])
+        state["merged_results"] = merged
         return {
-            "final_answer": {"text": f"Round {state['analyze']} answer", "evidence": [],
-                             "confidence": 0.5, "chunks": []},
+            "final_answer": {
+                "text": f"Round {state['analyze']} answer",
+                "evidence": [
+                    {"id": i, "url": r.get("url"), "title": r.get("title"),
+                     "content": r.get("content"), "original_content": r.get("content"),
+                     "reasoning": "", "chunk_index": 1}
+                    for i, r in enumerate(merged, 1)
+                ],
+                "confidence": 0.5, "chunks": [],
+            },
             "relevant_results": {},
             "web_search_results_dict": wsr,
         }
@@ -558,3 +567,60 @@ def test_follow_up_without_claims_artifact_never_calls_the_llm():
 
     assert result["status"] == "insufficient_evidence"
     assert called["n"] == 0
+
+
+# --- academic lane into the evidence pool (task-16326) --------------------------
+
+def test_engine_merges_academic_papers_with_doi_dedup():
+    service = _make_service()
+    run = service.launch_run(query="Papers question", limits_json={"max_iterations": 2})
+    search_fn, analyze_fn, state = _iter_pipeline("Papers question")
+    paper_rounds = [
+        [
+            {"title": "Paper v1", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://doi.org/10.1/x", "source": "arxiv"},
+            {"title": "Paper v1 preprint", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://other.example/x", "source": "semantic_scholar"},
+        ],
+        [
+            {"title": "Paper v1 again", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://doi.org/10.1/x", "source": "arxiv"},
+            {"title": "Paper v2", "abstract": "abs2", "doi": "10.2/y",
+             "url": "https://doi.org/10.2/y", "source": "arxiv"},
+        ],
+    ]
+
+    async def paper_search_fn(query):
+        return paper_rounds.pop(0) if paper_rounds else []
+
+    gap_calls = {"n": 0}
+
+    async def gap_fn(context):
+        gap_calls["n"] += 1
+        return ["gap 1"] if gap_calls["n"] == 1 else []
+
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_search_fn,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    urls = [r["url"] for r in state["merged_results"]]
+    # r1 (web round 1) + paper v1 ONCE (deduped across providers in round 1
+    # and across rounds) + r2 (web round 2) + paper v2 (new DOI round 2).
+    assert urls == [
+        "https://r1.example/",
+        "https://doi.org/10.1/x",
+        "https://r2.example/",
+        "https://doi.org/10.2/y",
+    ]
+    sources = _artifact_content(service.get_bundle(run["id"]), "sources.json")
+    paper_entries = [
+        e for e in sources["evidence"] if str(e.get("url", "")).startswith("https://doi.org/")
+    ]
+    assert len(paper_entries) == 2

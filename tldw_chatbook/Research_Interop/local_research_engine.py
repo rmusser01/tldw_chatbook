@@ -26,6 +26,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from .local_research_service import LocalResearchService
+from .academic_providers import papers_to_evidence
 from .research_budget import BudgetLedger, ResearchLimitExceeded
 
 __all__ = ["LocalResearchEngine", "TERMINAL_RUN_STATUSES"]
@@ -63,12 +64,17 @@ class LocalResearchEngine:
         analyze_fn: AnalyzeFn | None = None,
         gap_fn: "GapFn | None" = None,
         search_params: dict[str, Any] | None = None,
+        paper_search_fn: "Callable[[str], Any] | None" = None,
     ) -> None:
         self.service = local_service
         self.search_fn = search_fn or self._default_search_fn
         self.analyze_fn = analyze_fn or self._default_analyze_fn
         self.gap_fn = gap_fn or self._default_gap_fn
         self.search_params = dict(search_params or {})
+        # Optional academic lane (task-16326): returns normalized paper
+        # records for a query; papers join the SAME evidence pool as web
+        # results with DOI-level dedup. None keeps the run web-only.
+        self.paper_search_fn = paper_search_fn
 
     @staticmethod
     def _default_search_fn(question: str, params: dict[str, Any]) -> Any:
@@ -302,6 +308,7 @@ class LocalResearchEngine:
         merged_results: list[dict[str, Any]] = []
         merged_warnings: list[str] = []
         seen_urls: set[str] = set()
+        seen_dois: set[str] = set()
         all_sub_questions: list[str] = []
         remaining_gaps: list[str] = []
         final_answer: dict[str, Any] = {}
@@ -327,6 +334,24 @@ class LocalResearchEngine:
             )
             all_sub_questions.extend(round_sub_questions)
             merged_warnings.extend(round_warnings)
+            if self.paper_search_fn is not None:
+                # Academic lane: papers for this round's queries join the
+                # same evidence pool, deduped by DOI across providers and
+                # rounds (task-16326). A provider error is a warning, not a
+                # run failure -- the web lane already collected.
+                for query in round_queries:
+                    try:
+                        papers = await self._maybe_await(self.paper_search_fn(query))
+                    except Exception as exc:  # noqa: BLE001 - lane degrades
+                        merged_warnings.append(f"academic search failed: {exc}")
+                        continue
+                    for paper in papers_to_evidence(list(papers or [])):
+                        doi = paper.get("metadata", {}).get("doi")
+                        if doi:
+                            if doi in seen_dois:
+                                continue
+                            seen_dois.add(doi)
+                        round_results.append(paper)
             for result in round_results:
                 url = str(result.get("url") or "")
                 if url and url in seen_urls:
