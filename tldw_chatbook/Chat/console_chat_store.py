@@ -4501,6 +4501,14 @@ class ConsoleChatStore:
         once written, later flushes are no-ops. Never raises.
         """
         try:
+            # LOAD-BEARING invariant (final review): this write is TERMINAL.
+            # The row snapshots ``self._trajectory_timing`` at write time and
+            # the ``_trajectory_written_ids`` guard below makes every later
+            # flush a no-op. ``completed_at``/``model``/``provider`` therefore
+            # land ONLY if usage/timing is attached (via
+            # ``record_trajectory_timing``) BEFORE the terminal persist mark.
+            # A future path that persists first will silently lose those
+            # facts -- there is no update, only a dropped write.
             if message.id in self._trajectory_written_ids:
                 return
             if message.role not in (

@@ -1172,7 +1172,12 @@ def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectoryS
     if db is not None:
         try:
             messages = list(
-                db.get_messages_for_conversation(conversation_id, limit=1_000_000)
+                db.get_messages_for_conversation(
+                    conversation_id,
+                    limit=1_000_000,
+                    # Text-only projection: skip the image BLOB I/O (task-260).
+                    include_image_data=False,
+                )
             )
         except Exception:  # noqa: BLE001 - launch must degrade, not fail
             messages = []
@@ -2986,7 +2991,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def action_open_trajectory_view(self) -> None:
-        """Open the trajectory ledger for the active Console conversation (``j``).
+        """Open the trajectory ledger for the active Console conversation (``y``).
 
         task-5: the snapshot is built off the UI thread (DB reads); the
         screen is pushed with live tail-follow callables wired to the

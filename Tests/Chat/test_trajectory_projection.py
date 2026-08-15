@@ -334,6 +334,29 @@ def test_soft_deleted_messages_excluded_but_chain_traversed_through() -> None:
     assert ids == ["u1", "u2", "a2"]
 
 
+def test_mid_chain_gap_in_inputs_renders_all_not_partial_path() -> None:
+    # a1 is ABSENT from inputs mid-chain -- what the real DB seam produces
+    # for a hard-deleted row (get_messages_for_conversation filters
+    # deleted=0), unlike the soft-deleted node above which stays in the
+    # map. The walk cannot know which pre-gap messages are on the path,
+    # so it must yield "unknown" and the snapshot must degrade to
+    # render-all instead of silently rendering only post-gap messages.
+    rows, leaf = linear_chain(
+        ("u1", "user"), ("a1", "assistant"), ("u2", "user"), ("a2", "assistant")
+    )
+    rows = [row for row in rows if row["id"] != "a1"]
+    traj_rows = [
+        TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
+        TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
+        TrajRow("u2", turn_id="t2", seq=3, event_kind="user"),
+        TrajRow("a2", turn_id="t2", seq=4, event_kind="assistant"),
+    ]
+    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    # Render-all: u1 still appears (a partial-path walk would drop it).
+    ids = [r.message_id for t in snapshot.turns for r in t.records]
+    assert ids == ["u1", "u2", "a2"]
+
+
 def test_off_path_tree_siblings_surface_as_variants_not_rows() -> None:
     # u1 has two assistant children: a1 (active) and a1b (superseded fork).
     rows = [

@@ -438,13 +438,19 @@ def _active_path_ids(
     Traversal walks the FULL map (soft-deleted nodes included) so a
     deleted mid-chain node does not hide its ancestors; a visited-set
     guards against malformed cyclic chains (mirrors the store's walk).
+    A walk that ends at a non-root gap -- an ancestor id missing from
+    the input map (the DB seam filters ``deleted = 0``) -- yields
+    ``None`` too: the true path is unknowable, so the caller degrades
+    to render-all instead of silently rendering only post-gap messages.
     """
     if not leaf or leaf not in by_id:
         return None
     chain: list[str] = []
     seen: set[str] = set()
     current: str | None = leaf
-    while current is not None and current in by_id and current not in seen:
+    while current is not None and current not in seen:
+        if current not in by_id:
+            return None
         seen.add(current)
         chain.append(current)
         current = by_id[current].parent
