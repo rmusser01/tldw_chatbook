@@ -38,6 +38,12 @@ _MEMBERSHIP_ID_INSERT_ATTEMPTS = 3
 _TREE_SEARCH_NOTE_LIMIT = 250
 _TREE_SEARCH_FOLDER_LIMIT = 500
 _TREE_SEARCH_MEMBERSHIP_LIMIT = 1000
+_FOLDER_PATH_SEGMENT_LIMIT = 64
+_CALLER_FOLDER_ID_MAX_LENGTH = 256
+_ASCII_ALNUM = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+_CALLER_FOLDER_ID_CHARACTERS = _ASCII_ALNUM | frozenset("_.:-")
 _MEMBERSHIP_COLUMNS = (
     "id, folder_id, note_id, ownership, owner_id, owner_active, version"
 )
@@ -52,12 +58,19 @@ class LocalNoteFolderRepository:
             raise TypeError("db must be a CharactersRAGDB instance")
         self.db = db
 
-    def create_folder(self, *, name: str, parent_id: str | None) -> NoteFolder:
+    def create_folder(
+        self,
+        *,
+        name: str,
+        parent_id: str | None,
+        folder_id: str | None = None,
+    ) -> NoteFolder:
         """Create an active folder beneath an active parent.
 
         Args:
             name: User-visible name for the new folder.
             parent_id: Active parent folder identifier, or None for a root.
+            folder_id: Optional caller-owned opaque identifier.
 
         Returns:
             The newly created folder.
@@ -67,8 +80,11 @@ class LocalNoteFolderRepository:
             FolderValidationError: If the name or parent cannot be used.
             FolderConflictError: If database contention prevents the mutation.
         """
+        if folder_id is None:
+            selected_folder_id = str(uuid.uuid4())
+        else:
+            selected_folder_id = validate_deterministic_folder_id(folder_id)
         normalized = normalize_folder_name(name)
-        folder_id = str(uuid.uuid4())
         now = _utc_timestamp()
         normalized_path: str | None = None
 
@@ -102,7 +118,7 @@ class LocalNoteFolderRepository:
                     ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
                     """,
                     (
-                        folder_id,
+                        selected_folder_id,
                         parent_id,
                         normalized.display,
                         normalized.key,
@@ -114,7 +130,7 @@ class LocalNoteFolderRepository:
                 )
                 inserted = cursor.execute(
                     f"SELECT {_FOLDER_COLUMNS} FROM note_folders WHERE id = ?",
-                    (folder_id,),
+                    (selected_folder_id,),
                 ).fetchone()
                 if inserted is None:  # pragma: no cover - SQLite guarantees this
                     raise FolderValidationError("Created folder could not be read.")
@@ -134,6 +150,41 @@ class LocalNoteFolderRepository:
             _raise_mutation_operational_error(exc)
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
+
+    def get_folder_by_path(self, folder_segments: Iterable[str]) -> NoteFolder | None:
+        """Return one active folder by an exact normalized segment path."""
+        if isinstance(folder_segments, (str, bytes)):
+            raise FolderValidationError(
+                "folder_segments must be a collection of path segments."
+            )
+        try:
+            iterator = iter(folder_segments)
+        except TypeError as exc:
+            raise FolderValidationError(
+                "folder_segments must be a collection of path segments."
+            ) from exc
+
+        normalized_path = ""
+        count = 0
+        for count, segment in enumerate(iterator, start=1):
+            if count > _FOLDER_PATH_SEGMENT_LIMIT:
+                raise FolderValidationError(
+                    "folder_segments exceeds the allowed range."
+                )
+            normalized = normalize_folder_name(segment)
+            normalized_path = join_normalized_folder_path(
+                normalized_path, normalized.key
+            )
+        if count == 0:
+            raise FolderValidationError("folder_segments must identify a folder.")
+
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
+                "WHERE normalized_path = ? AND deleted = 0",
+                (normalized_path,),
+            ).fetchone()
+        return _folder_from_row(row) if row is not None else None
 
     def get_folder(
         self, folder_id: str, *, include_deleted: bool = False
@@ -439,11 +490,17 @@ class LocalNoteFolderRepository:
         )
 
     def attach_manual(
-        self, *, folder_id: str, note_id: str
+        self,
+        *,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int | None = None,
     ) -> NoteFolderMembership:
         """Attach one user-owned placement, reviving its latest history."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_folder_id(note_id, field="note_id")
+        if expected_note_version is not None:
+            _validate_expected_version(expected_note_version)
         try:
             with self.db.transaction() as cursor, _mutation_savepoint(cursor):
                 _require_active_membership_targets(
@@ -454,6 +511,7 @@ class LocalNoteFolderRepository:
                     folder_id=folder_id,
                     note_id=note_id,
                     now=_utc_timestamp(),
+                    expected_note_version=expected_note_version,
                 )
                 return _membership_from_row(row)
         except sqlite3.IntegrityError as exc:
@@ -1490,18 +1548,49 @@ def _insert_membership(
     ownership: str,
     owner_id: str,
     now: str,
+    expected_note_version: int | None = None,
 ) -> sqlite3.Row:
     membership_id = ""
     for attempt in range(_MEMBERSHIP_ID_INSERT_ATTEMPTS):
         membership_id = str(uuid.uuid4())
         try:
-            cursor.execute(
-                "INSERT INTO note_folder_memberships("
-                "id, folder_id, note_id, ownership, owner_id, owner_active, "
-                "version, deleted, created_at, modified_at"
-                ") VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?, ?)",
-                (membership_id, folder_id, note_id, ownership, owner_id, now, now),
-            )
+            if expected_note_version is None:
+                cursor.execute(
+                    "INSERT INTO note_folder_memberships("
+                    "id, folder_id, note_id, ownership, owner_id, owner_active, "
+                    "version, deleted, created_at, modified_at"
+                    ") VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?, ?)",
+                    (
+                        membership_id,
+                        folder_id,
+                        note_id,
+                        ownership,
+                        owner_id,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO note_folder_memberships("
+                    "id, folder_id, note_id, ownership, owner_id, owner_active, "
+                    "version, deleted, created_at, modified_at"
+                    ") SELECT ?, ?, ?, ?, ?, 1, 1, 0, ?, ? "
+                    "WHERE EXISTS (SELECT 1 FROM notes "
+                    "WHERE id = ? AND deleted = 0 AND version = ?)",
+                    (
+                        membership_id,
+                        folder_id,
+                        note_id,
+                        ownership,
+                        owner_id,
+                        now,
+                        now,
+                        note_id,
+                        expected_note_version,
+                    ),
+                )
+                _require_one_membership_update(cursor)
             break
         except sqlite3.IntegrityError as exc:
             if not _is_membership_id_collision(exc):
@@ -1520,7 +1609,12 @@ def _insert_membership(
 
 
 def _ensure_manual_membership(
-    cursor: sqlite3.Cursor, *, folder_id: str, note_id: str, now: str
+    cursor: sqlite3.Cursor,
+    *,
+    folder_id: str,
+    note_id: str,
+    now: str,
+    expected_note_version: int | None = None,
 ) -> sqlite3.Row:
     active = cursor.execute(
         f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships "
@@ -1529,6 +1623,15 @@ def _ensure_manual_membership(
         (folder_id, note_id),
     ).fetchone()
     if active is not None:
+        if expected_note_version is not None:
+            cursor.execute(
+                "UPDATE note_folder_memberships SET owner_active = owner_active "
+                "WHERE id = ? AND deleted = 0 AND ownership = 'manual' "
+                "AND owner_id = '' AND EXISTS (SELECT 1 FROM notes "
+                "WHERE id = ? AND deleted = 0 AND version = ?)",
+                (active["id"], note_id, expected_note_version),
+            )
+            _require_one_membership_update(cursor)
         return active
     deleted = cursor.execute(
         "SELECT id, version FROM note_folder_memberships "
@@ -1545,14 +1648,32 @@ def _ensure_manual_membership(
             ownership="manual",
             owner_id="",
             now=now,
+            expected_note_version=expected_note_version,
         )
-    cursor.execute(
-        "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
-        "version = version + 1, modified_at = ? "
-        "WHERE id = ? AND version = ? AND deleted = 1 "
-        "AND ownership = 'manual' AND owner_id = ''",
-        (now, deleted["id"], deleted["version"]),
-    )
+    if expected_note_version is None:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
+            "version = version + 1, modified_at = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1 "
+            "AND ownership = 'manual' AND owner_id = ''",
+            (now, deleted["id"], deleted["version"]),
+        )
+    else:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
+            "version = version + 1, modified_at = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1 "
+            "AND ownership = 'manual' AND owner_id = '' "
+            "AND EXISTS (SELECT 1 FROM notes "
+            "WHERE id = ? AND deleted = 0 AND version = ?)",
+            (
+                now,
+                deleted["id"],
+                deleted["version"],
+                note_id,
+                expected_note_version,
+            ),
+        )
     _require_one_membership_update(cursor)
     row = cursor.execute(
         f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships WHERE id = ?",
@@ -1829,6 +1950,18 @@ def _validate_absolute_normalized_path(path: str) -> None:
 def _validate_folder_id(folder_id: object, *, field: str) -> None:
     if not isinstance(folder_id, str) or not folder_id:
         raise FolderValidationError(f"{field} must be a non-empty string.")
+
+
+def validate_deterministic_folder_id(folder_id: object) -> str:
+    """Validate and return one caller-owned deterministic folder identifier."""
+    if (
+        type(folder_id) is not str
+        or not 1 <= len(folder_id) <= _CALLER_FOLDER_ID_MAX_LENGTH
+        or folder_id[0] not in _ASCII_ALNUM
+        or any(character not in _CALLER_FOLDER_ID_CHARACTERS for character in folder_id)
+    ):
+        raise FolderValidationError("folder_id is invalid.")
+    return folder_id
 
 
 def _validate_expected_version(expected_version: object) -> None:

@@ -219,6 +219,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "The Notes library owns a per-user database parent.",
     ),
+    "notes.sync_state": SQLiteOwnerPolicy(
+        "tldw_chatbook/Notes/note_import_receipts",
+        _PRIVATE_FILE,
+        "Device-private import receipts and future lasting-sync state remain "
+        "profile-local and outside centralized backup.",
+    ),
     "notifications.client": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/client_notifications_db",
         _MEMORY,

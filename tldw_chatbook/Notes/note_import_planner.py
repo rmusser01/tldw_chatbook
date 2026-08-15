@@ -155,14 +155,10 @@ def _private_payload_fingerprint(
     canonical_payloads = [
         {
             "type": "parsed_note_payload",
-            "content": normalize("NFC", payload.content),
-            "keywords": [normalize("NFC", keyword) for keyword in payload.keywords],
-            "template_name": (
-                normalize("NFC", payload.template_name)
-                if payload.template_name is not None
-                else None
-            ),
-            "title": normalize("NFC", payload.title),
+            "content": payload.content,
+            "keywords": list(payload.keywords),
+            "template_name": payload.template_name,
+            "title": payload.title,
         }
         for payload in copied
     ]

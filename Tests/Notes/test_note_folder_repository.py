@@ -26,6 +26,10 @@ from tldw_chatbook.Notes.note_folder_repository import (
 )
 
 
+class _FolderIdSubclass(str):
+    pass
+
+
 @pytest.fixture
 def repository(tmp_path) -> Iterator[LocalNoteFolderRepository]:
     """Return a repository backed by the real ChaChaNotes SQLite database."""
@@ -111,6 +115,114 @@ def test_create_and_list_nested_folders(repository: LocalNoteFolderRepository) -
     assert page.folders == (plans,)
     assert plans.path == "/Work/Plans"
     assert plans.normalized_path == "/work/plans"
+
+
+@pytest.mark.parametrize(
+    "folder_id",
+    [
+        "00000000-0000-5000-8000-000000000001",
+        "a._:-Z9",
+        "a" + ("b" * 255),
+    ],
+)
+def test_create_folder_accepts_a_bounded_safe_deterministic_caller_id(
+    repository: LocalNoteFolderRepository, folder_id: str
+) -> None:
+    folder = repository.create_folder(
+        name="Imported", parent_id=None, folder_id=folder_id
+    )
+
+    assert folder.folder_id == folder_id
+
+
+@pytest.mark.parametrize(
+    "folder_id",
+    [
+        "",
+        7,
+        False,
+        " leading",
+        ".leading",
+        "-leading",
+        ":leading",
+        "a b",
+        "a/b",
+        "a\\b",
+        "a\x00b",
+        "a\x01b",
+        "a\tb",
+        "éclair",
+        "a" + ("b" * 256),
+        _FolderIdSubclass("valid-subclass"),
+    ],
+)
+def test_create_folder_rejects_malformed_caller_id_without_mutation(
+    repository: LocalNoteFolderRepository, folder_id: object
+) -> None:
+    before = _folder_rows(repository)
+
+    with pytest.raises(FolderValidationError) as caught:
+        repository.create_folder(
+            name="Private input",
+            parent_id=None,
+            folder_id=folder_id,  # type: ignore[arg-type]
+        )
+
+    assert _folder_rows(repository) == before
+    assert "Private input" not in str(caught.value)
+
+
+def test_create_folder_validates_caller_id_before_opening_a_transaction(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_transaction():
+        raise AssertionError("invalid caller ID reached the transaction boundary")
+
+    monkeypatch.setattr(repository.db, "transaction", forbidden_transaction)
+
+    with pytest.raises(FolderValidationError):
+        repository.create_folder(
+            name="Private input",
+            parent_id=None,
+            folder_id="invalid/path",
+        )
+
+
+def test_create_folder_without_caller_id_retains_uuid_behavior(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generated = uuid.UUID("00000000-0000-4000-8000-000000000009")
+    monkeypatch.setattr(folder_repository_module.uuid, "uuid4", lambda: generated)
+
+    folder = repository.create_folder(name="Generated", parent_id=None)
+
+    assert folder.folder_id == str(generated)
+
+
+def test_get_folder_by_path_uses_normalized_exact_segments(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    cafe = repository.create_folder(name="Café", parent_id=None)
+    ideas = repository.create_folder(name="Ideas", parent_id=cafe.folder_id)
+    repository.create_folder(name="Ideas Archive", parent_id=cafe.folder_id)
+
+    assert repository.get_folder_by_path(("Cafe\u0301", "ideas")) == ideas
+    assert repository.get_folder_by_path(("Cafe\u0301",)) == cafe
+    assert repository.get_folder_by_path(("Cafe\u0301", "idea")) is None
+    assert repository.get_folder_by_path(("Cafe\u0301", "ideas", "later")) is None
+
+
+def test_get_folder_by_path_excludes_deleted_folders(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    deleted = repository.create_folder(name="Deleted", parent_id=None)
+    repository.db.get_connection().execute(
+        "UPDATE note_folders SET deleted = 1 WHERE id = ?", (deleted.folder_id,)
+    )
+    repository.db.get_connection().commit()
+
+    assert repository.get_folder_by_path(("deleted",)) is None
 
 
 def test_create_rejects_unicode_equivalent_active_path(
@@ -1514,6 +1626,61 @@ def test_attach_manual_is_idempotent_and_revives_only_latest_history(
         ("manual-a", 4, 1),
         ("manual-b", 5, 0),
     ]
+
+
+def test_attach_manual_expected_note_version_guards_new_active_and_revived_rows(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Guarded", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    repository.db.get_connection().execute(
+        "UPDATE notes SET version = 2 WHERE id = ?",
+        (note_id,),
+    )
+    repository.db.get_connection().commit()
+
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == ()
+
+    created = repository.attach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_note_version=2,
+    )
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == (created,)
+
+    assert repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=created.version,
+    )
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == ()
+
+    revived = repository.attach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_note_version=2,
+    )
+    assert revived.membership_id == created.membership_id
+    assert revived.version == created.version + 2
 
 
 def test_attach_manual_retries_a_generated_membership_id_collision(

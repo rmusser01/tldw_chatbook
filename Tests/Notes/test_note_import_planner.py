@@ -2818,7 +2818,7 @@ def test_classify_import_batch_turns_parse_issues_into_skip_only_items(
         assert len(item.reason) <= _discovery_bounds().max_reason_length
 
 
-def test_private_payload_fingerprint_is_canonical_and_payload_sensitive() -> None:
+def test_private_payload_fingerprint_is_exact_and_payload_sensitive() -> None:
     first = ParsedNotePayload(
         title="Cafe\u0301",
         content="Body",
@@ -2840,7 +2840,7 @@ def test_private_payload_fingerprint_is_canonical_and_payload_sensitive() -> Non
 
     fingerprint = note_import_planner._private_payload_fingerprint((first,))
 
-    assert fingerprint == note_import_planner._private_payload_fingerprint(
+    assert fingerprint != note_import_planner._private_payload_fingerprint(
         [canonically_equivalent]
     )
     assert fingerprint != note_import_planner._private_payload_fingerprint((changed,))
