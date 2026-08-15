@@ -30,6 +30,7 @@ the_calling_thread` pins.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import threading
 import time
@@ -42,11 +43,16 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Scheduling.scheduler.handlers.watchlist_check_handler import (
     WatchlistCheckHandler,
 )
+from tldw_chatbook.Subscriptions import monitoring_engine
 from tldw_chatbook.Subscriptions.db_offload import run_db_off_loop
 from tldw_chatbook.Subscriptions.local_watchlists_service import (
     LocalWatchlistsService,
 )
-from tldw_chatbook.Subscriptions.monitoring_engine import FeedMonitor
+from tldw_chatbook.Subscriptions.monitoring_engine import (
+    ContentExtractor,
+    FeedMonitor,
+    URLMonitor,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -88,6 +94,16 @@ def _serve(monkeypatch, body: str, *, content_type: str) -> list[str]:
         fake_guarded,
     )
     return fetched
+
+
+def _serve_in_order(monkeypatch, bodies: list[str]) -> None:
+    """Serve one HTML body per request from the real fetch seam."""
+    remaining = list(bodies)
+
+    async def fake_guarded(url, *, client, max_bytes, **kwargs):
+        return _response(remaining.pop(0), url, content_type="text/html")
+
+    monkeypatch.setattr(monitoring_engine, "guarded_fetch_httpx_async", fake_guarded)
 
 
 def _add_due_source(db: SubscriptionsDB, **kwargs) -> int:
@@ -354,6 +370,376 @@ async def test_the_feed_parse_runs_off_the_event_loop_thread(
         "the feed body parse must run under asyncio.to_thread, not inline on "
         "the event loop"
     )
+
+
+@pytest.mark.asyncio
+async def test_url_html_extraction_runs_off_the_event_loop(monkeypatch):
+    """URL HTML parsing must not block the event-loop thread."""
+    body = "<html><body><article>Hello <b>watchlist</b></article></body></html>"
+    _serve(monkeypatch, body, content_type="text/html")
+    real_extract = ContentExtractor.extract_text_from_html
+    extraction_threads: list[int] = []
+
+    def recording_extract(html, ignore_selectors=None):
+        extraction_threads.append(threading.get_ident())
+        return real_extract(html, ignore_selectors)
+
+    monkeypatch.setattr(ContentExtractor, "extract_text_from_html", recording_extract)
+    loop_thread = threading.get_ident()
+
+    content = await URLMonitor(SubscriptionsDB(":memory:", "test"))._fetch_url_content(
+        {
+            "source": "https://example.com/article",
+            "extraction_method": "auto",
+        }
+    )
+
+    assert content["text"] == "Hello watchlist"
+    assert extraction_threads, "the real HTML extractor must have run"
+    assert all(thread_id != loop_thread for thread_id in extraction_threads), (
+        "URL HTML extraction must run under asyncio.to_thread, not inline on "
+        "the event loop"
+    )
+
+
+@pytest.mark.asyncio
+async def test_changed_item_cpu_work_runs_off_the_event_loop_without_changing_semantics(
+    tmp_path, monkeypatch
+):
+    """Percentage and significant-change details are worker-thread CPU work."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+<p>Extra details.</p>
+</body></html>"""
+    previous_text = "Alpha sentence. Shared context."
+    current_text = "Beta sentence. Shared context. Extra details."
+
+    real_percentage = ContentExtractor.calculate_change_percentage
+    real_segment = monitoring_engine._segment_for_diff
+    real_build = monitoring_engine.build_change_diff
+    real_added_removed = monitoring_engine.added_and_removed_text
+    real_classify = monitoring_engine.classify_change_type
+    expected_percentage = real_percentage(previous_text, current_text)
+    old_segments = real_segment(previous_text)
+    new_segments = real_segment(current_text)
+    expected_diff, expected_summary = real_build(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    expected_added, expected_removed = real_added_removed(
+        previous_text,
+        current_text,
+        old_segments=old_segments,
+        new_segments=new_segments,
+    )
+    expected_type = real_classify(previous_text, current_text)
+
+    calls: dict[str, list[int]] = {
+        "percentage": [],
+        "segment": [],
+        "build": [],
+        "added_removed": [],
+        "classify": [],
+    }
+
+    def record(name, function):
+        def wrapper(*args, **kwargs):
+            calls[name].append(threading.get_ident())
+            return function(*args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(
+        ContentExtractor,
+        "calculate_change_percentage",
+        staticmethod(record("percentage", real_percentage)),
+    )
+    monkeypatch.setattr(
+        monitoring_engine, "_segment_for_diff", record("segment", real_segment)
+    )
+    monkeypatch.setattr(
+        monitoring_engine, "build_change_diff", record("build", real_build)
+    )
+    monkeypatch.setattr(
+        monitoring_engine,
+        "added_and_removed_text",
+        record("added_removed", real_added_removed),
+    )
+    monkeypatch.setattr(
+        monitoring_engine, "classify_change_type", record("classify", real_classify)
+    )
+
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Changed page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+    loop_thread = threading.get_ident()
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    item, disposition = await monitor.check_url(subscription)
+
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+    assert item is not None, "the changed page must produce a real item"
+    assert disposition["kind"] == "changed"
+    assert item["type"] == "url_change"
+    assert item["content_kind"] == "change"
+    assert item["content_format"] == "diff"
+    assert item["change_type"] == expected_type == "content"
+    assert item["change_percentage"] == pytest.approx(expected_percentage * 100.0)
+    assert item["content"] == expected_diff
+    assert item["diff_summary"] == expected_summary
+    assert item[monitoring_engine.RULE_MATCH_TEXT_KEY] == current_text
+    assert item[monitoring_engine.RULE_MATCH_ADDED_TEXT_KEY] == expected_added
+    assert item[monitoring_engine.RULE_MATCH_REMOVED_TEXT_KEY] == expected_removed
+
+    snapshots = db.conn.execute(
+        "SELECT content_hash, extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert [(row["extracted_content"], row["content_hash"]) for row in snapshots] == [
+        (previous_text, ContentExtractor.calculate_content_hash(previous_text)),
+        (current_text, ContentExtractor.calculate_content_hash(current_text)),
+    ]
+
+    assert len(calls["percentage"]) == 1
+    assert calls["percentage"][0] != loop_thread
+    assert len(calls["segment"]) == 2
+    assert len(calls["build"]) == 1
+    assert len(calls["added_removed"]) == 1
+    assert len(calls["classify"]) == 1
+    for name in ("segment", "build", "added_removed", "classify"):
+        assert all(thread_id != loop_thread for thread_id in calls[name]), (
+            f"{name} must run inside the grouped worker-thread comparison"
+        )
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_cpu_work_stops_before_significant_change_details(
+    tmp_path, monkeypatch
+):
+    """A withheld change offloads its ratio but never builds diff evidence."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    previous_text = "Alpha sentence. Shared context."
+    current_text = "Beta sentence. Shared context."
+    real_percentage = ContentExtractor.calculate_change_percentage
+    actual_ratio = real_percentage(previous_text, current_text)
+    threshold = actual_ratio + 0.1
+    assert threshold < 1.0
+
+    percentage_threads: list[int] = []
+
+    def recording_percentage(old_content, new_content):
+        percentage_threads.append(threading.get_ident())
+        return real_percentage(old_content, new_content)
+
+    grouped_calls: list[int] = []
+
+    def significant_details_must_not_run(*args, **kwargs):
+        grouped_calls.append(threading.get_ident())
+        pytest.fail("below-threshold changes must not build significant details")
+
+    monkeypatch.setattr(
+        ContentExtractor,
+        "calculate_change_percentage",
+        staticmethod(recording_percentage),
+    )
+    monkeypatch.setattr(
+        monitoring_engine,
+        "_build_significant_change_details",
+        significant_details_must_not_run,
+        raising=False,
+    )
+
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Withheld page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=threshold,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+    loop_thread = threading.get_ident()
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    item, disposition = await monitor.check_url(subscription)
+
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+    assert item is None
+    assert disposition["kind"] == "withheld_below_threshold"
+    assert disposition["reason"] == "below_change_threshold"
+    assert disposition["withheld_percentage"] == pytest.approx(actual_ratio * 100.0)
+    assert len(percentage_threads) == 1
+    assert percentage_threads[0] != loop_thread
+    assert grouped_calls == []
+    snapshots = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert [row["extracted_content"] for row in snapshots] == [previous_text]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_change_worker_does_not_resume_check_or_mutate_state(
+    tmp_path, monkeypatch
+):
+    """Cancelling the await abandons a late worker result without failure."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Cancelled page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+
+    breaker = monitor.circuit_breakers[source_id]
+    success_calls: list[int] = []
+    real_record_success = breaker.record_success
+
+    def recording_success() -> None:
+        success_calls.append(threading.get_ident())
+        real_record_success()
+
+    monkeypatch.setattr(breaker, "record_success", recording_success)
+    real_details = monitoring_engine._build_significant_change_details
+    worker_entered = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+    worker_threads: list[int] = []
+
+    def blocked_details(previous_text, current_text):
+        worker_threads.append(threading.get_ident())
+        worker_entered.set()
+        try:
+            release_worker.wait()
+            return real_details(previous_text, current_text)
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(
+        monitoring_engine, "_build_significant_change_details", blocked_details
+    )
+    loop_thread = threading.get_ident()
+    check_task = asyncio.create_task(monitor.check_url(subscription))
+
+    try:
+        assert await asyncio.to_thread(worker_entered.wait, 5.0)
+        check_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await check_task
+    finally:
+        release_worker.set()
+        assert await asyncio.to_thread(worker_finished.wait, 5.0)
+
+    snapshots = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert len(snapshots) == 1
+    assert snapshots[0]["extracted_content"] == "Alpha sentence. Shared context."
+    assert breaker.failure_count == 0
+    assert success_calls == []
+    assert check_task.cancelled()
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
+
+
+@pytest.mark.asyncio
+async def test_failing_change_worker_propagates_and_records_breaker_failure(
+    tmp_path, monkeypatch
+):
+    """A grouped-worker exception propagates through the existing failure path."""
+    before_html = """<html><body>
+<p>Alpha sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    after_html = """<html><body>
+<p>Beta sentence.</p>
+<p>Shared context.</p>
+</body></html>"""
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    source_id = db.add_subscription(
+        name="Failing page",
+        type="url",
+        source="https://example.com/page",
+        change_threshold=0.0,
+    )
+    subscription = db.get_subscription(source_id)
+    _serve_in_order(monkeypatch, [before_html, after_html])
+    monitor = URLMonitor(db)
+
+    first_item, first_disposition = await monitor.check_url(subscription)
+    assert first_item is None
+    assert first_disposition["kind"] == "baseline_stored"
+
+    class SignificantDetailsError(RuntimeError):
+        pass
+
+    worker_threads: list[int] = []
+
+    def failing_details(_previous_text, _current_text):
+        worker_threads.append(threading.get_ident())
+        raise SignificantDetailsError("significant details failed")
+
+    monkeypatch.setattr(
+        monitoring_engine, "_build_significant_change_details", failing_details
+    )
+    loop_thread = threading.get_ident()
+
+    with pytest.raises(SignificantDetailsError, match="significant details failed"):
+        await monitor.check_url(subscription)
+
+    snapshots = db.conn.execute(
+        "SELECT extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id",
+        (source_id,),
+    ).fetchall()
+    assert len(snapshots) == 1
+    assert snapshots[0]["extracted_content"] == "Alpha sentence. Shared context."
+    assert monitor.circuit_breakers[source_id].failure_count == 1
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
 
 
 @pytest.mark.asyncio

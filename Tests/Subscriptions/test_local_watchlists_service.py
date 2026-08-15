@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from inspect import isawaitable
 from types import SimpleNamespace
 
@@ -11,6 +12,8 @@ from tldw_chatbook.Notifications import (
     NotificationDispatchService,
 )
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Subscriptions import monitoring_engine
+from tldw_chatbook.Subscriptions.monitoring_engine import ContentExtractor
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
 
@@ -243,6 +246,152 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
     assert updated["settings"]["extraction_rules"] == {
         "urls": ["https://example.com/c"]
     }
+
+
+@pytest.mark.asyncio
+async def test_url_list_offloads_cpu_work_for_every_url_in_order(tmp_path, monkeypatch):
+    urls = ["https://example.com/a", "https://example.com/b"]
+    bodies = {
+        "a:baseline": "<html><body><p>URL A baseline body.</p></body></html>",
+        "b:baseline": "<html><body><p>URL B baseline body.</p></body></html>",
+        "a:changed": "<html><body><p>URL A changed body.</p></body></html>",
+        "b:changed": "<html><body><p>URL B changed body.</p></body></html>",
+    }
+    text_markers = {
+        "URL A baseline body.": "a:baseline",
+        "URL B baseline body.": "b:baseline",
+        "URL A changed body.": "a:changed",
+        "URL B changed body.": "b:changed",
+    }
+    phase = "baseline"
+    calls: list[tuple[str, str, int]] = []
+
+    async def serve(url, **_kwargs):
+        marker = f"{url.rsplit('/', 1)[-1]}:{phase}"
+        calls.append(("fetch", marker, threading.get_ident()))
+        return SimpleNamespace(
+            status_code=200,
+            headers={"content-type": "text/html"},
+            text=bodies[marker],
+            final_url=url,
+            raise_for_status=lambda: None,
+        )
+
+    real_extract = ContentExtractor.extract_text_from_html
+    real_percentage = ContentExtractor.calculate_change_percentage
+    real_details = monitoring_engine._build_significant_change_details
+
+    def recording_extract(html, ignore_selectors=None):
+        marker = next(key for key, body in bodies.items() if body == html)
+        calls.append(("extract", marker, threading.get_ident()))
+        return real_extract(html, ignore_selectors)
+
+    def recording_percentage(old_content, new_content):
+        marker = f"{text_markers[old_content]}->{text_markers[new_content]}"
+        calls.append(("percentage", marker, threading.get_ident()))
+        return real_percentage(old_content, new_content)
+
+    def recording_details(previous_text, current_text):
+        marker = f"{text_markers[previous_text]}->{text_markers[current_text]}"
+        calls.append(("details", marker, threading.get_ident()))
+        return real_details(previous_text, current_text)
+
+    monkeypatch.setattr(monitoring_engine, "guarded_fetch_httpx_async", serve)
+    monkeypatch.setattr(
+        ContentExtractor,
+        "extract_text_from_html",
+        staticmethod(recording_extract),
+    )
+    monkeypatch.setattr(
+        ContentExtractor,
+        "calculate_change_percentage",
+        staticmethod(recording_percentage),
+    )
+    monkeypatch.setattr(
+        monitoring_engine,
+        "_build_significant_change_details",
+        recording_details,
+    )
+
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+    output_orders: list[list[str]] = []
+    real_apply_filters = service._apply_filters_and_alerts
+
+    def recording_apply_filters(items, filters, content_alert_rules, run_id):
+        output_orders.append([item["url"] for item in items])
+        return real_apply_filters(items, filters, content_alert_rules, run_id)
+
+    monkeypatch.setattr(service, "_apply_filters_and_alerts", recording_apply_filters)
+    source = await service.create_source(
+        {
+            "name": "Docs",
+            "source_type": "url_list",
+            "extraction_rules": {"urls": urls},
+            "change_threshold": 0.0,
+        }
+    )
+    loop_thread = threading.get_ident()
+
+    baseline_run = await service.launch_run(source_id=source["source_id"])
+    baseline = await service.execute_run(baseline_run["run_id"])
+    phase = "changed"
+    changed_run = await service.launch_run(source_id=source["source_id"])
+    changed = await service.execute_run(changed_run["run_id"])
+
+    expected_call_order = [
+        ("fetch", "a:baseline"),
+        ("extract", "a:baseline"),
+        ("fetch", "b:baseline"),
+        ("extract", "b:baseline"),
+        ("fetch", "a:changed"),
+        ("extract", "a:changed"),
+        ("percentage", "a:baseline->a:changed"),
+        ("details", "a:baseline->a:changed"),
+        ("fetch", "b:changed"),
+        ("extract", "b:changed"),
+        ("percentage", "b:baseline->b:changed"),
+        ("details", "b:baseline->b:changed"),
+    ]
+    assert [(kind, marker) for kind, marker, _thread in calls] == expected_call_order
+    assert all(
+        thread == loop_thread for kind, _marker, thread in calls if kind == "fetch"
+    )
+    assert all(
+        thread != loop_thread for kind, _marker, thread in calls if kind != "fetch"
+    )
+
+    assert baseline["stats"]["items_found"] == 0
+    assert baseline["stats"]["dispositions"]["baseline"] == 2
+    assert changed["status"] == "completed"
+    assert changed["stats"]["items_found"] == 2
+    assert changed["stats"]["items_ingested"] == 2
+    assert changed["stats"]["dispositions"] == {
+        "changed": 2,
+        "unchanged": 0,
+        "withheld": 0,
+        "baseline": 0,
+        "rebaselined": 0,
+        "error": 0,
+    }
+    assert output_orders == [[], urls]
+
+    snapshots = db.conn.execute(
+        "SELECT url, extracted_content FROM url_snapshots "
+        "WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert [(row["url"], row["extracted_content"]) for row in snapshots] == [
+        (urls[0], "URL A baseline body."),
+        (urls[1], "URL B baseline body."),
+        (urls[0], "URL A changed body."),
+        (urls[1], "URL B changed body."),
+    ]
+    stored_items = db.conn.execute(
+        "SELECT url FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
+        (source["source_id"],),
+    ).fetchall()
+    assert [row["url"] for row in stored_items] == urls
 
 
 @pytest.mark.asyncio
