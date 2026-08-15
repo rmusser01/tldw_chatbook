@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 
 VISUAL_IDENTITY_TABLES = {
@@ -142,6 +142,21 @@ def _table_sql(connection: sqlite3.Connection, table: str) -> str:
     return str(row[0])
 
 
+def _seed_v38_database(
+    path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[set[str], str]:
+    with monkeypatch.context() as v38:
+        v38.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 38)
+        seeded = CharactersRAGDB(path, client_id="v38-seed")
+        connection = seeded.get_connection()
+        assert _version(connection) == 38
+        tables = _tables(connection)
+        assert not (tables & VISUAL_IDENTITY_TABLES)
+        expression_table = _table_sql(connection, "character_expression_images")
+        seeded.close_connection()
+    return tables, expression_table
+
+
 def _assert_schema_contract(connection: sqlite3.Connection) -> None:
     visual_tables = {
         name for name in _tables(connection) if name.startswith("visual_identity_")
@@ -258,6 +273,27 @@ def _assert_required_version_and_active_binding_uniqueness(
             binding,
         )
 
+    deleted_binding = (*binding, "deleted")
+    connection.executemany(
+        """
+        INSERT INTO visual_identity_bindings(
+            owner_user_id, actor_kind, actor_id, pack_id, active_version_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (deleted_binding, deleted_binding),
+    )
+    deleted_count = connection.execute(
+        """
+        SELECT COUNT(*)
+          FROM visual_identity_bindings
+         WHERE owner_user_id = 0
+           AND actor_kind = 'character'
+           AND actor_id = '42'
+           AND status = 'deleted'
+        """
+    ).fetchone()[0]
+    assert deleted_count == 2
+
 
 @pytest.mark.parametrize("construction", ["upgrade_v38", "fresh"])
 def test_visual_identity_schema_is_installed_by_migration_and_fresh_construction(
@@ -270,17 +306,7 @@ def test_visual_identity_schema_is_installed_by_migration_and_fresh_construction
     expression_table_before: str | None = None
 
     if construction == "upgrade_v38":
-        with monkeypatch.context() as v38:
-            v38.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 38)
-            seeded = CharactersRAGDB(path, client_id="v38-seed")
-            connection = seeded.get_connection()
-            assert _version(connection) == 38
-            tables_before = _tables(connection)
-            assert not (tables_before & VISUAL_IDENTITY_TABLES)
-            expression_table_before = _table_sql(
-                connection, "character_expression_images"
-            )
-            seeded.close_connection()
+        tables_before, expression_table_before = _seed_v38_database(path, monkeypatch)
 
     db = CharactersRAGDB(path, client_id="v39-open")
     try:
@@ -296,3 +322,42 @@ def test_visual_identity_schema_is_installed_by_migration_and_fresh_construction
             )
     finally:
         db.close_connection()
+
+
+def test_v38_to_v39_failure_rolls_back_all_visual_identity_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "rollback.db"
+    _seed_v38_database(path, monkeypatch)
+    migration_path = (
+        Path(__file__).parents[2]
+        / "tldw_chatbook"
+        / "DB"
+        / "migrations"
+        / "chachanotes_v38_to_v39_visual_identity.sql"
+    )
+    original_read_text = Path.read_text
+
+    def read_text_with_invalid_v39_sql(path_to_read: Path, *args, **kwargs) -> str:
+        source = original_read_text(path_to_read, *args, **kwargs)
+        if path_to_read != migration_path:
+            return source
+        next_table = "\n\nCREATE TABLE visual_identity_pack_versions"
+        assert next_table in source
+        return source.replace(next_table, f"\n\nINVALID SQL;{next_table}", 1)
+
+    monkeypatch.setattr(Path, "read_text", read_text_with_invalid_v39_sql)
+
+    with pytest.raises(SchemaError, match=r"V38.*V39"):
+        CharactersRAGDB(path, client_id="failed-v39-open")
+
+    with sqlite3.connect(path) as connection:
+        version = connection.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (CharactersRAGDB._SCHEMA_NAME,),
+        ).fetchone()[0]
+        tables = _tables(connection)
+
+    assert version == 38
+    assert not (VISUAL_IDENTITY_TABLES & tables)
