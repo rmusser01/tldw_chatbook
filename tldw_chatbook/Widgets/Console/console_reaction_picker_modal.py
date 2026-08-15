@@ -14,6 +14,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.message import Message
 from textual.message_pump import MessagePump
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -23,6 +24,9 @@ RESULTS_CONTAINER_ID = "console-reaction-picker-results"
 PREVIEW_ID = "console-reaction-picker-preview"
 ROW_CLASS = "console-reaction-picker-row"
 ROW_HIGHLIGHTED_CLASS = "console-reaction-picker-row-highlighted"
+
+FILTER_DEBOUNCE_SECONDS = 0.2
+PREVIEW_DEBOUNCE_SECONDS = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +219,12 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._highlighted_index = 0
         self._row_ids: list[str] = []
         self._last_preview_key: str | None = None
+        self._filter_debounce_timer: Timer | None = None
+        self._pending_filter_query: str | None = None
+        self._filter_generation = 0
+        self._preview_debounce_timer: Timer | None = None
+        self._pending_preview_key: str | None = None
+        self._preview_generation = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-reaction-picker-modal"):
@@ -263,6 +273,9 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         await self._apply_filter("")
         self._focus_filter()
 
+    def on_unmount(self) -> None:
+        self._cancel_pending_updates()
+
     def on_resize(self, event: Any) -> None:
         self._set_responsive(event.size.width, event.size.height)
 
@@ -276,22 +289,64 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
             return
 
     @on(Input.Changed, f"#{FILTER_INPUT_ID}")
-    async def _filter_changed(self, event: Input.Changed) -> None:
+    def _filter_changed(self, event: Input.Changed) -> None:
         event.stop()
-        await self._apply_filter(event.value)
+        self._cancel_filter_debounce()
+        self._cancel_preview_debounce()
+        self._filter_generation += 1
+        token = self._filter_generation
+        query = event.value
+        self._pending_filter_query = query
+        self._filter_debounce_timer = self.set_timer(
+            FILTER_DEBOUNCE_SECONDS,
+            lambda: self._apply_pending_filter(query=query, token=token),
+        )
 
     @on(Input.Submitted, f"#{FILTER_INPUT_ID}")
-    def _filter_submitted(self, event: Input.Submitted) -> None:
+    async def _filter_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        await self._flush_pending_filter()
         self._select_highlighted()
 
-    def on_key(self, event: events.Key) -> None:
+    async def on_key(self, event: events.Key) -> None:
         if event.key == "down":
             event.stop()
+            await self._flush_pending_filter()
             self._move_highlight(1)
         elif event.key == "up":
             event.stop()
+            await self._flush_pending_filter()
             self._move_highlight(-1)
+
+    def _cancel_filter_debounce(self) -> None:
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+            self._filter_debounce_timer = None
+
+    async def _apply_pending_filter(self, *, query: str, token: int) -> None:
+        if (
+            not self.is_mounted
+            or token != self._filter_generation
+            or query != self._pending_filter_query
+        ):
+            return
+        try:
+            if self.query_one(f"#{FILTER_INPUT_ID}", Input).value != query:
+                return
+        except (NoMatches, QueryError):
+            return
+        self._filter_debounce_timer = None
+        await self._apply_filter(query)
+        if token == self._filter_generation and query == self._pending_filter_query:
+            self._pending_filter_query = None
+
+    async def _flush_pending_filter(self) -> None:
+        query = self._pending_filter_query
+        if query is None:
+            return
+        token = self._filter_generation
+        self._cancel_filter_debounce()
+        await self._apply_pending_filter(query=query, token=token)
 
     async def _apply_filter(self, query: str) -> None:
         self._filtered = filter_reaction_options(self._options, query)
@@ -365,8 +420,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         option = self._highlighted_option()
         self._sync_preview_metadata(option)
-        if option is not None:
-            self._request_preview(option)
+        if option is None:
+            self._cancel_preview_debounce()
+        else:
+            self._schedule_preview_request(option)
 
     def _scroll_highlighted_into_view(self, row_id: str) -> None:
         """Reveal the current metadata row after Textual finishes layout."""
@@ -421,6 +478,58 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._last_preview_key = option.expression_key
         self._emit(ReactionPreviewRequested(option))
 
+    def _schedule_preview_request(self, option: ReactionOption) -> None:
+        self._cancel_preview_debounce()
+        if option.expression_key == self._last_preview_key:
+            return
+        key = option.expression_key
+        token = self._preview_generation
+        self._pending_preview_key = key
+        self._preview_debounce_timer = self.set_timer(
+            PREVIEW_DEBOUNCE_SECONDS,
+            lambda: self._emit_settled_preview(key=key, token=token),
+        )
+
+    def _cancel_preview_debounce(self) -> None:
+        if self._preview_debounce_timer is not None:
+            self._preview_debounce_timer.stop()
+            self._preview_debounce_timer = None
+        self._preview_generation += 1
+        self._pending_preview_key = None
+
+    def _emit_settled_preview(self, *, key: str, token: int) -> None:
+        if (
+            not self.is_mounted
+            or token != self._preview_generation
+            or key != self._pending_preview_key
+        ):
+            return
+        self._preview_debounce_timer = None
+        option = self._highlighted_option()
+        if option is None or option.expression_key != key:
+            self._pending_preview_key = None
+            return
+        index = self._highlighted_index
+        if not 0 <= index < len(self._row_ids):
+            self._pending_preview_key = None
+            return
+        try:
+            row = self.query_one(f"#{self._row_ids[index]}", Button)
+        except (NoMatches, QueryError):
+            self._pending_preview_key = None
+            return
+        if not row.has_class(ROW_HIGHLIGHTED_CLASS):
+            self._pending_preview_key = None
+            return
+        self._pending_preview_key = None
+        self._request_preview(option)
+
+    def _cancel_pending_updates(self) -> None:
+        self._cancel_filter_debounce()
+        self._filter_generation += 1
+        self._pending_filter_query = None
+        self._cancel_preview_debounce()
+
     def _emit(self, message: Message) -> None:
         """Post to the Console owner when supplied, otherwise bubble normally."""
 
@@ -442,13 +551,15 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._select_highlighted()
 
     @on(Button.Pressed, "#console-reaction-picker-select")
-    def _select_pressed(self, event: Button.Pressed) -> None:
+    async def _select_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        await self._flush_pending_filter()
         self._select_highlighted()
 
     @on(Button.Pressed, "#console-reaction-picker-clear")
     def _clear_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        self._cancel_pending_updates()
         self._emit(ReactionCleared())
         self.dismiss(None)
 
@@ -461,9 +572,15 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         option = self._highlighted_option()
         if option is None:
             return
+        self._cancel_pending_updates()
         self._emit(ReactionSelected(option))
         self.dismiss(None)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
+
+        async def cancel_pending_updates() -> None:
+            self._cancel_pending_updates()
+
+        await self.run_cancel_effect_once(cancel_pending_updates)
         self.dismiss_safe_once(None)

@@ -40,6 +40,9 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 )
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
+FILTER_SETTLE_SECONDS = 0.3
+PREVIEW_SETTLE_SECONDS = 0.25
+
 
 def _samira_options() -> tuple[ReactionOption, ...]:
     return tuple(
@@ -119,7 +122,7 @@ async def test_open_focuses_filter_shows_all_rows_count_and_one_preview_request(
     app = PickerHarness(_samira_options())
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         rows = list(app.screen.query(f".{ROW_CLASS}"))
 
@@ -139,10 +142,10 @@ async def test_filter_updates_rows_count_empty_state_and_selected_only_preview()
     app = PickerHarness(_samira_options())
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
         filter_input.value = "rel"
-        await pilot.pause()
+        await pilot.pause(FILTER_SETTLE_SECONDS + PREVIEW_SETTLE_SECONDS)
 
         assert len(app.screen.query(f".{ROW_CLASS}")) == 1
         assert str(
@@ -151,7 +154,7 @@ async def test_filter_updates_rows_count_empty_state_and_selected_only_preview()
         assert app.previews[-1].display_label == "Relief"
 
         filter_input.value = "no-such-reaction"
-        await pilot.pause()
+        await pilot.pause(FILTER_SETTLE_SECONDS)
         empty = app.screen.query_one("#console-reaction-picker-empty", Static)
         assert str(empty.renderable) == "No reactions match."
         assert str(
@@ -166,14 +169,12 @@ async def test_keyboard_down_up_enter_selects_highlight_and_escape_cancels() -> 
     app = PickerHarness(options)
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.pause()
-        await pilot.press("down")
-        await pilot.press("down")
-        await pilot.press("up")
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        await pilot.press("down", "down", "up")
         await pilot.press("enter")
         await pilot.pause()
 
-    assert app.previews == [options[0], options[1], options[2], options[1]]
+    assert app.previews == [options[0]]
     assert app.selected == [options[1]]
     assert app.dismissed is None
 
@@ -188,19 +189,39 @@ async def test_keyboard_down_up_enter_selects_highlight_and_escape_cancels() -> 
     assert cancel_app.dismissed is None
 
 
+@pytest.mark.parametrize(
+    ("keys", "expected_index"),
+    [(("enter",), 23), (("down", "enter"), 24)],
+)
+@pytest.mark.asyncio
+async def test_pending_filter_is_flushed_before_navigation_and_enter(
+    keys: tuple[str, ...], expected_index: int
+) -> None:
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        app.screen.query_one(f"#{FILTER_INPUT_ID}", Input).value = "custom:re"
+        await pilot.press(*keys)
+        await pilot.pause()
+
+    assert app.selected == [options[expected_index]]
+    assert app.previews == [options[0]]
+
+
 @pytest.mark.asyncio
 async def test_narrow_keyboard_keeps_highlight_visible_and_count_synced() -> None:
     options = _samira_options()
     app = PickerHarness(options)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         results = app.screen.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
         initial_scroll_y = results.scroll_y
 
-        for _ in range(20):
-            await pilot.press("down")
-        await pilot.pause()
+        await pilot.press(*(20 * ("down",)))
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
 
         highlighted = app.screen.query_one(f".{ROW_HIGHLIGHTED_CLASS}", Button)
         assert results.content_region.contains_region(highlighted.region)
@@ -213,6 +234,7 @@ async def test_narrow_keyboard_keeps_highlight_visible_and_count_synced() -> Non
             )
             == "21 / 31 reactions"
         )
+        assert app.previews == [options[0], options[20]]
 
         await pilot.press("enter")
         await pilot.pause()
@@ -225,17 +247,15 @@ async def test_narrow_up_reversal_and_filtered_count_preserve_filter_focus() -> 
     app = PickerHarness(_samira_options())
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         results = app.screen.query_one(f"#{RESULTS_CONTAINER_ID}", VerticalScroll)
         filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
 
-        for _ in range(20):
-            await pilot.press("down")
+        await pilot.press(*(20 * ("down",)))
         await pilot.pause()
         advanced_scroll_y = results.scroll_y
 
-        for _ in range(20):
-            await pilot.press("up")
+        await pilot.press(*(20 * ("up",)))
         await pilot.pause()
 
         highlighted = app.screen.query_one(f".{ROW_HIGHLIGHTED_CLASS}", Button)
@@ -252,7 +272,7 @@ async def test_narrow_up_reversal_and_filtered_count_preserve_filter_focus() -> 
         assert filter_input.has_focus
 
         filter_input.value = "custom:re"
-        await pilot.pause()
+        await pilot.pause(FILTER_SETTLE_SECONDS)
         assert (
             str(
                 app.screen.query_one(
@@ -263,7 +283,7 @@ async def test_narrow_up_reversal_and_filtered_count_preserve_filter_focus() -> 
         )
 
         await pilot.press("down")
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         assert (
             str(
                 app.screen.query_one(
@@ -273,6 +293,105 @@ async def test_narrow_up_reversal_and_filtered_count_preserve_filter_focus() -> 
             == "2 / 3 reactions"
         )
         assert filter_input.has_focus
+
+
+@pytest.mark.asyncio
+async def test_rapid_filter_changes_render_only_the_settled_query(
+    monkeypatch,
+) -> None:
+    render_count = 0
+    original_render = ConsoleReactionPickerModal._render_results
+
+    async def counted_render(modal: ConsoleReactionPickerModal) -> None:
+        nonlocal render_count
+        render_count += 1
+        await original_render(modal)
+
+    monkeypatch.setattr(
+        ConsoleReactionPickerModal,
+        "_render_results",
+        counted_render,
+    )
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        filter_input = app.screen.query_one(f"#{FILTER_INPUT_ID}", Input)
+        for query in ("c", "cu", "cus", "custom", "custom:", "custom:re"):
+            filter_input.value = query
+        await pilot.pause(FILTER_SETTLE_SECONDS + PREVIEW_SETTLE_SECONDS)
+
+        assert render_count == 2
+        assert len(app.screen.query(f".{ROW_CLASS}")) == 3
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-reaction-picker-count", Static
+                ).renderable
+            )
+            == "1 / 3 reactions"
+        )
+        assert filter_input.has_focus
+        assert app.previews == [options[0], options[23]]
+
+
+@pytest.mark.asyncio
+async def test_pending_filter_is_cancelled_when_modal_is_dismissed(
+    monkeypatch,
+) -> None:
+    render_count = 0
+    original_render = ConsoleReactionPickerModal._render_results
+
+    async def counted_render(modal: ConsoleReactionPickerModal) -> None:
+        nonlocal render_count
+        render_count += 1
+        await original_render(modal)
+
+    monkeypatch.setattr(
+        ConsoleReactionPickerModal,
+        "_render_results",
+        counted_render,
+    )
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        app.screen.query_one(f"#{FILTER_INPUT_ID}", Input).value = "custom:re"
+        await pilot.press("escape")
+        await pilot.pause(FILTER_SETTLE_SECONDS)
+
+    assert render_count == 1
+    assert app.previews == [options[0]]
+
+
+@pytest.mark.asyncio
+async def test_rapid_highlights_emit_latest_preview_only_and_none_after_dismiss() -> (
+    None
+):
+    options = _samira_options()
+    app = PickerHarness(options)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        assert app.previews == [options[0]]
+
+        await pilot.press(*(10 * ("down",)))
+        await pilot.pause(PREVIEW_SETTLE_SECONDS / 4)
+        await pilot.press(*(20 * ("down",)))
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        assert app.previews == [options[0], options[30]]
+
+        app.screen._sync_highlight()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        assert app.previews == [options[0], options[30]]
+
+        await pilot.press("down")
+        await pilot.press("escape")
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+
+    assert app.previews == [options[0], options[30]]
 
 
 @pytest.mark.asyncio
@@ -367,11 +486,11 @@ async def test_open_filter_and_highlight_never_read_or_decode_all_assets(
     app = PickerHarness(options)
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
         app.screen.query_one(f"#{FILTER_INPUT_ID}", Input).value = "custom:re"
-        await pilot.pause()
+        await pilot.pause(FILTER_SETTLE_SECONDS + PREVIEW_SETTLE_SECONDS)
         await pilot.press("down")
-        await pilot.pause()
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
 
     assert reads == []
     assert decodes == []
