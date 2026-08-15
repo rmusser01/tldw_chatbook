@@ -61,6 +61,33 @@ async def test_resize_priority_hands_context_focus_to_reveal_button() -> None:
 
 
 @pytest.mark.asyncio
+async def test_consecutive_resize_keeps_focus_on_reopened_context_rail() -> None:
+    """A focused Context handle hands focus back when Context reopens."""
+    host = ConsoleHarness(_build_test_app())
+
+    async with host.run_test(size=(117, 40)) as pilot:
+        console = host.screen_stack[-1]
+        collapse = console.query_one("#console-context-rail-collapse")
+        collapse.focus()
+        await pilot.pause()
+
+        await pilot.resize_terminal(118, 40)
+        await pilot.pause(0.2)
+        reveal = console.query_one("#console-context-rail-open")
+        assert pilot.app.focused is reveal
+
+        await pilot.resize_terminal(129, 40)
+        await pilot.pause(0.2)
+
+        collapse = console.query_one("#console-context-rail-collapse")
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        assert console.query_one("#console-context-rail-handle").display is False
+        assert collapse.display is True
+        assert pilot.app.focused is collapse
+
+
+@pytest.mark.asyncio
 async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
     """Crossing 128-to-129 hides focused Inspector and focuses its handle."""
     host = ConsoleHarness(_build_test_app())

@@ -20730,31 +20730,45 @@ class ChatScreen(BaseAppScreen):
         focused = self.app.focused
         left_rail = self.query_one("#console-left-rail")
         right_rail = self.query_one("#console-right-rail")
+        left_handle = self.query_one("#console-context-rail-handle")
+        right_handle = self.query_one("#console-inspector-rail-handle")
         focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
         focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
+        focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)
+        focused_in_right_handle = self._is_descendant_or_self(focused, right_handle)
         rail_state = self._current_console_rail_state(
             available_columns=event.size.width
         )
         self._sync_console_rail_visibility_if_changed(rail_state)
-        for focused_in_rail, rail_open, handle_selector, button_selector in (
+        for focused_in_rail, focused_in_handle, rail_open, rail, handle, buttons in (
             (
                 focused_in_left_rail,
+                focused_in_left_handle,
                 rail_state.left_open,
-                "#console-context-rail-handle",
-                "#console-context-rail-open",
+                left_rail,
+                left_handle,
+                ("#console-context-rail-open", "#console-context-rail-collapse"),
             ),
             (
                 focused_in_right_rail,
+                focused_in_right_handle,
                 rail_state.right_open,
-                "#console-inspector-rail-handle",
-                "#console-inspector-rail-open",
+                right_rail,
+                right_handle,
+                (
+                    "#console-inspector-rail-open",
+                    "#console-inspector-rail-collapse",
+                ),
             ),
         ):
-            if not focused_in_rail or rail_open:
+            if focused_in_rail and not rail_open:
+                target, button_selector = handle, buttons[0]
+            elif focused_in_handle and rail_open:
+                target, button_selector = rail, buttons[1]
+            else:
                 continue
-            handle = self.query_one(handle_selector)
             button = self.query_one(button_selector, Button)
-            if handle.display and button.display:
+            if target.display and button.display:
                 button.focus()
 
     @on(DescendantFocus)

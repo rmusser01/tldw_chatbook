@@ -53,6 +53,10 @@ async def test_standard_width_inspector_priority_preserves_context_preference():
         assert rail_state.right_open is True
         assert rail_state.right_compact_override is True
         assert rail_state.compact_override is True
+        assert console.query_one("#console-left-rail").display is False
+        assert console.query_one("#console-right-rail").display is True
+        assert console.query_one("#console-context-rail-handle").display is True
+        assert console.query_one("#console-main-column").styles.min_width.value == 0
         assert not app.app_config.get("console", {}).get("rail_state")
 
 
