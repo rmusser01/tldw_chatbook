@@ -42,6 +42,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
+    _wait_for_widget_state,
 )
 
 
@@ -1567,12 +1568,14 @@ async def _start_guarded_collection_mutation(
     else:
         modal.query_one("#prompt-collection-manager-create", Button).press()
     if app.action == "retry":
-        await _wait_for_condition(
+        retry = await _wait_for_widget_state(
+            modal,
             pilot,
-            lambda: modal.query_one("#prompt-collection-manager-retry", Button).display,
-            message="failed create did not expose mutation retry",
+            "#prompt-collection-manager-retry",
+            lambda widget: widget.display,
+            what="failed create did not expose mutation retry",
         )
-        modal.query_one("#prompt-collection-manager-retry", Button).press()
+        retry.press()
     await asyncio.wait_for(app.started.wait(), timeout=1.0)
     await pilot.pause()
 
