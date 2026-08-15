@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
+import weakref
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -14,6 +18,7 @@ from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
+import tldw_chatbook.UI.Console_Modules.session as session_module
 from tldw_chatbook.Character_Chat.visual_identity import (
     SAMIRA_EXPRESSION_KEYS,
     SAMIRA_REACTION_LABELS,
@@ -60,9 +65,16 @@ def _samira_options() -> tuple[ReactionOption, ...]:
 
 
 class PickerHarness(App[None]):
-    def __init__(self, options: tuple[ReactionOption, ...]) -> None:
+    def __init__(
+        self,
+        options: tuple[ReactionOption, ...],
+        *,
+        preview_cancel_callback: Callable[[ConsoleReactionPickerModal], None]
+        | None = None,
+    ) -> None:
         super().__init__()
         self._options = options
+        self._preview_cancel_callback = preview_cancel_callback
         self.previews: list[ReactionOption] = []
         self.selected: list[ReactionOption] = []
         self.cleared = 0
@@ -70,7 +82,11 @@ class PickerHarness(App[None]):
 
     async def on_mount(self) -> None:
         await self.push_screen(
-            ConsoleReactionPickerModal(options=self._options, message_target=self),
+            ConsoleReactionPickerModal(
+                options=self._options,
+                message_target=self,
+                preview_cancel_callback=self._preview_cancel_callback,
+            ),
             callback=lambda value: setattr(self, "dismissed", value),
         )
 
@@ -575,6 +591,23 @@ async def test_rapid_highlights_emit_latest_preview_only_and_none_after_dismiss(
 
 
 @pytest.mark.asyncio
+async def test_dismiss_notifies_the_preview_owner_once() -> None:
+    cancelled: list[ConsoleReactionPickerModal] = []
+    app = PickerHarness(
+        _samira_options(),
+        preview_cancel_callback=cancelled.append,
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        modal = app.screen
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert cancelled == [modal]
+
+
+@pytest.mark.asyncio
 async def test_clear_is_explicit_named_message_and_dismisses() -> None:
     app = PickerHarness(_samira_options())
 
@@ -836,7 +869,9 @@ def test_actor_replacement_clears_only_the_old_actor_override() -> None:
 
 
 @pytest.mark.asyncio
-async def test_preview_inventory_result_is_discarded_after_context_changes() -> None:
+async def test_preview_inventory_result_is_discarded_after_context_changes(
+    monkeypatch,
+) -> None:
     """A preview await may not publish into a newer operational context."""
 
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
@@ -856,13 +891,26 @@ async def test_preview_inventory_result_is_discarded_after_context_changes() -> 
     picker = type(
         "PreviewSink",
         (),
-        {"update_preview": lambda _self, key, value: updates.append((key, value))},
+        {
+            "is_mounted": True,
+            "is_preview_current": lambda _self, _key: True,
+            "update_preview": lambda _self, key, value: updates.append((key, value)),
+        },
     )()
+    controller._reaction_preview_generation = 1
+    controller._reaction_preview_sync_lock = asyncio.Lock()
+    controller._visual_identity_db_accessor = object
+    monkeypatch.setattr(
+        session_module,
+        "_visual_identity_options_for_db",
+        lambda _db, current_scope: options(current_scope),
+    )
 
     pending = asyncio.create_task(
         controller._preview_console_reaction(
             ReactionOption("custom:relief", "Relief", "image/webp", False),
-            picker,
+            weakref.ref(picker),
+            1,
         )
     )
     assert await asyncio.to_thread(started.wait, 5)
@@ -871,3 +919,174 @@ async def test_preview_inventory_result_is_discarded_after_context_changes() -> 
     await pending
 
     assert updates == []
+
+
+class _PreviewTaskWorker:
+    def __init__(self, task: asyncio.Task[None]) -> None:
+        self.task = task
+
+    def cancel(self) -> None:
+        self.task.cancel()
+
+
+class _PreviewWorkerScreen:
+    def __init__(self) -> None:
+        self.workers: list[_PreviewTaskWorker] = []
+
+    def run_worker(self, coroutine, *, exclusive=False, **_kwargs):
+        if exclusive and self.workers:
+            self.workers[-1].cancel()
+        worker = _PreviewTaskWorker(asyncio.create_task(coroutine))
+        self.workers.append(worker)
+        return worker
+
+    def unmount(self) -> None:
+        for worker in self.workers:
+            worker.cancel()
+
+    async def drain(self) -> None:
+        await asyncio.gather(
+            *(worker.task for worker in self.workers), return_exceptions=True
+        )
+
+
+class _PreviewSink:
+    def __init__(self, key: str) -> None:
+        self.key = key
+        self.is_mounted = True
+        self.updates: list[tuple[str, object]] = []
+
+    def is_preview_current(self, expression_key: str) -> bool:
+        return self.is_mounted and self.key == expression_key
+
+    def update_preview(self, expression_key: str, renderable: object) -> None:
+        self.updates.append((expression_key, renderable))
+
+
+class _BlockedPreviewDecode:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.second_started = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+
+    def __call__(self, *_args) -> bool:
+        self.calls += 1
+        if self.calls == 2:
+            self.second_started.set()
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if self.calls == 1:
+                self.started.set()
+                assert self.release.wait(timeout=5)
+            return True
+        finally:
+            self.active -= 1
+
+
+def _preview_controller(
+    monkeypatch,
+    options: tuple[ReactionOption, ...],
+    barrier: _BlockedPreviewDecode,
+) -> tuple[ConsoleSessionController, _PreviewWorkerScreen]:
+    screen = _PreviewWorkerScreen()
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._screen = screen
+    controller._reaction_preview_generation = 0
+    controller._reaction_preview_sync_lock = asyncio.Lock()
+    controller._reaction_preview_worker = None
+    controller._reaction_preview_target_ref = None
+    scope = ("session-a", "character", "7")
+    controller._visual_identity_request_context = lambda: (scope, "idle", None)
+    controller._visual_identity_db_accessor = object
+    controller._ensure_console_image_view_fn = lambda: (
+        None,
+        SimpleNamespace(
+            prepare=barrier,
+            get_pixels=lambda *_args: "decoded preview",
+        ),
+    )
+    monkeypatch.setattr(
+        session_module, "_visual_identity_options_for_db", lambda _db, _scope: options
+    )
+    monkeypatch.setattr(
+        session_module,
+        "_resolve_visual_identity_for_db",
+        lambda _db, _scope, state, manual: SimpleNamespace(
+            resolved_expression_key=manual,
+            image_bytes=b"preview",
+            cache_identity=(state, manual),
+        ),
+    )
+    return controller, screen
+
+
+@pytest.mark.asyncio
+async def test_replacement_preview_waits_for_cancelled_sync_job_to_drain(
+    monkeypatch,
+) -> None:
+    """Latest wins, but its sync job cannot overlap the cancelled first job."""
+
+    first = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    second = ReactionOption("custom:relief", "Relief", "image/webp", False)
+    barrier = _BlockedPreviewDecode()
+    controller, screen = _preview_controller(monkeypatch, (first, second), barrier)
+    picker = _PreviewSink(first.expression_key)
+
+    controller._dispatch_console_reaction_preview(first, picker)
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    picker.key = second.expression_key
+    controller._dispatch_console_reaction_preview(second, picker)
+
+    assert not await asyncio.to_thread(barrier.second_started.wait, 0.05)
+    assert barrier.calls == 1
+    assert barrier.max_active == 1
+    barrier.release.set()
+    await screen.drain()
+
+    assert barrier.max_active == 1
+    assert picker.updates == [(second.expression_key, "decoded preview")]
+
+
+@pytest.mark.asyncio
+async def test_dismissed_picker_cancels_and_is_not_retained_by_preview_thread(
+    monkeypatch,
+) -> None:
+    option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    barrier = _BlockedPreviewDecode()
+    controller, screen = _preview_controller(monkeypatch, (option,), barrier)
+    picker = _PreviewSink(option.expression_key)
+    picker_ref = weakref.ref(picker)
+    updates = picker.updates
+
+    controller._dispatch_console_reaction_preview(option, picker)
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    controller._cancel_console_reaction_preview(picker)
+    del picker
+    gc.collect()
+
+    assert picker_ref() is None
+    barrier.release.set()
+    await screen.drain()
+    assert barrier.max_active == 1
+    assert updates == []
+
+
+@pytest.mark.asyncio
+async def test_screen_unmount_cancels_preview_and_drains_sync_job(monkeypatch) -> None:
+    option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    barrier = _BlockedPreviewDecode()
+    controller, screen = _preview_controller(monkeypatch, (option,), barrier)
+    picker = _PreviewSink(option.expression_key)
+
+    controller._dispatch_console_reaction_preview(option, picker)
+    assert await asyncio.to_thread(barrier.started.wait, 5)
+    screen.unmount()
+    barrier.release.set()
+    await screen.drain()
+
+    assert picker.updates == []
+    assert barrier.max_active == 1

@@ -122,6 +122,7 @@ from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
 import uuid
+import weakref
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -389,6 +390,64 @@ def _console_global_user_display_name(app_config: object) -> str:
         return "User"
 
 
+def _resolve_visual_identity_for_db(
+    db: Any,
+    scope: tuple[str, str, str],
+    requested_state: str,
+    manual_expression_key: str | None,
+) -> VisualIdentityResolution | None:
+    """Resolve one immutable preview request without retaining its screen."""
+
+    _session_id, actor_kind, actor_id = scope
+    try:
+        return resolve_visual_identity(
+            db,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            requested_state=requested_state,
+            manual_expression_key=manual_expression_key,
+        )
+    except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+        logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
+            "Console reaction resolution failed for actor_kind={} actor_id={} "
+            "error_type={}",
+            actor_kind,
+            actor_id,
+            type(exc).__name__,
+        )
+        return None
+
+
+def _visual_identity_options_for_db(
+    db: Any, scope: tuple[str, str, str]
+) -> tuple[ReactionOption, ...]:
+    """Read metadata-only preview options without retaining its screen."""
+
+    _session_id, actor_kind, actor_id = scope
+    try:
+        graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
+    except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+        logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
+            "Console reaction inventory failed for actor_kind={} actor_id={} "
+            "error_type={}",
+            actor_kind,
+            actor_id,
+            type(exc).__name__,
+        )
+        return ()
+    if graph is None:
+        return ()
+    return tuple(
+        ReactionOption(
+            expression_key=str(asset["expression_key"]),
+            display_label=str(asset["display_label"]),
+            content_type=str(asset["content_type"]),
+            is_animated=bool(asset["is_animated"]),
+        )
+        for asset in graph["assets"]
+    )
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -591,6 +650,12 @@ class ConsoleSessionController:
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._closing_session_requests: set[str] = set()
         self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
+        self._reaction_preview_generation = 0
+        self._reaction_preview_sync_lock = asyncio.Lock()
+        self._reaction_preview_worker: Any | None = None
+        self._reaction_preview_target_ref: (
+            weakref.ReferenceType[ConsoleReactionPickerModal] | None
+        ) = None
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -839,24 +904,9 @@ class ConsoleSessionController:
         db = self._visual_identity_db_accessor()
         if db is None:
             return None
-        _session_id, actor_kind, actor_id = scope
-        try:
-            return resolve_visual_identity(
-                db,
-                actor_kind=actor_kind,
-                actor_id=actor_id,
-                requested_state=requested_state,
-                manual_expression_key=manual_expression_key,
-            )
-        except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
-            logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
-                "Console reaction resolution failed for actor_kind={} actor_id={} "
-                "error_type={}",
-                actor_kind,
-                actor_id,
-                type(exc).__name__,
-            )
-            return None
+        return _resolve_visual_identity_for_db(
+            db, scope, requested_state, manual_expression_key
+        )
 
     def _visual_identity_options(
         self, scope: tuple[str, str, str]
@@ -866,31 +916,7 @@ class ConsoleSessionController:
         db = self._visual_identity_db_accessor()
         if db is None:
             return ()
-        _session_id, actor_kind, actor_id = scope
-        try:
-            graph = VisualIdentityRepository(db).get_active_actor_pack(
-                actor_kind, actor_id
-            )
-        except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
-            logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
-                "Console reaction inventory failed for actor_kind={} actor_id={} "
-                "error_type={}",
-                actor_kind,
-                actor_id,
-                type(exc).__name__,
-            )
-            return ()
-        if graph is None:
-            return ()
-        return tuple(
-            ReactionOption(
-                expression_key=str(asset["expression_key"]),
-                display_label=str(asset["display_label"]),
-                content_type=str(asset["content_type"]),
-                is_animated=bool(asset["is_animated"]),
-            )
-            for asset in graph["assets"]
-        )
+        return _visual_identity_options_for_db(db, scope)
 
     async def _open_console_reaction_picker(self) -> None:
         """Query reaction metadata off-thread and open the owned picker."""
@@ -916,6 +942,7 @@ class ConsoleSessionController:
                 options=options,
                 message_target=self._screen,
                 preview_callback=self._dispatch_console_reaction_preview,
+                preview_cancel_callback=self._cancel_console_reaction_preview,
                 selection_callback=self._dispatch_console_reaction_selection,
                 clear_callback=self._dispatch_console_reaction_clear,
             )
@@ -924,12 +951,33 @@ class ConsoleSessionController:
     def _dispatch_console_reaction_preview(
         self, option: ReactionOption, picker: ConsoleReactionPickerModal
     ) -> None:
-        self.run_app_worker(
-            self._preview_console_reaction(option, picker),
+        generation = getattr(self, "_reaction_preview_generation", 0) + 1
+        self._reaction_preview_generation = generation
+        picker_ref = weakref.ref(picker)
+        self._reaction_preview_target_ref = picker_ref
+        self._reaction_preview_worker = self.run_worker(
+            self._preview_console_reaction(option, picker_ref, generation),
             group="console-reaction-preview",
             exclusive=True,
             exit_on_error=False,
         )
+
+    def _cancel_console_reaction_preview(
+        self, picker: ConsoleReactionPickerModal
+    ) -> None:
+        """Cancel work only for the picker that originally requested it."""
+
+        target_ref = getattr(self, "_reaction_preview_target_ref", None)
+        if target_ref is None or target_ref() is not picker:
+            return
+        self._reaction_preview_generation = (
+            getattr(self, "_reaction_preview_generation", 0) + 1
+        )
+        self._reaction_preview_target_ref = None
+        worker = getattr(self, "_reaction_preview_worker", None)
+        self._reaction_preview_worker = None
+        if worker is not None:
+            worker.cancel()
 
     def _dispatch_console_reaction_selection(self, option: ReactionOption) -> None:
         self.run_app_worker(
@@ -981,62 +1029,170 @@ class ConsoleSessionController:
         self._clear_manual_reaction(scope)
         return True
 
-    async def _preview_console_reaction(
-        self, option: ReactionOption, picker: ConsoleReactionPickerModal | None
-    ) -> None:
-        """Resolve and decode only the latest settled picker preview."""
+    async def _run_serialized_preview_sync(
+        self, function: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Run one sync stage and drain its thread before releasing the lock."""
 
-        if picker is None:
-            return
+        lock = getattr(self, "_reaction_preview_sync_lock", None)
+        if lock is None:
+            lock = self._reaction_preview_sync_lock = asyncio.Lock()
+        async with lock:
+            underlying = asyncio.create_task(asyncio.to_thread(function, *args))
+            try:
+                return await asyncio.shield(underlying)
+            except asyncio.CancelledError:
+                while not underlying.done():
+                    try:
+                        await asyncio.shield(underlying)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # noqa: BLE001 -- drain any sync stage failure.
+                        break
+                if underlying.done() and not underlying.cancelled():
+                    underlying.exception()
+                raise
+
+    def _preview_request_is_current(
+        self,
+        *,
+        generation: int,
+        context: tuple[tuple[str, str, str] | None, str, str | None],
+        expression_key: str,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+    ) -> bool:
+        picker = picker_ref()
+        return (
+            generation == getattr(self, "_reaction_preview_generation", 0)
+            and self._visual_identity_request_context() == context
+            and picker is not None
+            and picker.is_preview_current(expression_key)
+        )
+
+    def _apply_console_reaction_preview(
+        self,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+        expression_key: str,
+        renderable: object,
+    ) -> None:
+        picker = picker_ref()
+        if picker is not None:
+            picker.update_preview(expression_key, renderable)
+
+    async def _preview_console_reaction(
+        self,
+        option: ReactionOption,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+        generation: int,
+    ) -> None:
+        """Resolve and decode the latest preview with serialized sync work."""
+
         context = self._visual_identity_request_context()
         scope, state, _manual = context
-        if scope is None:
+        if scope is None or not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
             return
-        options = await asyncio.to_thread(self._visual_identity_options, scope)
-        if self._visual_identity_request_context() != context:
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return
+
+        options = await self._run_serialized_preview_sync(
+            _visual_identity_options_for_db, db, scope
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
             return
         if option.expression_key not in {
             candidate.expression_key for candidate in options
         }:
-            picker.update_preview(option.expression_key, "Preview unavailable.")
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
             return
-        resolution = await asyncio.to_thread(
-            self._resolve_visual_identity, scope, state, option.expression_key
+
+        resolution = await self._run_serialized_preview_sync(
+            _resolve_visual_identity_for_db,
+            db,
+            scope,
+            state,
+            option.expression_key,
         )
-        if self._visual_identity_request_context() != context:
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
             return
         if (
             resolution is None
             or resolution.resolved_expression_key != option.expression_key
             or not resolution.image_bytes
         ):
-            picker.update_preview(option.expression_key, "Preview unavailable.")
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
             return
+
         identity = resolution.cache_identity
         _view, cache = self._ensure_console_image_view()
         cache_key = "visual-identity-preview:" + "|".join(identity)
-        prepared = await asyncio.to_thread(
+        prepared = await self._run_serialized_preview_sync(
             cache.prepare, cache_key, resolution.image_bytes
         )
-        if self._visual_identity_request_context() != context:
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
             return
         if not prepared:
-            picker.update_preview(option.expression_key, "Preview unavailable.")
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
             return
-        renderable = await asyncio.to_thread(cache.get_pixels, cache_key)
-        if self._visual_identity_request_context() != context:
+
+        renderable = await self._run_serialized_preview_sync(
+            cache.get_pixels, cache_key
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
             return
-        current = await asyncio.to_thread(
-            self._resolve_visual_identity, scope, state, option.expression_key
+        current = await self._run_serialized_preview_sync(
+            _resolve_visual_identity_for_db,
+            db,
+            scope,
+            state,
+            option.expression_key,
         )
         if (
-            self._visual_identity_request_context() != context
+            not self._preview_request_is_current(
+                generation=generation,
+                context=context,
+                expression_key=option.expression_key,
+                picker_ref=picker_ref,
+            )
             or current is None
             or current.cache_identity != identity
         ):
             return
-        picker.update_preview(
-            option.expression_key, renderable or "Preview unavailable."
+        self._apply_console_reaction_preview(
+            picker_ref,
+            option.expression_key,
+            renderable or "Preview unavailable.",
         )
 
     # -- Session switcher / rename -------------------------------------------

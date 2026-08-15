@@ -220,6 +220,8 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         message_target: MessagePump | None = None,
         preview_callback: Callable[[ReactionOption, ConsoleReactionPickerModal], None]
         | None = None,
+        preview_cancel_callback: Callable[[ConsoleReactionPickerModal], None]
+        | None = None,
         selection_callback: Callable[[ReactionOption], None] | None = None,
         clear_callback: Callable[[], None] | None = None,
         **kwargs: Any,
@@ -230,6 +232,8 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._options = tuple(options)
         self._message_target = message_target
         self._preview_callback = preview_callback
+        self._preview_cancel_callback = preview_cancel_callback
+        self._preview_owner_cancelled = False
         self._selection_callback = selection_callback
         self._clear_callback = clear_callback
         self._filtered: tuple[ReactionOption, ...] = ()
@@ -566,6 +570,16 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
             return False
         return True
 
+    def is_preview_current(self, expression_key: str) -> bool:
+        """Return whether this mounted picker still highlights one key."""
+
+        option = self._highlighted_option()
+        return (
+            self.is_mounted
+            and option is not None
+            and option.expression_key == expression_key
+        )
+
     def _request_preview(self, option: ReactionOption) -> None:
         if option.expression_key == self._last_preview_key:
             return
@@ -628,6 +642,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         self._pending_filter_token = None
         self._cancel_filter_apply()
         self._cancel_preview_debounce()
+        if not self._preview_owner_cancelled:
+            self._preview_owner_cancelled = True
+            if self._preview_cancel_callback is not None:
+                self._preview_cancel_callback(self)
 
     def _emit(self, message: Message) -> None:
         """Post to the Console owner when supplied, otherwise bubble normally."""
