@@ -1,7 +1,7 @@
 # Library Top-Level Source Pagination Design
 
 **Date:** 2026-08-14
-**Status:** Independently re-reviewed; awaiting user approval
+**Status:** Approved; TASK-16311 Conversation foundation is complete and in closeout review; TASK-16312–TASK-16317 and TASK-16319 remain planned
 **Scope:** Library top-level flat browse sources
 
 ## Context
@@ -621,7 +621,7 @@ not accepted as a semantic diff.
   TASK-16312 (Prompts), TASK-16313 (Media), TASK-16314 (Skills), and TASK-16315
   (Collections). TASK-16312 through TASK-16315 depend only on TASK-16311.
 - Track the deferred nested tranche through TASK-16316 (Notes tree), TASK-16317
-  (Media Trash), and TASK-16318 (Collection members), each gated on completion
+  (Media Trash), and TASK-16319 (Collection members), each gated on completion
   of the five top-level tasks.
 - Update the Library user guide with the 20-item convention, exact range copy,
   Conversation/Media current-page selection, preserved Prompt cross-page
