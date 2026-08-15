@@ -45,6 +45,8 @@ _MAX_BATCH_SIZE = 100
 _MAX_TRANSITIONS = MAX_IMPORT_ENTRIES
 _MAX_LEDGER_ROWS = MAX_IMPORT_ENTRIES
 _SQL_PARAMETER_CHUNK = 32
+_PRIOR_OBSERVATION_CHUNK_CAP = 900
+_SQLITE_VARIABLE_LIMIT_FALLBACK = 999
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 
@@ -451,6 +453,7 @@ _SCHEMA_INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_import_membership_path ON import_membership_effects(session_id, folder_path_digest, item_id)",
     "CREATE INDEX IF NOT EXISTS idx_import_folder_parent ON import_folder_effects(session_id, parent_effect_id)",
     "CREATE INDEX IF NOT EXISTS idx_import_items_target ON import_items(session_id, target_note_id, selected_action)",
+    "CREATE INDEX IF NOT EXISTS idx_import_items_source_session ON import_items(source_locator_digest, session_id, item_id)",
 )
 
 _SCHEMA_STATEMENTS = (*_SCHEMA_TABLE_STATEMENTS, *_SCHEMA_INDEX_STATEMENTS)
@@ -466,6 +469,23 @@ def _validate_batch_size(batch_size: object) -> int:
     if not _MIN_BATCH_SIZE <= batch_size <= _MAX_BATCH_SIZE:
         raise ValueError("batch_size must be between 1 and 100.")
     return batch_size
+
+
+def _prior_observation_chunk_size(connection: sqlite3.Connection) -> int:
+    """Return a bounded digest chunk that respects this connection's SQL limit."""
+
+    try:
+        variable_limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    except (AttributeError, sqlite3.Error):
+        variable_limit = _SQLITE_VARIABLE_LIMIT_FALLBACK
+    if type(variable_limit) is not int or variable_limit <= 0:
+        variable_limit = _SQLITE_VARIABLE_LIMIT_FALLBACK
+    available = variable_limit - 1  # Reserve one binding for session.state.
+    if available < 1:
+        raise ImportReceiptError(
+            "The SQLite variable limit is too low for prior import recovery."
+        )
+    return min(_PRIOR_OBSERVATION_CHUNK_CAP, available)
 
 
 def _validate_id(value: object, *, field_name: str) -> str:
@@ -2357,14 +2377,18 @@ class NoteImportReceiptRepository:
         if not digest_items:
             return ()
 
-        latest: dict[str, tuple[str, list[tuple[object, ...]]]] = {}
+        latest: dict[
+            str,
+            tuple[tuple[int, int], str, list[tuple[object, ...]]],
+        ] = {}
         connection = self._connect()
         try:
             connection.execute("BEGIN")
             self._initialize_schema(connection)
             digests = tuple(digest_items)
-            for offset in range(0, len(digests), _SQL_PARAMETER_CHUNK):
-                chunk = digests[offset : offset + _SQL_PARAMETER_CHUNK]
+            chunk_size = _prior_observation_chunk_size(connection)
+            for offset in range(0, len(digests), chunk_size):
+                chunk = digests[offset : offset + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = connection.execute(
                     f"""
@@ -2386,19 +2410,24 @@ class NoteImportReceiptRepository:
                      AND payload.payload_index = 0
                     WHERE item.source_locator_digest IN ({placeholders})
                       AND session.state = ?
-                    ORDER BY session.updated_at DESC, session.rowid DESC,
-                             item.rowid DESC
                     """,
                     (*chunk, ImportSessionState.COMPLETED.value),
                 ).fetchall()
                 for row in rows:
                     digest = str(row[0])
                     session_id = str(row[1])
+                    updated_at = row[11]
+                    session_rowid = row[12]
+                    if type(updated_at) is not int or type(session_rowid) is not int:
+                        raise ImportReceiptError(
+                            "Prior import observations could not be ordered safely."
+                        )
+                    ordering = (updated_at, session_rowid)
                     existing = latest.get(digest)
-                    if existing is None:
-                        latest[digest] = (session_id, [tuple(row)])
-                    elif existing[0] == session_id:
-                        existing[1].append(tuple(row))
+                    if existing is None or ordering > existing[0]:
+                        latest[digest] = (ordering, session_id, [tuple(row)])
+                    elif ordering == existing[0] and existing[1] == session_id:
+                        existing[2].append(tuple(row))
             connection.commit()
         except Exception:
             connection.rollback()
@@ -2411,9 +2440,9 @@ class NoteImportReceiptRepository:
             if len(items) != 1:
                 continue
             latest_group = latest.get(digest)
-            if latest_group is None or len(latest_group[1]) != 1:
+            if latest_group is None or len(latest_group[2]) != 1:
                 continue
-            row = latest_group[1][0]
+            row = latest_group[2][0]
             (
                 _source_digest,
                 _session_id,

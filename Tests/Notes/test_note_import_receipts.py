@@ -584,6 +584,7 @@ def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
         connection.execute("DROP INDEX idx_import_folder_target")
         connection.execute("DROP INDEX idx_import_membership_path")
         connection.execute("DROP INDEX idx_import_folder_parent")
+        connection.execute("DROP INDEX IF EXISTS idx_import_items_source_session")
         connection.commit()
 
     NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
@@ -622,16 +623,152 @@ def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
                 ("opaque-session", "opaque-folder"),
             ).fetchall()
         )
+        source_detail = " ".join(
+            str(row[3])
+            for row in connection.execute(
+                """EXPLAIN QUERY PLAN
+                SELECT item.item_id
+                FROM import_items AS item
+                JOIN import_sessions AS session
+                  ON session.session_id = item.session_id
+                WHERE item.source_locator_digest IN (?)
+                  AND session.state = ?""",
+                ("0" * 64, ImportSessionState.COMPLETED.value),
+            ).fetchall()
+        )
 
     assert {
         "idx_import_payload_target",
         "idx_import_folder_target",
         "idx_import_membership_path",
         "idx_import_folder_parent",
+        "idx_import_items_source_session",
     } <= indexes
     assert "idx_import_membership_path" in detail
     assert "idx_import_payload_target" in payload_detail
     assert "idx_import_folder_target" in folder_detail
+    assert "idx_import_items_source_session" in source_detail
+    assert "SCAN item" not in source_detail
+    assert "USE TEMP B-TREE" not in source_detail
+
+
+def test_prior_observation_lookup_uses_bounded_large_input_query_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item_count = 1_025
+    base = replace(
+        _item(selected_action=ImportAction.CREATE_NEW),
+        selected_action=ImportAction.SKIP,
+        memberships=(),
+        add_membership=False,
+    )
+    items = tuple(
+        replace(
+            base,
+            item_id=f"bounded-source-{index}",
+            source=ImportSource(
+                kind=ImportSourceKind.SELECTED_FILE,
+                display_path=f"Selected/private-{index}.md",
+                source_path=Path(f"/private/bounded/private-{index}.md"),
+            ),
+            memberships=(),
+            add_membership=False,
+        )
+        for index in range(item_count)
+    )
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=item_count,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+            max_entries=item_count,
+            max_notes_per_file=100,
+            max_keywords_per_note=50,
+        ),
+        items=items,
+        proposed_folder_paths=(),
+    )
+    repository = _repository(tmp_path)
+    statements: list[str] = []
+    original_connect = repository._connect
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(repository, "_connect", traced_connect)
+
+    assert repository.prior_observations_for_plan(plan) == ()
+
+    lookup_statements = tuple(
+        statement
+        for statement in statements
+        if "FROM import_items AS item" in statement
+    )
+    assert 1 <= len(lookup_statements) <= 2
+    assert "/private/bounded" not in repr(repository)
+    assert all("/private/bounded" not in statement for statement in lookup_statements)
+
+
+def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item_count = 41
+    base = replace(
+        _item(selected_action=ImportAction.CREATE_NEW),
+        selected_action=ImportAction.SKIP,
+        memberships=(),
+        add_membership=False,
+    )
+    items = tuple(
+        replace(
+            base,
+            item_id=f"limited-source-{index}",
+            source=ImportSource(
+                kind=ImportSourceKind.SELECTED_FILE,
+                display_path=f"Selected/limited-{index}.md",
+                source_path=Path(f"/private/limited/limited-{index}.md"),
+            ),
+        )
+        for index in range(item_count)
+    )
+    plan = NoteImportPlan(
+        bounds=ImportBounds(
+            max_files=item_count,
+            max_file_bytes=1_000_000,
+            max_total_bytes=5_000_000,
+            max_depth=8,
+            max_entries=item_count,
+            max_notes_per_file=100,
+            max_keywords_per_note=50,
+        ),
+        items=items,
+        proposed_folder_paths=(),
+    )
+    repository = _repository(tmp_path)
+    statements: list[str] = []
+    original_connect = repository._connect
+
+    def limited_connect():
+        connection = original_connect()
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 10)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(repository, "_connect", limited_connect)
+
+    assert repository.prior_observations_for_plan(plan) == ()
+    lookup_statements = tuple(
+        statement
+        for statement in statements
+        if "FROM import_items AS item" in statement
+    )
+    assert len(lookup_statements) == 5
+    assert all("/private/limited" not in statement for statement in lookup_statements)
 
 
 def test_existing_v1_without_folder_parent_authority_fails_safe(tmp_path: Path) -> None:

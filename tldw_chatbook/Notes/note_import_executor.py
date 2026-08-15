@@ -942,10 +942,14 @@ class NoteImportExecutor:
         if cancel_event is not None and cancel_event.is_set():
             return self._cancel(approved.approval_id, progress_callback)
 
-        folder_bindings, folder_failures = self._execute_folders(
+        folder_bindings, folder_failures, folders_cancelled = self._execute_folders(
             approved,
             snapshot.folder_effects,
+            cancel_event=cancel_event,
+            progress_callback=progress_callback,
         )
+        if folders_cancelled:
+            return self._cancel(approved.approval_id, progress_callback)
         payload_effects_by_item: dict[str, dict[int | None, ImportEffectRecord]] = {}
         for effect in snapshot.payload_effects:
             if effect.item_id is None:
@@ -1121,7 +1125,14 @@ class NoteImportExecutor:
         self,
         approved: ApprovedNoteImportPlan,
         folder_effects: tuple[ImportEffectRecord, ...],
-    ) -> tuple[dict[str, str], dict[tuple[str, ...], _ExecutionFailure]]:
+        *,
+        cancel_event: threading.Event | None,
+        progress_callback: Callable[[ImportExecutionProgress], None] | None,
+    ) -> tuple[
+        dict[str, str],
+        dict[tuple[str, ...], _ExecutionFailure],
+        bool,
+    ]:
         ordered_paths = _required_folder_paths(approved)
         effects_by_digest = {
             effect.folder_path_digest: effect for effect in folder_effects
@@ -1140,62 +1151,69 @@ class NoteImportExecutor:
         bindings: dict[str, str] = {}
         failures: dict[tuple[str, ...], _ExecutionFailure] = {}
         normalized_owners: dict[str, tuple[str, ...]] = {}
-        for path in ordered_paths:
-            effect = effects_by_digest[_folder_path_digest(path)]
-            inherited = _first_folder_failure(path, failures)
-            if inherited is not None:
-                self._fail_effect(approved.approval_id, effect, inherited)
-                failures[path] = inherited
-                continue
-            normalized_path = _normalized_folder_path(path)
-            if normalized_path in normalized_owners:
-                failure = _ExecutionFailure("folder_conflict", False)
-                self._fail_effect(approved.approval_id, effect, failure)
-                failures[path] = failure
-                continue
-            if effect.state is ImportEffectState.APPLIED:
-                if effect.target_folder_id is None:
-                    raise ImportReceiptTransitionError(
-                        "Applied folder receipt is missing its target identity."
-                    )
-                bindings[_folder_path_digest(path)] = effect.target_folder_id
-                normalized_owners[normalized_path] = path
-                continue
-            if effect.state is ImportEffectState.FAILED:
-                failure = _failure_from_effect(effect)
-                failures[path] = failure
-                continue
-            deterministic_id = _deterministic_folder_id(
-                approved.approval_id,
-                normalized_path,
-            )
-            try:
-                folder = self._target.ensure_folder(
-                    segments=path,
-                    folder_id=deterministic_id,
-                    allow_existing=_allows_existing_root(approved, path),
+        for batch_start in range(0, len(ordered_paths), self._batch_size):
+            if cancel_event is not None and cancel_event.is_set():
+                return bindings, failures, True
+            batch = ordered_paths[batch_start : batch_start + self._batch_size]
+            for path in batch:
+                effect = effects_by_digest[_folder_path_digest(path)]
+                inherited = _first_folder_failure(path, failures)
+                if inherited is not None:
+                    self._fail_effect(approved.approval_id, effect, inherited)
+                    failures[path] = inherited
+                    continue
+                normalized_path = _normalized_folder_path(path)
+                if normalized_path in normalized_owners:
+                    failure = _ExecutionFailure("folder_conflict", False)
+                    self._fail_effect(approved.approval_id, effect, failure)
+                    failures[path] = failure
+                    continue
+                if effect.state is ImportEffectState.APPLIED:
+                    if effect.target_folder_id is None:
+                        raise ImportReceiptTransitionError(
+                            "Applied folder receipt is missing its target identity."
+                        )
+                    bindings[_folder_path_digest(path)] = effect.target_folder_id
+                    normalized_owners[normalized_path] = path
+                    continue
+                if effect.state is ImportEffectState.FAILED:
+                    failure = _failure_from_effect(effect)
+                    failures[path] = failure
+                    continue
+                deterministic_id = _deterministic_folder_id(
+                    approved.approval_id,
+                    normalized_path,
                 )
-            except ImportTargetInternalError:
-                raise
-            except ImportTargetError as error:
-                failure = _failure_for_target_error(error, folder=True)
-                self._fail_effect(approved.approval_id, effect, failure)
-                failures[path] = failure
-                continue
-            self._receipts.transition_effects(
-                approved.approval_id,
-                (
-                    EffectTransition(
-                        category=ImportEffectCategory.FOLDER,
-                        effect_id=effect.effect_id,
-                        state=ImportEffectState.APPLIED,
-                        target_folder_id=folder.folder_id,
+                try:
+                    folder = self._target.ensure_folder(
+                        segments=path,
+                        folder_id=deterministic_id,
+                        allow_existing=_allows_existing_root(approved, path),
+                    )
+                except ImportTargetInternalError:
+                    raise
+                except ImportTargetError as error:
+                    failure = _failure_for_target_error(error, folder=True)
+                    self._fail_effect(approved.approval_id, effect, failure)
+                    failures[path] = failure
+                    continue
+                self._receipts.transition_effects(
+                    approved.approval_id,
+                    (
+                        EffectTransition(
+                            category=ImportEffectCategory.FOLDER,
+                            effect_id=effect.effect_id,
+                            state=ImportEffectState.APPLIED,
+                            target_folder_id=folder.folder_id,
+                        ),
                     ),
-                ),
-            )
-            bindings[_folder_path_digest(path)] = folder.folder_id
-            normalized_owners[normalized_path] = path
-        return bindings, failures
+                )
+                bindings[_folder_path_digest(path)] = folder.folder_id
+                normalized_owners[normalized_path] = path
+            self._publish_progress(approved.approval_id, progress_callback)
+            if cancel_event is not None and cancel_event.is_set():
+                return bindings, failures, True
+        return bindings, failures, False
 
     def _execute_item(
         self,

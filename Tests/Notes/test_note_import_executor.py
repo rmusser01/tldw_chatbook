@@ -1201,6 +1201,102 @@ def test_executor_cancels_only_between_batches_after_current_target_call_returns
     assert durable.items[1].outcome is ImportItemOutcome.PENDING
 
 
+def test_executor_cancels_between_folder_batches_after_current_target_returns(
+    target_harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, folders, _db = target_harness
+    receipts = NoteImportReceiptRepository(tmp_path / "folder-batch-cancel.sqlite3")
+    executor = NoteImportExecutor(
+        target=target,
+        receipt_repository=receipts,
+        batch_size=1,
+    )
+    items = tuple(
+        _execution_item(
+            item_id=item_id,
+            payloads=(_payload(title=title),),
+            action=ImportAction.CREATE_NEW,
+            memberships=(ProposedFolderMembership(0, (folder_name,)),),
+            add_membership=True,
+        )
+        for item_id, title, folder_name in (
+            ("first-folder-item", "First", "A First Folder"),
+            ("second-folder-item", "Second", "B Second Folder"),
+        )
+    )
+    approved = _approved_execution_plan(
+        *items,
+        proposed_folder_paths=(("A First Folder",), ("B Second Folder",)),
+    )
+    started = threading.Event()
+    release = threading.Event()
+    cancel = threading.Event()
+    original_ensure = target.ensure_folder
+    calls: list[tuple[str, ...]] = []
+
+    def blocking_ensure(*, segments, folder_id, allow_existing):
+        copied = tuple(segments)
+        calls.append(copied)
+        if copied == ("A First Folder",):
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("folder target release timed out")
+        return original_ensure(
+            segments=copied,
+            folder_id=folder_id,
+            allow_existing=allow_existing,
+        )
+
+    monkeypatch.setattr(target, "ensure_folder", blocking_ensure)
+    progress: list[ImportExecutionProgress] = []
+    results: Queue[object] = Queue()
+
+    def run() -> None:
+        try:
+            results.put(
+                executor.execute(
+                    approved,
+                    cancel_event=cancel,
+                    progress_callback=progress.append,
+                )
+            )
+        except BaseException as error:  # noqa: BLE001 - cross-thread test capture
+            results.put(error)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert started.wait(5)
+    cancel.set()
+    assert worker.is_alive()
+    release.set()
+    worker.join(5)
+    assert not worker.is_alive()
+    result = results.get_nowait()
+    if isinstance(result, BaseException):
+        raise result
+
+    assert result.state is ImportSessionState.CANCELLED
+    assert calls == [("A First Folder",)]
+    assert folders.get_folder_by_path(("A First Folder",)) is not None
+    assert folders.get_folder_by_path(("B Second Folder",)) is None
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.state is ImportSessionState.CANCELLED
+    assert [effect.state for effect in durable.folder_effects] == [
+        ImportEffectState.APPLIED,
+        ImportEffectState.PENDING,
+    ]
+    assert all(item.outcome is ImportItemOutcome.PENDING for item in durable.items)
+    assert progress[-1].state is ImportSessionState.CANCELLED
+    assert all(update.completed == 0 for update in progress)
+    assert all(
+        earlier.completed <= later.completed for earlier, later in pairwise(progress)
+    )
+    with pytest.raises(FrozenInstanceError):
+        progress[-1].completed = 1  # type: ignore[misc]
+
+
 @pytest.mark.asyncio
 async def test_executor_async_offloads_the_whole_execution_and_keeps_loop_responsive(
     real_executor,
