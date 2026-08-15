@@ -415,3 +415,160 @@ loses only by `sys.meta_path` ordering.
    hunk-level staging of two heavily-interleaved files. Piece (a) does have its
    own isolated evidence (347 passed / 1 known flake across the three
    handle-heaviest suites, run before (b)–(d) were written).
+
+---
+
+# Regression round — the five "regressions" were a stale base, not this landing
+
+The coordinator ran the seven-file `Tests/Chat/` cluster on both sides of the
+branch and measured **`origin/dev` 4 failed / 531 passed** vs **this branch 9
+failed / 525 passed**, and handed over five named failures as regressions from
+the lifetime landing.
+
+**All five are `origin/dev` repairs that landed AFTER this branch's base.** Not
+one of them is caused by a line this branch wrote. The branch was cut at
+`dcdcf2925` (PR #1648); PR #1647 — the ~200-commit "reconcile current dev
+diagnostics" batch — merged into `dev` *after* it, and three of its commits fix
+exactly these five tests.
+
+## The decisive measurement
+
+Run the five node-ids at the **merge-base itself** — `dcdcf2925`, pristine, with
+zero bytes of this branch applied — in a throwaway detached worktree:
+
+```
+5 failed, 1 passed, 1 warning in 1.71s
+FAILED …test_save_history_soft_deletes_messages_removed_from_resave
+FAILED …test_save_history_without_ids_skips_variant_rows_in_positional_fallback
+FAILED …TestChatHistorySaving::test_resave_chat_history
+FAILED …test_context_change_before_first_admission_pauses_for_explicit_review
+FAILED …test_local_marks_migrate_from_v16_to_v17_with_expected_schema
+```
+
+The same six node-ids at `origin/dev` `239ca3f33`: **`6 passed`**.
+
+A failure that reproduces with the branch's changes *absent* cannot have been
+introduced by them. The comparison the coordinator ran was branch-vs-`dev`-tip,
+which conflates "what this branch changed" with "what `dev` gained meanwhile";
+the branch-vs-**base** comparison separates them, and every one of the five
+lands on the `dev`-gained side.
+
+## Mechanism, per regression
+
+| # | Test | Fixed on `dev` by | Mechanism |
+|---|---|---|---|
+| 1 | `test_save_history_soft_deletes_messages_removed_from_resave` | `63a1e6023` (production) | `save_history` updating a parent's content ran `update_message`'s recursive-descendants tombstone, soft-deleting `msg-assistant-1`; the loop's next iteration then hit `ValueError: Message msg-assistant-1 not found`. `dev` added `preserve_descendants=True` for the authoritative bulk resave. |
+| 2 | `test_save_history_without_ids_skips_variant_rows_in_positional_fallback` | `63a1e6023` (production) | Same tombstone, reached through the positional-fallback branch. |
+| 3 | `TestChatHistorySaving::test_resave_chat_history` | `63a1e6023` (production) | Same tombstone, through `Chat_Functions`' resave path. |
+| 4 | `test_context_change_before_first_admission_pauses_for_explicit_review` | `e5d2acf6a` (test fixture) | The fixture drove a context change via `store.update_message_content(...)`, which is no longer a context-summary mutation; `dev` repointed it at `store.set_session_context_summary(...)`. |
+| 5 | `test_local_marks_migrate_from_v16_to_v17_with_expected_schema` | `5300077fd` (test fixture) | The V16 fixture builds a current-schema DB then strips it back to V16; it did not strip the `note_folders` / `note_folder_memberships` tables introduced at V35→V36, so the migration assertion saw tables a real V16 DB cannot have. `dev` added the two `DROP TABLE IF EXISTS`. |
+
+Regressions 1–3 are **production** bugs (fixed on `dev`, in a file this branch
+never touches: `chat_persistence_service.py` / `ChaChaNotes_DB.py`).
+Regressions 4–5 are **test fixtures** that had gone stale against `dev`
+production, and `dev` repaired the fixtures. In neither case was the old
+lifetime encoded, and no assertion was weakened anywhere.
+
+## The #5 verdict: stale base, not order-dependence
+
+`test_local_marks_migrate_from_v16_to_v17_with_expected_schema` was flagged as
+possibly order-dependent (seen red on `dev` earlier in the session, green in the
+seven-file run). It is neither ordering nor flake: it fails **alone** at
+`dcdcf2925` and passes **alone** at `239ca3f33`, and the mechanism is a fixture
+that must be taught about every table added after V16. The earlier "pre-existing
+`dev` red" observation is the same staleness seen from a `dev` checkout that
+predated `5300077fd`.
+
+## The fix
+
+`git merge origin/dev` into `feat/task-15860-runtime-lifetime` (`f6d31e76f`).
+The merge is a **clean auto-merge** — `git merge-tree --write-tree HEAD
+origin/dev` returned a tree with no conflict output before the merge was run —
+despite `dev` having extracted `UI/Console_Modules/image.py` and `video.py` out
+of `chat_screen.py` in the meantime. Verified after the merge:
+
+- no `_console_chat_store = None` / `_console_provider_gateway = None` /
+  `_console_chat_controller = None` / `_console_agent_bridge = None` assignment
+  was reintroduced anywhere in `tldw_chatbook/` (the §2 hazard);
+- every §2/§3/§4 seam survived: `ChatScreen._console_runtime`, the four
+  read-write handle properties, `console_view_hooks`,
+  `leave_console_runtime` at `on_unmount`,
+  `uninstall_console_hands_free_store_tap`, and `app.py`'s
+  `_shutdown_console_runtime` → `dispose_console_runtime`;
+- `dev`'s two new Console modules read the repointed handles and never assign
+  them, so the properties serve them unchanged.
+
+No production code and no test was changed by this round. There was nothing to
+fix in this branch.
+
+## Mutations (attribution, not new tests)
+
+No test was added or changed, so there is no new assertion to mutate. Instead
+the three `dev` fixes were **reverse-mutated** on the merged branch to prove
+they, and not anything in this branch, are what carries the five green. Every
+restore was `sed`-based in place and proven with an empty `git diff`.
+
+| # | Mutation | Died |
+|---|---|---|
+| A | `save_history`'s two `preserve_descendants=True` → `False` | regressions 1, 2, 3 — `3 failed` ✅ |
+| B | prompt-queue fixture back to `store.update_message_content(...)` | regression 4 ✅ |
+| C | V16 fixture's two `DROP TABLE IF EXISTS` removed | regression 5 ✅ |
+
+B and C were installed together and killed both their targets in one run
+(`2 failed`). `git diff` is empty and `grep -c "MUTATION-"` is `0` in all three
+files.
+
+## Gate
+
+Runner both sides: `.venv/bin/pytest <paths> -p no:randomly -q --no-header -rf`.
+`Tests/test_probe_import_provenance.py` is in every group it can be added to.
+**Branch** = `f6d31e76f` (this branch merged with `dev` `239ca3f33`);
+**dev** = `239ca3f33` in a throwaway detached worktree, same invocation, same
+machine.
+
+| Gate | dev `239ca3f33` | branch `f6d31e76f` | Verdict |
+|---|---|---|---|
+| the seven `Tests/Chat/` files + probe | 4 failed / 532 passed | **4 failed / 532 passed** | identical; the four are the known pre-existing reds |
+| `Tests/Chat/` in full + probe | 14 failed / 5561 passed / 66 skipped (18:56) | **14 failed / 5575 passed / 66 skipped** (17:09) | **failure sets byte-identical** (`comm` both directions empty); +14 passed = this branch's new `test_console_runtime_lifetime.py` |
+| `Tests/Agents/` + probe | 1418 + probe | **1419 passed / 0 failed** | identical |
+| `Tests/UI/test_screen_residency.py` | 7 passed | **7 passed** | identical |
+| `test_console_runtime_ownership.py` + `test_console_runtime_lifetime.py` | 2 passed (dev has neither the 4 added cases nor the file) | **6 + 14 = 20 passed** | as specified |
+| wake suites — the specified glob, 16 files + probe | 110 passed | **110 passed** | identical; **the known `[size0]` red is GREEN on both** |
+| wake-adjacent files the glob misses (`test_console_agent_fleet_sync_coalescing.py`, `test_probe_headless_wake_p1_continuity.py`, `test_probe_headless_wake_p2_p3_p4.py`) | 9 passed / 1 skipped | **9 passed / 1 skipped** | identical |
+| `Tests/UI/test_console_mcp_approval.py` | 69 passed | **69 passed** | identical |
+
+Not one failure anywhere in the battery is attributable to this branch.
+
+The dev-baseline worktree (`.worktrees/devbase-regr`) was removed after the run.
+
+`origin/dev` moved twice during this round: to `5e8b3724b` (docs-only, two
+backlog files) and then to `a99aaf2fd` (media reading scope, selection dialogs,
+console workspace — real code). **The gate above is pinned to `239ca3f33`** so
+both columns describe the same tree; merging a moving tip mid-gate would have
+invalidated an 18-minute measurement. Bringing the branch to the newer tip is a
+pre-merge step for whoever opens the PR, not part of this attribution round.
+
+Two report claims from §10 are also resolved by the merge: concern 2's
+`test_console_video_capacity.py::test_real_unmount_path_invokes_pending_
+artifact_drain` is in **neither** side's failure list (dev's Console
+video-controller extraction fixed it), and the `[size0]` wake red is green.
+
+## Concerns from this round
+
+1. **A branch-vs-`dev`-tip test comparison cannot attribute a failure.** It
+   measures the union of "what the branch broke" and "what `dev` fixed since the
+   branch was cut". Five confident regression reports came out of that
+   conflation. The attributing measurement is branch-vs-**merge-base**, and it
+   costs one throwaway detached worktree.
+2. The merge pulled in ~200 `dev` commits including a Console decomposition
+   wave (`image.py`, `video.py`), the trajectory feature (ChaChaNotes v38), and
+   the modal-dismissal boundary. It auto-merged cleanly and the gate below is
+   green, but this branch has not been re-reviewed against that much new
+   neighbouring code.
+3. The wake-suite gate as specified (`Tests/Chat/test_fleet_*.py
+   Tests/Chat/test_console_fleet_*.py Tests/UI/test_console_fleet_*.py`)
+   collects **109** tests here, not the 177 quoted; the quoted figure must have
+   come from a wider file set. Counts for the three wake-adjacent files that the
+   glob misses are recorded in the gate table so the set is unambiguous.
+4. The known `[size0]` red in `test_console_fleet_discoverability.py` is
+   **green** after the merge — `dev`'s task-16220 compact-grid work fixed it.
