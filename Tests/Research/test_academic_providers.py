@@ -7,6 +7,7 @@ evidence pool as web results. HTTP is faked at the client seam; parsing,
 retry, and merge logic run real.
 """
 
+import asyncio
 from unittest.mock import MagicMock
 
 import httpx
@@ -20,6 +21,7 @@ from tldw_chatbook.Research_Interop.academic_providers import (
     papers_to_evidence,
     resolve_semantic_scholar_api_key,
     search_arxiv,
+    search_papers,
     search_semantic_scholar,
 )
 
@@ -228,3 +230,86 @@ def test_merge_dedups_papers_by_doi_and_keeps_web_results():
     titles = [item["title"] for item in merged]
     assert titles == ["Web", "P1", "No DOI"]  # DOI dup dropped, no-DOI kept
     assert merged[1]["metadata"]["doi"] == "10.1/x"
+
+
+# --- dual-provider paper search (task-16328) ------------------------------------
+
+_S2_PAYLOAD = (
+    '{"total": 1, "data": [{"paperId": "p1", "title": "S2 Paper", "abstract": "s2 abs",'
+    ' "externalIds": {"DOI": "10.48550/arxiv.2401.00001"}}]}'
+)
+
+
+def test_search_papers_queries_both_providers_and_dedups_by_doi(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    calls = []
+
+    def fake_arxiv(**kwargs):
+        calls.append("arxiv")
+        return search_arxiv(query="agents", client=_client_returning([_response(text=_ATOM)]))
+
+    def fake_s2(**kwargs):
+        calls.append("s2")
+        return search_semantic_scholar(
+            query="agents", client=_client_returning([_response(text=_S2_PAYLOAD)])
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", fake_arxiv
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", fake_s2
+    )
+
+    papers = asyncio.run(search_papers("agents"))
+
+    assert calls == ["arxiv", "s2"]
+    # The S2 paper shares the arXiv DOI -> deduped to one paper.
+    assert len(papers) == 1
+    assert papers[0]["doi"] == "10.48550/arxiv.2401.00001"
+    assert papers[0]["source"] == "arxiv"  # first provider wins the DOI
+
+
+def test_search_papers_degrades_when_one_provider_fails(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+
+    def boom_arxiv(**kwargs):
+        raise AcademicProviderError("arxiv down")
+
+    def ok_s2(**kwargs):
+        return search_semantic_scholar(
+            query="agents", client=_client_returning([_response(text=_S2_PAYLOAD)])
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", boom_arxiv
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", ok_s2
+    )
+
+    papers = asyncio.run(search_papers("agents"))
+
+    assert len(papers) == 1
+    assert papers[0]["title"] == "S2 Paper"
+
+
+def test_search_papers_raises_only_when_all_providers_fail(monkeypatch):
+    def boom(**kwargs):
+        raise AcademicProviderError("down")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", boom
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", boom
+    )
+
+    with pytest.raises(AcademicProviderError):
+        asyncio.run(search_papers("agents"))

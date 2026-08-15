@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
+    Checkbox,
     Input,
     Label,
     ListItem,
@@ -20,6 +21,18 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
+
+
+def _academic_lane_default() -> bool:
+    """Config default for the academic lane toggle: [SearchSettings]
+    research_academic_lane (default False). Failures default OFF -- the
+    lane costs network calls, so the safe default is opt-in."""
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        return bool(get_cli_setting("SearchSettings", "research_academic_lane", False))
+    except Exception:
+        return False
 
 
 class ResearchWindow(Vertical):
@@ -35,6 +48,9 @@ class ResearchWindow(Vertical):
         self.current_artifact: Any | None = None
         self.event_log_entries: list[str] = []
         self.status_message = ""
+        # task-16328: academic lane toggle (arXiv + Semantic Scholar papers
+        # join the run's evidence pool when enabled).
+        self.academic_enabled = _academic_lane_default()
         self.controller = ResearchController(
             getattr(app_instance, "research_scope_service", None)
         )
@@ -49,6 +65,11 @@ class ResearchWindow(Vertical):
                 id="research-source-select",
             )
             yield Button("Refresh", id="research-refresh-runs")
+            yield Checkbox(
+                "Academic (arXiv + S2)",
+                value=self.academic_enabled,
+                id="research-academic-toggle",
+            )
         with Horizontal(id="research-create-row"):
             yield Input(placeholder="Research question", id="research-query-input")
             yield Button("Create Run", id="research-create-run", variant="primary")
@@ -83,11 +104,30 @@ class ResearchWindow(Vertical):
                 )
 
     def save_state(self) -> dict[str, Any]:
-        return {"source": self.current_source}
+        return {"source": self.current_source, "academic": self.academic_enabled}
 
     def restore_state(self, state: dict[str, Any]) -> None:
         source = str((state or {}).get("source") or "local").strip().lower()
         self.current_source = source if source in {"local", "server"} else "local"
+        self.academic_enabled = bool((state or {}).get("academic"))
+        self._sync_academic_toggle()
+
+    def _sync_academic_toggle(self) -> None:
+        try:
+            self.query_one("#research-academic-toggle", Checkbox).value = (
+                self.academic_enabled
+            )
+        except Exception:
+            pass  # not mounted yet; the compose() initial value covers it
+
+    @on(Checkbox.Changed, "#research-academic-toggle")
+    def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
+        self.academic_enabled = bool(event.value)
+        self._set_status(
+            "Academic sources (arXiv + Semantic Scholar) "
+            + ("enabled" if self.academic_enabled else "disabled")
+            + " for local runs."
+        )
 
     async def switch_source(self, source: str) -> list[Any]:
         self.current_source = self._normalize_source(source)
@@ -142,7 +182,15 @@ class ResearchWindow(Vertical):
             LocalResearchEngine,
         )
 
-        engine = LocalResearchEngine(local_service)
+        # task-16328: the academic lane joins the evidence pool (with DOI
+        # dedup) when the window toggle is on; off keeps today's web-only
+        # behavior with a None paper_search_fn.
+        from ..Research_Interop.academic_providers import search_papers
+
+        engine = LocalResearchEngine(
+            local_service,
+            paper_search_fn=search_papers if self.academic_enabled else None,
+        )
 
         async def _run_engine() -> None:
             try:

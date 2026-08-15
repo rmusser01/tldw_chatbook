@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Mapping
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting
 
@@ -387,3 +388,64 @@ def merge_evidence_pools(
             seen_dois.add(doi)
         merged.append(paper)
     return merged
+
+
+async def search_papers(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    semantic_scholar_api_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query arXiv and Semantic Scholar together for one query string
+    (task-16328) and return DOI-deduped normalized papers — the default
+    ``paper_search_fn`` for the engine's academic lane.
+
+    Per-provider degradation: one provider failing logs and contributes
+    nothing while the other still returns; only total failure raises (the
+    engine lane turns that into a warning, never a run failure).
+    """
+    from asyncio import to_thread
+
+    failures: list[str] = []
+    papers: list[dict[str, Any]] = []
+    seen_dois: set[str] = set()
+
+    def _collect(items: list[Any]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            doi = item.get("doi")
+            if doi:
+                if doi in seen_dois:
+                    continue
+                seen_dois.add(doi)
+            papers.append(item)
+
+    try:
+        arxiv_out = await to_thread(
+            search_arxiv, query=query, results_per_page=results_per_page
+        )
+        _collect(arxiv_out.get("items") or [])
+    except AcademicProviderError as exc:
+        failures.append(f"arxiv: {exc}")
+        logger.warning(f"search_papers arxiv lane failed: {exc}")
+
+    try:
+        s2_out = await to_thread(
+            search_semantic_scholar,
+            query=query,
+            results_per_page=results_per_page,
+            api_key=semantic_scholar_api_key
+            if semantic_scholar_api_key is not None
+            else resolve_semantic_scholar_api_key(),
+        )
+        _collect(s2_out.get("items") or [])
+    except AcademicProviderError as exc:
+        failures.append(f"semantic_scholar: {exc}")
+        logger.warning(f"search_papers semantic scholar lane failed: {exc}")
+
+    if not papers and failures:
+        raise AcademicProviderError(
+            "all academic providers failed: " + "; ".join(failures)
+        )
+    return papers
