@@ -86,6 +86,7 @@ from tldw_chatbook.Notes.file_notes_service import (
 )
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
     CommitDraftProjection,
     CommitExecutionProjection,
@@ -347,10 +348,11 @@ class _SessionGitService(Protocol):
     ) -> asyncio.Task[CommitOutcome]: ...
 
 
-class FileNotesRootDetailsDialog(ModalScreen[None]):
+class FileNotesRootDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Show the exact linked-root state through a keyboard-readable surface."""
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#file-notes-root-details-dialog"
 
     DEFAULT_CSS = """
     FileNotesRootDetailsDialog {
@@ -425,13 +427,14 @@ class FileNotesRootDetailsDialog(ModalScreen[None]):
     @on(Button.Pressed, "#file-notes-root-details-close")
     def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
 
-class FileNotesConflictCompareDialog(ModalScreen[None]):
+class FileNotesConflictCompareDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Show one immutable, bounded Base/Draft/Disk comparison."""
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#file-notes-conflict-dialog"
 
     DEFAULT_CSS = """
     FileNotesConflictCompareDialog {
@@ -548,7 +551,7 @@ class FileNotesConflictCompareDialog(ModalScreen[None]):
     @on(Button.Pressed, "#file-notes-conflict-close")
     def _close(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
 
 class LibraryFileNotesWorkspace(Vertical):

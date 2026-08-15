@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.UI.Screens.skills_screen import (
     SkillTrustBootstrapModal,
@@ -16,6 +21,24 @@ from tldw_chatbook.UI.Screens.skills_screen import (
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
+)
+from tldw_chatbook.Notes.file_notes_conflict_compare import (
+    ConflictSide,
+    build_conflict_comparison,
+)
+from tldw_chatbook.Notes.file_notes_git_push import (
+    PushAuthorizationProjection,
+    PushCandidateProjection,
+    PushDestinationProjection,
+)
+from tldw_chatbook.Widgets.Library.library_file_notes_git_panel import (
+    PushDestinationAuthorizationDialog,
+    PushEndpointDetailsDialog,
+    SessionGitTrustDialog,
+)
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    FileNotesConflictCompareDialog,
+    FileNotesRootDetailsDialog,
 )
 from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteConfirmationModal,
@@ -37,10 +60,284 @@ ORDINARY_LIBRARY_MODAL_CONTRACTS = (
 )
 
 
+def _push_destination() -> PushDestinationProjection:
+    return PushDestinationProjection(
+        "https",
+        "push.example.test",
+        443,
+        "/team/notes.git",
+        "refs/heads/session-notes",
+    )
+
+
+def _push_authorization_dialog() -> PushDestinationAuthorizationDialog:
+    candidate = PushCandidateProjection(
+        local_branch_ref="refs/heads/main",
+        parent_oid="a" * 40,
+        candidate_oid="b" * 40,
+        subject="Publish notes",
+        included_notes=(),
+    )
+    return PushDestinationAuthorizationDialog(
+        candidate,
+        PushAuthorizationProjection(_push_destination()),
+    )
+
+
+def _conflict_compare_dialog() -> FileNotesConflictCompareDialog:
+    comparison = build_conflict_comparison(
+        ConflictSide.from_text("Base", "base"),
+        ConflictSide.from_text("Draft", "draft"),
+        ConflictSide.from_text("Disk", "disk"),
+    )
+    return FileNotesConflictCompareDialog("note.md", comparison)
+
+
+@dataclass(frozen=True)
+class _FileNotesModalContract:
+    name: str
+    modal_type: type[ModalScreen[Any]]
+    factory: Callable[[], ModalScreen[Any]]
+    content_selector: str
+    visible_cancel: str
+    cancel_result: object
+    positive_action: str | None = None
+
+
+FILE_NOTES_MODAL_CONTRACTS = (
+    _FileNotesModalContract(
+        "root-details",
+        FileNotesRootDetailsDialog,
+        lambda: FileNotesRootDetailsDialog("/notes"),
+        "#file-notes-root-details-dialog",
+        "#file-notes-root-details-close",
+        None,
+    ),
+    _FileNotesModalContract(
+        "conflict-compare",
+        FileNotesConflictCompareDialog,
+        _conflict_compare_dialog,
+        "#file-notes-conflict-dialog",
+        "#file-notes-conflict-close",
+        None,
+    ),
+    _FileNotesModalContract(
+        "trust",
+        SessionGitTrustDialog,
+        lambda: SessionGitTrustDialog("/notes"),
+        "#confirmation-dialog",
+        "#cancel-button",
+        False,
+        "#confirm-button",
+    ),
+    _FileNotesModalContract(
+        "endpoint-details",
+        PushEndpointDetailsDialog,
+        lambda: PushEndpointDetailsDialog(_push_destination()),
+        "#file-notes-push-endpoint-details-dialog",
+        "#file-notes-push-endpoint-details-close",
+        None,
+    ),
+    _FileNotesModalContract(
+        "authorization",
+        PushDestinationAuthorizationDialog,
+        _push_authorization_dialog,
+        "#file-notes-push-auth-dialog",
+        "#file-notes-push-auth-cancel",
+        False,
+        "#file-notes-push-auth-confirm",
+    ),
+)
+
+
+class _FileNotesModalHarness(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[object] = []
+
+
 def _binding_key_action(binding: object) -> tuple[str, str]:
     if isinstance(binding, tuple):
         return str(binding[0]), str(binding[1])
     return str(binding.key), str(binding.action)  # type: ignore[attr-defined]
+
+
+def test_file_notes_modal_dismissal_contracts_adopt_shared_boundary() -> None:
+    for contract in FILE_NOTES_MODAL_CONTRACTS:
+        assert issubclass(contract.modal_type, SafeModalDismissMixin)
+        assert contract.modal_type.SAFE_MODAL_CONTENT == contract.content_selector
+        escape_actions = [
+            action
+            for binding in contract.modal_type.BINDINGS
+            for key, action in [_binding_key_action(binding)]
+            if key == "escape"
+        ]
+        assert escape_actions == ["request_safe_cancel"]
+
+
+@pytest.mark.parametrize(
+    "contract", FILE_NOTES_MODAL_CONTRACTS, ids=lambda row: row.name
+)
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_file_notes_modal_dismissal_returns_exact_negative_once(
+    contract: _FileNotesModalContract,
+    source: str,
+) -> None:
+    app = _FileNotesModalHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        assert modal.query_one(contract.content_selector)
+        if source == "visible":
+            await pilot.click(contract.visible_cancel)
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert len(app.results) == 1
+    assert app.results[0] is contract.cancel_result
+
+
+@pytest.mark.parametrize(
+    "contract", FILE_NOTES_MODAL_CONTRACTS, ids=lambda row: row.name
+)
+@pytest.mark.asyncio
+async def test_file_notes_modal_dismissal_inside_and_non_primary_stay_open(
+    contract: _FileNotesModalContract,
+) -> None:
+    app = _FileNotesModalHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        await pilot.click(contract.content_selector)
+        non_primary = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=3,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+        await modal._dispatch_message(non_primary)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+
+
+@pytest.mark.parametrize(
+    "contract",
+    [row for row in FILE_NOTES_MODAL_CONTRACTS if row.positive_action is not None],
+    ids=lambda row: row.name,
+)
+@pytest.mark.asyncio
+async def test_file_notes_modal_dismissal_positive_behavior_is_unchanged(
+    contract: _FileNotesModalContract,
+) -> None:
+    app = _FileNotesModalHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        assert contract.positive_action is not None
+        await pilot.click(contract.positive_action)
+        await pilot.pause()
+
+    assert app.results == [True]
+
+
+@pytest.mark.parametrize(
+    "contract", FILE_NOTES_MODAL_CONTRACTS, ids=lambda row: row.name
+)
+@pytest.mark.asyncio
+async def test_file_notes_modal_dismissal_lifecycle_runs_mixin_once(
+    contract: _FileNotesModalContract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mount_calls = 0
+    unmount_calls = 0
+    original_mount = SafeModalDismissMixin.on_mount
+    original_unmount = SafeModalDismissMixin.on_unmount
+
+    def count_mount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mount_calls
+        mount_calls += 1
+        original_mount(self)
+
+    def count_unmount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal unmount_calls
+        unmount_calls += 1
+        original_unmount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mount)
+    monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_unmount)
+    app = _FileNotesModalHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        assert mount_calls == 1
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert unmount_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_authorization_endpoint_details_nested_modal_dismissal_restores_focus_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _FileNotesModalHarness()
+    authorization = _push_authorization_dialog()
+    details_focus_calls = 0
+    original_focus = Button.focus
+
+    def count_details_focus(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal details_focus_calls
+        if self.id == "file-notes-push-auth-details":
+            details_focus_calls += 1
+        return original_focus(self, *args, **kwargs)
+
+    monkeypatch.setattr(Button, "focus", count_details_focus)
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(authorization, callback=app.results.append)
+        await pilot.pause()
+        opener = authorization.query_one("#file-notes-push-auth-details", Button)
+        await pilot.click(opener)
+        await pilot.pause()
+        endpoint_details = app.screen
+        assert isinstance(endpoint_details, PushEndpointDetailsDialog)
+        details_focus_calls = 0
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is authorization
+        assert authorization.focused is opener
+        assert details_focus_calls == 1
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert app.results == [False]
 
 
 def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
