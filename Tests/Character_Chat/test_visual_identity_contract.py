@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import FrozenInstanceError
 import inspect
+import json
 import math
 
 import pytest
@@ -132,6 +133,13 @@ EXPECTED_SAMIRA_KEYS = {
     "error": "custom:error",
 }
 
+VALID_SAMIRA_DIRECTORY_BYTES = 18 * 1024 * 1024
+MAX_EXPRESSION_ASSET_BYTES = 25 * 1024 * 1024
+MAX_EXPRESSION_IMAGE_DIMENSION = 4096
+MAX_EXPRESSION_FRAME_COUNT = 512
+MAX_EXPRESSION_PACK_ASSETS = 128
+MAX_EXPRESSION_TOTAL_BYTES = 256 * 1024 * 1024
+
 
 def _asset(
     label: str,
@@ -194,6 +202,19 @@ def _samira_manifest_data() -> dict[str, object]:
         license_id=SAMIRA_LICENSE,
         default_expression_key=SAMIRA_DEFAULT_EXPRESSION_KEY,
     )
+
+
+def _many_assets(count: int, *, byte_count: int = 1) -> list[dict[str, object]]:
+    return [
+        _asset(
+            f"slot_{index:03d}",
+            f"custom:slot_{index:03d}",
+            byte_count=byte_count,
+            sha256=f"{index:064x}",
+            storage_relpath=f"packs/example/slot_{index:03d}.webp",
+        )
+        for index in range(count)
+    ]
 
 
 def test_server_expression_constants_are_frozen() -> None:
@@ -388,6 +409,92 @@ def test_general_manifest_accepts_a_validated_user_subset() -> None:
         manifest.pack_id = "changed"  # type: ignore[misc]
 
 
+def test_general_manifest_accepts_exact_pinned_server_boundaries() -> None:
+    static_asset = _asset(
+        "neutral",
+        "neutral",
+        byte_count=MAX_EXPRESSION_ASSET_BYTES,
+    )
+    static_asset["width"] = MAX_EXPRESSION_IMAGE_DIMENSION
+    static_asset["height"] = MAX_EXPRESSION_IMAGE_DIMENSION
+    animated_asset = _asset(
+        "animated",
+        "custom:animated",
+        byte_count=1,
+        sha256="b" * 64,
+        is_animated=True,
+        frame_count=MAX_EXPRESSION_FRAME_COUNT,
+        duration_ms=1,
+    )
+    data = _manifest_data([static_asset, animated_asset])
+
+    manifest = validate_visual_identity_manifest(data)
+
+    assert manifest.assets[0].bytes == MAX_EXPRESSION_ASSET_BYTES
+    assert manifest.assets[1].frame_count == MAX_EXPRESSION_FRAME_COUNT
+
+
+def test_general_limit_constants_match_the_pinned_server_contract() -> None:
+    assert visual_identity.MAX_EXPRESSION_ASSET_BYTES == MAX_EXPRESSION_ASSET_BYTES
+    assert (
+        visual_identity.MAX_EXPRESSION_IMAGE_DIMENSION == MAX_EXPRESSION_IMAGE_DIMENSION
+    )
+    assert visual_identity.MAX_EXPRESSION_FRAME_COUNT == MAX_EXPRESSION_FRAME_COUNT
+    assert visual_identity.MAX_EXPRESSION_PACK_ASSETS == MAX_EXPRESSION_PACK_ASSETS
+    assert visual_identity.MAX_EXPRESSION_TOTAL_BYTES == MAX_EXPRESSION_TOTAL_BYTES
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["bytes", "width", "height", "frame_count"],
+)
+def test_general_manifest_rejects_values_over_pinned_server_boundaries(
+    field: str,
+) -> None:
+    asset = _asset("animated", "custom:animated")
+    if field == "bytes":
+        asset[field] = MAX_EXPRESSION_ASSET_BYTES + 1
+    elif field in {"width", "height"}:
+        asset[field] = MAX_EXPRESSION_IMAGE_DIMENSION + 1
+    else:
+        asset.update(
+            is_animated=True,
+            frame_count=MAX_EXPRESSION_FRAME_COUNT + 1,
+            duration_ms=1,
+        )
+    data = _manifest_data([asset])
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_manifest(data)
+
+
+def test_general_manifest_rejects_too_many_assets_before_io() -> None:
+    data = _manifest_data(_many_assets(MAX_EXPRESSION_PACK_ASSETS + 1))
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_manifest(data)
+
+
+def test_general_manifest_rejects_aggregate_bytes_over_pinned_server_boundary() -> None:
+    assets = _many_assets(10, byte_count=MAX_EXPRESSION_ASSET_BYTES)
+    assets.append(
+        _asset(
+            "remainder",
+            "custom:remainder",
+            byte_count=6 * 1024 * 1024 + 1,
+            sha256="f" * 64,
+            storage_relpath="packs/example/remainder.webp",
+        )
+    )
+    assert sum(int(asset["bytes"]) for asset in assets) == (
+        MAX_EXPRESSION_TOTAL_BYTES + 1
+    )
+    data = _manifest_data(assets)
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_manifest(data)
+
+
 @pytest.mark.parametrize(
     ("mutation", "category"),
     [
@@ -504,7 +611,7 @@ def test_samira_manifest_requires_exact_inventory_mapping_and_contract() -> None
     manifest = validate_visual_identity_manifest(
         _samira_manifest_data(),
         require_samira_bundle=True,
-        directory_bytes=18 * 1024 * 1024,
+        directory_bytes=VALID_SAMIRA_DIRECTORY_BYTES,
     )
 
     assert (
@@ -552,7 +659,11 @@ def test_samira_manifest_rejects_contract_drift(mutation, category: str) -> None
     data["pack_content_sha256"] = compute_pack_content_sha256(data)
 
     with pytest.raises(ValueError, match=f"^{category}$"):
-        validate_visual_identity_manifest(data, require_samira_bundle=True)
+        validate_visual_identity_manifest(
+            data,
+            require_samira_bundle=True,
+            directory_bytes=VALID_SAMIRA_DIRECTORY_BYTES,
+        )
 
 
 def test_samira_manifest_enforces_per_reaction_budget() -> None:
@@ -561,7 +672,11 @@ def test_samira_manifest_enforces_per_reaction_budget() -> None:
     data["pack_content_sha256"] = compute_pack_content_sha256(data)
 
     with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
-        validate_visual_identity_manifest(data, require_samira_bundle=True)
+        validate_visual_identity_manifest(
+            data,
+            require_samira_bundle=True,
+            directory_bytes=VALID_SAMIRA_DIRECTORY_BYTES,
+        )
 
 
 def test_samira_manifest_enforces_reaction_aggregate_budget() -> None:
@@ -571,7 +686,11 @@ def test_samira_manifest_enforces_reaction_aggregate_budget() -> None:
     data["pack_content_sha256"] = compute_pack_content_sha256(data)
 
     with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
-        validate_visual_identity_manifest(data, require_samira_bundle=True)
+        validate_visual_identity_manifest(
+            data,
+            require_samira_bundle=True,
+            directory_bytes=VALID_SAMIRA_DIRECTORY_BYTES,
+        )
 
 
 def test_samira_manifest_enforces_supplied_directory_budget() -> None:
@@ -583,3 +702,64 @@ def test_samira_manifest_enforces_supplied_directory_budget() -> None:
             require_samira_bundle=True,
             directory_bytes=20 * 1024 * 1024 + 1,
         )
+
+
+def test_reserved_samira_pack_id_is_strict_even_in_general_mode() -> None:
+    data = _samira_manifest_data()
+    data["assets"][0]["expression_key"] = "custom:wrong"  # type: ignore[index]
+    data["pack_content_sha256"] = compute_pack_content_sha256(data)
+
+    with pytest.raises(ValueError, match="^visual_identity_samira_contract_invalid$"):
+        validate_visual_identity_manifest(
+            data,
+            directory_bytes=VALID_SAMIRA_DIRECTORY_BYTES,
+        )
+
+
+@pytest.mark.parametrize("require_samira_bundle", [False, True])
+def test_bundled_samira_validation_requires_measured_directory_bytes(
+    require_samira_bundle: bool,
+) -> None:
+    data = _samira_manifest_data()
+    if not require_samira_bundle:
+        data["pack_id"] = SAMIRA_PACK_ID
+        data["pack_content_sha256"] = compute_pack_content_sha256(data)
+
+    with pytest.raises(ValueError, match="^visual_identity_directory_bytes_required$"):
+        validate_visual_identity_manifest(
+            data,
+            require_samira_bundle=require_samira_bundle,
+        )
+
+
+def test_parse_manifest_json_accepts_strict_utf8_object() -> None:
+    data = _manifest_data([_asset("neutral", "neutral")])
+
+    parsed = visual_identity.parse_visual_identity_manifest_json(
+        json.dumps(data).encode("utf-8")
+    )
+
+    assert parsed.pack_id == "user.example.pack"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"schema_id":"first","schema_id":"second"}',
+        '{"assets":[{"bytes":1,"bytes":2}]}',
+        '{"value":NaN}',
+        '{"value":Infinity}',
+        '["not", "an", "object"]',
+        b"\xff",
+        42,
+    ],
+)
+def test_parse_manifest_json_rejects_ambiguous_or_invalid_json_without_content_leak(
+    raw: object,
+) -> None:
+    with pytest.raises(ValueError) as error:
+        visual_identity.parse_visual_identity_manifest_json(raw)  # type: ignore[arg-type]
+
+    assert str(error.value) == "visual_identity_manifest_json_invalid"
+    assert error.value.__cause__ is None
+    assert repr(raw) not in str(error.value)

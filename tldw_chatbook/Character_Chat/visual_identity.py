@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import errno
 import hashlib
 from importlib import resources
 from io import BytesIO
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 from typing import Any
+import warnings
 
 from PIL import Image, UnidentifiedImageError
 
@@ -119,6 +123,10 @@ def _sanitize_expression_token(value: str) -> str:
     return normalized.strip("_")
 
 
+# Pinned byte-for-byte from
+# tldw_Server_API/app/core/Visual_Identities/expression_slots.py at
+# commit 385afa951922c8a9dc2002c675bb6cad65e4ac23.
+
 SAMIRA_REACTION_LABELS = (
     "admiration",
     "amusement",
@@ -197,6 +205,14 @@ SAMIRA_MAX_REACTION_BYTES = 1024 * 1024
 SAMIRA_MAX_REACTIONS_BYTES = 16 * 1024 * 1024
 SAMIRA_MAX_DIRECTORY_BYTES = 20 * 1024 * 1024
 
+MAX_EXPRESSION_ASSET_BYTES = 25 * 1024 * 1024
+MAX_EXPRESSION_IMAGE_DIMENSION = 4096
+MAX_EXPRESSION_FRAME_COUNT = 512
+MAX_EXPRESSION_PACK_ASSETS = 128
+MAX_EXPRESSION_TOTAL_BYTES = 256 * 1024 * 1024
+
+_READ_CHUNK_SIZE = 1024 * 1024
+
 _LOWER_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _LICENSE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*\Z")
 _EXPECTED_IMAGE_FORMATS = {
@@ -251,6 +267,14 @@ class LoadedVisualIdentityAsset:
 
     asset: VisualIdentityManifestAsset
     data: bytes
+
+
+class _VisualIdentityBudgetError(ValueError):
+    """Internal sentinel that preserves the public budget category."""
+
+
+class _VisualIdentityImageLimitError(ValueError):
+    """Internal sentinel that preserves the public decoded-image limit category."""
 
 
 def compute_pack_content_sha256(
@@ -355,11 +379,16 @@ def validate_visual_identity_manifest(
         raw_assets = data.get("assets")
         if not isinstance(raw_assets, list) or not raw_assets:
             raise ValueError
+        if len(raw_assets) > MAX_EXPRESSION_PACK_ASSETS:
+            raise _VisualIdentityBudgetError
         assets = tuple(_validate_manifest_asset(asset) for asset in raw_assets)
         _require_unique_assets(assets)
         if default_expression_key not in {asset.expression_key for asset in assets}:
             raise ValueError
         _validate_directory_bytes(directory_bytes)
+        _validate_general_budgets(assets)
+    except _VisualIdentityBudgetError:
+        raise ValueError("visual_identity_budget_exceeded") from None
     except (KeyError, TypeError, ValueError):
         raise ValueError("visual_identity_manifest_invalid") from None
 
@@ -376,9 +405,53 @@ def validate_visual_identity_manifest(
     if compute_pack_content_sha256(manifest) != digest:
         raise ValueError("visual_identity_digest_mismatch")
 
-    if require_samira_bundle:
+    if require_samira_bundle or pack_id == SAMIRA_PACK_ID:
+        if directory_bytes is None:
+            raise ValueError("visual_identity_directory_bytes_required")
         _validate_samira_manifest(manifest, directory_bytes=directory_bytes)
     return manifest
+
+
+def parse_visual_identity_manifest_json(
+    raw: bytes | str,
+    *,
+    require_samira_bundle: bool = False,
+    directory_bytes: int | None = None,
+) -> VisualIdentityManifest:
+    """Parse strict JSON and validate a Visual Identity manifest.
+
+    Args:
+        raw: UTF-8 JSON bytes or text.
+        require_samira_bundle: Require the exact bundled Samira contract.
+        directory_bytes: Measured byte count for the complete supplied directory.
+
+    Returns:
+        Frozen validated manifest data.
+
+    Raises:
+        ValueError: With a stable category for malformed or invalid input.
+    """
+    try:
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="strict")
+        elif isinstance(raw, str):
+            text = raw
+        else:
+            raise TypeError
+        data = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_json_constant,
+        )
+        if not isinstance(data, Mapping):
+            raise TypeError
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        raise ValueError("visual_identity_manifest_json_invalid") from None
+    return validate_visual_identity_manifest(
+        data,
+        require_samira_bundle=require_samira_bundle,
+        directory_bytes=directory_bytes,
+    )
 
 
 def load_visual_identity_asset(
@@ -406,37 +479,228 @@ def load_visual_identity_asset(
         raise ValueError("visual_identity_manifest_invalid")
     if source_kind != "builtin" and source_kind not in _USER_SOURCE_KINDS:
         raise ValueError("visual_identity_source_kind_unsupported")
+    if (
+        asset.bytes > MAX_EXPRESSION_ASSET_BYTES
+        or asset.width > MAX_EXPRESSION_IMAGE_DIMENSION
+        or asset.height > MAX_EXPRESSION_IMAGE_DIMENSION
+        or asset.frame_count > MAX_EXPRESSION_FRAME_COUNT
+    ):
+        raise ValueError("visual_identity_budget_exceeded")
 
     parts = _safe_relative_parts(asset.storage_relpath)
     if source_kind == "builtin":
-        try:
-            data = (
-                resources.files("tldw_chatbook").joinpath("assets", *parts).read_bytes()
-            )
-        except (OSError, TypeError):
-            raise ValueError("visual_identity_asset_unavailable") from None
+        data = _read_builtin_asset(parts, expected_bytes=asset.bytes)
     else:
-        profile_root = (
-            Path(user_data_dir) if user_data_dir is not None else get_user_data_dir()
+        data = _read_user_asset(
+            parts,
+            expected_bytes=asset.bytes,
+            user_data_dir=user_data_dir,
         )
-        resolved_profile_root = profile_root.resolve(strict=False)
-        lexical_assets_root = resolved_profile_root / "visual_identities"
-        resolved_assets_root = lexical_assets_root.resolve(strict=False)
-        if not resolved_assets_root.is_relative_to(resolved_profile_root):
-            raise ValueError("visual_identity_path_invalid")
-        candidate = resolved_assets_root.joinpath(*parts).resolve(strict=False)
-        if not candidate.is_relative_to(resolved_assets_root):
-            raise ValueError("visual_identity_path_invalid")
-        try:
-            data = candidate.read_bytes()
-        except OSError:
-            raise ValueError("visual_identity_asset_unavailable") from None
 
     if len(data) != asset.bytes:
         raise ValueError("visual_identity_asset_size_mismatch")
     if hashlib.sha256(data).hexdigest() != asset.sha256:
         raise ValueError("visual_identity_asset_sha256_mismatch")
     return LoadedVisualIdentityAsset(asset=asset, data=data)
+
+
+def _read_builtin_asset(parts: tuple[str, ...], *, expected_bytes: int) -> bytes:
+    try:
+        candidate = resources.files("tldw_chatbook").joinpath("assets", *parts)
+        with candidate.open("rb") as stream:
+            return _read_stream_bounded(stream, expected_bytes=expected_bytes)
+    except (OSError, RuntimeError, TypeError, AttributeError):
+        raise ValueError("visual_identity_asset_unavailable") from None
+
+
+def _read_user_asset(
+    parts: tuple[str, ...],
+    *,
+    expected_bytes: int,
+    user_data_dir: str | Path | None,
+) -> bytes:
+    assets_root, candidate = _confined_user_asset_path(parts, user_data_dir)
+    if _supports_secure_dir_fd():
+        return _read_user_asset_secure(
+            assets_root,
+            parts,
+            expected_bytes=expected_bytes,
+        )
+    return _read_user_asset_fallback(
+        assets_root,
+        candidate,
+        parts,
+        expected_bytes=expected_bytes,
+    )
+
+
+def _confined_user_asset_path(
+    parts: tuple[str, ...], user_data_dir: str | Path | None
+) -> tuple[Path, Path]:
+    try:
+        profile_root = (
+            Path(user_data_dir) if user_data_dir is not None else get_user_data_dir()
+        ).resolve(strict=False)
+        assets_root = (profile_root / "visual_identities").resolve(strict=False)
+        candidate = assets_root.joinpath(*parts)
+        resolved_candidate = candidate.resolve(strict=False)
+    except (OSError, RuntimeError, TypeError):
+        raise ValueError("visual_identity_path_invalid") from None
+    if not assets_root.is_relative_to(
+        profile_root
+    ) or not resolved_candidate.is_relative_to(assets_root):
+        raise ValueError("visual_identity_path_invalid")
+    return assets_root, candidate
+
+
+def _supports_secure_dir_fd() -> bool:
+    return (
+        os.name == "posix"
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+        and os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.stat in os.supports_follow_symlinks
+    )
+
+
+def _read_user_asset_secure(
+    assets_root: Path,
+    parts: tuple[str, ...],
+    *,
+    expected_bytes: int,
+) -> bytes:
+    opened_fds: list[int] = []
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        root_fd = os.open(assets_root, flags | os.O_DIRECTORY)
+        opened_fds.append(root_fd)
+        parent_fd = root_fd
+        for component in parts[:-1]:
+            directory_fd = os.open(
+                component,
+                flags | os.O_DIRECTORY,
+                dir_fd=parent_fd,
+            )
+            opened_fds.append(directory_fd)
+            if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+                raise ValueError("visual_identity_path_invalid")
+            parent_fd = directory_fd
+
+        leaf = parts[-1]
+        leaf_fd = os.open(leaf, flags, dir_fd=parent_fd)
+        opened_fds.append(leaf_fd)
+        opened_stat = os.fstat(leaf_fd)
+        _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
+        data = _read_fd_bounded(leaf_fd, expected_bytes=expected_bytes)
+        _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
+        return data
+    except ValueError:
+        raise
+    except OSError as error:
+        category = (
+            "visual_identity_path_invalid"
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}
+            else "visual_identity_asset_unavailable"
+        )
+        raise ValueError(category) from None
+    finally:
+        for descriptor in reversed(opened_fds):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _verify_opened_leaf_identity(
+    parent_fd: int, leaf: str, opened_stat: os.stat_result
+) -> None:
+    try:
+        named_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        raise ValueError("visual_identity_path_invalid") from None
+    if (
+        not stat.S_ISREG(opened_stat.st_mode)
+        or not stat.S_ISREG(named_stat.st_mode)
+        or (opened_stat.st_dev, opened_stat.st_ino)
+        != (named_stat.st_dev, named_stat.st_ino)
+    ):
+        raise ValueError("visual_identity_path_invalid")
+
+
+def _read_user_asset_fallback(
+    assets_root: Path,
+    candidate: Path,
+    parts: tuple[str, ...],
+    *,
+    expected_bytes: int,
+) -> bytes:
+    try:
+        _verify_fallback_directories(assets_root, parts)
+        with candidate.open("rb") as stream:
+            opened_stat = os.fstat(stream.fileno())
+            _verify_fallback_directories(assets_root, parts)
+            _verify_fallback_identity(candidate, opened_stat)
+            data = _read_stream_bounded(stream, expected_bytes=expected_bytes)
+            _verify_fallback_directories(assets_root, parts)
+            _verify_fallback_identity(candidate, opened_stat)
+            return data
+    except ValueError:
+        raise
+    except (OSError, RuntimeError, AttributeError, TypeError):
+        raise ValueError("visual_identity_asset_unavailable") from None
+
+
+def _verify_fallback_directories(assets_root: Path, parts: tuple[str, ...]) -> None:
+    current = assets_root
+    root_stat = os.lstat(current)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise ValueError("visual_identity_path_invalid")
+    for component in parts[:-1]:
+        current /= component
+        if not stat.S_ISDIR(os.lstat(current).st_mode):
+            raise ValueError("visual_identity_path_invalid")
+
+
+def _verify_fallback_identity(candidate: Path, opened_stat: os.stat_result) -> None:
+    try:
+        named_stat = os.lstat(candidate)
+    except OSError:
+        raise ValueError("visual_identity_path_invalid") from None
+    if (
+        not stat.S_ISREG(opened_stat.st_mode)
+        or not stat.S_ISREG(named_stat.st_mode)
+        or (opened_stat.st_dev, opened_stat.st_ino)
+        != (named_stat.st_dev, named_stat.st_ino)
+    ):
+        raise ValueError("visual_identity_path_invalid")
+
+
+def _read_fd_bounded(descriptor: int, *, expected_bytes: int) -> bytes:
+    return _read_bounded(
+        lambda size: os.read(descriptor, size), expected_bytes=expected_bytes
+    )
+
+
+def _read_stream_bounded(stream: Any, *, expected_bytes: int) -> bytes:
+    return _read_bounded(stream.read, expected_bytes=expected_bytes)
+
+
+def _read_bounded(read: Any, *, expected_bytes: int) -> bytes:
+    limit = min(expected_bytes, MAX_EXPRESSION_ASSET_BYTES) + 1
+    chunks: list[bytes] = []
+    byte_count = 0
+    while byte_count < limit:
+        chunk = read(min(_READ_CHUNK_SIZE, limit - byte_count))
+        if not isinstance(chunk, bytes):
+            raise ValueError("visual_identity_asset_unavailable")
+        if not chunk:
+            break
+        chunks.append(chunk)
+        byte_count += len(chunk)
+    return b"".join(chunks)
 
 
 def validate_visual_identity_assets(
@@ -467,20 +731,25 @@ def validate_visual_identity_assets(
         _validate_directory_bytes(directory_bytes)
     except ValueError:
         raise ValueError("visual_identity_manifest_invalid") from None
+    if len(manifest.assets) > MAX_EXPRESSION_PACK_ASSETS:
+        raise ValueError("visual_identity_budget_exceeded")
+    try:
+        _validate_general_budgets(manifest.assets)
+    except _VisualIdentityBudgetError:
+        raise ValueError("visual_identity_budget_exceeded") from None
     if manifest.pack_id == SAMIRA_PACK_ID:
         _validate_samira_manifest(manifest, directory_bytes=directory_bytes)
 
-    loaded_assets = tuple(
-        load_visual_identity_asset(
+    loaded_assets: list[LoadedVisualIdentityAsset] = []
+    for asset in manifest.assets:
+        loaded = load_visual_identity_asset(
             asset,
             source_kind=source_kind,
             user_data_dir=user_data_dir,
         )
-        for asset in manifest.assets
-    )
-    for loaded in loaded_assets:
         _validate_image_bytes(loaded)
-    return loaded_assets
+        loaded_assets.append(loaded)
+    return tuple(loaded_assets)
 
 
 def _content_asset_payload(
@@ -508,6 +777,19 @@ def _content_asset_payload(
         "height": asset["height"],
         "sha256": asset["sha256"],
     }
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError
 
 
 def _nonempty_string(value: Any) -> str:
@@ -591,6 +873,21 @@ def _require_unique_assets(assets: tuple[VisualIdentityManifestAsset, ...]) -> N
         raise ValueError
 
 
+def _validate_general_budgets(
+    assets: tuple[VisualIdentityManifestAsset, ...],
+) -> None:
+    if any(
+        asset.bytes > MAX_EXPRESSION_ASSET_BYTES
+        or asset.width > MAX_EXPRESSION_IMAGE_DIMENSION
+        or asset.height > MAX_EXPRESSION_IMAGE_DIMENSION
+        or asset.frame_count > MAX_EXPRESSION_FRAME_COUNT
+        for asset in assets
+    ):
+        raise _VisualIdentityBudgetError
+    if sum(asset.bytes for asset in assets) > MAX_EXPRESSION_TOTAL_BYTES:
+        raise _VisualIdentityBudgetError
+
+
 def _safe_relative_parts(value: str) -> tuple[str, ...]:
     if (
         not isinstance(value, str)
@@ -619,6 +916,8 @@ def _validate_samira_manifest(
     *,
     directory_bytes: int | None,
 ) -> None:
+    if directory_bytes is None:
+        raise ValueError("visual_identity_directory_bytes_required")
     labels = tuple(asset.original_label for asset in manifest.assets)
     mappings = {asset.original_label: asset.expression_key for asset in manifest.assets}
     exact_contract = (
@@ -647,23 +946,43 @@ def _validate_samira_manifest(
         raise ValueError("visual_identity_budget_exceeded")
     if sum(asset.bytes for asset in manifest.assets) > SAMIRA_MAX_REACTIONS_BYTES:
         raise ValueError("visual_identity_budget_exceeded")
-    if directory_bytes is not None and directory_bytes > SAMIRA_MAX_DIRECTORY_BYTES:
+    if directory_bytes > SAMIRA_MAX_DIRECTORY_BYTES:
         raise ValueError("visual_identity_budget_exceeded")
 
 
 def _validate_image_bytes(loaded: LoadedVisualIdentityAsset) -> None:
     asset = loaded.asset
     try:
-        with Image.open(BytesIO(loaded.data)) as image:
-            image_format = image.format
-            image_size = image.size
-            frame_count = max(int(getattr(image, "n_frames", 1) or 1), 1)
-            is_animated = bool(getattr(image, "is_animated", False)) or frame_count > 1
-            duration_ms = (
-                _image_duration_ms(image, frame_count) if is_animated else None
-            )
-            image.verify()
-    except (OSError, UnidentifiedImageError, ValueError):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(loaded.data)) as image:
+                image_format = image.format
+                image_size = image.size
+                frame_count = max(int(getattr(image, "n_frames", 1) or 1), 1)
+                is_animated = (
+                    bool(getattr(image, "is_animated", False)) or frame_count > 1
+                )
+                if (
+                    image_size[0] > MAX_EXPRESSION_IMAGE_DIMENSION
+                    or image_size[1] > MAX_EXPRESSION_IMAGE_DIMENSION
+                    or frame_count > MAX_EXPRESSION_FRAME_COUNT
+                ):
+                    raise _VisualIdentityImageLimitError
+                decoded_duration_ms = _image_duration_ms(image, frame_count)
+                duration_ms = decoded_duration_ms if is_animated else None
+    except _VisualIdentityImageLimitError:
+        raise ValueError("visual_identity_asset_limits_exceeded") from None
+    except (
+        OSError,
+        EOFError,
+        SyntaxError,
+        RuntimeError,
+        IndexError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        ValueError,
+    ):
         raise ValueError("visual_identity_asset_decode_invalid") from None
 
     try:
@@ -686,5 +1005,6 @@ def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
     duration_ms = 0
     for frame_index in range(frame_count):
         image.seek(frame_index)
+        image.load()
         duration_ms += int(image.info.get("duration") or 0)
     return duration_ms
