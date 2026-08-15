@@ -1033,6 +1033,16 @@ def _assert_no_private_json_metadata_keys(*values: object) -> None:
     assert not private_keys, f"private JSON metadata key: {', '.join(private_keys)}"
 
 
+def _assert_no_webp_metadata(raw: bytes, image_info: dict[str, object]) -> None:
+    chunk_markers = (b"EXIF", b"ICCP", b"XMP ")
+    metadata_keys = {"exif", "icc_profile", "xmp", "xmp_metadata"}
+    found_chunks = [marker.decode("ascii") for marker in chunk_markers if marker in raw]
+    found_keys = sorted(metadata_keys.intersection(image_info))
+    assert not (found_chunks or found_keys), (
+        f"WebP metadata: chunks={found_chunks}, Pillow keys={found_keys}"
+    )
+
+
 @pytest.mark.parametrize(
     "private_metadata",
     [
@@ -1055,6 +1065,22 @@ def test_packaging_key_guard_rejects_private_manifest_metadata_even_when_parser_
     assert parsed.pack_id == SAMIRA_PACK_ID
     with pytest.raises(AssertionError, match="private JSON metadata key"):
         _assert_no_private_json_metadata_keys(manifest)
+
+
+def test_webp_metadata_guard_rejects_exif_chunk_and_pillow_key() -> None:
+    buffer = BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(
+        buffer,
+        format="WEBP",
+        exif=b"Exif\x00\x00legacy-metadata",
+    )
+    raw = buffer.getvalue()
+    with Image.open(BytesIO(raw)) as image:
+        image.load()
+        assert b"EXIF" in raw
+        assert "exif" in image.info
+        with pytest.raises(AssertionError, match="WebP metadata"):
+            _assert_no_webp_metadata(raw, image.info)
 
 
 def test_bundled_samira_package_inventory_is_exact() -> None:
@@ -1114,6 +1140,7 @@ def test_bundled_samira_manifest_rows_match_packaged_webps() -> None:
             assert image.size == (1024, 1024)
             assert image.mode == "RGB"
             assert getattr(image, "n_frames", 1) == 1
+            _assert_no_webp_metadata(raw, image.info)
 
         assert asset == {
             "bytes": len(raw),
