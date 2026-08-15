@@ -912,9 +912,9 @@ class ConsoleWorkspaceController:
                 return
             services.append((candidate, include_mode))
 
-        add_service(scope_service, include_mode=True)
-        add_service(getattr(scope_service, "local_service", None), include_mode=False)
         add_service(local_service, include_mode=False)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(scope_service, include_mode=True)
         if not services:
             return [], None, ""
 
