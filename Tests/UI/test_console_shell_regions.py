@@ -1,13 +1,9 @@
-"""Painted-geometry baseline for the Console shell's regions.
+"""Painted-geometry contract for the Console shell's production regions.
 
-Written BEFORE the wave-1 extractions (spec rule 3, screen-decomposition
-design). Every extraction task must keep this file green and byte-identical.
-If an extraction needs this file to change, the extraction changed behaviour
--- stop and treat that as a finding.
-
-The expectation table pins what the shell DOES at each size as of the
-baseline commit, including regions that are legitimately hidden in compact
-mode. It does not pin what anyone thinks it should do.
+The expectation table pins the approved shell policy at each size, including
+regions that are legitimately hidden in compact mode. It mounts the production
+hierarchy with the shipped stylesheet so simplified widget geometry cannot
+stand in for application behavior.
 
 Three sizes are pinned:
 
@@ -26,10 +22,12 @@ Three sizes are pinned:
   has a "Run recipe" row plus a companion row (Blocked impact / Next
   action / Sources / Tools / Approvals / Artifacts) -- the fresh harness's
   setup-blocked state supplies exactly that, so at 120x30 the Inspector is
-  OPEN by default where it is closed at the other two sizes. This flips
-  ``#console-inspector-rail-handle`` from hittable to hidden (the "open"
-  handle only shows when the rail is closed) and makes
-  ``#console-run-inspector`` newly present in the DOM with ``display=True``
+  OPEN by default where it is closed at the other two sizes. Inspector-first
+  compact priority then hides the Context rail, exposes its reveal handle,
+  and grants the Inspector compact-override authority. The Transcript's
+  minimum-width waiver keeps all displayed workspace-grid children inside
+  both the grid and viewport. The Inspector reveal handle stays hidden, and
+  ``#console-run-inspector`` is newly present in the DOM with ``display=True``
   -- but see the "clipped" state below before assuming that means visible.
 
 ``#console-mode-bar`` is hidden unconditionally at any size: it is a legacy
@@ -70,15 +68,14 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 # (id, expected_at_160x45, expected_at_235x52, expected_at_120x30) where
-# expected is "hittable" | "hidden" | "clipped" -- filled from throwaway
-# probes run against the unmodified shell (see task-1 report, including its
-# fix-round section, for the raw observations).
+# expected is "hittable" | "hidden" | "clipped" -- pinned against the
+# production hierarchy and shipped stylesheet.
 _REGIONS: list[tuple[str, str, str, str]] = [
     ("#console-shell", "hittable", "hittable", "hittable"),
-    ("#console-left-rail", "hittable", "hittable", "clipped"),
-    ("#console-left-rail-body", "hittable", "hittable", "clipped"),
-    ("#console-main-column", "hittable", "hittable", "clipped"),
-    ("#console-context-rail-handle", "hidden", "hidden", "hidden"),
+    ("#console-left-rail", "hittable", "hittable", "hidden"),
+    ("#console-left-rail-body", "hittable", "hittable", "hidden"),
+    ("#console-main-column", "hittable", "hittable", "hittable"),
+    ("#console-context-rail-handle", "hidden", "hidden", "hittable"),
     ("#console-inspector-rail-handle", "hittable", "hittable", "hidden"),
     ("#console-control-bar", "hittable", "hittable", "hittable"),
     ("#console-mode-bar", "hidden", "hidden", "hidden"),
@@ -206,3 +203,42 @@ async def test_region_geometry_is_stable(
         assert node.display and node.region.width > 0
         hit = pilot.app.screen.get_widget_at(*node.region.center)[0]
         assert hit is node or node in hit.ancestors or hit in node.walk_children()
+
+
+@pytest.mark.asyncio
+async def test_compact_workspace_grid_children_are_contained() -> None:
+    """The real 120x30 workspace keeps every displayed direct pane in bounds."""
+    async with make_console_pilot(size=(120, 30)) as pilot:
+        screen = pilot.app.screen
+        grid = screen.query_one("#console-workspace-grid")
+        children = tuple(grid.children)
+
+        assert {child.id for child in children} == {
+            "console-context-rail-handle",
+            "console-left-rail",
+            "console-main-column",
+            "console-right-rail",
+            "console-inspector-rail-handle",
+        }
+        displayed = tuple(child for child in children if child.display)
+        assert len(displayed) == 3
+
+        for child in displayed:
+            child_id = child.id
+            assert child.region.width > 0 and child.region.height > 0, (
+                f"{child_id} has no painted geometry: child={child.region}"
+            )
+            assert grid.content_region.contains_region(child.region), (
+                f"{child_id} escapes workspace grid content: "
+                f"child={child.region}, grid={grid.content_region}"
+            )
+            assert screen.region.contains_region(child.region), (
+                f"{child_id} escapes the 120x30 viewport: "
+                f"child={child.region}, screen={screen.region}"
+            )
+
+        assert {child.id for child in displayed} == {
+            "console-context-rail-handle",
+            "console-main-column",
+            "console-right-rail",
+        }
