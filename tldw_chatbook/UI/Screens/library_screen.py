@@ -9914,32 +9914,9 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_conversation_canvas(
         self, *, then: Callable[[], None] | None = None
     ) -> bool:
-        """Sync Conversation state and enforce screen-owned stale action gates."""
+        """Sync Conversation state through its canvas-owned action gates."""
 
-        def finish() -> None:
-            self._apply_library_conversation_action_availability()
-            if then is not None:
-                then()
-
-        return _sync_library_canvas(self, "conversations", then=finish)
-
-    def _apply_library_conversation_action_availability(self) -> None:
-        """Disable mounted row/bulk actions while retained rows are stale."""
-
-        disabled = self._library_conversation_freshness == "stale"
-        selectors = (
-            ".library-conversation-row",
-            "#library-conversations-select-toggle",
-            "#library-conversations-select-all",
-            "#library-conversations-select-clear",
-            "#library-conversations-export-selected",
-            "#library-conversations-export",
-            "#library-conversation-open-console",
-            "#library-conversation-use-source",
-        )
-        for selector in selectors:
-            for widget in self.query(selector):
-                widget.disabled = disabled
+        return _sync_library_canvas(self, "conversations", then=then)
 
     @staticmethod
     def _normalize_library_conversation_page(page: object) -> int:

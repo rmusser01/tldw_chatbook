@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches, QueryError
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -91,6 +92,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
+    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -749,6 +751,9 @@ async def _wait_for_condition(
     zero-arg callable (evaluated at raise time, so dynamic diagnostics report the
     stuck state).
 
+    Textual query misses during targeted recomposition are retried; all other
+    predicate exceptions propagate immediately.
+
     The predicate is checked FIRST each iteration -- before the deadline test and
     before pausing -- so it is evaluated at least once (even at ``timeout=0``) and
     is always given a final chance after a ``pause`` that overshoots the deadline
@@ -757,7 +762,11 @@ async def _wait_for_condition(
     """
     deadline = time.monotonic() + timeout
     while True:
-        if predicate():
+        try:
+            matched = predicate()
+        except (NoMatches, QueryError):
+            matched = False
+        if matched:
             return
         if time.monotonic() >= deadline:
             break
@@ -837,6 +846,45 @@ async def test__wait_for_condition_evaluates_callable_message_at_raise() -> None
             timeout=0.05,
             message=lambda: f"dynamic {6 * 7}",
         )
+
+
+@pytest.mark.parametrize("transient_error", [NoMatches, QueryError])
+@pytest.mark.asyncio
+async def test__wait_for_condition_retries_transient_query_errors(
+    transient_error,
+) -> None:
+    """Targeted recomposes may briefly remove the widget a predicate queries."""
+    calls = 0
+
+    def predicate() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise transient_error()
+        return True
+
+    pilot = _FakePilot()
+    await _wait_for_condition(pilot, predicate, message="must not raise")
+
+    assert calls == 3
+    assert pilot.pause_calls == 2
+
+
+@pytest.mark.asyncio
+async def test__wait_for_condition_propagates_other_predicate_errors() -> None:
+    pilot = _FakePilot()
+
+    def broken_predicate() -> bool:
+        raise RuntimeError("broken predicate")
+
+    with pytest.raises(RuntimeError, match="broken predicate"):
+        await _wait_for_condition(
+            pilot,
+            broken_predicate,
+            message="must not mask the predicate error",
+        )
+
+    assert pilot.pause_calls == 0
 
 
 def _two_conversations():
@@ -7130,6 +7178,102 @@ async def test_library_conversation_pager_disabled_reason_and_focus_fallback(siz
 
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
+async def test_library_conversation_canvas_sync_preserves_intrinsic_action_gates(size):
+    """Canvas composition remains the sole owner of Conversation action gates."""
+    app = _build_test_app()
+    _seed_conversations(app, _conversation_records(2))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-1")
+
+        screen._start_library_conversation_page_request(1, "no matches")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_freshness == "fresh"
+            and screen._library_conversation_query == "no matches"
+            and not screen.query(".library-conversation-row"),
+            message="Fresh empty Conversation page never applied.",
+        )
+        empty_sync_finished = asyncio.Event()
+        screen._sync_library_conversation_canvas(then=empty_sync_finished.set)
+        await _wait_for_condition(
+            pilot,
+            empty_sync_finished.is_set,
+            message="Fresh empty Conversation sync callback never ran.",
+        )
+
+        select = screen.query_one("#library-conversations-select-toggle", Button)
+        assert select.label.plain == f"{LIBRARY_DISABLED_ACTION_MARKER} Select"
+        assert select.disabled is True
+        assert str(select.tooltip) == LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
+        select.press()
+        await pilot.pause()
+        assert screen._library_conversations_select_mode is False
+
+        screen._start_library_conversation_page_request(1, "")
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-1")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_freshness == "fresh"
+            and screen._library_conversation_query == "",
+            message="Fresh nonempty Conversation page never reapplied.",
+        )
+        for selector in (
+            ".library-conversation-row",
+            "#library-conversations-export",
+            "#library-conversations-select-toggle",
+        ):
+            controls = list(screen.query(selector))
+            assert controls and all(not control.disabled for control in controls)
+
+        screen._library_conversations_select_mode = True
+        screen._library_conversations_row_selection.clear()
+        select_sync_finished = asyncio.Event()
+        screen._sync_library_conversation_canvas(then=select_sync_finished.set)
+        await _wait_for_condition(
+            pilot,
+            select_sync_finished.is_set,
+            message="Fresh select-mode Conversation sync callback never ran.",
+        )
+        export_selected = screen.query_one(
+            "#library-conversations-export-selected", Button
+        )
+        assert export_selected.disabled is True
+        assert export_selected.label.plain == (
+            f"{LIBRARY_DISABLED_ACTION_MARKER} Export selected"
+        )
+        assert str(export_selected.tooltip) == (
+            LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+        )
+
+        screen._library_conversation_freshness = "stale"
+        screen._library_conversation_total_known = False
+        screen._library_conversation_stale_copy = "Source changed; try again."
+        stale_sync_finished = asyncio.Event()
+        screen._sync_library_conversation_canvas(then=stale_sync_finished.set)
+        await _wait_for_condition(
+            pilot,
+            stale_sync_finished.is_set,
+            message="Stale Conversation sync callback never ran.",
+        )
+        for selector in (
+            ".library-conversation-row",
+            "#library-conversations-export",
+            "#library-conversations-select-toggle",
+            "#library-conversations-select-all",
+            "#library-conversations-select-clear",
+            "#library-conversations-export-selected",
+        ):
+            controls = list(screen.query(selector))
+            assert controls and all(control.disabled for control in controls)
+
+
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
+@pytest.mark.asyncio
 async def test_library_conversation_disabled_reason_stale_actions_and_notice(size):
     """Stale rows are read-only while filter and mounted Retry recover them."""
     app = _build_test_app()
@@ -7294,13 +7438,14 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         assert len(active.query(".library-conversation-row")) == 2
 
 
+@pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
-async def test_library_conversation_page_failure_keeps_last_successful_rows():
+async def test_library_conversation_page_failure_keeps_last_successful_rows(size):
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(25))
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations").press()
