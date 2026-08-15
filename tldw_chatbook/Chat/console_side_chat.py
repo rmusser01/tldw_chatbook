@@ -128,8 +128,21 @@ class ConsoleSideChatService:
         parts: list[str] = []
         try:
             resolution = await self.gateway.resolve_for_send(selection)
-            provider = getattr(resolution, "provider", "") or ""
-            model = getattr(resolution, "model", "") or ""
+            provider = str(getattr(resolution, "provider", "") or "")
+            model = str(getattr(resolution, "model", "") or "").strip()
+            if not getattr(resolution, "ready", True) or not model:
+                # Blocked resolutions (missing key, model-less provider) do not
+                # raise; stream_chat would silently yield zero chunks. Surface
+                # the blocker instead (cf. UI/Console_Modules/prompts.py).
+                yield SideChatOutcome(
+                    text="",
+                    provider=provider,
+                    model=model,
+                    status="provider_error",
+                    error=str(getattr(resolution, "visible_copy", "") or "")
+                    or "Choose a ready provider and model, then reopen the side chat.",
+                )
+                return
             async for item in self.gateway.stream_chat(resolution, messages):
                 if not isinstance(item, str):
                     continue  # non-str items (tool calls) are not side-chat text

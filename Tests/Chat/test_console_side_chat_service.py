@@ -41,6 +41,8 @@ class FakeResolution:
 
     provider: str = "openai"
     model: str = "gpt-test"
+    ready: bool = True
+    visible_copy: str = ""
 
 
 class FakeGateway:
@@ -60,6 +62,7 @@ class FakeGateway:
         self.first_chunk_sent = asyncio.Event()
         self.selections: list[ConsoleProviderSelection] = []
         self.messages: list[list[dict[str, str]]] = []
+        self.stream_calls = 0
 
     @property
     def call_count(self) -> int:
@@ -70,6 +73,7 @@ class FakeGateway:
         return self.resolution
 
     async def stream_chat(self, resolution: FakeResolution, messages: list[dict[str, str]]):
+        self.stream_calls += 1
         self.messages.append(messages)
         if self.error is not None:
             raise self.error
@@ -159,6 +163,50 @@ async def test_provider_error_yields_error_outcome_with_empty_text() -> None:
             model="gpt-test",
             status="provider_error",
             error="safe copy",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_blocked_resolution_yields_provider_error_without_stream_chat() -> None:
+    gateway = FakeGateway(
+        resolution=FakeResolution(provider="openai", model="", ready=False, visible_copy="API key missing for openai")
+    )
+    service = ConsoleSideChatService(gateway)
+
+    items = await collect(service, **default_run_kwargs())
+
+    assert gateway.call_count == 1
+    assert gateway.stream_calls == 0
+    assert items == [
+        SideChatOutcome(
+            text="",
+            provider="openai",
+            model="",
+            status="provider_error",
+            error="API key missing for openai",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["", "   ", None])
+async def test_ready_resolution_with_blank_model_yields_provider_error_with_fallback_copy(
+    model: str | None,
+) -> None:
+    gateway = FakeGateway(resolution=FakeResolution(provider="mistral", model=model, ready=True, visible_copy=""))
+    service = ConsoleSideChatService(gateway)
+
+    items = await collect(service, **default_run_kwargs())
+
+    assert gateway.stream_calls == 0
+    assert items == [
+        SideChatOutcome(
+            text="",
+            provider="mistral",
+            model="",
+            status="provider_error",
+            error="Choose a ready provider and model, then reopen the side chat.",
         )
     ]
 
