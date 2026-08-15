@@ -513,6 +513,8 @@ class LocalResearchEngine:
             "relevant_count": len(relevant_results),
             "chunk_count": len(final_answer.get("chunks") or []),
         }
+        if "gate" in final_answer:
+            verification_summary["gate"] = final_answer["gate"]
         if "citation_verification" in final_answer:
             verification_summary["citation_verification"] = final_answer[
                 "citation_verification"

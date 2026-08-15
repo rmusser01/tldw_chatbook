@@ -135,10 +135,12 @@ async def _run_question(engine, service, question: str) -> dict | None:
         print(f"  [run failed: {final.get('status')} — {final.get('progress_message')}]")
         return None
     verification = service.get_artifact(run["id"], "verification_summary.json") or {}
-    payload = (verification.get("content") or {}).get("citation_verification")
-    if not payload:
+    payload = verification.get("content") or {}
+    if not payload.get("citation_verification"):
         print("  [no citation verification on the synthesis branch]")
         return None
+    # The full summary (not just the citation block) so gate counts flow
+    # into gate_pass_rate (task-16333).
     return payload
 
 
@@ -184,12 +186,18 @@ async def main_async(args: argparse.Namespace) -> int:
             payload = await _run_question(engine, service, question)
             if payload is not None:
                 metrics = score_research_report(payload)
+                cv = payload.get("citation_verification") or {}
+                gate = payload.get("gate") or {}
+                gate_note = (
+                    f" gate_pass={metrics['gate_pass_rate']:.2f}" if "gate_pass_rate" in metrics else ""
+                )
+                fallback_note = " [GATE FALLBACK]" if gate.get("fallback") else ""
                 print(
                     f"  citation_accuracy={metrics['citation_accuracy']:.2f} "
                     f"quote_grounding={metrics['quote_grounding']:.2f} "
                     f"claim_support={metrics['claim_support_rate']:.2f} "
-                    f"cited_sentences={metrics['cited_sentence_ratio']:.2f} "
-                    f"(markers {payload.get('markers_resolved')}/{payload.get('markers_total')})"
+                    f"cited_sentences={metrics['cited_sentence_ratio']:.2f}{gate_note}"
+                    f" (markers {cv.get('markers_resolved')}/{cv.get('markers_total')}){fallback_note}"
                 )
                 payloads.append(payload)
 

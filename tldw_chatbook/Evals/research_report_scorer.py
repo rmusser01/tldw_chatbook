@@ -41,9 +41,20 @@ def _ratio(numerator: Any, denominator: Any) -> float:
 
 
 def score_research_report(verification: Mapping[str, Any]) -> Dict[str, float]:
-    """Score one research report from its verification payload."""
+    """Score one research report from its verification payload.
+
+    Accepts either the flat ``citation_verification`` block or a full
+    ``verification_summary`` artifact (the ``citation_verification`` key is
+    unwrapped when present, so the live-baseline flow can hand over the
+    whole summary including the gate block)."""
     if not isinstance(verification, Mapping):
         verification = {}
+    if isinstance(verification.get("citation_verification"), Mapping):
+        nested = dict(verification["citation_verification"])
+        gate = verification.get("gate")
+        if isinstance(gate, Mapping):
+            nested.setdefault("gate", gate)
+        verification = nested
     markers_total = verification.get("markers_total") or 0
     markers_resolved = verification.get("markers_resolved") or 0
     citation_accuracy = _ratio(markers_resolved, markers_total)
@@ -68,12 +79,21 @@ def score_research_report(verification: Mapping[str, Any]) -> Dict[str, float]:
         markers_total, float(markers_total or 0) + float(uncited_sentences or 0)
     )
 
-    return {
+    metrics = {
         "citation_accuracy": citation_accuracy,
         "quote_grounding": quote_grounding,
         "claim_support_rate": claim_support_rate,
         "cited_sentence_ratio": cited_sentence_ratio,
     }
+    # Gate pass-rate (task-16333): relevant/raw from the gate block; present
+    # only when the pipeline reported gate outcomes.
+    gate = verification.get("gate")
+    if isinstance(gate, Mapping):
+        raw = gate.get("raw") or 0
+        relevant = gate.get("relevant") or 0
+        if raw:
+            metrics["gate_pass_rate"] = _ratio(relevant, raw)
+    return metrics
 
 
 # Baseline (task-16327): the synthetic verification payload the recorded
@@ -107,14 +127,21 @@ def aggregate_metrics(payloads: list) -> Dict[str, float]:
     ``sample_count`` 0."""
     scored = [score_research_report(payload) for payload in payloads]
     aggregate: Dict[str, float] = {"sample_count": float(len(scored))}
-    for key in (
+    keys = [
         "citation_accuracy",
         "quote_grounding",
         "claim_support_rate",
         "cited_sentence_ratio",
-    ):
-        if scored:
-            aggregate[key] = sum(metric[key] for metric in scored) / len(scored)
-        else:
-            aggregate[key] = 0.0
+        "gate_pass_rate",
+    ]
+    for key in keys:
+        # Per-key means over the payloads that CARRY the key (gate counts
+        # only exist once the pipeline reports them) -- always-defined
+        # metrics still average over every payload.
+        values = [metric[key] for metric in scored if key in metric]
+        if key == "gate_pass_rate":
+            if values:
+                aggregate[key] = sum(values) / len(values)
+            continue
+        aggregate[key] = (sum(values) / len(values)) if values else 0.0
     return aggregate

@@ -730,3 +730,21 @@ def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monke
     assert "Deep answer [1]." in out  # the run DID fully succeed
     assert "deadline reached: partial synthesis" not in out.lower()
     assert "deadline reached" in out.lower() and "may be incomplete" in out.lower()
+
+
+def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
+    final_answer = dict(_FINAL)
+    final_answer["gate"] = {"relevant": 3, "raw": 5, "fallback": True}
+    final_answer["evidence"] = [
+        {"id": 1, "url": "https://e.com/", "title": "T", "content": "c",
+         "original_content": "o", "reasoning": "gate fallback", "chunk_index": 0,
+         "gate_unverified": True},
+    ]
+
+    async def fake_aa(wsr, sqd, params, cancel_event=None):
+        return {"final_answer": final_answer, "relevant_results": {"1": {}},
+                "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa)
+    out = web_deep_search("what is love")
+    assert "not relevance-verified" in out

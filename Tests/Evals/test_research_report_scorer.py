@@ -136,3 +136,44 @@ def test_aggregate_metrics_empty_payloads():
 
     assert aggregate["sample_count"] == 0
     assert aggregate["citation_accuracy"] == 0.0
+
+
+# --- gate pass-rate (task-16333) ---------------------------------------------------
+
+def test_score_unwraps_nested_citation_verification_and_adds_gate_rate():
+    metrics = score_research_report(
+        {
+            "confidence": 0.7,
+            "gate": {"relevant": 2, "raw": 5, "fallback": False},
+            "citation_verification": {
+                "markers_total": 4, "markers_resolved": 4,
+                "quotes_checked": 0, "quotes_verified": 0, "uncited_sentences": 1,
+            },
+        }
+    )
+
+    assert metrics["citation_accuracy"] == 1.0
+    assert metrics["gate_pass_rate"] == pytest.approx(2 / 5)
+
+
+def test_score_omits_gate_rate_without_gate_counts():
+    metrics = score_research_report({"markers_total": 1, "markers_resolved": 1})
+    assert "gate_pass_rate" not in metrics
+
+
+def test_aggregate_averages_gate_rate_only_over_payloads_that_have_it():
+    from tldw_chatbook.Evals.research_report_scorer import aggregate_metrics
+
+    payloads = [
+        {"markers_total": 2, "markers_resolved": 2,
+         "gate": {"relevant": 4, "raw": 5}},
+        {"markers_total": 2, "markers_resolved": 1},  # no gate block
+        {"markers_total": 2, "markers_resolved": 2,
+         "gate": {"relevant": 2, "raw": 5}},
+    ]
+
+    aggregate = aggregate_metrics(payloads)
+
+    assert aggregate["sample_count"] == 3
+    assert aggregate["gate_pass_rate"] == pytest.approx((0.8 + 0.4) / 2)
+    assert aggregate["citation_accuracy"] == pytest.approx((1.0 + 0.5 + 1.0) / 3)

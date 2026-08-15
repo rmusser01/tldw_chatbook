@@ -2469,6 +2469,12 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # successfully -- deadline_hit only means the deadline was reached,
     # not that anything was actually cut short.
     deadline_note = " · deadline reached — results may be incomplete" if deadline_hit else ""
+    # task-16333: a gate-fallback report must never masquerade as a
+    # relevance-verified one.
+    gate_block = final_answer.get("gate") or {}
+    gate_note = (
+        " · evidence not relevance-verified (gate fallback)" if gate_block.get("fallback") else ""
+    )
     # "scored" is only accurate when the relevance loop ran to completion --
     # a deadline hit means some of `results` were never examined at all, so
     # say "found" instead of implying full coverage the run never had
@@ -2488,7 +2494,7 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     footer = (
         f"Confidence: {confidence:.2f} · Engine: {engine} · Sub-queries: {len(sub_questions)} · "
         f"Relevant: {len(relevant_results)} of {len(results)} {coverage_verb}"
-        f"{fallback_note}{warning_note}{deadline_note}{citation_note}"
+        f"{fallback_note}{warning_note}{deadline_note}{citation_note}{gate_note}"
     )
 
     text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)

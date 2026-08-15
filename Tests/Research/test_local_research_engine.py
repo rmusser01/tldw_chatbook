@@ -688,3 +688,34 @@ def test_engine_enforces_max_tokens_between_llm_calls():
     names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
     assert "report_v1.md" not in names
     assert "budget_ledger.json" in names
+
+
+# --- gate block in verification summary (task-16333) -----------------------------
+
+def test_engine_verification_summary_carries_gate_block():
+    service = _make_service()
+    run = service.launch_run(query="Gate question")
+
+    def search_fn(q, params):
+        return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
+                {"sub_questions": [], "main_goal": q})
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {
+                "text": "Answer[1].", "confidence": 0.6, "chunks": [],
+                "evidence": [{"id": 1, "url": "https://t.example/", "title": "T",
+                              "content": "c", "original_content": "o", "reasoning": "r",
+                              "chunk_index": 1, "gate_unverified": True}],
+                "gate": {"relevant": 3, "raw": 5, "fallback": True},
+            },
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    summary = _artifact_content(service.get_bundle(run["id"]), "verification_summary.json")
+    assert summary["gate"] == {"relevant": 3, "raw": 5, "fallback": True}
