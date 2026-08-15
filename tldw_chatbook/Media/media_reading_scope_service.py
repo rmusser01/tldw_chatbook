@@ -2719,10 +2719,14 @@ class MediaReadingScopeService:
             }.items()
             if value is not None
         }
+        # task-15768: dispatch the leaf contract both backends actually
+        # implement -- LocalMediaReadingService only has the unprefixed
+        # names; ServerMediaReadingService's primary methods are unprefixed
+        # too (the reading_-prefixed ones are back-compat aliases).
         highlight = await self._call_local_leaf(
             normalized_mode,
             service,
-            "create_reading_highlight",
+            "create_highlight",
             resolved_item_id,
             **payload,
         )
@@ -2746,7 +2750,7 @@ class MediaReadingScopeService:
             media_id=media_id,
         )
         highlights = await self._call_local_leaf(
-            normalized_mode, service, "list_reading_highlights", resolved_item_id
+            normalized_mode, service, "list_highlights", resolved_item_id
         )
         return [
             normalize_reading_highlight(highlight, backend=normalized_mode.value)
@@ -2768,7 +2772,7 @@ class MediaReadingScopeService:
         highlight = await self._call_local_leaf(
             normalized_mode,
             service,
-            "update_reading_highlight",
+            "update_highlight",
             highlight_id,
             **{key: value for key, value in changes.items() if value is not None},
         )
@@ -2786,7 +2790,7 @@ class MediaReadingScopeService:
         )
         service = self._service_for_mode(normalized_mode)
         return await self._call_local_leaf(
-            normalized_mode, service, "delete_reading_highlight", highlight_id
+            normalized_mode, service, "delete_highlight", highlight_id
         )
 
     async def create_highlight(
