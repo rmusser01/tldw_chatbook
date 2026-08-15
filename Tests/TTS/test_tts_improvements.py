@@ -676,6 +676,76 @@ class TestTTSEventHandler:
         assert not test_audio.exists()
         assert "msg-claim" not in handler._audio_files
 
+    @pytest.mark.asyncio
+    async def test_shutdown_sweep_skips_a_source_an_export_is_still_copying(
+        self, handler, tmp_path, monkeypatch
+    ):
+        """Quitting mid-copy must not zero the export's source (task-16199).
+
+        The task-15471 review's N1: `cleanup_tts_resources`'s shutdown
+        sweep deleted every cached artifact WITHOUT consulting
+        `_exporting_audio_refcounts`. Worse, the sweep first CANCELS the
+        export task, whose `finally` then releases the claim even though
+        the already-running pool thread keeps copying (cancellation cannot
+        stop a thread) -- so even a claim-aware sweep reading only the
+        live refcounts would miss it. The sweep must snapshot the claims
+        BEFORE the cancel pass and skip those files; the still-running
+        copy then finishes against an intact source.
+        """
+        import shutil as shutil_module
+        import threading
+
+        payload = b"real audio payload"
+        test_audio = tmp_path / "claimed-at-quit.mp3"
+        test_audio.write_bytes(payload)
+        handler._audio_files["msg-quit"] = test_audio
+
+        copy_started = threading.Event()
+        release_copy = threading.Event()
+        real_copy2 = shutil_module.copy2
+
+        def gated_copy2(src, dst, **kwargs):
+            copy_started.set()
+            assert release_copy.wait(5), "test never released the gated copy"
+            return real_copy2(src, dst, **kwargs)
+
+        monkeypatch.setattr(shutil_module, "copy2", gated_copy2)
+
+        export_path = tmp_path / "exports" / "out.mp3"
+        export_task = asyncio.create_task(
+            handler.handle_tts_export(
+                TTSExportEvent("msg-quit", export_path, include_metadata=False)
+            )
+        )
+        # Register the task exactly as production's `on_tts_export_event`
+        # does, so the shutdown sweep's cancel pass reaches it -- that
+        # cancel-releases-the-claim interleaving is the window under test.
+        await handler._add_active_task(export_task)
+
+        # Wait (off-loop) until the pool thread is inside the gated copy.
+        assert await asyncio.to_thread(copy_started.wait, 5)
+
+        # Quit the app mid-copy. Must return promptly: the sweep skips the
+        # claimed file rather than waiting out the (gated, i.e. "hung") copy.
+        await asyncio.wait_for(handler.cleanup_tts_resources(), timeout=10)
+
+        # The sweep skipped the claimed source: still present, NOT zeroed
+        # in place (the secure delete overwrites with zeros before unlink).
+        assert test_audio.exists(), "shutdown sweep destroyed the source mid-copy"
+        assert test_audio.read_bytes() == payload
+
+        # Shutdown cancelled the export task without waiting on its thread.
+        assert export_task.cancelled()
+
+        # Let the still-running pool thread finish: the export it writes
+        # must carry the real bytes, not zeros.
+        release_copy.set()
+        for _ in range(200):
+            if export_path.exists() and export_path.read_bytes() == payload:
+                break
+            await asyncio.sleep(0.05)
+        assert export_path.read_bytes() == payload
+
 
 class TestAudioPlayer:
     """Test audio player improvements"""

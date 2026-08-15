@@ -3788,6 +3788,12 @@ class TTSEventHandler:
         # is still copying -- the secure delete zeroes it in place, and the
         # overlapping copy would silently write zeros. Wait for the claim to
         # clear (bounded in practice by one copy's duration), then delete.
+        # Termination bound (task-16199, review N2): this loop always ends
+        # because every claim is released by `handle_tts_export`'s `finally`,
+        # which completes even for a cancelled export -- the release only
+        # needs `_audio_files_lock`, and `Lock.acquire()` on a free lock has
+        # no suspension point for a further cancellation to land in -- and
+        # at shutdown `cleanup_tts_resources` cancels this task outright.
         while True:
             async with self._audio_files_lock:
                 if message_id not in self._exporting_audio_refcounts:
@@ -3878,6 +3884,16 @@ class TTSEventHandler:
         if pending_legacy_timers:
             await asyncio.gather(*pending_legacy_timers, return_exceptions=True)
 
+        # task-16199 (task-15471 review N1): snapshot export claims BEFORE
+        # the cancel pass below. Cancelling an export task makes its
+        # `finally` release the claim even though the copy already running
+        # on a pool thread keeps going (cancellation cannot stop a thread),
+        # so by sweep time the live refcounts under-report the copies still
+        # in flight -- and the secure delete would zero their source in
+        # place mid-copy. The sweep skips these ids.
+        async with self._audio_files_lock:
+            exports_in_flight_at_shutdown = set(self._exporting_audio_refcounts)
+
         # Cancel all active tasks with lock
         async with self._active_tasks_lock:
             tasks_to_cancel = list(self._active_tasks)
@@ -3906,9 +3922,30 @@ class TTSEventHandler:
                 for message_id, audio_file in self._audio_files.items()
             ]
             retries_to_clean = list(self._artifact_cleanup_retry)
+            # Union with the LIVE claims too: an export admitted after the
+            # cancel pass above was never cancelled, so its claim is still
+            # held here and stays held until its copy truly finishes.
+            claimed_message_ids = exports_in_flight_at_shutdown | set(
+                self._exporting_audio_refcounts
+            )
+            claimed_paths = {
+                self._audio_files[message_id]
+                for message_id in claimed_message_ids
+                if message_id in self._audio_files
+            }
             self._last_played = None
 
         for message_id, audio_file, artifact_owner in files_to_clean:
+            if message_id in claimed_message_ids:
+                # SKIP, never bounded-wait (task-16199): shutdown must not
+                # inherit the duration of a slow or hung copy, and a wait
+                # would still need this skip as its fallback. Cost: at most
+                # the in-flight exports' temp files leak at quit.
+                logger.info(
+                    "Skipping shutdown cleanup of an audio file an export "
+                    f"is still copying (message {message_id})"
+                )
+                continue
             if await self._try_secure_delete_tts_artifact(
                 audio_file,
                 on_late_success=partial(
@@ -3926,6 +3963,14 @@ class TTSEventHandler:
                 logger.debug(f"Cleaned up audio file for message {message_id}")
 
         for audio_file in retries_to_clean:
+            if audio_file in claimed_paths:
+                # Same invariant as above: a path a live export claims must
+                # not be zeroed by the retry pass either.
+                logger.info(
+                    "Skipping shutdown retry-cleanup of an audio file an "
+                    "export is still copying"
+                )
+                continue
             if await self._try_secure_delete_tts_artifact(audio_file):
                 async with self._audio_files_lock:
                     self._artifact_cleanup_retry.discard(audio_file)
