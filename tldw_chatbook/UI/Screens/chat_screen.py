@@ -2148,8 +2148,12 @@ class ChatScreen(BaseAppScreen):
         rail_state = self._current_console_rail_state(
             available_columns=available_columns
         )
+        preference_changes = console_context_reveal_preferences(
+            rail_state, available_columns
+        )
         self._set_console_rail_preference(
-            **console_context_reveal_preferences(rail_state, available_columns)
+            left_open=preference_changes["left_open"],
+            right_open=preference_changes.get("right_open"),
         )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
@@ -2786,8 +2790,12 @@ class ChatScreen(BaseAppScreen):
             rail_state = self._current_console_rail_state(
                 available_columns=available_columns
             )
+            preference_changes = console_context_reveal_preferences(
+                rail_state, available_columns
+            )
             self._set_console_rail_preference(
-                **console_context_reveal_preferences(rail_state, available_columns)
+                left_open=preference_changes["left_open"],
+                right_open=preference_changes.get("right_open"),
             )
         elif action_id == "run-library-rag":
             self._run_console_library_rag_from_visible_action()
