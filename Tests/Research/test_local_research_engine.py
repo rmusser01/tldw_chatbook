@@ -307,3 +307,127 @@ def test_engine_runtime_budget_stops_run_at_phase_boundary():
     assert "results" not in seen
     ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
     assert ledger["limits"]["max_runtime_seconds"] == 0.0
+
+
+# --- iterative gap-driven replanning (task-16324) -------------------------------
+
+def _iter_pipeline(question):
+    """Pipeline fakes whose search returns one NEW url per call."""
+    state = {"search": 0, "analyze": 0, "merged_results": []}
+
+    def search_fn(q, params):
+        state["search"] += 1
+        n = state["search"]
+        return (
+            {"results": [{"title": f"R{n}", "url": f"https://r{n}.example/"}], "warnings": []},
+            {"sub_questions": [], "main_goal": q},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        state["analyze"] += 1
+        state["merged_results"] = list(wsr.get("results") or [])
+        return {
+            "final_answer": {"text": f"Round {state['analyze']} answer", "evidence": [],
+                             "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+            "web_search_results_dict": wsr,
+        }
+
+    return search_fn, analyze_fn, state
+
+
+def test_engine_single_pass_by_default_without_gap_llm():
+    service = _make_service()
+    run = service.launch_run(query="Single pass")
+    search_fn, analyze_fn, state = _iter_pipeline("Single pass")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    # No gap_fn injected and no final_answer_llm in params -> default gap
+    # analysis returns no gaps -> exactly one pass (today's behavior).
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert state["search"] == 1 and state["analyze"] == 1
+
+
+def test_engine_iterates_until_gaps_resolve_within_max_iterations():
+    service = _make_service()
+    run = service.launch_run(query="Iterate", limits_json={"max_iterations": 3})
+    search_fn, analyze_fn, state = _iter_pipeline("Iterate")
+    gap_calls = []
+
+    async def gap_fn(context):
+        gap_calls.append(dict(context))
+        return ["gap query 1"] if len(gap_calls) == 1 else []
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert state["search"] == 2 and state["analyze"] == 2
+    # Gap analysis saw the synthesized answer from the prior pass.
+    assert gap_calls[0]["answer_text"] == "Round 1 answer"
+    # Evidence merged across iterations reached synthesis.
+    assert [r["url"] for r in state["merged_results"]] == [
+        "https://r1.example/",
+        "https://r2.example/",
+    ]
+    events = _events(service, run["id"])
+    assert "iteration_started" in events
+    bundle = service.get_bundle(run["id"])
+    bundle_json = _artifact_content(bundle, "bundle.json")
+    assert bundle_json["iterations"] == 2
+    assert bundle_json["remaining_gaps"] == []
+
+
+def test_engine_stops_at_max_iterations_and_reports_remaining_gaps():
+    service = _make_service()
+    run = service.launch_run(query="Always gappy", limits_json={"max_iterations": 2})
+    search_fn, analyze_fn, state = _iter_pipeline("Always gappy")
+
+    async def gap_fn(context):
+        return ["unresolved question"]
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert state["search"] == 2  # hard bound despite gaps remaining
+    report = _artifact_content(service.get_bundle(run["id"]), "report_v1.md")
+    assert "Remaining gaps" in report and "unresolved question" in report
+    bundle_json = _artifact_content(service.get_bundle(run["id"]), "bundle.json")
+    assert bundle_json["remaining_gaps"] == ["unresolved question"]
+    assert bundle_json["iterations"] == 2
+
+
+def test_engine_gap_iteration_stops_cleanly_when_search_budget_exhausted():
+    service = _make_service()
+    run = service.launch_run(
+        query="Budgeted iteration", limits_json={"max_iterations": 5, "max_searches": 1}
+    )
+    search_fn, analyze_fn, state = _iter_pipeline("Budgeted iteration")
+
+    async def gap_fn(context):
+        return ["gap query 1"]
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_searches" in final["progress_message"]
+    assert "iteration_started" in _events(service, run["id"])
+
+
+def test_engine_default_gap_fn_returns_empty_without_llm():
+    engine = LocalResearchEngine(_make_service())
+    gaps = asyncio.run(engine._default_gap_fn({"answer_text": "x", "sub_questions": []}))
+    assert gaps == []

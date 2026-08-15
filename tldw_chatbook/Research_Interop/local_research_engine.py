@@ -41,6 +41,7 @@ _PROGRESS_PACKAGING = 95.0
 
 SearchFn = Callable[[str, dict[str, Any]], Any]
 AnalyzeFn = Callable[..., Awaitable[Any]]
+GapFn = Callable[[dict[str, Any]], Awaitable[list[str]]]
 
 
 class _RunPaused(Exception):
@@ -60,11 +61,13 @@ class LocalResearchEngine:
         *,
         search_fn: SearchFn | None = None,
         analyze_fn: AnalyzeFn | None = None,
+        gap_fn: "GapFn | None" = None,
         search_params: dict[str, Any] | None = None,
     ) -> None:
         self.service = local_service
         self.search_fn = search_fn or self._default_search_fn
         self.analyze_fn = analyze_fn or self._default_analyze_fn
+        self.gap_fn = gap_fn or self._default_gap_fn
         self.search_params = dict(search_params or {})
 
     @staticmethod
@@ -85,6 +88,51 @@ class LocalResearchEngine:
         return await analyze_and_aggregate(
             web_search_results_dict, sub_query_dict, params, cancel_event=cancel_event
         )
+
+    async def _default_gap_fn(self, context: dict[str, Any]) -> list[str]:
+        """Gap analysis over the latest synthesis (task-16324).
+
+        Uses the synthesis LLM when one is configured; returns no gaps
+        otherwise. Failure here must never break the run -- an unparseable
+        gap analysis reads as "no gaps" with a warning, not a failed report.
+        """
+        llm = str(self.search_params.get("final_answer_llm") or "").strip()
+        if not llm:
+            return []
+        from ..Chat.Chat_Functions import chat_api_call
+
+        prompt = (
+            "You are reviewing a research synthesis for completeness. Given "
+            "the original question, the sub-questions asked, and the "
+            "synthesized answer, identify what remains UNANSWERED or too "
+            "thinly supported to be useful. Respond with ONLY a JSON array "
+            'of short follow-up search queries (strings), e.g. ["..."]. '
+            "If the answer already covers the question adequately, respond "
+            "with [].\n\n"
+            f"Question: {context.get('question')}\n"
+            f"Sub-questions asked: {context.get('sub_questions')}\n"
+            f"Synthesized answer:\n{context.get('answer_text')}"
+        )
+        try:
+            response = chat_api_call(
+                api_endpoint=llm,
+                messages_payload=[{"role": "user", "content": prompt}],
+                api_key=None,
+                temp=0.2,
+                system_message=None,
+                streaming=False,
+                minp=None,
+                maxp=None,
+                model=None,
+                topk=None,
+                topp=None,
+            )
+            parsed = json.loads(str(response or "[]"))
+            if isinstance(parsed, list):
+                return [str(q) for q in parsed if str(q).strip()][:5]
+        except Exception as exc:  # noqa: BLE001 - gap analysis degrades, never fails
+            logger.warning(f"Gap analysis failed (treated as no gaps): {exc}")
+        return []
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -156,6 +204,46 @@ class LocalResearchEngine:
             self._save_ledger(run_id, ledger)
             return self.service.fail_run(run_id, error_msg=str(exc))
 
+    async def _collect_round(
+        self,
+        queries: list[str],
+        base_params: dict[str, Any],
+        ledger: BudgetLedger,
+    ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+        """Run one collection round: one search call per query, each with the
+        fan-out cap clamped to the remaining search budget BEFORE it can
+        spend (task-16323), settling the actual query count after."""
+        collected: list[dict[str, Any]] = []
+        sub_questions: list[str] = []
+        warnings: list[str] = []
+        for query in queries:
+            params = dict(base_params)
+            if ledger.max_runtime_seconds is not None:
+                params["phase1_time_budget_s"] = max(
+                    0.0, ledger.max_runtime_seconds - ledger.elapsed_seconds()
+                )
+            remaining = ledger.remaining_searches()
+            if remaining is not None:
+                cap = min(
+                    int(params.get("search_default_max_queries", 5) or 5),
+                    max(1, remaining),
+                )
+                params["search_default_max_queries"] = cap
+                ledger.reserve_searches(cap)
+            outcome = await self._maybe_await(self.search_fn(query, params))
+            if isinstance(outcome, tuple) and len(outcome) == 2:
+                wsr, sqd = outcome
+            else:
+                shaped = outcome or {}
+                wsr = shaped.get("web_search_results_dict") or {}
+                sqd = shaped.get("sub_query_dict") or {}
+            call_sub_questions = list((sqd or {}).get("sub_questions") or [])
+            sub_questions.extend(call_sub_questions)
+            collected.extend(r for r in (wsr or {}).get("results") or [] if isinstance(r, dict))
+            warnings.extend(w for w in (wsr or {}).get("warnings") or [])
+            ledger.settle_searches(1 + len(call_sub_questions))
+        return collected, sub_questions, warnings
+
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
         self.service.save_artifact(
             run_id,
@@ -198,101 +286,135 @@ class LocalResearchEngine:
             content={"query": question, "limits": limits},
         )
 
-        # -- collecting ----------------------------------------------------
-        self._check_control(run_id, "collecting")
-        ledger.check_runtime()
-        run = self.service.update_run_progress(
-            run_id,
-            phase="collecting",
-            progress_percent=_PROGRESS_COLLECTING,
-            progress_message="Collecting sources",
-        )
-        # Budget the fan-out BEFORE phase 1 can spend (task-16323): cap the
-        # query fan-out at the remaining search budget and hand the pipeline
-        # the remaining runtime as its phase-1 deadline.
+        # -- iterate: collecting + synthesizing + gap analysis ----------
+        # task-16324: collect, synthesize, then let gap analysis decide
+        # whether another bounded iteration is worth spending. Iteration 1
+        # researches the question; every later round researches the gaps the
+        # previous synthesis left open. max_iterations (limits_json,
+        # default 1) is the hard bound; the budget ledger bounds spend
+        # within it.
+        try:
+            max_iterations = int(limits.get("max_iterations", 1) or 1)
+        except (TypeError, ValueError):
+            max_iterations = 1
+        max_iterations = max(1, max_iterations)
+
+        merged_results: list[dict[str, Any]] = []
+        merged_warnings: list[str] = []
+        seen_urls: set[str] = set()
+        all_sub_questions: list[str] = []
+        remaining_gaps: list[str] = []
+        final_answer: dict[str, Any] = {}
+        relevant_results: dict[str, Any] = {}
         search_params = dict(self.search_params)
-        remaining_searches = ledger.remaining_searches()
-        if remaining_searches is not None:
-            search_params["search_default_max_queries"] = min(
-                int(search_params.get("search_default_max_queries", 5) or 5),
-                max(1, remaining_searches),
+        iteration = 0
+
+        while True:
+            iteration += 1
+            round_queries = [question] if iteration == 1 else list(remaining_gaps)
+            self.service.update_run_progress(
+                run_id,
+                phase="collecting",
+                progress_percent=_PROGRESS_COLLECTING,
+                progress_message=f"Collecting sources (iteration {iteration})",
+                event="iteration_started",
+                data={"iteration": iteration, "queries": round_queries},
             )
-            ledger.reserve_searches(search_params["search_default_max_queries"])
-        if ledger.max_runtime_seconds is not None:
-            search_params["phase1_time_budget_s"] = max(
-                0.0, ledger.max_runtime_seconds - ledger.elapsed_seconds()
+            self._check_control(run_id, "collecting")
+            ledger.check_runtime()
+            round_results, round_sub_questions, round_warnings = await self._collect_round(
+                round_queries, search_params, ledger
             )
-        search_outcome = await self._maybe_await(self.search_fn(question, search_params))
-        if isinstance(search_outcome, tuple) and len(search_outcome) == 2:
-            web_search_results_dict, sub_query_dict = search_outcome
-        else:  # already-shaped generate_and_search return
-            outcome = search_outcome or {}
-            web_search_results_dict = outcome.get("web_search_results_dict") or {}
-            sub_query_dict = outcome.get("sub_query_dict") or {}
-        sub_questions = list((sub_query_dict or {}).get("sub_questions") or [])
-        raw_results = list((web_search_results_dict or {}).get("results") or [])
-        warnings = list((web_search_results_dict or {}).get("warnings") or [])
-        # Record what was collected BEFORE enforcement: the collection
-        # happened, and a budget stop on processing must preserve the
-        # evidence of it (partial-artifact contract, task-16323).
-        self.service.save_artifact(
-            run_id,
-            artifact_name="plan.json",
-            content_type="application/json",
-            content={"query": question, "sub_questions": sub_questions, "limits": limits},
-        )
-        self.service.save_artifact(
-            run_id,
-            artifact_name="collection_summary.json",
-            content_type="application/json",
-            content={
-                "result_count": len(raw_results),
-                "sub_questions": sub_questions,
-                "warnings": warnings,
-            },
-        )
-        # Settle the actual search spend, then cap the fetched-doc batch at
-        # the remaining doc budget BEFORE synthesis processes it (allot
-        # raises on an exhausted budget -> clean phase-boundary stop).
-        ledger.settle_searches(1 + len(sub_questions))
-        allotted_docs = ledger.allot_docs(len(raw_results))
-        if allotted_docs < len(raw_results):
-            warnings = warnings + [
-                f"budget cap: processing {allotted_docs} of {len(raw_results)} fetched result(s)"
-            ]
-            web_search_results_dict = dict(web_search_results_dict)
-            web_search_results_dict["results"] = raw_results[:allotted_docs]
-        ledger.settle_docs(allotted_docs)
-        self._save_ledger(run_id, ledger)
-        if allotted_docs < len(raw_results):
-            # Upsert the collection summary with the truncation note so the
-            # artifact explains why fewer docs were processed than fetched.
+            all_sub_questions.extend(round_sub_questions)
+            merged_warnings.extend(round_warnings)
+            for result in round_results:
+                url = str(result.get("url") or "")
+                if url and url in seen_urls:
+                    continue
+                if url:
+                    seen_urls.add(url)
+                merged_results.append(result)
+
+            # Record what was collected BEFORE enforcement: the collection
+            # happened, and a budget stop on processing must preserve the
+            # evidence of it (partial-artifact contract, task-16323).
+            self.service.save_artifact(
+                run_id,
+                artifact_name="plan.json",
+                content_type="application/json",
+                content={
+                    "query": question,
+                    "sub_questions": all_sub_questions,
+                    "limits": limits,
+                    "iterations": iteration,
+                },
+            )
             self.service.save_artifact(
                 run_id,
                 artifact_name="collection_summary.json",
                 content_type="application/json",
                 content={
-                    "result_count": len(raw_results),
-                    "processed_count": allotted_docs,
-                    "sub_questions": sub_questions,
-                    "warnings": warnings,
+                    "iteration": iteration,
+                    "result_count": len(merged_results),
+                    "sub_questions": all_sub_questions,
+                    "warnings": merged_warnings,
                 },
             )
+            # Settle the fetched-doc batch at the remaining doc budget
+            # BEFORE synthesis processes it (allot raises on an exhausted
+            # budget -> clean phase-boundary stop).
+            raw_count = len(merged_results)
+            allotted_docs = ledger.allot_docs(raw_count)
+            if allotted_docs < raw_count:
+                merged_results = merged_results[:allotted_docs]
+                merged_warnings.append(
+                    f"budget cap: processing {allotted_docs} of {raw_count} fetched result(s)"
+                )
+            ledger.settle_docs(allotted_docs)
+            self._save_ledger(run_id, ledger)
 
-        # -- synthesizing --------------------------------------------------
-        self._check_control(run_id, "synthesizing")
-        ledger.check_runtime()
-        run = self.service.update_run_progress(
-            run_id,
-            phase="synthesizing",
-            progress_percent=_PROGRESS_SYNTHESIZING,
-            progress_message="Synthesizing findings",
-        )
-        phase2 = await self.analyze_fn(
-            web_search_results_dict, sub_query_dict, search_params
-        )
-        final_answer = (phase2 or {}).get("final_answer") or {}
-        relevant_results = (phase2 or {}).get("relevant_results") or {}
+            self._check_control(run_id, "synthesizing")
+            ledger.check_runtime()
+            run = self.service.update_run_progress(
+                run_id,
+                phase="synthesizing",
+                progress_percent=_PROGRESS_SYNTHESIZING,
+                progress_message=f"Synthesizing findings (iteration {iteration})",
+            )
+            merged_wsr = {
+                "results": merged_results,
+                "warnings": merged_warnings,
+                "search_query": question,
+            }
+            merged_sqd = {"sub_questions": all_sub_questions, "main_goal": question}
+            phase2 = await self.analyze_fn(merged_wsr, merged_sqd, search_params)
+            final_answer = (phase2 or {}).get("final_answer") or {}
+            relevant_results = (phase2 or {}).get("relevant_results") or {}
+
+            # Gap analysis runs after EVERY synthesis so the final report can
+            # name what is still unresolved; iterating further is bounded by
+            # max_iterations and the ledger.
+            gaps = list(
+                await self._maybe_await(
+                    self.gap_fn(
+                        {
+                            "question": question,
+                            "sub_questions": all_sub_questions,
+                            "answer_text": str(final_answer.get("text") or ""),
+                        }
+                    )
+                )
+                or []
+            )
+            self.service.update_run_progress(
+                run_id,
+                progress_message=f"Iteration {iteration} complete ({len(gaps)} gap(s))",
+                event="iteration_complete",
+                data={"iteration": iteration, "gap_count": len(gaps)},
+            )
+            remaining_gaps = gaps
+            if not gaps or iteration >= max_iterations:
+                break
 
         # -- packaging -----------------------------------------------------
         self._check_control(run_id, "packaging")
@@ -318,6 +440,10 @@ class LocalResearchEngine:
                     f"[{item.get('id')}] {item.get('title') or item.get('url') or 'Untitled'} "
                     f"— {item.get('url') or ''}"
                 )
+        if remaining_gaps:
+            report_lines.append("")
+            report_lines.append("## Remaining gaps")
+            report_lines.extend(f"- {gap}" for gap in remaining_gaps)
         report_markdown = "\n".join(report_lines)
         self.service.save_artifact(
             run_id,
@@ -352,10 +478,12 @@ class LocalResearchEngine:
             content_type="application/json",
             content={
                 "query": question,
-                "sub_questions": sub_questions,
+                "sub_questions": all_sub_questions,
                 "confidence": final_answer.get("confidence"),
                 "report_markdown": report_markdown,
                 "source_count": len(evidence),
+                "iterations": iteration,
+                "remaining_gaps": remaining_gaps,
             },
         )
 
@@ -364,6 +492,3 @@ class LocalResearchEngine:
             progress_message=f"Completed with {len(evidence)} source(s)",
         )
 
-
-def _unused_json() -> Any:  # pragma: no cover - keeps json import honest for dumps usage
-    return json.dumps({})
