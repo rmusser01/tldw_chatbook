@@ -14,8 +14,8 @@ from tldw_chatbook.Chat.console_command_grammar import (
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.UI.Console_Modules import video as video_controller_module
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore
@@ -75,9 +75,7 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         push_screen=pushed.append,
     )
     screen._console_chat_store = store
-    screen._console_video_store = video_store
     screen._ensure_console_chat_store = lambda: store
-    screen._ensure_console_video_store = lambda: video_store
     screen._sync_native_console_chat_ui = AsyncMock()
     screen.run_worker = lambda awaitable, **_kwargs: pending_workers.append(awaitable)
     build_console_controllers(
@@ -85,6 +83,7 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         rag_source_types_accessor=lambda: (),
         rag_top_k_accessor=lambda: 8,
     )
+    screen._console_video_store = video_store
     return (
         screen,
         message,
@@ -210,7 +209,7 @@ async def test_handle_console_message_action_routes_video_save_with_persisted_st
     )
     export_root = tmp_path / "exports"
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_cli_setting",
         lambda *_args, **_kwargs: str(export_root),
     )
@@ -272,7 +271,7 @@ async def test_video_save_copy_preserves_webm_extension_and_collision_names(
     )
     export_root = tmp_path / "exports"
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_cli_setting",
         lambda *_args, **_kwargs: str(export_root),
     )

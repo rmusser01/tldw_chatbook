@@ -63,6 +63,7 @@ from .prompt_queue import (
 )
 from .prompts import ConsolePromptsController
 from .session import ConsoleSessionController
+from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -139,6 +140,26 @@ def build_console_controllers(
             lambda: screen._session._default_console_session_settings()
         ),
         clear_console_composer_draft=(lambda: screen._clear_console_composer_draft()),
+    )
+
+    screen._video = ConsoleVideoController(
+        app_instance=screen.app_instance,
+        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        ensure_console_chat_store=lambda: screen._ensure_console_chat_store(),
+        wait_for_console_screen_result=(
+            lambda modal: screen._wait_for_console_screen_result(modal)
+        ),
+        open_video_with_os=lambda path: screen._open_video_with_os(path),
+        append_native_console_system_message=(
+            lambda *args, **kwargs: screen._append_native_console_system_message(
+                *args, **kwargs
+            )
+        ),
+        default_console_session_settings=(
+            lambda: screen._session._default_console_session_settings()
+        ),
+        console_composer_or_none=lambda: screen._console_composer_or_none(),
+        clear_console_composer_draft=lambda: screen._clear_console_composer_draft(),
     )
 
     #: Workspace policy context, lifecycle, and resume-flow state and
@@ -555,9 +576,16 @@ def build_console_controllers(
         invalidate_console_persisted_rows_cache=(
             lambda: screen._invalidate_console_persisted_rows_cache()
         ),
-        play_console_video=(lambda message_id: screen._play_console_video(message_id)),
+        play_console_video=(
+            lambda message_id: screen._video._play_console_video(message_id)
+        ),
         save_console_video_copy=(
-            lambda message_id: screen._save_console_video_copy(message_id)
+            lambda message_id: screen._video._save_console_video_copy(message_id)
+        ),
+        regenerate_console_video_message=(
+            lambda message_id: screen._video._regenerate_console_video_message(
+                message_id
+            )
         ),
     )
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
