@@ -1909,8 +1909,10 @@ class ConsoleTranscript(VerticalScroll):
     class TranscriptTextSelected(Message):
         """Posted when a mouse drag finished with a non-empty text selection.
 
-        Console selection phase 1. The owning screen anchors its selection
-        menu at the release cell (screen coordinates).
+        Console selection phase 1. This transcript mounts the floating
+        selection menu at the release cell (screen coordinates); the event
+        is not stopped, so the owning screen may also consume it (selection
+        lifecycle).
         """
 
         def __init__(
@@ -3233,7 +3235,7 @@ class ConsoleTranscript(VerticalScroll):
         )
 
     @on(TranscriptTextSelected)
-    def _text_selected(self, event: TranscriptTextSelected) -> None:
+    async def _text_selected(self, event: TranscriptTextSelected) -> None:
         """Mount the floating selection menu at the drag-release cell.
 
         Console selection phase 1. The menu is DOCKED (out of the scroll
@@ -3247,8 +3249,16 @@ class ConsoleTranscript(VerticalScroll):
         them transcript-local, and the clamp keeps the anchor within the
         transcript bounds (the ``+1`` sits the menu just below the release
         row).
+
+        Async and awaiting the previous menu's removal is load-bearing:
+        ``Widget.remove()`` only SCHEDULES removal, so a synchronous same-id
+        remount while the old menu is still in the DOM raises Textual's
+        app-fatal ``DuplicateIds`` (consecutive selections crashed before).
+        The message pump awaits this handler before processing the next
+        message, so the remount ordering versus the release Click is stable.
         """
-        self._remove_selection_menu()
+        for menu in self._attached_selection_menus():
+            await menu.remove()
         region = self.region
         self.mount(
             ConsoleSelectionMenu(
@@ -3287,9 +3297,30 @@ class ConsoleTranscript(VerticalScroll):
         self._selection_origin_row = None
         self._remove_selection_menu()
 
+    def _attached_selection_menus(self) -> list[ConsoleSelectionMenu]:
+        """Menus still attached whose removal is not already scheduled.
+
+        Textual marks a widget ``_pruning`` synchronously inside
+        ``remove()`` but detaches it only when the prune message is
+        processed, so a menu can appear in ``query`` twice across two
+        removal calls; already-pruning menus are skipped to keep
+        ``remove()`` single-shot per menu.
+        """
+        return [
+            menu
+            for menu in self.query(ConsoleSelectionMenu)
+            if not getattr(menu, "_pruning", False)
+        ]
+
     def _remove_selection_menu(self) -> None:
-        """Remove any mounted selection menu (no side effects)."""
-        for menu in self.query(ConsoleSelectionMenu):
+        """Remove any mounted selection menu (no side effects).
+
+        Fire-and-forget: suitable for dismissal paths (escape,
+        click-outside, add-to-chat cleanup) that never remount a same-id
+        menu afterwards. The remount path (``_text_selected``) must await
+        the removals instead -- see its docstring.
+        """
+        for menu in self._attached_selection_menus():
             menu.remove()
 
     def on_click(self, event: Click) -> None:

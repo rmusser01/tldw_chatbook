@@ -15,7 +15,7 @@ from typing import ClassVar
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.events import Click
+from textual.events import Click, Key
 from textual.message import Message
 from textual.widgets import Button
 
@@ -72,6 +72,47 @@ class ConsoleSelectionMenu(Vertical):
         x, y = self._anchor
         self.styles.offset = (x, y)
         self.focus()
+        # The transcript pre-clamps the anchor with a small fixed margin, but
+        # only this widget knows its real extent (border + padding + button);
+        # correct the offset once the layout has measured it.
+        self.call_after_refresh(self._clamp_within_parent)
+
+    def on_key(self, event: Key) -> None:
+        """Dismiss on Escape before the transcript can claim the key.
+
+        The menu is a child of ``ConsoleTranscript``, whose own ``on_key``
+        stops Escape for its clear-selection action during bubbling -- before
+        binding dispatch would ever consult this menu's BINDINGS. The focused
+        widget's ``on_key`` runs first in the bubble chain, so handling the
+        key here is what actually fires in the real transcript context.
+        """
+        if event.key == "escape":
+            event.stop()
+            event.prevent_default()
+            self.action_dismiss()
+
+    def _clamp_within_parent(self) -> None:
+        """Pull the measured menu back inside the owning transcript.
+
+        A release near the transcript's right (or bottom) edge anchored the
+        menu so its action button overhung the edge -- unreachable. Runs
+        after the first layout (via ``call_after_refresh``) so the real cell
+        extents are known; the anchor's non-negative offsets mean only the
+        right/bottom edges can overflow.
+        """
+        parent = self.parent
+        if parent is None or not self.is_attached:
+            return
+        region = self.region
+        parent_region = parent.region
+        if not region or not parent_region:
+            return
+        shift_x = max(0, region.right - parent_region.right)
+        shift_y = max(0, region.bottom - parent_region.bottom)
+        if not shift_x and not shift_y:
+            return
+        x, y = self._anchor
+        self.styles.offset = (max(0, x - shift_x), max(0, y - shift_y))
 
     @on(Button.Pressed, "#console-selection-add-to-chat")
     def _add_to_chat(self) -> None:
@@ -92,13 +133,11 @@ class ConsoleSelectionMenu(Vertical):
         The menu grabs focus on mount; every dismissal path (escape,
         click-outside, add-to-chat cleanup) funnels through removal, so
         unmount is the single restore seam. Skips quietly when no composer
-        is mounted (bare transcript/test harnesses).
+        is mounted (bare transcript/test harnesses) or when the screen is
+        already gone during teardown (``self.screen`` raises NoScreen).
         """
-        screen = self.screen
-        if screen is None:
-            return
         try:
-            matches = screen.query("#console-native-composer")
+            matches = self.screen.query("#console-native-composer")
         except Exception:  # noqa: BLE001 - focus restore is best-effort during teardown
             return
         for composer in matches:

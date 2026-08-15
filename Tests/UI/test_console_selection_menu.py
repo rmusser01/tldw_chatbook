@@ -106,6 +106,56 @@ async def _finish_drag_selection(pilot) -> None:
     await pilot.pause()
 
 
+async def _real_drag(pilot, selector: str) -> None:
+    """Perform a real pilot mouse drag over ``selector`` (press, move, release).
+
+    Unlike ``_finish_drag_selection`` this exercises the full mouse path
+    (including the release Click pilot synthesizes), so it reproduces the
+    message ordering a live terminal produces.
+    """
+    await pilot.mouse_down(selector, offset=(0, 0))
+    await pilot.hover(selector, offset=(5, 0))
+    await pilot.mouse_up(selector, offset=(5, 0))
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_consecutive_selections_remount_exactly_one_menu():
+    """Regression: remounting over a still-pruning menu must not hit DuplicateIds.
+
+    ``Widget.remove()`` only SCHEDULES removal; a synchronous same-id remount
+    before the prune completes raises Textual's DuplicateIds (app-fatal), so a
+    second selection right after the first used to crash the app.
+    """
+    app = _TranscriptMenuApp()
+    body = "#console-message-m1 .console-transcript-message-body"
+    async with app.run_test() as pilot:
+        await _real_drag(pilot, body)
+        assert len(app.query(ConsoleSelectionMenu)) == 1
+        await _real_drag(pilot, body)
+        assert len(app.query(ConsoleSelectionMenu)) == 1
+        assert app.is_running  # no app-fatal DuplicateIds
+
+
+@pytest.mark.asyncio
+async def test_escape_dismisses_menu_in_transcript_context():
+    """Escape must dismiss the menu even inside the transcript.
+
+    The transcript's own ``on_key`` intercepts escape (clear-selection +
+    stop) during bubbling, so the menu's BINDING never fires; the menu must
+    handle escape in its own ``on_key`` (the focused widget's handler runs
+    first in the bubble chain).
+    """
+    app = _TranscriptMenuApp()
+    async with app.run_test() as pilot:
+        await _finish_drag_selection(pilot)
+        assert app.query_one(ConsoleSelectionMenu)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.query(ConsoleSelectionMenu)
+
+
+
 @pytest.mark.asyncio
 async def test_transcript_mounts_menu_on_selection_release():
     app = _TranscriptMenuApp()
@@ -200,3 +250,37 @@ async def test_menu_anchors_at_release_cell_in_tall_transcript():
         assert menu.region.bottom <= region.bottom
         # Docked out of flow: scroll content height unchanged after mount.
         assert transcript.virtual_size.height == flow_height_before
+
+
+@pytest.mark.asyncio
+async def test_far_right_release_keeps_menu_inside_transcript():
+    """Regression: a release near the transcript's right edge must not overhang.
+
+    The transcript pre-clamps the anchor with a small fixed margin, but only
+    the menu knows its own extent (border + padding + button); without a
+    post-layout clamp a far-right (or near-bottom) release anchored the menu
+    with its Add-to-chat button overhanging the transcript -- unreachable.
+    """
+    app = _TallTranscriptMenuApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0", ConsoleTranscriptMessage)
+        region = transcript.region
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.right - 2,
+                screen_y=region.bottom - 3,
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()  # let the post-layout clamp settle
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert region.x <= menu.region.x
+        assert menu.region.right <= region.right
+        assert region.y <= menu.region.y
+        assert menu.region.bottom <= region.bottom
