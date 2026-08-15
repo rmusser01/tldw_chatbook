@@ -1,7 +1,7 @@
 # Console Trajectory View — Design
 
 Date: 2026-08-14
-Status: Approved direction (this doc pending user review)
+Status: Implemented (2026-08-14)
 Inspirational reference: deepseek-harness `packages/client/ui-trajectory` ("Trajectory" tab; server-side `traceSession`/`traceEvent` query APIs)
 
 ## Goal
