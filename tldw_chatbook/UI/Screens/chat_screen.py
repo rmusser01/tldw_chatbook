@@ -13953,34 +13953,6 @@ class ChatScreen(BaseAppScreen):
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle)
-            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
-            # flag below -- compose the cost chip correctly on the very
-            # first frame rather than waiting for a post-mount sync call.
-            # Best-effort: `_build_console_cost_state` already never raises
-            # on its own, but this call site still tolerates an unexpected
-            # failure rather than ever taking down the whole compose.
-            try:
-                initial_cost_state = self._build_console_cost_state()
-            except Exception:
-                logger.opt(exception=True).warning("cost_chip_state_failed")
-                initial_cost_state = None
-            yield ConsoleStatusChips(
-                control_state,
-                scope_state=retrieval_scope_state,
-                collapsed=self._console_status_chips_collapsed,
-                # F1 (final review): compose the chip correctly on the very
-                # first render instead of relying on a post-mount sync call
-                # that some code paths (screen recreation via
-                # restore_state) never make.
-                ephemeral=self._console_active_session_is_ephemeral(),
-                cost_state=initial_cost_state,
-                # FB-08 (TASK-2154.18): same first-frame precedent for the
-                # run chip -- returning to Console while a background run
-                # is still active must show it before the next sync tick.
-                run_copy=self._console_active_run_copy(),
-                id="console-status-chips",
-                classes="ds-panel",
-            )
             # RAG-40: staged evidence belongs on the MAIN surface, directly
             # above the composer it is about to be prepended to -- not only
             # in an Inspector rail the staging path never opens.
@@ -14030,6 +14002,40 @@ class ChatScreen(BaseAppScreen):
                 except KeyError:
                     pass
             yield self._frame_console_region(composer)
+            # The status chips close the shell as a bottom status row, below
+            # the composer: the composer cluster (staged evidence, prompt
+            # queue, composer) stays contiguous with the transcript, and the
+            # chips annotate the whole surface from underneath. The command
+            # popup anchors against this order (see ConsoleCommandPopup.
+            # reposition) -- keep the chips last among the visible rows.
+            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
+            # flag -- compose the cost chip correctly on the very first
+            # frame rather than waiting for a post-mount sync call.
+            # Best-effort: `_build_console_cost_state` already never raises
+            # on its own, but this call site still tolerates an unexpected
+            # failure rather than ever taking down the whole compose.
+            try:
+                initial_cost_state = self._build_console_cost_state()
+            except Exception:
+                logger.opt(exception=True).warning("cost_chip_state_failed")
+                initial_cost_state = None
+            yield ConsoleStatusChips(
+                control_state,
+                scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
+                # F1 (final review): compose the chip correctly on the very
+                # first render instead of relying on a post-mount sync call
+                # that some code paths (screen recreation via
+                # restore_state) never make.
+                ephemeral=self._console_active_session_is_ephemeral(),
+                cost_state=initial_cost_state,
+                # FB-08 (TASK-2154.18): same first-frame precedent for the
+                # run chip -- returning to Console while a background run
+                # is still active must show it before the next sync tick.
+                run_copy=self._console_active_run_copy(),
+                id="console-status-chips",
+                classes="ds-panel",
+            )
             yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,

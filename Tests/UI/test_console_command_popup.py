@@ -217,14 +217,53 @@ async def _spy_submit_draft(console) -> AsyncMock:
 class _StyledConsoleHarness(ConsoleHarness):
     """ConsoleHarness with the real bundled stylesheet loaded.
 
-    The bare harness App has no CSS_PATH, so the popup's TCSS
-    ``position: absolute`` rule never applies in the other tests — fine for
-    behavior assertions, but positioning must be verified with real CSS.
+    The bare harness App has no CSS_PATH, so the popup's TCSS rules never
+    apply in the other tests — fine for behavior assertions, but positioning
+    must be verified with real CSS.
     """
 
     CSS_PATH = str(
         Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
     )
+
+
+@pytest.mark.asyncio
+async def test_popup_does_not_reclaim_workspace_grid_rows():
+    """Opening the popup must not shrink the workspace grid.
+
+    Regression (Textual 8.x vertical layout): a ``position: absolute``
+    child still has its height deducted from the container's fr pool during
+    box-model resolution, so opening the popup used to shrink the workspace
+    grid by the popup's 8 rows — the transcript jumped up, a dead band
+    opened under the status row, and on short terminals the anchor clamped
+    to the shell top. The popup now places itself via ``overlay: screen``,
+    which is exempt from that deduction: the grid must hold its height while
+    autocomplete is open, and the popup must still clear the composer.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        closed_grid_height = grid.region.height
+        closed_composer_y = composer.region.y
+
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.pause(0.2)
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        assert popup.is_open
+        # The transcript neither jumps nor yields rows to the open popup.
+        assert grid.region.height == closed_grid_height
+        assert composer.region.y == closed_composer_y
+        popup_bottom = popup.region.y + popup.region.height
+        assert popup_bottom <= composer.region.y, (
+            f"popup {popup.region} overlaps composer {composer.region}"
+        )
 
 
 @pytest.mark.asyncio
@@ -277,11 +316,12 @@ async def test_enter_with_popup_closed_sends_normally():
 
 
 @pytest.mark.asyncio
-async def test_popup_anchors_above_status_chips_with_real_css():
-    """DS-09 (TASK-2154.15): the always-on status chip strip sits between
-    the transcript and the composer; the open popup's bottom edge must
-    clear it (covering transcript rows instead — the conventional
-    autocomplete trade-off) so the chips are not wiped mid-composition."""
+async def test_popup_anchor_clears_composer_with_chips_below():
+    """DS-09 (TASK-2154.15), post-swap geometry: the status chip strip now
+    sits BELOW the composer as the shell's bottom row, so an anchor that
+    chases the chips would drop the popup over the input row. The popup's
+    bottom edge must clear the composer's top edge, which also keeps the
+    chips (further down) out of the popup's reach."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _StyledConsoleHarness(app)
@@ -289,6 +329,7 @@ async def test_popup_anchors_above_status_chips_with_real_css():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         chips = console.query_one("#console-status-chips")
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
 
@@ -298,7 +339,12 @@ async def test_popup_anchors_above_status_chips_with_real_css():
         await pilot.pause(0.2)
         assert popup.is_open
         assert chips.display and chips.region.height > 0
+        # The chips are the bottom row, below the composer.
+        assert composer.region.y + composer.region.height <= chips.region.y
         popup_bottom = popup.region.y + popup.region.height
+        assert popup_bottom <= composer.region.y, (
+            f"popup {popup.region} overlaps composer {composer.region}"
+        )
         assert popup_bottom <= chips.region.y, (
             f"popup {popup.region} overlaps status chips {chips.region}"
         )

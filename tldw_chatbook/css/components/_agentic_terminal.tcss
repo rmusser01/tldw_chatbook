@@ -5183,8 +5183,9 @@ ConsoleCitationSourcesModal {
 }
 
 /* RAG UX v2 PR-4 (task-1): the staged-evidence strip -- the MAIN-surface
-   reader of the pending live-work launch, mounted between the status chips
-   and the composer. Hidden entirely (`display` toggled from the widget)
+   reader of the pending live-work launch, mounted directly above the
+   composer (the status chips sit below the composer). Hidden entirely
+   (`display` toggled from the widget)
    when nothing is staged, so it costs zero rows on the common path.
    M3 (final review): `min-height: 1` overrides the shared `.ds-panel`
    `min-height: 3` -- with 1-2 rows of real content (a header row plus N

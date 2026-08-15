@@ -33,9 +33,9 @@ CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
 
 #: How many staged references the composer-level evidence strip lists before
-#: it collapses the rest into a "+N more" line. The strip sits between the
-#: status chips and the composer, so it must stay short enough never to push
-#: the composer off a small terminal.
+#: it collapses the rest into a "+N more" line. The strip sits directly above
+#: the composer (the status chips are below it now), so it must stay short
+#: enough never to push the composer off a small terminal.
 CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS = 3
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_ID = "console-unstage-evidence"
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL = "Un-stage"

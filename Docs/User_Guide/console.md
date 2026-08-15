@@ -51,18 +51,8 @@ Top to bottom:
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
-- **Status chip strip** — one row of chips directly above the composer:
-  **Provider**, **Model**, **Assistant**, **Library search**, **Sources**,
-  **Tools**, **Approvals**, and — once retrieval is narrowed — **Scope**.
-  The chips are actions, not just readouts: **Sources** and **Tools** open
-  the Inspector rail (the only way to reach it in single-pane mode, where
-  the edge handles hide), **Provider**/**Model** open the model picker,
-  **Library search** opens the search settings, **Approvals** jumps to the
-  pending approval card, and **Scope** opens the scope picker. The **Tools**
-  chip only appears once tools are counted for the session (after your
-  first send) — before that it stays hidden rather than guessing.
-- **Staged-evidence strip** — appears between the status chips and the
-  composer only while Library RAG evidence is staged (or briefly after a
+- **Staged-evidence strip** — appears directly above the composer only
+  while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md).
 - **Composer row** — the "Composer ▾" collapse toggle, the draft area
@@ -74,6 +64,17 @@ Top to bottom:
   choose a model to continue"), so you never have to hover to find out why.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
+- **Status chip strip** — the shell's bottom row, one row of chips directly
+  below the composer: **Provider**, **Model**, **Assistant**,
+  **Library search**, **Sources**, **Tools**, **Approvals**, and — once
+  retrieval is narrowed — **Scope**.
+  The chips are actions, not just readouts: **Sources** and **Tools** open
+  the Inspector rail (the only way to reach it in single-pane mode, where
+  the edge handles hide), **Provider**/**Model** open the model picker,
+  **Library search** opens the search settings, **Approvals** jumps to the
+  pending approval card, and **Scope** opens the scope picker. The **Tools**
+  chip only appears once tools are counted for the session (after your
+  first send) — before that it stays hidden rather than guessing.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
   Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
 
