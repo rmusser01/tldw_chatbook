@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import threading
 import warnings
@@ -336,56 +335,91 @@ class VisualIdentityCandidate:
     )
     _cleared: set[str] = field(default_factory=set, init=False, repr=False)
     _cancelled: bool = field(default=False, init=False, repr=False)
+    _publishing: bool = field(default=False, init=False, repr=False)
     _published: bool = field(default=False, init=False, repr=False)
+    _lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
 
     @property
     def replaced_expression_keys(self) -> tuple[str, ...]:
         """Return replacements in the active version's stable order."""
 
-        return tuple(
-            str(asset["expression_key"])
-            for asset in self.assets
-            if asset["expression_key"] in self._replacements
-        )
+        with self._lock:
+            return tuple(
+                str(asset["expression_key"])
+                for asset in self.assets
+                if asset["expression_key"] in self._replacements
+            )
 
     @property
     def cleared_expression_keys(self) -> tuple[str, ...]:
         """Return clears in the active version's stable order."""
 
-        return tuple(
-            str(asset["expression_key"])
-            for asset in self.assets
-            if asset["expression_key"] in self._cleared
-        )
+        with self._lock:
+            return tuple(
+                str(asset["expression_key"])
+                for asset in self.assets
+                if asset["expression_key"] in self._cleared
+            )
 
     def stage_replacement(
         self, expression_key: str, data: bytes, *, source: str = "manual"
     ) -> None:
         """Stage replacement bytes without touching files or persistence."""
 
-        key = self._existing_expression_key(expression_key)
-        if not isinstance(data, bytes) or not data:
-            raise ValueError("visual_identity_replacement_bytes_invalid")
-        if len(data) > MAX_EXPRESSION_ASSET_BYTES:
-            raise ValueError("visual_identity_budget_exceeded")
-        if source not in {"manual", "upload", "generated"}:
-            raise ValueError("visual_identity_replacement_source_invalid")
-        self._ensure_editable()
-        self._replacements[key] = (data, source)
-        self._cleared.discard(key)
+        with self._lock:
+            self._ensure_stageable()
+            key = self._existing_expression_key(expression_key)
+            if not isinstance(data, bytes) or not data:
+                raise ValueError("visual_identity_replacement_bytes_invalid")
+            if len(data) > MAX_EXPRESSION_ASSET_BYTES:
+                raise ValueError("visual_identity_budget_exceeded")
+            if source not in {"manual", "upload", "generated"}:
+                raise ValueError("visual_identity_replacement_source_invalid")
+            projected = sum(
+                len(data)
+                if str(asset["expression_key"]) == key
+                else len(self._replacements[str(asset["expression_key"])][0])
+                if str(asset["expression_key"]) in self._replacements
+                else int(asset["bytes"])
+                for asset in self.assets
+                if str(asset["expression_key"]) not in self._cleared
+                or str(asset["expression_key"]) == key
+            )
+            if projected > MAX_EXPRESSION_TOTAL_BYTES:
+                raise VisualIdentityPublicationError("visual_identity_budget_exceeded")
+            self._replacements[key] = (data, source)
+            self._cleared.discard(key)
 
     def stage_clear(self, expression_key: str) -> None:
         """Stage one omission without changing the active immutable version."""
 
-        key = self._existing_expression_key(expression_key)
-        self._ensure_editable()
-        self._replacements.pop(key, None)
-        self._cleared.add(key)
+        with self._lock:
+            self._ensure_stageable()
+            key = self._existing_expression_key(expression_key)
+            retained = [
+                str(asset["expression_key"])
+                for asset in self.assets
+                if str(asset["expression_key"]) != key
+                and str(asset["expression_key"]) not in self._cleared
+            ]
+            if not retained:
+                raise VisualIdentityPublicationError("visual_identity_candidate_empty")
+            self._replacements.pop(key, None)
+            self._cleared.add(key)
+            if self.default_expression_key == key:
+                self.default_expression_key = (
+                    "neutral" if "neutral" in retained else retained[0]
+                )
 
     def cancel(self) -> None:
         """Make the candidate permanently unpublished."""
 
-        self._cancelled = True
+        with self._lock:
+            if self._published:
+                raise VisualIdentityPublicationError(
+                    "visual_identity_candidate_published"
+                )
+            self._cancelled = True
 
     def _existing_expression_key(self, value: str) -> str:
         key = normalize_expression_key(value)
@@ -400,6 +434,11 @@ class VisualIdentityCandidate:
             raise VisualIdentityPublicationError("visual_identity_candidate_cancelled")
         if self._published:
             raise VisualIdentityPublicationError("visual_identity_candidate_published")
+
+    def _ensure_stageable(self) -> None:
+        self._ensure_editable()
+        if self._publishing:
+            raise VisualIdentityPublicationError("visual_identity_candidate_publishing")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1756,9 +1795,7 @@ def publish_visual_identity_candidate(
     candidate: VisualIdentityCandidate,
     *,
     user_data_dir: str | Path | None = None,
-    atomic_replace: Callable[
-        [str | os.PathLike[str], str | os.PathLike[str]], None
-    ] = os.replace,
+    atomic_replace: Callable[..., None] = os.replace,
 ) -> VisualIdentityPublicationResult:
     """Publish one complete candidate directory and one immutable DB version."""
 
@@ -1767,14 +1804,24 @@ def publish_visual_identity_candidate(
 
     if not isinstance(candidate, VisualIdentityCandidate):
         raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
-    candidate._ensure_editable()
-    if not candidate._replacements and not candidate._cleared:
-        raise VisualIdentityPublicationError("visual_identity_candidate_clean")
-    if not callable(atomic_replace):
-        raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
+    with candidate._lock:
+        candidate._ensure_editable()
+        if not candidate._replacements and not candidate._cleared:
+            raise VisualIdentityPublicationError("visual_identity_candidate_clean")
+        if not callable(atomic_replace):
+            raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
+        candidate._publishing = True
 
     repository = VisualIdentityRepository(db)
-    live = repository.get_active_actor_pack(candidate.actor_kind, candidate.actor_id)
+    try:
+        live = repository.get_active_actor_pack(
+            candidate.actor_kind, candidate.actor_id
+        )
+    except (CharactersRAGDBError, OSError, RuntimeError, TypeError, ValueError):
+        _reset_candidate_publication(candidate)
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed"
+        ) from None
     if live is None or (
         int(live["binding"]["id"]),
         int(live["pack"]["id"]),
@@ -1784,15 +1831,25 @@ def publish_visual_identity_candidate(
         candidate.old_pack_id,
         candidate.old_version_id,
     ):
+        _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError("visual_identity_binding_changed")
 
-    profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
-    profile_pack_token = _publication_pack_token(candidate)
+    try:
+        profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
+        profile_pack_token = _publication_pack_token(candidate)
+    except VisualIdentityPublicationError:
+        _reset_candidate_publication(candidate)
+        raise
     publication_token = uuid4().hex
     versions_root = assets_root / "packs" / profile_pack_token / "versions"
-    staging_dir = versions_root / f".staging-{publication_token}"
-    final_dir = versions_root / publication_token
+    staging_name = f".staging-{publication_token}"
+    final_name = publication_token
+    staging_dir = versions_root / staging_name
+    final_dir = versions_root / final_name
     final_relpath = final_dir.relative_to(assets_root).as_posix()
+    versions_fd = -1
+    staging_fd = -1
+    files_published = False
     try:
         for directory in (
             profile_root,
@@ -1800,16 +1857,25 @@ def publish_visual_identity_candidate(
             assets_root / "packs",
             versions_root.parent,
             versions_root,
-            staging_dir,
         ):
             if not secure_private_directory(
                 directory, create=True, application_owned=True
             ).verified_private:
                 raise PermissionError
+        versions_fd = _open_private_directory(versions_root)
+        if not secure_private_directory(
+            staging_dir, create=True, application_owned=True
+        ).verified_private:
+            raise PermissionError
+        staging_fd = os.open(
+            staging_name,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=versions_fd,
+        )
 
         assets, manifest = _materialize_visual_identity_candidate(
             candidate,
-            staging_dir=staging_dir,
+            staging_fd=staging_fd,
             final_relpath=final_relpath,
             profile_pack_token=profile_pack_token,
             user_data_dir=profile_root,
@@ -1821,63 +1887,101 @@ def publish_visual_identity_candidate(
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        _write_private_publication_file(staging_dir / "manifest.json", manifest_raw)
-        _verify_materialized_candidate(staging_dir, assets)
-        atomic_replace(staging_dir, final_dir)
+        _write_private_publication_file(staging_fd, "manifest.json", manifest_raw)
+        _verify_materialized_candidate(staging_fd, assets)
+        with candidate._lock:
+            candidate._ensure_editable()
+            if not _directory_fd_matches_path(versions_fd, versions_root):
+                raise PermissionError
+            atomic_replace(
+                staging_name,
+                final_name,
+                src_dir_fd=versions_fd,
+                dst_dir_fd=versions_fd,
+            )
+            files_published = True
+            if not _directory_fd_matches_path(versions_fd, versions_root):
+                _discard_pinned_directory(versions_fd, final_name, staging_fd)
+                files_published = False
+                raise VisualIdentityPublicationError(
+                    "visual_identity_publication_denied"
+                )
+            try:
+                if candidate.source_kind == "builtin":
+                    graph = repository.activate_pack(
+                        pack={
+                            "title": f"{candidate.title} (Profile Copy)",
+                            "description": candidate.description,
+                            "default_expression_key": candidate.default_expression_key,
+                            "source_kind": "manual",
+                            "source_context": {
+                                "profile_pack_id": profile_pack_token,
+                                "forked_from_pack_id": candidate.old_pack_id,
+                                "forked_from_version_id": candidate.old_version_id,
+                            },
+                        },
+                        manifest=manifest,
+                        assets=assets,
+                        actor_kind=candidate.actor_kind,
+                        actor_id=candidate.actor_id,
+                        expected_active_identity=(
+                            candidate.old_pack_id,
+                            candidate.old_version_id,
+                        ),
+                        expected_binding_id=candidate.old_binding_id,
+                    )
+                else:
+                    graph = repository.publish_version(
+                        candidate.old_pack_id,
+                        manifest=manifest,
+                        assets=assets,
+                        actor_kind=candidate.actor_kind,
+                        actor_id=candidate.actor_id,
+                        default_expression_key=candidate.default_expression_key,
+                        expected_active_version_id=candidate.old_version_id,
+                        expected_binding_id=candidate.old_binding_id,
+                    )
+            except ValueError as error:
+                category = (
+                    "visual_identity_binding_changed"
+                    if str(error) == "visual_identity_binding_changed"
+                    else "visual_identity_database_failed"
+                )
+                raise VisualIdentityPublicationError(
+                    category,
+                    cleanup_candidate_relpath=final_relpath,
+                ) from None
+            except (CharactersRAGDBError, OSError, RuntimeError, TypeError):
+                raise VisualIdentityPublicationError(
+                    "visual_identity_database_failed",
+                    cleanup_candidate_relpath=final_relpath,
+                ) from None
+            candidate._published = True
+            candidate._publishing = False
     except VisualIdentityPublicationError:
-        _discard_staging_directory(staging_dir, assets_root)
+        if not files_published and versions_fd >= 0:
+            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        _reset_candidate_publication(candidate)
         raise
     except PermissionError:
-        _discard_staging_directory(staging_dir, assets_root)
+        if not files_published and versions_fd >= 0:
+            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError(
             "visual_identity_publication_denied"
         ) from None
     except (OSError, TypeError, ValueError, OverflowError):
-        _discard_staging_directory(staging_dir, assets_root)
+        if not files_published and versions_fd >= 0:
+            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError(
             "visual_identity_candidate_invalid"
         ) from None
-
-    try:
-        if candidate.source_kind == "builtin":
-            graph = repository.activate_pack(
-                pack={
-                    "title": f"{candidate.title} (Profile Copy)",
-                    "description": candidate.description,
-                    "default_expression_key": candidate.default_expression_key,
-                    "source_kind": "manual",
-                    "source_context": {
-                        "profile_pack_id": profile_pack_token,
-                        "forked_from_pack_id": candidate.old_pack_id,
-                        "forked_from_version_id": candidate.old_version_id,
-                    },
-                },
-                manifest=manifest,
-                assets=assets,
-                actor_kind=candidate.actor_kind,
-                actor_id=candidate.actor_id,
-                expected_active_identity=(
-                    candidate.old_pack_id,
-                    candidate.old_version_id,
-                ),
-            )
-        else:
-            graph = repository.publish_version(
-                candidate.old_pack_id,
-                manifest=manifest,
-                assets=assets,
-                actor_kind=candidate.actor_kind,
-                actor_id=candidate.actor_id,
-                default_expression_key=candidate.default_expression_key,
-                expected_active_version_id=candidate.old_version_id,
-            )
-    except (CharactersRAGDBError, OSError, RuntimeError, TypeError, ValueError):
-        raise VisualIdentityPublicationError(
-            "visual_identity_database_failed",
-            cleanup_candidate_relpath=final_relpath,
-        ) from None
-
-    candidate._published = True
+    finally:
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        if versions_fd >= 0:
+            os.close(versions_fd)
     return VisualIdentityPublicationResult(
         actor_kind=candidate.actor_kind,
         actor_id=candidate.actor_id,
@@ -1904,11 +2008,14 @@ def _visual_identity_publication_roots(
         )
     except (OSError, RuntimeError, TypeError):
         raise VisualIdentityPublicationError("visual_identity_path_invalid") from None
-    if package_root is not None and profile_root.is_relative_to(package_root):
-        raise VisualIdentityPublicationError("visual_identity_package_root_immutable")
     assets_root = (profile_root / "visual_identities").resolve(strict=False)
     if not assets_root.is_relative_to(profile_root):
         raise VisualIdentityPublicationError("visual_identity_path_invalid")
+    if package_root is not None and (
+        assets_root.is_relative_to(package_root)
+        or package_root.is_relative_to(assets_root)
+    ):
+        raise VisualIdentityPublicationError("visual_identity_package_root_immutable")
     return profile_root, assets_root
 
 
@@ -1928,13 +2035,14 @@ def _publication_pack_token(candidate: VisualIdentityCandidate) -> str:
 def _materialize_visual_identity_candidate(
     candidate: VisualIdentityCandidate,
     *,
-    staging_dir: Path,
+    staging_fd: int,
     final_relpath: str,
     profile_pack_token: str,
     user_data_dir: Path,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    prepared: list[tuple[dict[str, Any], bytes]] = []
+    prepared: list[dict[str, Any]] = []
     decoded_pixels = 0
+    materialized_bytes = 0
     for index, stored in enumerate(candidate.assets):
         expression_key = str(stored["expression_key"])
         if expression_key in candidate._cleared:
@@ -1970,6 +2078,9 @@ def _materialize_visual_identity_candidate(
             decoded_pixels += pixels
             content_type = _IMAGE_CONTENT_TYPES_BY_FORMAT[image_format]
             source_context = {"publication_source": replacement_source}
+        materialized_bytes += len(data)
+        if materialized_bytes > MAX_EXPRESSION_TOTAL_BYTES:
+            raise VisualIdentityPublicationError("visual_identity_budget_exceeded")
         extension = {
             "image/gif": "gif",
             "image/jpeg": "jpg",
@@ -1998,7 +2109,8 @@ def _materialize_visual_identity_candidate(
             "frame_count": frame_count,
             "duration_ms": duration_ms,
         }
-        prepared.append((asset, data))
+        _write_private_publication_file(staging_fd, filename, data)
+        prepared.append(asset)
 
     manifest = {
         "schema_id": SAMIRA_MANIFEST_SCHEMA_ID,
@@ -2023,14 +2135,12 @@ def _materialize_visual_identity_candidate(
                 "frame_count": asset["frame_count"],
                 "duration_ms": asset["duration_ms"],
             }
-            for asset, _data in prepared
+            for asset in prepared
         ],
     }
     manifest["pack_content_sha256"] = compute_pack_content_sha256(manifest)
     validate_visual_identity_manifest(manifest)
-    for asset, data in prepared:
-        _write_private_publication_file(staging_dir / asset["source_filename"], data)
-    return [asset for asset, _data in prepared], manifest
+    return prepared, manifest
 
 
 def _manifest_asset_from_row(row: Mapping[str, Any]) -> VisualIdentityManifestAsset:
@@ -2050,9 +2160,13 @@ def _manifest_asset_from_row(row: Mapping[str, Any]) -> VisualIdentityManifestAs
     )
 
 
-def _write_private_publication_file(path: Path, data: bytes) -> None:
+def _write_private_publication_file(
+    directory_fd: int, filename: str, data: bytes
+) -> None:
+    if _safe_relative_parts(filename) != (filename,):
+        raise ValueError("visual_identity_candidate_invalid")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
+    descriptor = os.open(filename, flags, 0o600, dir_fd=directory_fd)
     try:
         with os.fdopen(descriptor, "wb", closefd=True) as stream:
             descriptor = -1
@@ -2065,11 +2179,15 @@ def _write_private_publication_file(path: Path, data: bytes) -> None:
 
 
 def _verify_materialized_candidate(
-    staging_dir: Path, assets: list[dict[str, Any]]
+    staging_fd: int, assets: list[dict[str, Any]]
 ) -> None:
     decoded_pixels = 0
     for asset in assets:
-        data = (staging_dir / asset["source_filename"]).read_bytes()
+        data = _read_private_publication_file(
+            staging_fd,
+            str(asset["source_filename"]),
+            max_bytes=MAX_EXPRESSION_ASSET_BYTES,
+        )
         loaded = LoadedVisualIdentityAsset(
             asset=_manifest_asset_from_row(asset), data=data
         )
@@ -2082,18 +2200,93 @@ def _verify_materialized_candidate(
         )
 
 
-def _discard_staging_directory(path: Path, assets_root: Path) -> None:
+def _open_private_directory(path: Path) -> int:
+    return os.open(
+        path,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+    )
+
+
+def _directory_fd_matches_path(directory_fd: int, path: Path) -> bool:
     try:
-        resolved = path.resolve(strict=False)
-        root = assets_root.resolve(strict=False)
-        if (
-            path.name.startswith(".staging-")
-            and resolved.is_relative_to(root)
-            and resolved.exists()
+        descriptor_stat = os.fstat(directory_fd)
+        path_stat = path.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISDIR(path_stat.st_mode) and (
+        descriptor_stat.st_dev,
+        descriptor_stat.st_ino,
+    ) == (path_stat.st_dev, path_stat.st_ino)
+
+
+def _read_private_publication_file(
+    directory_fd: int, filename: str, *, max_bytes: int
+) -> bytes:
+    if _safe_relative_parts(filename) != (filename,):
+        raise ValueError("visual_identity_candidate_invalid")
+    descriptor = os.open(
+        filename,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=directory_fd,
+    )
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > max_bytes:
+            raise ValueError("visual_identity_candidate_invalid")
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = -1
+            data = stream.read(max_bytes + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(data) > max_bytes:
+        raise ValueError("visual_identity_candidate_invalid")
+    return data
+
+
+def _discard_staging_directory(
+    versions_fd: int, staging_name: str, staging_fd: int
+) -> None:
+    if not staging_name.startswith(".staging-"):
+        return
+    _discard_pinned_directory(versions_fd, staging_name, staging_fd)
+
+
+def _discard_pinned_directory(parent_fd: int, entry_name: str, pinned_fd: int) -> None:
+    try:
+        if _safe_relative_parts(entry_name) != (entry_name,):
+            return
+        entry_stat = os.stat(
+            entry_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if stat.S_ISLNK(entry_stat.st_mode):
+            os.unlink(entry_name, dir_fd=parent_fd)
+            return
+        if pinned_fd < 0 or not stat.S_ISDIR(entry_stat.st_mode):
+            return
+        pinned_stat = os.fstat(pinned_fd)
+        if (entry_stat.st_dev, entry_stat.st_ino) != (
+            pinned_stat.st_dev,
+            pinned_stat.st_ino,
         ):
-            shutil.rmtree(resolved)
+            return
+        for filename in os.listdir(pinned_fd):
+            child_stat = os.stat(filename, dir_fd=pinned_fd, follow_symlinks=False)
+            if stat.S_ISDIR(child_stat.st_mode):
+                os.rmdir(filename, dir_fd=pinned_fd)
+            else:
+                os.unlink(filename, dir_fd=pinned_fd)
+        os.rmdir(entry_name, dir_fd=parent_fd)
     except OSError:
         pass
+
+
+def _reset_candidate_publication(candidate: VisualIdentityCandidate) -> None:
+    with candidate._lock:
+        if not candidate._published:
+            candidate._publishing = False
 
 
 _SAMIRA_CARD_NAME = "Samira “Sammy” Vadem"
