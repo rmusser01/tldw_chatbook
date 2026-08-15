@@ -6079,6 +6079,10 @@ class ToolsStep(SetupStep):
         "update_note": ("Update note", "⚠ Edits your existing notes."),
         "glob_files": ("Find files", "Match file names by pattern (like *.md)."),
         "grep_files": ("Search in files", "Search inside files for text."),
+        "expand_document": (
+            "Expand document",
+            "Read the whole document behind a search result.",
+        ),
     }
 
     def gate_key_for(self, switch: Switch) -> str:
