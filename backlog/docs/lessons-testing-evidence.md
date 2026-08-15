@@ -4315,3 +4315,30 @@ version participates in the atomic mutation that grants the effect. Reproduce th
 read/write interleaving deterministically, assert the stale write changes nothing,
 and cover every idempotent write shape (new row, revive, and already-active row).
 Green sequential and crash-recovery suites do not substitute for either probe.
+
+## An AC's enumeration of hot call sites is not the cost profile (task-15764, 2026-08-15)
+
+Task-15764's AC enumerated the difflib work to move off the event loop by name --
+`_segment_for_diff` x2, `build_change_diff`, `added_and_removed_text`,
+`classify_change_type` -- and an implementation scoped to that list would have been
+green on every thread-identity test while leaving most of the stall in place. The
+dominant cost was `ContentExtractor.calculate_change_percentage`, a
+`difflib.SequenceMatcher.ratio` over the two full raw texts that sits three lines
+above the enumerated block and is not in the enumeration. Mechanism, corrected by
+the independent review (the implementer's 16.2 s / "99.8%" figure on a 160 KB Latin
+page pair did NOT reproduce -- Latin text at that size hits `autojunk`'s fast path,
+20-40 ms across four content shapes, and autojunk incidentally returns a
+meaningless `pct` for it, a separate pre-existing oddity): character-level
+`ratio()` goes quadratic only when the character repertoire is large enough that
+autojunk junks nothing (CJK / unicode-heavy pages) -- measured clean 4x per
+doubling, extrapolating to ~1 s at 160 K chars and **~7 minutes at the 10 MB
+fetch cap**. The off-loop move is thus MORE justified than the original numbers
+suggested, and the review's own stall probe corroborated the shape independently
+(164.7 ms -> 18.4 ms max stall on the same seam). Keep both halves of this
+incident: measure the whole operation, and expect your headline number to be
+re-run by a skeptic. The lesson: before implementing a perf task scoped by a list of
+call sites, run one measurement that would catch an omission -- a wall/stall probe
+around the whole operation, not around the listed calls. If the numbers do not drop
+when the listed sites move, the list was wrong, and the AC's own wording ("the
+difflib work") almost always licenses fixing the omission in the same change --
+record the addition explicitly rather than silently widening scope.

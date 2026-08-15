@@ -268,6 +268,31 @@ corroboration commit on top of the existing tip (PR #1640) instead of a competin
 fix. Independent evidence is worth keeping; a second fix for the same defect is
 not.
 
+**TASK-15764, 2026-08-15 — fourth instance, and this time the duplicate was
+already MERGED before the second session even started.** A Codex session
+implemented the task on `codex/task-15764-urlmonitor-offloop` (commits
+`8f638f815` + `8fbd1426d`, eleven minutes from first commit to PR #1650
+merging at 2026-08-14 17:38) and marked the task file Done on dev. The second
+session, launched by a burn-down controller with a base pinned to `bb91fef73`
+(cut 2026-08-13 20:14 -0700 — ~21 hours BEFORE the incumbent merged, and a
+further ~21 hours before the second session implemented on 2026-08-15), read
+the task file AT ITS BASE — where it still said `To Do` — and re-implemented
+the whole task:
+three hops, born-red tests, latency probes, an independent review with verdict
+MERGE. Nobody ran the two cheap commands above against the REMOTES, and a
+pinned base makes the board check worse than useless: it faithfully shows the
+world as of the pin, so `git fetch && git log origin/dev --grep=<id>` (plus
+`git branch -a | grep -i <id>` — the Codex branch name carried the id) is the
+check that would have caught it in seconds, before implementation rather than
+at reconciliation. Two mitigations with teeth: (1) a pinned-base session must
+run its staleness check against `origin/dev`, not its own checkout; (2) the
+recovery was again contribution, not competition — the incumbent stood
+(byte-identical semantics, verified across 11 full-cycle cases), and the
+second implementation's delta ported on top: the url_list-through-
+`launch_run`/`execute_run` coverage the incumbent's ticked AC#3 never had a
+test for, plus the review-corrected latency lesson (the 16.2 s headline
+figure did not survive the reviewer re-running it).
+
 ---
 
 ## Check for an in-flight PR before designing — claiming the task does not reserve it
