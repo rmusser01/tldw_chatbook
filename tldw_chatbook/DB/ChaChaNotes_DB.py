@@ -7922,9 +7922,17 @@ UPDATE db_schema_version
 
     @staticmethod
     def _validate_conversation_page_coordinates(limit: Any, offset: Any = 0) -> None:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _SQLITE_POSITIVE_INTEGER_MAX
+        ):
             raise InputError("limit must be a positive integer.")
-        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or not 0 <= offset <= _SQLITE_POSITIVE_INTEGER_MAX
+        ):
             raise InputError("offset must be a non-negative integer.")
 
     def search_conversations_page(

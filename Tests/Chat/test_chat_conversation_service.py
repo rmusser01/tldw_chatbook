@@ -543,10 +543,12 @@ def test_list_conversations_retains_the_exact_ordinary_page_envelope():
         ({"limit": True}, "limit"),
         ({"limit": 1.5}, "limit"),
         ({"limit": "20"}, "limit"),
+        ({"limit": 2**63}, "limit"),
         ({"offset": -1}, "offset"),
         ({"offset": True}, "offset"),
         ({"offset": 1.5}, "offset"),
         ({"offset": "0"}, "offset"),
+        ({"offset": 2**63}, "offset"),
     ],
 )
 def test_list_conversations_rejects_invalid_coordinates_before_db_call(
@@ -559,6 +561,28 @@ def test_list_conversations_rejects_invalid_coordinates_before_db_call(
         service.list_conversations(**kwargs)
 
     assert db.calls == []
+
+
+def test_list_conversations_accepts_sqlite_integer_max_without_real_sql():
+    sqlite_integer_max = (1 << 63) - 1
+    db = FakeDB(conversations_page_rows=[])
+    service = ChatConversationService(db)
+
+    result = service.list_conversations(
+        limit=sqlite_integer_max, offset=sqlite_integer_max
+    )
+
+    assert result["pagination"] == {
+        "limit": sqlite_integer_max,
+        "offset": sqlite_integer_max,
+        "total": 0,
+        "has_more": False,
+    }
+    search_call = next(
+        call for call in db.calls if call[0] == "search_conversations_page"
+    )
+    assert search_call[2]["limit"] == sqlite_integer_max
+    assert search_call[2]["offset"] == sqlite_integer_max
 
 
 def test_locate_conversation_page_normalizes_the_bounded_owning_page():

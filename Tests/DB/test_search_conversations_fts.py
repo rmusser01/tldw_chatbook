@@ -194,10 +194,12 @@ class TestCoherentConversationPages:
             ({"limit": True}, "limit"),
             ({"limit": 1.5}, "limit"),
             ({"limit": "20"}, "limit"),
+            ({"limit": 2**63}, "limit"),
             ({"offset": -1}, "offset"),
             ({"offset": True}, "offset"),
             ({"offset": 1.5}, "offset"),
             ({"offset": "0"}, "offset"),
+            ({"offset": 2**63}, "offset"),
         ],
     )
     def test_rejects_invalid_ordinary_page_coordinates(self, db, kwargs, message):

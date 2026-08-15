@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
+_SQLITE_INTEGER_MAX = (1 << 63) - 1
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.citation_legacy_migration import (
@@ -666,9 +667,17 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _SQLITE_INTEGER_MAX
+        ):
             raise ValueError("limit must be a positive integer.")
-        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or not 0 <= offset <= _SQLITE_INTEGER_MAX
+        ):
             raise ValueError("offset must be a non-negative integer.")
 
         effective_scope = scope_type
