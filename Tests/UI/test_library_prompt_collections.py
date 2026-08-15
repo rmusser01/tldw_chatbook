@@ -1605,7 +1605,9 @@ async def _dispatch_collection_close(
     ],
 )
 async def test_collection_mutation_close_requests_dispatch_without_queuing(
-    action: str, close_sources: tuple[str, ...]
+    action: str,
+    close_sources: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _GuardedMutationManagerHost(action=action)
     async with app.run_test(size=(120, 48)) as pilot:
@@ -1630,9 +1632,18 @@ async def test_collection_mutation_close_requests_dispatch_without_queuing(
             modal.query_one(selector).disabled for selector in disabled_selectors
         )
         assert not modal.query_one("#prompt-collection-manager-cancel", Button).disabled
+        outcome = modal.query_one("#prompt-collection-manager-outcome", Static)
+        original_update = outcome.update
+        status_updates: list[object] = []
+
+        def record_status_update(content: object = "") -> None:
+            status_updates.append(content)
+            original_update(content)
+
+        monkeypatch.setattr(outcome, "update", record_status_update)
 
         try:
-            for index, source in enumerate(close_sources):
+            for source in close_sources:
                 await _dispatch_collection_close(pilot, source, app.release)
                 await pilot.pause()
                 assert app.screen is modal
@@ -1641,8 +1652,9 @@ async def test_collection_mutation_close_requests_dispatch_without_queuing(
                     _modal_outcome(modal)
                     == "Finish the current collection change before closing."
                 )
-                if index:
-                    assert len(modal.query("#prompt-collection-manager-outcome")) == 1
+            assert status_updates == [
+                "Finish the current collection change before closing."
+            ]
         finally:
             app.release.set()
         await _wait_for_condition(
