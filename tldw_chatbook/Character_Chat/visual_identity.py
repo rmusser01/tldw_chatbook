@@ -345,8 +345,9 @@ def validate_visual_identity_manifest(
     Args:
         data: Parsed manifest mapping.
         require_samira_bundle: Require the exact bundled Samira contract.
-        directory_bytes: Optional byte count for the complete supplied pack
-            directory. The Samira bundle enforces its directory cap when set.
+        directory_bytes: Measured byte count for the complete supplied pack
+            directory. Required when ``require_samira_bundle`` is true or the
+            pack ID is the reserved Samira ID; optional for general packs.
 
     Returns:
         Frozen validated manifest data.
@@ -423,7 +424,9 @@ def parse_visual_identity_manifest_json(
     Args:
         raw: UTF-8 JSON bytes or text.
         require_samira_bundle: Require the exact bundled Samira contract.
-        directory_bytes: Measured byte count for the complete supplied directory.
+        directory_bytes: Measured byte count for the complete supplied pack
+            directory. Required when ``require_samira_bundle`` is true or the
+            pack ID is the reserved Samira ID; optional for general packs.
 
     Returns:
         Frozen validated manifest data.
@@ -716,7 +719,9 @@ def validate_visual_identity_assets(
         manifest: Previously validated manifest.
         source_kind: Owning pack source kind.
         user_data_dir: Injectable profile data root for user-owned sources.
-        directory_bytes: Optional complete supplied-directory byte count.
+        directory_bytes: Measured complete supplied-directory byte count.
+            Required for the reserved Samira pack ID; optional for general
+            packs.
 
     Returns:
         Every loaded asset in manifest order.
@@ -795,6 +800,10 @@ def _reject_json_constant(value: str) -> None:
 def _nonempty_string(value: Any) -> str:
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ValueError
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ValueError from None
     return value
 
 

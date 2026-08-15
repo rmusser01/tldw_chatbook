@@ -582,6 +582,18 @@ def test_general_manifest_rejects_digest_mismatch() -> None:
         validate_visual_identity_manifest(data)
 
 
+def test_general_manifest_rejects_lone_surrogate_without_raw_error() -> None:
+    data = _manifest_data([_asset("neutral", "neutral")])
+    data["assets"][0]["original_label"] = "\ud800"  # type: ignore[index]
+
+    with pytest.raises(ValueError) as error:
+        validate_visual_identity_manifest(data)
+
+    assert str(error.value) == "visual_identity_manifest_invalid"
+    assert error.value.__cause__ is None
+    assert "Unicode" not in str(error.value)
+
+
 @pytest.mark.parametrize(
     "unsafe_path",
     [
@@ -740,6 +752,20 @@ def test_parse_manifest_json_accepts_strict_utf8_object() -> None:
     )
 
     assert parsed.pack_id == "user.example.pack"
+
+
+def test_parse_manifest_json_rejects_escaped_lone_surrogate_without_raw_error() -> None:
+    data = _manifest_data([_asset("neutral", "neutral")])
+    data["title"] = "\ud800"
+    raw = json.dumps(data)
+    assert r"\ud800" in raw
+
+    with pytest.raises(ValueError) as error:
+        visual_identity.parse_visual_identity_manifest_json(raw)
+
+    assert str(error.value) == "visual_identity_manifest_invalid"
+    assert error.value.__cause__ is None
+    assert r"\ud800" not in str(error.value)
 
 
 @pytest.mark.parametrize(
