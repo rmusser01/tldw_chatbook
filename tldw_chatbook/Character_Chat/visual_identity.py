@@ -227,6 +227,10 @@ _EXPECTED_IMAGE_FORMATS = {
     "image/png": "PNG",
     "image/webp": "WEBP",
 }
+_IMAGE_CONTENT_TYPES_BY_FORMAT = {
+    image_format: content_type
+    for content_type, image_format in _EXPECTED_IMAGE_FORMATS.items()
+}
 _USER_SOURCE_KINDS = frozenset({"manual"})
 
 
@@ -400,6 +404,15 @@ def resolve_visual_identity(
            AND a.owner_user_id = 0
            AND a.deleted = 0
            AND a.expression_key IN (?, ?, v.default_expression_key, 'neutral')
+           AND a.id = (
+                 SELECT MIN(a2.id)
+                   FROM visual_identity_assets a2
+                  WHERE a2.pack_id = a.pack_id
+                    AND a2.pack_version_id = a.pack_version_id
+                    AND a2.owner_user_id = a.owner_user_id
+                    AND a2.deleted = 0
+                    AND a2.expression_key = a.expression_key
+               )
          WHERE c.id = ? AND c.deleted = 0
          ORDER BY CASE
                     WHEN a.expression_key = ? THEN 0
@@ -497,18 +510,32 @@ def resolve_visual_identity(
     if legacy_state is not None:
         legacy = db.execute_query(
             """
-            SELECT id, image, mime, updated_at
+            SELECT id, updated_at,
+                   CASE WHEN typeof(image) = 'blob'
+                              AND length(image) BETWEEN 1 AND ?
+                        THEN image END AS image
               FROM character_expression_images
              WHERE character_id = ? AND state_id = ? AND deleted = 0
             """,
-            (actor_id, legacy_state),
+            (MAX_EXPRESSION_ASSET_BYTES, actor_id, legacy_state),
         ).fetchone()
     else:
         legacy = None
-    if legacy is not None and legacy["image"] is not None:
+    if legacy is not None:
         legacy = dict(legacy)
-        legacy_image = legacy["image"]
-        data = bytes(legacy_image)
+        validated = _validate_fallback_image(legacy["image"])
+        if validated is None:
+            logger.warning(
+                "visual_identity_resolution_fallback_failed actor_kind=character "
+                "actor_id={} expression_id={} source=legacy "
+                "category=visual_identity_fallback_invalid",
+                actor_id_text,
+                legacy["id"],
+            )
+    else:
+        validated = None
+    if validated is not None:
+        data, content_type, is_animated = validated
         digest = hashlib.sha256(data).hexdigest()
         return VisualIdentityResolution(
             actor_kind=actor_kind,
@@ -522,8 +549,8 @@ def resolve_visual_identity(
             expression_id=int(legacy["id"]),
             storage_source="database",
             storage_relpath=None,
-            content_type=legacy["mime"] or _image_content_type(data),
-            is_animated=False,
+            content_type=content_type,
+            is_animated=is_animated,
             resolution_source="legacy_expression",
             fallback_reason="pack_assets_unavailable",
             cache_identity=_resolution_cache_identity(
@@ -534,20 +561,35 @@ def resolve_visual_identity(
                 "legacy_expression",
                 f"expression_id={legacy['id']}",
                 f"updated_at={legacy['updated_at']}",
+                f"content_type={content_type}",
+                f"is_animated={int(is_animated)}",
                 f"sha256={digest}",
             ),
             image_bytes=data,
         )
 
     card = db.execute_query(
-        """SELECT image, version FROM character_cards
-             WHERE id = ? AND deleted = 0""",
-        (actor_id,),
+        """SELECT version, length(image) AS image_bytes,
+                  CASE WHEN typeof(image) = 'blob'
+                             AND length(image) BETWEEN 1 AND ?
+                       THEN image END AS image
+             FROM character_cards WHERE id = ? AND deleted = 0""",
+        (MAX_EXPRESSION_ASSET_BYTES, actor_id),
     ).fetchone()
-    if card is not None and card["image"] is not None:
+    if card is not None:
         card = dict(card)
-        card_image = card["image"]
-        data = bytes(card_image)
+        validated = _validate_fallback_image(card["image"])
+        if validated is None and card["image_bytes"] is not None:
+            logger.warning(
+                "visual_identity_resolution_fallback_failed actor_kind=character "
+                "actor_id={} source=card "
+                "category=visual_identity_fallback_invalid",
+                actor_id_text,
+            )
+    else:
+        validated = None
+    if validated is not None:
+        data, content_type, is_animated = validated
         digest = hashlib.sha256(data).hexdigest()
         return VisualIdentityResolution(
             actor_kind=actor_kind,
@@ -561,8 +603,8 @@ def resolve_visual_identity(
             expression_id=None,
             storage_source="database",
             storage_relpath=None,
-            content_type=_image_content_type(data),
-            is_animated=False,
+            content_type=content_type,
+            is_animated=is_animated,
             resolution_source="card_portrait",
             fallback_reason="legacy_unavailable",
             cache_identity=_resolution_cache_identity(
@@ -572,6 +614,8 @@ def resolve_visual_identity(
                 manual_key,
                 "card_portrait",
                 f"card_version={card['version']}",
+                f"content_type={content_type}",
+                f"is_animated={int(is_animated)}",
                 f"sha256={digest}",
             ),
             image_bytes=data,
@@ -677,16 +721,18 @@ def _resolution_cache_identity(
     )
 
 
-def _image_content_type(data: bytes) -> str | None:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "image/gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
+def _validate_fallback_image(value: object) -> tuple[bytes, str, bool] | None:
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        return None
+    data = bytes(value)
+    if not data or len(data) > MAX_EXPRESSION_ASSET_BYTES:
+        return None
+    try:
+        image_format, _, _, is_animated, _, _ = _inspect_image_bytes(data)
+        content_type = _IMAGE_CONTENT_TYPES_BY_FORMAT[image_format]
+    except (KeyError, ValueError):
+        return None
+    return data, content_type, is_animated
 
 
 class _VisualIdentityBudgetError(ValueError):
@@ -1431,11 +1477,45 @@ def _validate_image_bytes(
     decoded_pixels_before: int = 0,
 ) -> int:
     asset = loaded.asset
+    (
+        image_format,
+        image_size,
+        frame_count,
+        is_animated,
+        duration_ms,
+        decoded_pixels,
+    ) = _inspect_image_bytes(
+        loaded.data,
+        decoded_pixels_before=decoded_pixels_before,
+    )
+
+    try:
+        expected_format = _EXPECTED_IMAGE_FORMATS[asset.content_type]
+    except KeyError:
+        raise ValueError("visual_identity_asset_format_mismatch") from None
+    if image_format != expected_format:
+        raise ValueError("visual_identity_asset_format_mismatch")
+    if image_size != (asset.width, asset.height):
+        raise ValueError("visual_identity_asset_dimensions_mismatch")
+    if (
+        frame_count != asset.frame_count
+        or is_animated != asset.is_animated
+        or duration_ms != asset.duration_ms
+    ):
+        raise ValueError("visual_identity_asset_frame_mismatch")
+    return decoded_pixels
+
+
+def _inspect_image_bytes(
+    data: bytes,
+    *,
+    decoded_pixels_before: int = 0,
+) -> tuple[str, tuple[int, int], int, bool, int | None, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(loaded.data)) as image:
-                image_format = image.format
+            with Image.open(BytesIO(data)) as image:
+                image_format = image.format or ""
                 image_size = image.size
                 frame_count = max(int(getattr(image, "n_frames", 1) or 1), 1)
                 is_animated = (
@@ -1474,22 +1554,14 @@ def _validate_image_bytes(
         ValueError,
     ):
         raise ValueError("visual_identity_asset_decode_invalid") from None
-
-    try:
-        expected_format = _EXPECTED_IMAGE_FORMATS[asset.content_type]
-    except KeyError:
-        raise ValueError("visual_identity_asset_format_mismatch") from None
-    if image_format != expected_format:
-        raise ValueError("visual_identity_asset_format_mismatch")
-    if image_size != (asset.width, asset.height):
-        raise ValueError("visual_identity_asset_dimensions_mismatch")
-    if (
-        frame_count != asset.frame_count
-        or is_animated != asset.is_animated
-        or duration_ms != asset.duration_ms
-    ):
-        raise ValueError("visual_identity_asset_frame_mismatch")
-    return decoded_pixels
+    return (
+        image_format,
+        image_size,
+        frame_count,
+        is_animated,
+        duration_ms,
+        decoded_pixels,
+    )
 
 
 def _image_duration_ms(image: Image.Image, frame_count: int) -> int:
