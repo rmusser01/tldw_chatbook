@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button
@@ -20,6 +20,7 @@ from Tests.UI.test_destination_shells import (
 from tldw_chatbook.Constants import TAB_STUDY
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import RefreshReport
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
@@ -159,6 +160,11 @@ async def test_study_screen_consumes_pending_initial_section(
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
     app._initial_tab_value = "home"
+    app.model_catalog_disk_store = Mock()
+    catalog_refresh = AsyncMock(return_value=RefreshReport())
+    app.local_llm_provider_catalog_service.refresh_stale_configured_providers = (
+        catalog_refresh
+    )
 
     try:
         async with app.run_test() as pilot:
@@ -170,6 +176,12 @@ async def test_study_screen_consumes_pending_initial_section(
                 raise AssertionError(
                     f"initial route never became 'home' (was {app.current_tab!r})."
                 )
+            for _ in range(150):
+                if catalog_refresh.await_count:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("startup catalog refresh was never attempted.")
 
             app.open_study_screen(initial_section="quizzes")
             for _ in range(150):
@@ -190,6 +202,7 @@ async def test_study_screen_consumes_pending_initial_section(
             assert not app.pending_handoffs.has_pending(
                 HandoffChannel.STUDY_INITIAL_SECTION
             )
+        catalog_refresh.assert_awaited_once()
     finally:
         await _close_production_app(app)
 
