@@ -1350,6 +1350,179 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     )
 
 
+def test_executor_reopens_after_committed_create_item_finalization(
+    target_harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, folders, db = target_harness
+    receipt_path = tmp_path / "post-create-item-finalization.sqlite3"
+    receipts = NoteImportReceiptRepository(receipt_path)
+    executor = NoteImportExecutor(
+        target=target,
+        receipt_repository=receipts,
+        batch_size=1,
+    )
+    payload = _payload(title="Post-finalized create", keywords=("finalized",))
+    item = _execution_item(
+        item_id="post-finalized-create",
+        payloads=(payload,),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Post Finalized Create",)),),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(("Post Finalized Create",),),
+    )
+    original_transition_item = receipts.transition_item
+    crashed = False
+
+    def crash_after_item_finalize(approval_id, item_id, outcome, **kwargs):
+        nonlocal crashed
+        result = original_transition_item(approval_id, item_id, outcome, **kwargs)
+        if not crashed:
+            crashed = True
+            raise RuntimeError("simulated post-create-finalization interruption")
+        return result
+
+    monkeypatch.setattr(receipts, "transition_item", crash_after_item_finalize)
+    with pytest.raises(RuntimeError, match="post-create-finalization interruption"):
+        executor.execute(approved)
+    crashed_snapshot = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert crashed_snapshot.state is ImportSessionState.RUNNING
+    assert crashed_snapshot.items[0].outcome is ImportItemOutcome.IMPORTED
+    session_id = crashed_snapshot.session_id
+    monkeypatch.undo()
+
+    def forbidden_create(**_kwargs):
+        raise AssertionError("finalized create was repeated")
+
+    monkeypatch.setattr(target, "create_note", forbidden_create)
+    reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    resumed = NoteImportExecutor(
+        target=target,
+        receipt_repository=reopened_receipts,
+        batch_size=1,
+    ).execute(approved)
+
+    note_id = _expected_note_id(item.item_id, 0)
+    note = target.read_note(note_id=note_id)
+    folder = folders.get_folder_by_path(("Post Finalized Create",))
+    assert resumed.state is ImportSessionState.COMPLETED
+    assert (
+        reopened_receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID).session_id
+        == session_id
+    )
+    assert note is not None and (note.version, note.title) == (1, payload.title)
+    assert folder is not None
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE id = ?", (note_id,))
+        .fetchone()[0]
+        == 1
+    )
+    assert (
+        _active_membership_count(db, folder_id=folder.folder_id, note_id=note_id) == 1
+    )
+
+
+def test_executor_reopens_after_committed_update_item_finalization(
+    target_harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, _service, folders, db = target_harness
+    receipt_path = tmp_path / "post-update-item-finalization.sqlite3"
+    receipts = NoteImportReceiptRepository(receipt_path)
+    executor = NoteImportExecutor(
+        target=target,
+        receipt_repository=receipts,
+        batch_size=1,
+    )
+    existing = target.create_note(
+        note_id="post-finalized-update-target",
+        payload=_payload(content="Before", keywords=("old",)),
+    )
+    replacement = _payload(content="After", keywords=("new", "finalized"))
+    item = _execution_item(
+        item_id="post-finalized-update",
+        payloads=(replacement,),
+        action=ImportAction.UPDATE_EXISTING,
+        memberships=(ProposedFolderMembership(0, ("Post Finalized Update",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        replace_content=True,
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(("Post Finalized Update",),),
+    )
+    original_transition_item = receipts.transition_item
+    crashed = False
+
+    def crash_after_item_finalize(approval_id, item_id, outcome, **kwargs):
+        nonlocal crashed
+        result = original_transition_item(approval_id, item_id, outcome, **kwargs)
+        if not crashed:
+            crashed = True
+            raise RuntimeError("simulated post-update-finalization interruption")
+        return result
+
+    monkeypatch.setattr(receipts, "transition_item", crash_after_item_finalize)
+    with pytest.raises(RuntimeError, match="post-update-finalization interruption"):
+        executor.execute(approved)
+    crashed_snapshot = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert crashed_snapshot.state is ImportSessionState.RUNNING
+    assert crashed_snapshot.items[0].outcome is ImportItemOutcome.UPDATED
+    session_id = crashed_snapshot.session_id
+    monkeypatch.undo()
+
+    def forbidden_replace(**_kwargs):
+        raise AssertionError("finalized optimistic update was repeated")
+
+    monkeypatch.setattr(target, "replace_note", forbidden_replace)
+    reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    resumed = NoteImportExecutor(
+        target=target,
+        receipt_repository=reopened_receipts,
+        batch_size=1,
+    ).execute(approved)
+
+    updated = target.read_note(note_id=existing.note_id)
+    folder = folders.get_folder_by_path(("Post Finalized Update",))
+    assert resumed.state is ImportSessionState.COMPLETED
+    assert (
+        reopened_receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID).session_id
+        == session_id
+    )
+    assert updated is not None
+    assert (updated.version, updated.content, set(updated.keywords)) == (
+        existing.version + 1,
+        replacement.content,
+        set(replacement.keywords),
+    )
+    assert folder is not None
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE id = ?", (existing.note_id,))
+        .fetchone()[0]
+        == 1
+    )
+    assert (
+        _active_membership_count(
+            db,
+            folder_id=folder.folder_id,
+            note_id=existing.note_id,
+        )
+        == 1
+    )
+
+
 def test_executor_reconciles_update_crash_without_repeating_optimistic_update(
     real_executor,
     monkeypatch: pytest.MonkeyPatch,
@@ -2009,6 +2182,69 @@ def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
     executor.execute(latest)
 
     assert receipts.prior_observations_for_plan(first.plan) == ()
+
+
+def test_prior_observations_reject_duplicate_items_in_latest_source_session(
+    target_harness,
+    tmp_path: Path,
+) -> None:
+    target, _service, _folders, _db = target_harness
+    receipts = NoteImportReceiptRepository(tmp_path / "prior-duplicate-source.sqlite3")
+    older_item = _execution_item(
+        item_id="duplicate-source-older",
+        payloads=(_payload(title="Older exact source"),),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Duplicate Source",)),),
+        add_membership=True,
+    )
+    older = approve_note_import_plan(
+        _execution_plan(
+            older_item,
+            proposed_folder_paths=(("Duplicate Source",),),
+        ),
+        approval_id=_EXECUTION_APPROVAL_ID,
+    )
+    first_duplicate = replace(
+        older_item,
+        item_id="duplicate-source-first",
+        payloads=(_payload(title="Newest first duplicate"),),
+    )
+    second_duplicate = replace(
+        older_item,
+        item_id="duplicate-source-second",
+        payloads=(_payload(title="Newest second duplicate"),),
+    )
+    newest = approve_note_import_plan(
+        _execution_plan(
+            first_duplicate,
+            second_duplicate,
+            proposed_folder_paths=(("Duplicate Source",),),
+            root_collision=RootCollisionState(
+                proposed_label="Duplicate Source",
+                collides=True,
+                choice=RootCollisionChoice.USE_EXISTING,
+            ),
+        ),
+        approval_id="00000000-0000-4000-8000-000000000044",
+    )
+    executor = NoteImportExecutor(
+        target=target,
+        receipt_repository=receipts,
+        batch_size=2,
+    )
+    executor.execute(older)
+    executor.execute(newest)
+
+    observations = receipts.prior_observations_for_plan(older.plan)
+
+    assert observations == ()
+    private_values = (
+        str(older_item.source.source_path),
+        older_item.source.display_path,
+        older_item.payloads[0].content,
+    )
+    rendered = repr(receipts) + repr(observations)
+    assert all(value not in rendered for value in private_values)
 
 
 @pytest.mark.parametrize("excluded_state", ["multi", "failed", "cancelled", "missing"])

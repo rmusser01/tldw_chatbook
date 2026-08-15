@@ -2357,7 +2357,7 @@ class NoteImportReceiptRepository:
         if not digest_items:
             return ()
 
-        latest: dict[str, tuple[object, ...]] = {}
+        latest: dict[str, tuple[str, list[tuple[object, ...]]]] = {}
         connection = self._connect()
         try:
             connection.execute("BEGIN")
@@ -2368,8 +2368,8 @@ class NoteImportReceiptRepository:
                 placeholders = ",".join("?" for _ in chunk)
                 rows = connection.execute(
                     f"""
-                    SELECT item.source_locator_digest, item.outcome_count,
-                           item.outcome,
+                    SELECT item.source_locator_digest, session.session_id,
+                           item.outcome_count, item.outcome,
                            (SELECT COUNT(*) FROM import_payload_effects AS counted
                             WHERE counted.session_id = item.session_id
                               AND counted.item_id = item.item_id) AS payload_count,
@@ -2392,7 +2392,13 @@ class NoteImportReceiptRepository:
                     (*chunk, ImportSessionState.COMPLETED.value),
                 ).fetchall()
                 for row in rows:
-                    latest.setdefault(row[0], tuple(row))
+                    digest = str(row[0])
+                    session_id = str(row[1])
+                    existing = latest.get(digest)
+                    if existing is None:
+                        latest[digest] = (session_id, [tuple(row)])
+                    elif existing[0] == session_id:
+                        existing[1].append(tuple(row))
             connection.commit()
         except Exception:
             connection.rollback()
@@ -2404,11 +2410,13 @@ class NoteImportReceiptRepository:
         for digest, items in digest_items.items():
             if len(items) != 1:
                 continue
-            row = latest.get(digest)
-            if row is None:
+            latest_group = latest.get(digest)
+            if latest_group is None or len(latest_group[1]) != 1:
                 continue
+            row = latest_group[1][0]
             (
                 _source_digest,
+                _session_id,
                 outcome_count,
                 outcome,
                 payload_count,
