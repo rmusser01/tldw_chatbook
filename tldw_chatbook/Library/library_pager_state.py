@@ -90,6 +90,10 @@ def build_library_pager_display(
         raise TypeError("error_copy must be a string")
     if not isinstance(stale_copy, str):
         raise TypeError("stale_copy must be a string")
+    if error_copy and not error_copy.strip():
+        raise ValueError("error_copy cannot be whitespace-only")
+    if stale_copy and not stale_copy.strip():
+        raise ValueError("stale_copy cannot be whitespace-only")
     if row_count > page_size:
         raise ValueError("row_count cannot exceed page_size")
     if loading and error_copy:

@@ -350,3 +350,35 @@ def test_stale_state_requires_applied_page_and_source_owned_copy():
         build_library_pager_display(applied_page=None, stale_copy="Stale.", **base)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         build_library_pager_display(applied_page=1, stale_copy="", **base)  # type: ignore[arg-type]
+
+
+def test_error_copy_rejects_whitespace_only_recovery_copy():
+    with pytest.raises(ValueError, match="error_copy"):
+        _fresh_display(error_copy=" \t ")
+
+
+def test_stale_copy_rejects_whitespace_only_recovery_copy():
+    with pytest.raises(ValueError, match="stale_copy"):
+        build_library_pager_display(
+            applied_page=1,
+            requested_page=1,
+            page_size=20,
+            row_count=0,
+            total=None,
+            freshness="stale",
+            stale_copy=" \t ",
+        )
+
+
+def test_stale_state_rejects_error_copy_even_with_meaningful_stale_copy():
+    with pytest.raises(ValueError, match="error_copy"):
+        build_library_pager_display(
+            applied_page=1,
+            requested_page=1,
+            page_size=20,
+            row_count=0,
+            total=None,
+            freshness="stale",
+            error_copy="Couldn't refresh page.",
+            stale_copy="List may be out of date",
+        )
