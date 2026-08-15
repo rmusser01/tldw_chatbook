@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import configparser
+from contextlib import contextmanager
 from email.parser import Parser
 import hashlib
+from importlib import metadata
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
-import sysconfig
 import tarfile
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 import venv
 import zipfile
 
@@ -138,6 +140,50 @@ _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+_BUILD_TOOL_DISTRIBUTIONS = (
+    "build",
+    "setuptools",
+    "wheel",
+    "packaging",
+    "pyproject_hooks",
+)
+_BUILD_ENV_KEYS = frozenset(_PRIVATE_CHILD_BASELINE_ENV_KEYS) | {
+    "HOME",
+    "USERPROFILE",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "PYTHONDONTWRITEBYTECODE",
+    "PIP_CONFIG_FILE",
+    "PIP_DISABLE_PIP_VERSION_CHECK",
+    "PIP_NO_INDEX",
+}
+BUILD_TOOL_PROBE = r"""
+import importlib.util
+import os
+
+assert "PYTHONPATH" not in os.environ
+assert not any(
+    "PROXY" in name.upper()
+    or any(
+        marker in name.upper()
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+    for name in os.environ
+)
+for module_name in ("build", "setuptools", "wheel", "packaging", "pyproject_hooks"):
+    __import__(module_name)
+assert importlib.util.find_spec("PIL") is None
+assert importlib.util.find_spec("tldw_chatbook") is None
+print("curated-build-tools-ok")
+"""
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -885,6 +931,13 @@ class SdistWheel(NamedTuple):
     wheel: Path
 
 
+class InstalledPathState(NamedTuple):
+    mode: int
+    size: int
+    mtime_ns: int
+    digest: str | None
+
+
 def _copy_build_inputs(destination: Path) -> None:
     ignored = shutil.ignore_patterns(
         "__pycache__",
@@ -977,8 +1030,30 @@ def sdist_wheel(
     build_python = build_env / (
         "Scripts/python.exe" if os.name == "nt" else "bin/python"
     )
+    tool_layer = build_env / (
+        "Lib/site-packages"
+        if os.name == "nt"
+        else f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+    )
+    tool_layer.mkdir(parents=True, exist_ok=True)
+    _copy_build_tool_layer(tool_layer)
+    build_state = extract_root / "build-state"
+    build_env_vars = _sanitized_build_env(build_state)
+    probe_root = extract_root / "build-probe"
+    probe_root.mkdir()
+    probe = subprocess.run(
+        [str(build_python), "-I", "-c", BUILD_TOOL_PROBE],
+        cwd=probe_root,
+        env=build_env_vars,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert "curated-build-tools-ok" in probe.stdout
     command = [
         str(build_python),
+        "-I",
         "-m",
         "build",
         "--wheel",
@@ -989,11 +1064,7 @@ def sdist_wheel(
     completed = subprocess.run(
         command,
         cwd=source_root,
-        env={
-            **os.environ,
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONPATH": sysconfig.get_path("purelib"),
-        },
+        env=build_env_vars,
         capture_output=True,
         text=True,
         timeout=300,
@@ -1004,6 +1075,63 @@ def sdist_wheel(
     wheels = sorted(dist_dir.glob("*.whl"))
     assert len(wheels) == 1
     return SdistWheel(source_root, wheels[0])
+
+
+def _copy_build_tool_layer(destination: Path) -> None:
+    copied: set[Path] = set()
+    for distribution_name in _BUILD_TOOL_DISTRIBUTIONS:
+        distribution = metadata.distribution(distribution_name)
+        files = distribution.files
+        assert files is not None, distribution_name
+        for relative in files:
+            relative_path = Path(str(relative))
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                continue
+            source = Path(distribution.locate_file(relative))
+            if not source.is_file():
+                continue
+            target = destination / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            copied.add(relative_path)
+    assert copied
+    assert {
+        distribution.metadata["Name"].lower().replace("-", "_")
+        for distribution in metadata.distributions(path=[str(destination)])
+    } == set(_BUILD_TOOL_DISTRIBUTIONS)
+    assert {
+        path.relative_to(destination)
+        for path in destination.rglob("*")
+        if path.is_file()
+    } == copied
+
+
+def _sanitized_build_env(state_root: Path) -> dict[str, str]:
+    state_root.mkdir(mode=0o700)
+    temp_root = state_root / "tmp"
+    temp_root.mkdir(mode=0o700)
+    env = {
+        name: value
+        for name in _PRIVATE_CHILD_BASELINE_ENV_KEYS
+        if (value := os.environ.get(name)) and not _is_sensitive_environment_name(name)
+    }
+    env.update(
+        {
+            "HOME": str(state_root),
+            "USERPROFILE": str(state_root),
+            "TMPDIR": str(temp_root),
+            "TEMP": str(temp_root),
+            "TMP": str(temp_root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "PIP_NO_INDEX": "1",
+        }
+    )
+    assert set(env) <= _BUILD_ENV_KEYS
+    assert "PYTHONPATH" not in env
+    assert not any(_is_sensitive_environment_name(name) for name in env)
+    return env
 
 
 def _sdist_members(path: Path) -> set[str]:
@@ -1075,6 +1203,48 @@ def _target_hashes(target: Path) -> dict[str, str]:
         for path in sorted(target.rglob("*"))
         if path.is_file()
     }
+
+
+def _target_snapshot(target: Path) -> dict[str, InstalledPathState]:
+    snapshot = {}
+    for path in (target, *sorted(target.rglob("*"))):
+        path_stat = path.lstat()
+        snapshot[path.relative_to(target).as_posix()] = InstalledPathState(
+            stat.S_IMODE(path_stat.st_mode),
+            path_stat.st_size,
+            path_stat.st_mtime_ns,
+            hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
+        )
+    return snapshot
+
+
+@contextmanager
+def _read_only_installed_tree(
+    target: Path,
+) -> Iterator[dict[str, InstalledPathState]]:
+    paths = (target, *sorted(target.rglob("*")))
+    assert not any(path.is_symlink() for path in paths)
+    original_modes = {path: stat.S_IMODE(path.lstat().st_mode) for path in paths}
+    for path in paths:
+        if path.is_file():
+            path.chmod(0o444)
+    for path in reversed(paths):
+        if path.is_dir():
+            path.chmod(0o555)
+    before = _target_snapshot(target)
+    try:
+        yield before
+        assert _target_snapshot(target) == before, (
+            "installed package tree content or metadata changed"
+        )
+    finally:
+        current_paths = (target, *sorted(target.rglob("*")))
+        for path in current_paths:
+            if path.is_dir():
+                path.chmod(original_modes.get(path, 0o755))
+        for path in current_paths:
+            if path.is_file():
+                path.chmod(original_modes.get(path, 0o644))
 
 
 def _is_sensitive_environment_name(name: str) -> bool:
@@ -1192,6 +1362,23 @@ def test_private_child_env_excludes_host_credentials_and_proxy_config(
     assert proxy_name not in env
     assert {name: env.get(name) for name in safe_baseline} == safe_baseline
     assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
+
+
+def test_sdist_build_env_excludes_host_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TASK16319_BUILD_API_KEY", "test-only-value")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("PYTHONPATH", "/host/purelib")
+
+    env = _sanitized_build_env(tmp_path / "build-state")
+
+    assert set(env) <= _BUILD_ENV_KEYS
+    assert "TASK16319_BUILD_API_KEY" not in env
+    assert "HTTPS_PROXY" not in env
+    assert "PYTHONPATH" not in env
+    assert env["PIP_NO_INDEX"] == "1"
 
 
 def _run_child(
@@ -1327,27 +1514,36 @@ def test_built_artifacts_match_distribution_contract(
     }
 
 
-def test_installed_wheel_migrates_v35_database_to_v38(
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+def test_installed_distribution_migrates_v35_database_to_v38(
     built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
     tmp_path: Path,
+    wheel_source: str,
 ) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
     target = tmp_path / "target"
     state_root = tmp_path / "state"
     run_root = tmp_path / "run"
     state_root.mkdir(mode=0o700)
     run_root.mkdir()
-    _install_wheel(built_distributions, target)
+    _install_wheel_path(wheel, target)
     env = _private_child_env(
         state_root,
         target,
-        built_distributions.source_root,
+        build_source_root,
     )
 
-    result = _run_child(
-        [sys.executable, "-c", INSTALLED_MIGRATION_PROBE],
-        run_root,
-        env,
-    )
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_MIGRATION_PROBE],
+            run_root,
+            env,
+        )
 
     assert "installed-wheel-v35-to-v38-ok" in result.stdout
 
@@ -1382,7 +1578,8 @@ assert len(manifest.packages) == 45
 print("installed-audio-cpp-manifest-ok")
 """
 
-    result = _run_child([sys.executable, "-c", probe], run_root, env)
+    with _read_only_installed_tree(target):
+        result = _run_child([sys.executable, "-c", probe], run_root, env)
 
     assert "installed-audio-cpp-manifest-ok" in result.stdout
 
@@ -1574,21 +1771,33 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         target,
         built_distributions.source_root,
     )
-    before = _target_hashes(target)
-    results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
+    with _read_only_installed_tree(target):
+        results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
 
-    script_path = os.pathsep.join(
-        str(path) for path in (target / "bin", target / "Scripts")
-    )
-    for name in ("tldw-cli", "tldw-serve"):
-        script = shutil.which(name, path=script_path)
-        assert script is not None, (
-            f"missing installed script {name!r}; "
-            f"target files: {sorted(_target_hashes(target))}"
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
         )
-        results.append(_run_child([script, "--help"], run_root, env))
+        for name in ("tldw-cli", "tldw-serve"):
+            script = (
+                shutil.which(name, path=script_path)
+                if os.name == "nt"
+                else str(target / "bin" / name)
+            )
+            assert script is not None, (
+                f"missing installed script {name!r}; "
+                f"target files: {sorted(_target_hashes(target))}"
+            )
+            assert Path(script).is_file()
+            results.append(
+                _run_child(
+                    [script, "--help"]
+                    if os.name == "nt"
+                    else [sys.executable, script, "--help"],
+                    run_root,
+                    env,
+                )
+            )
 
-    after = _target_hashes(target)
     process_text = "\n".join(result.stdout + "\n" + result.stderr for result in results)
     log_text = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
@@ -1602,7 +1811,31 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         "Error handling CSS file",
     ):
         assert forbidden not in observed_text
-    assert after == before
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX mode bits are required to enforce read-only installed trees",
+)
+def test_read_only_installed_tree_rejects_rewrite_and_catches_touch(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    _install_wheel(built_distributions, target)
+    package_file = target / "tldw_chatbook" / "__init__.py"
+
+    with _read_only_installed_tree(target):
+        original = package_file.read_bytes()
+        with pytest.raises(PermissionError):
+            package_file.write_bytes(original)
+
+    with pytest.raises(
+        AssertionError,
+        match="installed package tree content or metadata changed",
+    ):
+        with _read_only_installed_tree(target):
+            package_file.touch()
 
 
 @pytest.mark.parametrize("wheel_source", ["source", "sdist"])
@@ -1624,13 +1857,11 @@ def test_installed_distribution_validates_and_seeds_samira_without_package_write
     run_root.mkdir()
     _install_wheel_path(wheel, target)
     env = _private_child_env(state_root, target, build_source_root)
-    before = _target_hashes(target)
-
-    result = _run_child(
-        [sys.executable, "-c", INSTALLED_SAMIRA_PROBE],
-        run_root,
-        env,
-    )
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_SAMIRA_PROBE],
+            run_root,
+            env,
+        )
 
     assert "installed-samira-distribution-ok" in result.stdout
-    assert _target_hashes(target) == before
