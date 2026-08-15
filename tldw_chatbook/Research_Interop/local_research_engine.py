@@ -26,6 +26,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from .local_research_service import LocalResearchService
+from ..Chat.usage_recorder import usage_scope
 from .academic_providers import papers_to_evidence
 from .research_budget import BudgetLedger, ResearchLimitExceeded
 
@@ -75,6 +76,9 @@ class LocalResearchEngine:
         # records for a query; papers join the SAME evidence pool as web
         # results with DOI-level dedup. None keeps the run web-only.
         self.paper_search_fn = paper_search_fn
+        # Set for the duration of execute_run so _llm_bounded_call can
+        # settle usage without threading the ledger through every seam.
+        self._active_ledger: BudgetLedger | None = None
 
     @staticmethod
     def _default_search_fn(question: str, params: dict[str, Any]) -> Any:
@@ -145,6 +149,20 @@ class LocalResearchEngine:
             return await value
         return value
 
+    async def _llm_bounded_call(self, make_call: "Callable[[], Any]") -> Any:
+        """Run one LLM-bearing call inside a usage scope and settle the
+        recorded tokens into the ledger (task-16329). The token budget is
+        checked BEFORE the call (post-settlement enforcement: estimates
+        arrive after calls complete, so the boundary is the next call)."""
+        ledger = self._active_ledger
+        if ledger is not None:
+            ledger.check_tokens()
+        with usage_scope() as recorder:
+            result = await self._maybe_await(make_call())
+        if ledger is not None:
+            ledger.settle_tokens(recorder.total_tokens())
+        return result
+
     def _get_run(self, run_id: str) -> dict[str, Any]:
         run = self.service.get_run(run_id)
         if run is None:
@@ -188,6 +206,7 @@ class LocalResearchEngine:
         ledger = BudgetLedger.from_limits(
             run.get("limits") if isinstance(run.get("limits"), dict) else None
         )
+        self._active_ledger = ledger
 
         try:
             return await self._execute_phases(run, ledger)
@@ -209,6 +228,8 @@ class LocalResearchEngine:
             logger.opt(exception=True).error(f"Research run {run_id} failed: {exc}")
             self._save_ledger(run_id, ledger)
             return self.service.fail_run(run_id, error_msg=str(exc))
+        finally:
+            self._active_ledger = None
 
     async def _collect_round(
         self,
@@ -236,7 +257,7 @@ class LocalResearchEngine:
                 )
                 params["search_default_max_queries"] = cap
                 ledger.reserve_searches(cap)
-            outcome = await self._maybe_await(self.search_fn(query, params))
+            outcome = await self._llm_bounded_call(lambda: self.search_fn(query, params))
             if isinstance(outcome, tuple) and len(outcome) == 2:
                 wsr, sqd = outcome
             else:
@@ -412,7 +433,9 @@ class LocalResearchEngine:
                 "search_query": question,
             }
             merged_sqd = {"sub_questions": all_sub_questions, "main_goal": question}
-            phase2 = await self.analyze_fn(merged_wsr, merged_sqd, search_params)
+            phase2 = await self._llm_bounded_call(
+                lambda: self.analyze_fn(merged_wsr, merged_sqd, search_params)
+            )
             final_answer = (phase2 or {}).get("final_answer") or {}
             relevant_results = (phase2 or {}).get("relevant_results") or {}
 
@@ -420,8 +443,8 @@ class LocalResearchEngine:
             # name what is still unresolved; iterating further is bounded by
             # max_iterations and the ledger.
             gaps = list(
-                await self._maybe_await(
-                    self.gap_fn(
+                await self._llm_bounded_call(
+                    lambda: self.gap_fn(
                         {
                             "question": question,
                             "sub_questions": all_sub_questions,
@@ -444,6 +467,9 @@ class LocalResearchEngine:
         # -- packaging -----------------------------------------------------
         self._check_control(run_id, "packaging")
         ledger.check_runtime()
+        # Persist the ledger AFTER the last settlement of the run (synthesis
+        # + gap analysis) so the artifact reflects final usage.
+        self._save_ledger(run_id, ledger)
         run = self.service.update_run_progress(
             run_id,
             phase="packaging",
@@ -656,7 +682,7 @@ class LocalResearchEngine:
                 "reason": "no stored claims",
                 "suggestion": "Launch a new research run (or a fresh search) for this question.",
             }
-        result = await self._maybe_await(answerer(seed, question))
+        result = await self._llm_bounded_call(lambda: answerer(seed, question))
         if not isinstance(result, dict):
             result = {"sufficient": True, "answer": str(result)}
         event = "follow_up_answered" if result.get("sufficient") else "follow_up_insufficient"

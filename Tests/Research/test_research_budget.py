@@ -115,6 +115,7 @@ def test_snapshot_is_persistable_and_reports_all_axes():
         "docs_used": 3,
         "tokens_reserved": 0,
         "tokens_settled": 0,
+        "tokens_estimated": True,
         "runtime_elapsed_s": snap["runtime_elapsed_s"],  # float, asserted below
     }
     assert isinstance(snap["runtime_elapsed_s"], float)
@@ -128,3 +129,32 @@ def test_invalid_limit_values_fall_back_to_unlimited():
     assert ledger.remaining_searches() is None
     assert ledger.remaining_docs() is None
     ledger.check_runtime()
+
+
+# --- token enforcement (task-16329) ----------------------------------------------
+
+def test_check_tokens_raises_once_settled_usage_reaches_budget():
+    ledger = BudgetLedger.from_limits({"max_tokens": 100})
+
+    ledger.settle_tokens(99)
+    ledger.check_tokens()  # still under
+
+    ledger.settle_tokens(1)
+    with pytest.raises(ResearchLimitExceeded) as excinfo:
+        ledger.check_tokens()
+    assert excinfo.value.limit_key == "max_tokens"
+
+
+def test_check_tokens_no_budget_never_raises():
+    ledger = BudgetLedger.from_limits({})
+    ledger.settle_tokens(10**9)
+    ledger.check_runtime()
+    ledger.check_tokens()
+
+
+def test_snapshot_marks_tokens_as_estimates():
+    ledger = BudgetLedger.from_limits({"max_tokens": 50})
+    ledger.settle_tokens(20)
+
+    assert ledger.snapshot()["tokens_estimated"] is True
+    assert ledger.snapshot()["tokens_settled"] == 20

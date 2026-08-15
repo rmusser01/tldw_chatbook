@@ -146,6 +146,19 @@ class BudgetLedger:
     def settle_tokens(self, count: int) -> None:
         self.tokens_settled += max(0, int(count))
 
+    def check_tokens(self) -> None:
+        """Raise when settled token usage has reached the budget (checked
+        between LLM-bearing units of work; enforcement is post-settlement
+        because estimates arrive after calls complete)."""
+        if self.max_tokens is None:
+            return
+        if self.tokens_settled >= int(self.max_tokens):
+            raise ResearchLimitExceeded(
+                "max_tokens",
+                f"token budget exhausted ({self.tokens_settled} settled of "
+                f"{int(self.max_tokens)})",
+            )
+
     # -- runtime ----------------------------------------------------------
 
     def elapsed_seconds(self) -> float:
@@ -176,5 +189,8 @@ class BudgetLedger:
             "docs_used": self.docs_used,
             "tokens_reserved": self.tokens_reserved,
             "tokens_settled": self.tokens_settled,
+            # Estimates from the chat_api_call seam until providers expose
+            # real usage (task-16329); the flag keeps the numbers honest.
+            "tokens_estimated": True,
             "runtime_elapsed_s": round(self.elapsed_seconds(), 3),
         }

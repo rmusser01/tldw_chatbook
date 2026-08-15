@@ -624,3 +624,67 @@ def test_engine_merges_academic_papers_with_doi_dedup():
         e for e in sources["evidence"] if str(e.get("url", "")).startswith("https://doi.org/")
     ]
     assert len(paper_entries) == 2
+
+
+# --- token usage settlement + enforcement (task-16329) ---------------------------
+
+def test_engine_settles_recorded_usage_into_ledger():
+    from tldw_chatbook.Chat.usage_recorder import active_recorder
+
+    service = _make_service()
+    run = service.launch_run(query="Tokens question")
+    search_fn, analyze_fn, _ = _make_pipeline("Tokens question")
+
+    async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=30, completion_tokens=10)
+        return await analyze_fn(wsr, sqd, params, cancel_event=cancel_event)
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_with_usage
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
+    assert ledger["tokens_settled"] == 40
+    assert ledger["tokens_estimated"] is True
+
+
+def test_engine_enforces_max_tokens_between_llm_calls():
+    from tldw_chatbook.Chat.usage_recorder import active_recorder
+
+    service = _make_service()
+    run = service.launch_run(query="Token capped", limits_json={"max_tokens": 25})
+    search_fn, analyze_fn, _ = _make_pipeline("Token capped")
+
+    async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=20, completion_tokens=10)
+        return await analyze_fn(wsr, sqd, params, cancel_event=cancel_event)
+
+    async def gap_with_usage(context):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=5, completion_tokens=5)
+        return []
+
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_with_usage,
+        gap_fn=gap_with_usage,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    # Synthesis settled 30 of 25 tokens; the gap call is refused at the
+    # boundary -> clean research_limit_exceeded stop with partial artifacts.
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_tokens" in final["progress_message"]
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    assert "report_v1.md" not in names
+    assert "budget_ledger.json" in names
