@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Widgets.Console.console_workspace_setup_modal import (
+    ConsoleWorkspaceSetupModal,
+)
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -20,6 +24,33 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
+
+
+async def _confirm_workspace_setup_modal(host, pilot, tmp_path: Path) -> None:
+    """Complete the new-workspace setup modal the Library now opens.
+
+    Pressing ``#library-create-local-workspace`` pushes the shared setup
+    modal (TASK-16317) onto the HARNESS app's screen stack; this fills a
+    valid folder (keeping the prefilled name), runs the (debounced)
+    validation synchronously, and confirms.
+    """
+    modal = host.screen
+    assert isinstance(modal, ConsoleWorkspaceSetupModal), (
+        f"expected the workspace setup modal, got {modal!r}"
+    )
+    folder = tmp_path / "setup-project"
+    folder.mkdir(parents=True, exist_ok=True)
+    modal.query_one("#console-workspace-setup-path", Input).value = str(folder)
+    # Let the Input.Changed handler run first (it re-disables Create and
+    # schedules the debounce), then fire the validation synchronously so
+    # no real-time 0.3s wait is needed.
+    await pilot.pause()
+    modal._run_validation()
+    await pilot.pause()
+    assert not modal.query_one("#console-workspace-setup-create", Button).disabled
+    modal.query_one("#console-workspace-setup-create", Button).press()
+    await pilot.pause()
+    await pilot.pause()
 
 
 async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -238,7 +269,9 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_can_create_and_select_local_workspace() -> None:
+async def test_library_workspaces_can_create_and_select_local_workspace(
+    tmp_path: Path,
+) -> None:
     app = _build_test_app()
     host = DestinationHarness(app, "library")
 
@@ -251,12 +284,21 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        await _confirm_workspace_setup_modal(host, pilot, tmp_path)
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
         assert active_workspace is not None
         assert active_workspace.workspace_id == "workspace-local-1"
         assert active_workspace.name == "Workspace 1"
+        # TASK-16317: creation now also binds the confirmed folder, so the
+        # workspace is never created without an access root.
+        bindings = app.workspace_registry_service.list_folder_bindings(
+            "workspace-local-1"
+        )
+        assert len(bindings) == 1
+        assert bindings[0].metadata["access"] == "ro"
 
         visible = _visible_text(screen)
         active_workspace_row = screen.query_one(
@@ -268,7 +310,9 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
+async def test_library_workspaces_create_local_workspace_mouse_clicks(
+    tmp_path: Path,
+) -> None:
     """Verify mouse clicks can create and activate a local workspace."""
     app = _build_test_app()
     host = DestinationHarness(app, "library")
@@ -301,6 +345,8 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
+        await pilot.pause()
+        await _confirm_workspace_setup_modal(host, pilot, tmp_path)
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -315,9 +361,43 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> (
-    None
-):
+async def test_library_create_workspace_cancel_creates_nothing() -> None:
+    """Cancelling the setup modal must leave the registry untouched."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        before = {
+            ws.workspace_id
+            for ws in app.workspace_registry_service.list_workspaces(
+                include_archived=True
+            )
+        }
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        assert isinstance(host.screen, ConsoleWorkspaceSetupModal)
+        host.screen.query_one("#console-workspace-setup-cancel", Button).press()
+        await pilot.pause()
+
+        after = {
+            ws.workspace_id
+            for ws in app.workspace_registry_service.list_workspaces(
+                include_archived=True
+            )
+        }
+        assert after == before
+        assert host.screen is screen
+
+
+@pytest.mark.asyncio
+async def test_library_workspaces_create_skips_archived_local_workspace_identity(
+    tmp_path: Path,
+) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(
@@ -343,6 +423,8 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        await _confirm_workspace_setup_modal(host, pilot, tmp_path)
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = service.get_active_workspace()
@@ -502,7 +584,9 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
 
 
 @pytest.mark.asyncio
-async def test_library_create_workspace_notification_names_console_retarget() -> None:
+async def test_library_create_workspace_notification_names_console_retarget(
+    tmp_path: Path,
+) -> None:
     """TASK-713: the Library create toast must say the new workspace became
     active and that Console now targets it - the cross-screen side effect was
     previously unstated."""
@@ -518,6 +602,8 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
         notifications: list[str] = []
         app.notify = lambda message, **kwargs: notifications.append(str(message))
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        await _confirm_workspace_setup_modal(host, pilot, tmp_path)
         await pilot.pause(0.3)
 
         assert any(
@@ -549,7 +635,7 @@ async def test_blocked_use_in_console_press_explains_inline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_workspace_preserves_rail_scroll() -> None:
+async def test_create_workspace_preserves_rail_scroll(tmp_path: Path) -> None:
     """TASK-716: the create-workspace recompose must not reset the rail
     scroll - the user is acting at the bottom-of-rail Workspace group and
     loses their place (and the updated Active row) when it snaps to top."""
@@ -571,6 +657,8 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         assert scrolled_to > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        await _confirm_workspace_setup_modal(host, pilot, tmp_path)
         await pilot.pause(0.6)
 
         rail = screen.query_one("#library-rail")

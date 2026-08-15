@@ -247,6 +247,10 @@ from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
 )
+from ...Widgets.Console.console_workspace_setup_modal import (
+    ConsoleWorkspaceSetupModal,
+    ConsoleWorkspaceSetupResult,
+)
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from ...Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteConfirmationModal,
@@ -31683,7 +31687,13 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-create-local-workspace")
     async def create_local_workspace(self, event: Button.Pressed) -> None:
-        """Create and activate a local-only Library workspace.
+        """Open the new-workspace setup modal (name + required folder).
+
+        Mirrors the Console flow (TASK-16316): creation itself happens in
+        ``_confirm_library_workspace_create`` only on a confirmed result;
+        Cancel/Escape creates nothing. The folder binding is required so a
+        Library workspace, like a Console one, is never created without an
+        indication of what it maps to.
 
         Args:
             event: Button press event emitted by the Library Workspaces action.
@@ -31697,21 +31707,109 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Workspace registry is not ready.", severity="warning")
             return
+
+        def _validate(name: str, path: str) -> str | None:
+            try:
+                name_error = registry_service.validate_workspace_name(name)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to pre-check workspace name for the Library setup modal"
+                )
+                return "Workspace registry could not be read."
+            if name_error is not None:
+                return name_error
+            try:
+                return registry_service.validate_folder_binding(
+                    "workspace-pending", path
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to pre-check folder binding for the Library setup modal"
+                )
+                return "Folder binding could not be checked."
+
         try:
-            workspace_id, workspace_name = self._next_local_workspace_identity()
+            _, suggested_name = self._next_local_workspace_identity()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to suggest a Library workspace name"
+            )
+            suggested_name = ""
+        self.app.push_screen(
+            ConsoleWorkspaceSetupModal(
+                suggested_name=suggested_name,
+                validate=_validate,
+            ),
+            callback=self._confirm_library_workspace_create,
+        )
+
+    def _confirm_library_workspace_create(
+        self, result: ConsoleWorkspaceSetupResult | None
+    ) -> None:
+        """Create + bind + activate a workspace confirmed in the setup modal.
+
+        The collision-free identity is computed HERE, at confirm time --
+        the suggested name from modal-open may have been taken meanwhile.
+        A write-time bind race keeps the workspace and warns, exactly as
+        the Console path does (TASK-16316).
+        """
+        if result is None:
+            return
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Workspace registry is not ready.", severity="warning")
+            return
+        notify = getattr(self.app_instance, "notify", None)
+        try:
+            workspace_id, fallback_name = self._next_local_workspace_identity()
+            workspace_name = result.name or fallback_name
             registry_service.create_workspace(
                 workspace_id=workspace_id,
                 name=workspace_name,
                 description="Local workspace created from Library.",
             )
-            registry_service.set_active_workspace(workspace_id)
         except Exception:
             logger.opt(exception=True).warning(
                 "Failed to create local Library workspace"
             )
-            notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Local workspace could not be created.", severity="error")
+            return
+        try:
+            registry_service.add_folder_binding(
+                workspace_id,
+                result.folder_path,
+                allow_write=result.allow_write,
+            )
+        except Exception:
+            # Binding raced (folder vanished since validation, or a duplicate
+            # landed). Keep the workspace; the details surface can add the
+            # binding later -- no half-state re-prompt.
+            logger.opt(exception=True).warning(
+                "Library workspace '{}' created but its folder binding failed",
+                workspace_name,
+            )
+            if callable(notify):
+                notify(
+                    f"Created {workspace_name}, but the folder binding failed. "
+                    "Add it from the workspace's Folders settings.",
+                    severity="warning",
+                )
+        try:
+            registry_service.set_active_workspace(workspace_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to activate new Library workspace {}", workspace_id
+            )
+            if callable(notify):
+                notify(
+                    f"Created {workspace_name}, but it could not be activated.",
+                    severity="warning",
+                )
             return
 
         self._invalidate_library_workspace_depth_state()
@@ -31721,7 +31819,6 @@ class LibraryScreen(BaseAppScreen):
         # rail's scroll offset across the rebuild.
         self._preserve_library_rail_scroll()
         self.refresh(recompose=True)
-        notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             # TASK-713: creation also makes the workspace active, which
             # retargets Console's context from another screen - say so.
