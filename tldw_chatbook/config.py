@@ -2958,6 +2958,9 @@ local_mlx_lm = ["None"]
 [model_catalog]
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
+# The startup check is confirm-first: nothing is contacted online until the
+# user answers the one-time consent dialog (which sets this to true).
+refresh_consent_recorded = false
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
 write_to_config = [] # exact [providers] keys whose new models append to this file

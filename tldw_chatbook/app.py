@@ -10028,6 +10028,12 @@ class TldwCli(
             catalog_settings = load_model_catalog_settings(load_settings())
             if not catalog_settings.auto_refresh_enabled:
                 return
+            if not catalog_settings.refresh_consent_recorded:
+                # ADR-020 amendment: the startup check is confirm-first.
+                # Scheduling-side consent gate normally intercepts this
+                # before the worker spawns; keep the check here so the
+                # refresh never runs unconsented by any other path.
+                return
             report = await self.local_llm_provider_catalog_service.refresh_stale_configured_providers(
                 catalog_settings=catalog_settings,
                 disk_store=self.model_catalog_disk_store,
@@ -10066,7 +10072,12 @@ class TldwCli(
         after_setup_completion: bool = False,
         environ: Mapping[str, str] | None = None,
     ) -> bool:
-        """Schedule the automatic catalog pass once when setup releases it."""
+        """Schedule the automatic catalog pass once when setup releases it.
+
+        ADR-020 amendment (confirm-first): when the user has never answered
+        the consent question, a modal is shown instead of the refresh; the
+        refresh itself is only scheduled from the consent callback.
+        """
         if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
             return False
         if not after_setup_completion and setup_owns_startup_networking(
@@ -10075,6 +10086,26 @@ class TldwCli(
         ):
             return False
 
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+
+            catalog_settings = load_model_catalog_settings(load_settings())
+        except Exception as exc:
+            logger.error(
+                "Failed to load model catalog settings for startup refresh "
+                f"scheduling (after_setup_completion={after_setup_completion}): "
+                f"{type(exc).__name__}"
+            )
+            return False
+        if catalog_settings.auto_refresh_enabled and (
+            not catalog_settings.refresh_consent_recorded
+        ):
+            self._startup_model_catalog_refresh_scheduled = True
+            self.call_after_refresh(self._push_model_catalog_consent_modal)
+            return True
+
         self._startup_model_catalog_refresh_scheduled = True
         self.run_worker(
             self._refresh_model_catalogs,
@@ -10082,6 +10113,68 @@ class TldwCli(
             group="model-catalog-refresh",
         )
         return True
+
+    def _push_model_catalog_consent_modal(self) -> None:
+        """Show the one-time consent dialog for online model-list checks."""
+        if self.is_headless:
+            # Headless/embedded runs have no user to answer a modal; stay
+            # unconsented (no refresh) rather than blocking startup behind
+            # an unanswerable dialog.
+            return
+        try:
+            from tldw_chatbook.UI.Screens.model_catalog_consent import (
+                ModelCatalogConsentModal,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to import the model catalog consent modal "
+                f"(screen=model_catalog_consent): {type(exc).__name__}"
+            )
+            return
+        self.push_screen(ModelCatalogConsentModal(), self._handle_model_catalog_consent)
+
+    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
+        """Persist the consent answer; on allow, run the startup refresh."""
+        # Only the boolean singleton True counts as consent — truthy garbage
+        # (e.g. a non-bool reaching this callback) falls through to the deny
+        # path, mirroring the settings parser's strict validator.
+        allowed = allowed is True
+        try:
+            from tldw_chatbook.config import save_settings_to_cli_config
+
+            section = {"refresh_consent_recorded": True}
+            if not allowed:
+                section["auto_refresh_enabled"] = False
+            saved = await asyncio.to_thread(
+                save_settings_to_cli_config, {"model_catalog": section}
+            )
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (including the app's config) into the log.
+            logger.error(
+                "Failed to persist model catalog consent "
+                f"(allowed={allowed!r}, section=model_catalog): "
+                f"{type(exc).__name__}"
+            )
+            saved = False
+        if allowed:
+            if not saved:
+                self.notify(
+                    "Your choice couldn't be saved; you'll be asked again next launch.",
+                    title="Model catalog",
+                    severity="warning",
+                )
+            self.run_worker(
+                self._refresh_model_catalogs,
+                exclusive=True,
+                group="model-catalog-refresh",
+            )
+        else:
+            self.notify(
+                "Online model-list checks stay off. You can enable them any "
+                "time in Settings.",
+                title="Model catalog",
+            )
 
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:

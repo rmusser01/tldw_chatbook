@@ -10394,8 +10394,22 @@ class SettingsScreen(BaseAppScreen):
                 ],
             }
         }
-        if load_model_catalog_settings(section_values) == load_model_catalog_settings(
-            load_settings()
+        # Compare every field EXCEPT consent: only the one-time startup
+        # dialog records consent, and the write below never touches it.
+        # Including it here would make a consented config never compare
+        # equal, rewriting config.toml on every toggle/keystroke.
+        candidate = load_model_catalog_settings(section_values)
+        current = load_model_catalog_settings(load_settings())
+        if (
+            candidate.auto_refresh_enabled,
+            candidate.stale_after_hours,
+            candidate.auto_refresh_disabled,
+            candidate.write_to_config,
+        ) == (
+            current.auto_refresh_enabled,
+            current.stale_after_hours,
+            current.auto_refresh_disabled,
+            current.write_to_config,
         ):
             return
         self._persist_model_catalog_section_values(section_values)
