@@ -38,6 +38,7 @@ Decisions:
 - **Streaming behavior.** Selections on actively-streaming rows clamp to the last stable text; if the row is replaced, the selection clears. Rows own their clamp logic (per-row delegate benefit). Row repaints during the 0.1–0.2s transcript sync tick must preserve highlight styles (refresh, not recompose, for selected rows).
 - **Non-selectable rows.** Banners, action rows, scrollbars, and other `PROTECTED_CLICK_CLASSES`-style regions never start a selection.
 - **Terminal interplay.** Plain drag reaches the app (Textual mouse reporting); shift+drag remains terminal-native copy. Verify with an early spike test in phase 1.
+- **Selection size cap.** Actions quote at most a capped number of characters (e.g. 4,000; configurable constant) — larger selections are truncated with an ellipsis marker. Prevents blowing the composer draft, side-chat prompt, or stored annotation with a whole-file dump.
 - **Keyboard fallback (phase 5).** shift+j/k grows a row-range over the existing j/k selection; entering a row activates character mode. Reuses the same `SelectionManager` and menu so all actions are shared. Keybindings must follow ADR-031 (htop-style single letters, no terminal-convention keys, footer hints truthful 1:1 — test-enforced).
 
 ### Selection Menu
@@ -63,6 +64,10 @@ New console settings entries (canonical surface: `UI/Screens/settings_screen.py`
 
 - `[console] sidechat_model` (provider + model identifier; defaults to the current session model if unset).
 - `[console] sidechat_prompt_template` (default as above; `{selection}` placeholder).
+
+### Side-chat execution isolation
+
+The side chat runs in its own `run_worker(..., exclusive=False)` with its own conversation context — it must not cancel, block, or share streaming state with an active console agent run. It calls the provider through the standard `LLM_Calls` path with its own ephemeral message list (system prompt + `{selection}` exchange only; no console session context is attached, keeping it stateless and cheap).
 
 ## 3. Feedback and Annotations
 
@@ -90,6 +95,8 @@ Rules:
   ```
 
   Soft-delete per DB conventions. Render as an inline badge/marker on the anchored row with a viewer popover. The stable anchor is `(session_id, row_key)`; `message_id` is nullable because diff/tool rows are not DB messages.
+
+  **`row_key` derivation must be deterministic across restarts.** A runtime widget/row identity regenerated on session reload would orphan annotations. `row_key` is derived from persisted data — e.g. `message:<db_message_id>` for message rows, `tool:<tool_call_id>` / `diff:<tool_call_id>:<hunk>` for tool/diff rows — never from Python object identity or mount order. Phase 4 starts with a spike that inventories the row kinds and confirms each has (or can cheaply gain) a durable key; any row kind without one is excluded from annotation (selectable but comment-persistence disabled with a hint).
 
 ## 4. Error Handling
 
