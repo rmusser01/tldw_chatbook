@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
@@ -58,6 +60,7 @@ def _activate(
     actor_id: str = "42",
     source_kind: str = "user",
     source_id: str = "fixture.pack",
+    manifest: Mapping[str, Any] | None = None,
     assets: list[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return repository.activate_pack(
@@ -69,7 +72,7 @@ def _activate(
             "source_kind": source_kind,
             "source_context": {"source_id": source_id},
         },
-        manifest={"schema": "test/v1", "source_id": source_id},
+        manifest=manifest or {"schema": "test/v1", "source_id": source_id},
         assets=assets or [_asset("neutral")],
         actor_kind="character",
         actor_id=actor_id,
@@ -151,7 +154,15 @@ def test_find_pack_by_stable_source_id_respects_deleted_tombstones(
     assert tombstone["status"] == "deleted"
 
 
-@pytest.mark.parametrize("source_context_json", ["{bad json", "[]"])
+@pytest.mark.parametrize(
+    "source_context_json",
+    [
+        "{bad json",
+        "[]",
+        '{"source_id":"fixture.pack","value":NaN}',
+        '{"source_id":"fixture.pack","value":Infinity}',
+    ],
+)
 def test_find_pack_rejects_invalid_source_context(
     repository: VisualIdentityRepository, source_context_json: str
 ) -> None:
@@ -253,6 +264,63 @@ def test_get_active_actor_pack_returns_pack_version_and_sorted_live_assets(
     assert active["assets"] == repository.list_version_assets(active["version"]["id"])
 
 
+def test_get_active_actor_pack_uses_one_database_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "snapshot.db"
+    writer_db = CharactersRAGDB(path, client_id="snapshot-writer")
+    reader_db = CharactersRAGDB(path, client_id="snapshot-reader")
+    writer = VisualIdentityRepository(writer_db)
+    reader = VisualIdentityRepository(reader_db)
+    first = _activate(writer)
+    old_version_id = first["version"]["id"]
+    reached_pack_read = Event()
+    continue_pack_read = Event()
+    original_execute = reader_db.execute_query
+    blocked = False
+
+    def interleaved_execute(query: str, params: Any = None, **kwargs: Any) -> Any:
+        nonlocal blocked
+        if not blocked and "FROM visual_identity_packs" in query:
+            blocked = True
+            reached_pack_read.set()
+            assert continue_pack_read.wait(5)
+        return original_execute(query, params, **kwargs)
+
+    monkeypatch.setattr(reader_db, "execute_query", interleaved_execute)
+
+    def read_active() -> dict[str, Any] | None:
+        try:
+            return reader.get_active_actor_pack("character", "42")
+        finally:
+            reader_db.close_connection()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(read_active)
+            assert reached_pack_read.wait(5)
+            try:
+                published = writer.publish_version(
+                    first["pack"]["id"],
+                    manifest={"revision": 2},
+                    assets=[_asset("neutral")],
+                    actor_kind="character",
+                    actor_id="42",
+                )
+            finally:
+                continue_pack_read.set()
+            observed = future.result(timeout=5)
+
+        assert observed is not None
+        assert observed["binding"]["active_version_id"] == old_version_id
+        assert observed["pack"]["active_version_id"] == old_version_id
+        assert observed["version"]["id"] == old_version_id
+        assert published["version"]["id"] != old_version_id
+    finally:
+        reader_db.close_connection()
+        writer_db.close_connection()
+
+
 def test_get_active_actor_pack_rejects_null_pack_active_version(
     repository: VisualIdentityRepository,
 ) -> None:
@@ -287,6 +355,23 @@ def test_activate_pack_creates_the_complete_active_graph_atomically(
     ]
 
 
+def test_activate_pack_captures_its_result_before_commit(
+    repository: VisualIdentityRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_get = repository.get_active_actor_pack
+
+    def guarded_get(actor_kind: str, actor_id: int | str) -> dict[str, Any] | None:
+        assert repository.db.get_connection().in_transaction
+        return original_get(actor_kind, actor_id)
+
+    monkeypatch.setattr(repository, "get_active_actor_pack", guarded_get)
+
+    result = _activate(repository)
+
+    assert result["version"]["version_number"] == 1
+    assert result["pack"]["active_version_id"] == result["version"]["id"]
+
+
 def test_activate_pack_rolls_back_when_the_final_asset_insert_fails(
     repository: VisualIdentityRepository,
 ) -> None:
@@ -295,6 +380,21 @@ def test_activate_pack_rolls_back_when_the_final_asset_insert_fails(
 
     with pytest.raises(CharactersRAGDBError, match="constraint violation"):
         _activate(repository, assets=assets)
+
+    assert _counts(repository.db) == {
+        "visual_identity_packs": 0,
+        "visual_identity_pack_versions": 0,
+        "visual_identity_assets": 0,
+        "visual_identity_bindings": 0,
+    }
+
+
+@pytest.mark.parametrize("nonstandard", [float("nan"), float("inf")])
+def test_activate_pack_rejects_nonstandard_json_without_writing(
+    repository: VisualIdentityRepository, nonstandard: float
+) -> None:
+    with pytest.raises(ValueError, match="Out of range float values"):
+        _activate(repository, manifest={"value": nonstandard})
 
     assert _counts(repository.db) == {
         "visual_identity_packs": 0,
@@ -341,6 +441,104 @@ def test_publish_version_keeps_versions_immutable_and_activates_the_next_number(
         ).fetchall()
     ]
     assert version_numbers == [1, 2]
+
+
+def test_publish_version_captures_its_result_before_commit(
+    repository: VisualIdentityRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = _activate(repository)
+    original_get = repository.get_active_actor_pack
+
+    def guarded_get(actor_kind: str, actor_id: int | str) -> dict[str, Any] | None:
+        assert repository.db.get_connection().in_transaction
+        return original_get(actor_kind, actor_id)
+
+    monkeypatch.setattr(repository, "get_active_actor_pack", guarded_get)
+
+    result = repository.publish_version(
+        first["pack"]["id"],
+        manifest={"revision": 2},
+        assets=[_asset("neutral")],
+        actor_kind="character",
+        actor_id="42",
+    )
+
+    assert result["version"]["version_number"] == 2
+    assert result["pack"]["active_version_id"] == result["version"]["id"]
+
+
+def test_publish_version_rolls_back_late_asset_failure_to_prior_graph(
+    repository: VisualIdentityRepository,
+) -> None:
+    first = _activate(repository, assets=[_asset("neutral"), _asset("thinking")])
+    pack_id = first["pack"]["id"]
+    binding_id = first["binding"]["id"]
+    pack_before = dict(
+        repository.db.execute_query(
+            "SELECT * FROM visual_identity_packs WHERE id = ?", (pack_id,)
+        ).fetchone()
+    )
+    binding_before = dict(
+        repository.db.execute_query(
+            "SELECT * FROM visual_identity_bindings WHERE id = ?", (binding_id,)
+        ).fetchone()
+    )
+    versions_before = [
+        dict(row)
+        for row in repository.db.execute_query(
+            "SELECT * FROM visual_identity_pack_versions WHERE pack_id = ? ORDER BY id",
+            (pack_id,),
+        ).fetchall()
+    ]
+    assets_before = [
+        dict(row)
+        for row in repository.db.execute_query(
+            "SELECT * FROM visual_identity_assets WHERE pack_id = ? ORDER BY id",
+            (pack_id,),
+        ).fetchall()
+    ]
+    failing_assets = [_asset(f"reaction-{index:02d}") for index in range(30)]
+    failing_assets.append(_asset("reaction-31", bytes_=0))
+
+    with pytest.raises(CharactersRAGDBError, match="constraint violation"):
+        repository.publish_version(
+            pack_id,
+            manifest={"revision": 2},
+            assets=failing_assets,
+            actor_kind="character",
+            actor_id="42",
+        )
+
+    assert (
+        dict(
+            repository.db.execute_query(
+                "SELECT * FROM visual_identity_packs WHERE id = ?", (pack_id,)
+            ).fetchone()
+        )
+        == pack_before
+    )
+    assert (
+        dict(
+            repository.db.execute_query(
+                "SELECT * FROM visual_identity_bindings WHERE id = ?", (binding_id,)
+            ).fetchone()
+        )
+        == binding_before
+    )
+    assert [
+        dict(row)
+        for row in repository.db.execute_query(
+            "SELECT * FROM visual_identity_pack_versions WHERE pack_id = ? ORDER BY id",
+            (pack_id,),
+        ).fetchall()
+    ] == versions_before
+    assert [
+        dict(row)
+        for row in repository.db.execute_query(
+            "SELECT * FROM visual_identity_assets WHERE pack_id = ? ORDER BY id",
+            (pack_id,),
+        ).fetchall()
+    ] == assets_before
 
 
 def test_publish_rejects_null_pack_active_version_without_writing(
@@ -418,6 +616,19 @@ def test_archive_delete_and_binding_tombstone_never_hard_delete_rows(
         ).fetchone()
         is not None
     )
+
+
+@pytest.mark.parametrize("operation", ["archive_pack", "mark_pack_deleted"])
+def test_repeated_pack_status_change_is_idempotent(
+    repository: VisualIdentityRepository, operation: str
+) -> None:
+    activated = _activate(repository)
+    method = getattr(repository, operation)
+
+    first = method(activated["pack"]["id"])
+    second = method(activated["pack"]["id"])
+
+    assert second == first
 
 
 @pytest.mark.parametrize("operation", ["archive_pack", "mark_pack_deleted"])

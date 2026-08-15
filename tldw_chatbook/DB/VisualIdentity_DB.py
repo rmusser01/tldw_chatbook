@@ -56,8 +56,11 @@ class VisualIdentityRepository:
         for row in rows:
             pack = dict(row)
             try:
-                context = json.loads(pack["source_context_json"])
-            except (TypeError, json.JSONDecodeError) as exc:
+                context = json.loads(
+                    pack["source_context_json"],
+                    parse_constant=_reject_nonstandard_json_constant,
+                )
+            except (TypeError, ValueError) as exc:
                 raise ValueError("visual_identity_source_context_invalid") from exc
             if not isinstance(context, dict):
                 raise ValueError("visual_identity_source_context_invalid")
@@ -82,52 +85,53 @@ class VisualIdentityRepository:
         Raises:
             ValueError: If a stored active-version reference crosses pack rows.
         """
-        binding_row = self.db.execute_query(
-            """
-            SELECT *
-              FROM visual_identity_bindings
-             WHERE owner_user_id = ?
-               AND actor_kind = ?
-               AND actor_id = ?
-               AND status = ?
-            """,
-            (LOCAL_OWNER_ID, actor_kind, str(actor_id), "active"),
-        ).fetchone()
-        if binding_row is None:
-            return None
-        binding = dict(binding_row)
+        with self.db.transaction():
+            binding_row = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_bindings
+                 WHERE owner_user_id = ?
+                   AND actor_kind = ?
+                   AND actor_id = ?
+                   AND status = ?
+                """,
+                (LOCAL_OWNER_ID, actor_kind, str(actor_id), "active"),
+            ).fetchone()
+            if binding_row is None:
+                return None
+            binding = dict(binding_row)
 
-        pack_row = self.db.execute_query(
-            """
-            SELECT *
-              FROM visual_identity_packs
-             WHERE id = ? AND owner_user_id = ? AND status = ?
-            """,
-            (binding["pack_id"], LOCAL_OWNER_ID, "active"),
-        ).fetchone()
-        if pack_row is None:
-            return None
-        pack = dict(pack_row)
-        self._validate_pack_active_version(pack)
-        self._validate_binding_active_version(binding)
+            pack_row = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE id = ? AND owner_user_id = ? AND status = ?
+                """,
+                (binding["pack_id"], LOCAL_OWNER_ID, "active"),
+            ).fetchone()
+            if pack_row is None:
+                return None
+            pack = dict(pack_row)
+            self._validate_pack_active_version(pack)
+            self._validate_binding_active_version(binding)
 
-        version_row = self.db.execute_query(
-            """
-            SELECT *
-              FROM visual_identity_pack_versions
-             WHERE id = ? AND owner_user_id = ?
-            """,
-            (binding["active_version_id"], LOCAL_OWNER_ID),
-        ).fetchone()
-        if version_row is None:
-            raise ValueError("visual_identity_binding_active_version_mismatch")
-        version = dict(version_row)
-        return {
-            "binding": binding,
-            "pack": pack,
-            "version": version,
-            "assets": self.list_version_assets(version["id"]),
-        }
+            version_row = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_pack_versions
+                 WHERE id = ? AND owner_user_id = ?
+                """,
+                (binding["active_version_id"], LOCAL_OWNER_ID),
+            ).fetchone()
+            if version_row is None:
+                raise ValueError("visual_identity_binding_active_version_mismatch")
+            version = dict(version_row)
+            return {
+                "binding": binding,
+                "pack": pack,
+                "version": version,
+                "assets": self.list_version_assets(version["id"]),
+            }
 
     def list_version_assets(self, version_id: int) -> list[dict[str, Any]]:
         """List a version's non-deleted assets in deterministic label order.
@@ -247,11 +251,10 @@ class VisualIdentityRepository:
                 pack_id=pack_id,
                 version_id=version_id,
             )
-
-        active = self.get_active_actor_pack(actor_kind, actor_id)
-        if active is None:
-            raise RuntimeError("activated_visual_identity_pack_not_found")
-        return active
+            active = self.get_active_actor_pack(actor_kind, actor_id)
+            if active is None:
+                raise RuntimeError("activated_visual_identity_pack_not_found")
+            return active
 
     def publish_version(
         self,
@@ -338,11 +341,10 @@ class VisualIdentityRepository:
                 pack_id=pack_id,
                 version_id=version_id,
             )
-
-        active = self.get_active_actor_pack(actor_kind, actor_id)
-        if active is None:
-            raise RuntimeError("published_visual_identity_pack_not_found")
-        return active
+            active = self.get_active_actor_pack(actor_kind, actor_id)
+            if active is None:
+                raise RuntimeError("published_visual_identity_pack_not_found")
+            return active
 
     def archive_pack(self, pack_id: int) -> dict[str, Any]:
         """Soft-archive a pack.
@@ -591,7 +593,10 @@ class VisualIdentityRepository:
             ).fetchone()
             if row is None:
                 raise ValueError("visual_identity_pack_not_found")
-            self._validate_pack_active_version(dict(row))
+            pack = dict(row)
+            self._validate_pack_active_version(pack)
+            if pack["status"] == status:
+                return pack
             self.db.execute_query(
                 """
                 UPDATE visual_identity_packs
@@ -629,4 +634,14 @@ class VisualIdentityRepository:
 
 
 def _json_dump(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _reject_nonstandard_json_constant(_value: str) -> None:
+    raise ValueError("nonstandard JSON constant")
