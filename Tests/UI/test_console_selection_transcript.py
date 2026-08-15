@@ -572,3 +572,80 @@ async def test_menu_open_protected_action_press_dismisses_menu_no_drag():
 
         assert not app.query(ConsoleSelectionMenu)  # folded by the press
         assert transcript.selection_manager.state.active is False  # no drag armed
+
+
+@pytest.mark.asyncio
+async def test_real_terminal_press_without_control_arms_drag():
+    """Live-terminal presses carry widget=None (screen forwarding never sets it).
+
+    Regression for the live spike: every real MouseDown logged ``ctrl=None``
+    (only MouseMove gets a translated widget), so keying the arm off
+    ``event.control`` made real-terminal drags silent no-ops while
+    synthetic-event tests stayed green. The arm must hit-test from screen
+    coordinates instead.
+    """
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        body = _body_static(row)
+
+        # Shape identical to Textual's screen._forward_event output for a
+        # real terminal press: posted to the widget under the pointer, with
+        # NO widget attached to the event.
+        event = MouseDown(
+            widget=None,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=body.region.x + 2,
+            screen_y=body.region.y,
+        )
+        transcript.post_message(event)
+        await pilot.pause()
+
+        assert transcript.selection_manager.state.active is True
+        assert (
+            transcript.selection_manager.state.selection.row_key == row.id
+        )
+
+        transcript.post_message(
+            MouseMove(
+                widget=None,
+                x=0,
+                y=0,
+                delta_x=0,
+                delta_y=0,
+                button=1,
+                shift=False,
+                meta=False,
+                ctrl=False,
+                screen_x=body.region.x + 8,
+                screen_y=body.region.y,
+            )
+        )
+        await pilot.pause()
+        transcript.post_message(
+            MouseUp(
+                widget=None,
+                x=0,
+                y=0,
+                delta_x=0,
+                delta_y=0,
+                button=0,
+                shift=False,
+                meta=False,
+                ctrl=False,
+                screen_x=body.region.x + 8,
+                screen_y=body.region.y,
+            )
+        )
+        await pilot.pause()
+
+        assert len(app.query(ConsoleSelectionMenu)) == 1
+        assert row.get_selection_text() != ""

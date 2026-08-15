@@ -3361,8 +3361,32 @@ class ConsoleTranscript(VerticalScroll):
             text, region.height, screen_x - region.x, screen_y - region.y
         )
 
+    def _selection_press_widget(self, event: MouseDown | MouseUp) -> Widget | None:
+        """Return the widget a real-terminal mouse press/release hit.
+
+        Textual's screen forwarding dispatches ``MouseDown``/``MouseUp`` to
+        the widget under the pointer WITHOUT setting ``event.widget`` (only
+        the translated ``MouseMove`` path assigns one), so ``event.control``
+        is ``None`` for every press in a live terminal; it is populated only
+        on the synthetic events pilot tests post. Live-spike evidence
+        (2026-08-15): real drags logged ``ctrl=None`` on every MouseDown
+        while synthetic-test events carried controls. Resolve the target
+        from screen coordinates, falling back to ``event.control`` for
+        synthetic callers.
+        """
+        if event.control is not None:
+            return event.control
+        try:
+            widget, _offset = self.screen.get_widget_at(
+                event.screen_x, event.screen_y
+            )
+        except Exception:
+            return None
+        return widget
+
     def on_mouse_down(self, event: MouseDown) -> None:
         """Arm a text-selection drag on a left press over a selectable row."""
+        press_control = self._selection_press_widget(event)
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this
@@ -3373,7 +3397,7 @@ class ConsoleTranscript(VerticalScroll):
         # Add-to-chat button's MouseDown precedes its Click, so removing
         # the menu on the press would unmount the button before its Click
         # can activate it.
-        press_node: Widget | None = event.control
+        press_node: Widget | None = press_control
         while press_node is not None and not isinstance(
             press_node, ConsoleSelectionMenu
         ):
@@ -3383,7 +3407,7 @@ class ConsoleTranscript(VerticalScroll):
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
-        row = self._selection_row_for(event.control) if event.button == 1 else None
+        row = self._selection_row_for(press_control) if event.button == 1 else None
         if row is None:
             # A fresh press that cannot arm a drag (non-left button, or a
             # protected/non-row control) ends the drag-release suppression
