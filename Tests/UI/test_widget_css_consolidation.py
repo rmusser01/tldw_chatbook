@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib
 import os
 from pathlib import Path
 
@@ -220,41 +221,199 @@ def test_generated_stylesheet_parses(filename: str):
     stylesheet.parse()
 
 
+def _stream_order(path: Path) -> dict[str, int]:
+    """Banner index of each class's block within ONE generated sheet.
+
+    ``render_stylesheets`` writes one ``/* ===== WIDGET: ... */`` banner per
+    class, in the order its block was rendered into this stream. That text
+    order is what decides an exact-specificity tie *within this stream*: see
+    ``test_base_class_blocks_precede_their_subclasses`` for why.
+    """
+    order: dict[str, int] = {}
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        if line.startswith("/* ===== WIDGET: "):
+            order.setdefault(line.split()[3], index)
+    return order
+
+
+def _module_name(module: str) -> str:
+    """``iter_blocks``' package-relative POSIX path -> a dotted module name."""
+    return "tldw_chatbook." + module[:-3].replace("/", ".")
+
+
+def _transitive_base_pairs(
+    blocks: list[widget_css.BundledBlock],
+) -> list[tuple[str, str]]:
+    """``(class_name, ancestor_name)`` for every real ancestor relationship
+    between two consolidated widget classes.
+
+    Imports each class and walks its actual ``__mro__`` rather than its
+    syntactic bases, so a grandparent inversion is not invisible just because
+    an intermediate class in the chain declares no ``BUNDLED_CSS`` of its own
+    -- a syntactic-direct-bases-only scan only ever fires from a class that
+    itself has CSS to check, so it can never reach past such a class.
+    """
+    consolidated = {block.class_name for block in blocks}
+    pairs: list[tuple[str, str]] = []
+    for block in blocks:
+        module = importlib.import_module(_module_name(block.module))
+        cls = getattr(module, block.class_name)
+        for ancestor in cls.__mro__[1:]:
+            if (
+                ancestor.__name__ in consolidated
+                and ancestor.__name__ != block.class_name
+            ):
+                pairs.append((block.class_name, ancestor.__name__))
+    return pairs
+
+
+def _ordering_problems(
+    pairs: list[tuple[str, str]], streams: list[tuple[str, dict[str, int]]]
+) -> list[str]:
+    """Flag ``(class, base)`` pairs where ``base`` is emitted after ``class``
+    *within the same stream*.
+
+    Comparing across streams pins nothing: the self stream's tie-breaker (0)
+    and the scoped stream's (``SCOPED_DEFAULTS_TIE_BREAKER``, -1,000,000)
+    already decide any cross-stream tie outright, regardless of either
+    block's text position, so only a same-stream comparison is load-bearing.
+    """
+    problems: list[str] = []
+    for class_name, base_name in pairs:
+        for stream_name, order in streams:
+            if base_name not in order or class_name not in order:
+                continue
+            if order[base_name] > order[class_name]:
+                problems.append(
+                    f"[{stream_name}] {base_name} is a base of {class_name} but "
+                    "is emitted after it, inverting the tie-breaker Textual "
+                    "gave them"
+                )
+    return problems
+
+
 def test_base_class_blocks_precede_their_subclasses():
     """Base-class CSS must be emitted before a subclass's, as Textual ordered it.
 
     Textual gave each class's own ``DEFAULT_CSS`` tie-breaker 0 and its bases
-    ``-(depth)``, so a subclass won ties against its base. In one generated sheet
-    that ordering has to come from source order instead.
-    """
-    sheets = "".join(
-        (_CSS_ROOT / name).read_text(encoding="utf-8")
-        for name in (
-            build_css.WIDGET_DEFAULTS_SELF_FILENAME,
-            build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
-        )
-    )
-    order: dict[str, int] = {}
-    for index, line in enumerate(sheets.splitlines()):
-        if line.startswith("/* ===== WIDGET: "):
-            order.setdefault(line.split()[3], index)
+    ``-(depth)``: a subclass won a specificity tie against its base outright,
+    by that numeric comparison, regardless of source order
+    (``Styles.extract_rules``/``Stylesheet._check_and_refresh``).
 
-    problems = []
-    for module, class_name, _css in _class_css_blocks():
-        if class_name not in order:
-            continue
-        source = (_PACKAGE_ROOT / module).read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.ClassDef) or node.name != class_name:
-                continue
-            for base in node.bases:
-                base_name = ast.unparse(base).split("[")[0].split(".")[-1]
-                if base_name in order and order[base_name] > order[class_name]:
-                    problems.append(
-                        f"{base_name} is a base of {class_name} but is emitted "
-                        "after it, inverting the tie-breaker Textual gave them"
-                    )
+    The consolidated scheme collapses every class's self-stream rules onto
+    ONE shared tie-breaker (0, ``build_css.widget_defaults_sources``) and
+    every scoped-stream rule onto another shared one
+    (``SCOPED_DEFAULTS_TIE_BREAKER``). Two same-stream rules that still tie on
+    specificity therefore fall through to Textual's *next* tie-break: on an
+    exact tie, the LAST rule in source order wins (the stylesheet scans rules
+    in reverse and ``max()`` keeps the first-seen maximum). So within one
+    stream, a base's block must sit *before* its subclass's -- and only a
+    same-stream comparison means anything: a pair that straddles streams is
+    already decided outright by the differing tie-breakers, so comparing
+    their raw text positions (as this test used to, via a naive concatenation
+    of both streams) pins nothing. See TASK-15994.
+    """
+    blocks = widget_css.iter_blocks(_PACKAGE_ROOT, widget_css.WIDGET_ATTR)
+    self_order = _stream_order(_CSS_ROOT / build_css.WIDGET_DEFAULTS_SELF_FILENAME)
+    scoped_order = _stream_order(_CSS_ROOT / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME)
+    pairs = _transitive_base_pairs(blocks)
+    problems = _ordering_problems(
+        pairs, [("self", self_order), ("scoped", scoped_order)]
+    )
     assert not problems, "\n".join(problems)
+
+
+def test_ordering_check_catches_a_cross_stream_conflation_the_old_index_missed():
+    """TASK-15994 AC3, defect 1 (born-red): the retired algorithm merged both
+    streams into ONE index by scanning their concatenation and keeping only
+    each class's FIRST occurrence (``order.setdefault``). Since the self
+    stream was concatenated whole before the scoped stream, any class with a
+    self-stream block had its scoped-stream position silently discarded.
+
+    Seed exactly that: ``BaseWidget``/``SubWidget`` are correctly ordered in
+    the self stream, but ``SubWidget``'s scoped block sits BEFORE
+    ``BaseWidget``'s -- a real inversion the old algorithm could never see.
+    """
+    self_order = {"BaseWidget": 1, "SubWidget": 5}
+    scoped_order = {"SubWidget": 8, "BaseWidget": 20}
+    pairs = [("SubWidget", "BaseWidget")]
+
+    # Reconstruct the retired algorithm's merged index: every self-stream
+    # line preceded every scoped-stream one in the concatenation, so a class
+    # present in the self stream permanently shadowed its own scoped-stream
+    # position via `order.setdefault(class_name, index)`.
+    old_order: dict[str, int] = {}
+    for name, index in self_order.items():
+        old_order.setdefault(name, index)
+    for name, index in scoped_order.items():
+        old_order.setdefault(name, index)
+    old_problems = [
+        (base, cls)
+        for cls, base in pairs
+        if base in old_order and cls in old_order and old_order[base] > old_order[cls]
+    ]
+    assert old_problems == [], (
+        "setup invalid -- the retired merged-index algorithm should pass this "
+        f"over silently, but flagged {old_problems}"
+    )
+
+    new_problems = _ordering_problems(
+        pairs, [("self", self_order), ("scoped", scoped_order)]
+    )
+    assert new_problems, (
+        "the per-stream check must catch the scoped-stream inversion the "
+        "retired merged-index check missed"
+    )
+
+
+def test_ordering_check_catches_a_transitive_base_inversion_the_old_scan_missed():
+    """TASK-15994 AC3, defect 2 (born-red): the retired algorithm only
+    inspected a class's own SYNTACTIC (direct) bases, so a base that is only
+    a base-of-a-base was invisible whenever the intermediate class declared
+    no CSS of its own -- there was never a ``class_name`` entry for it to
+    check its own direct bases from. Seed exactly that with a real
+    inheritance chain.
+    """
+
+    class Grandparent:
+        pass
+
+    class Middle(Grandparent):
+        """Declares no BUNDLED_CSS of its own -- invisible to a scan that only
+        ever inspects the direct bases of a class that DOES have CSS."""
+
+    class Grandchild(Middle):
+        pass
+
+    consolidated = {"Grandparent", "Grandchild"}  # Middle is not consolidated
+
+    # The retired algorithm's check, reconstructed: for the one class in
+    # `consolidated` that even has an ancestor in the chain (Grandchild),
+    # look only at its syntactic __bases__ -- equivalent to what `ast` would
+    # see, since these classes are declared with ordinary Python syntax.
+    old_flagged_bases = {
+        base.__name__ for base in Grandchild.__bases__ if base.__name__ in consolidated
+    }
+    assert old_flagged_bases == set(), (
+        "setup invalid -- Grandparent must not be a direct base of Grandchild"
+    )
+
+    # The new transitive walk finds Grandparent regardless.
+    new_pairs = [
+        (Grandchild.__name__, ancestor.__name__)
+        for ancestor in Grandchild.__mro__[1:]
+        if ancestor.__name__ in consolidated
+    ]
+    assert ("Grandchild", "Grandparent") in new_pairs, (
+        "the transitive MRO walk must still find Grandparent as an ancestor "
+        "of Grandchild even though it is not a direct base"
+    )
+
+    # Base emitted AFTER its (transitive) subclass -- a real inversion within
+    # one stream -- is exactly what the strengthened pairs must let us catch.
+    order = {"Grandparent": 10, "Grandchild": 2}
+    problems = _ordering_problems(new_pairs, [("self", order)])
+    assert problems, "must flag Grandparent emitted after its descendant Grandchild"
 
 
 def test_consolidated_classes_declare_no_textual_css_attribute():
