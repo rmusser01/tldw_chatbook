@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    PageFreshness,
+    build_library_pager_display,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
 )
@@ -23,6 +28,7 @@ _MESSAGE_COUNT_KEYS = (
     "message_total",
     "messages_total",
 )
+_SQLITE_SIGNED_INT_MAX = 2**63 - 1
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,20 @@ class LibraryConversationsCanvasState:
     next_disabled: bool = True
     loading: bool = False
     error_copy: str = ""
+    pager: LibraryPagerDisplay | None = None
+    selection_notice: str = ""
+    actions_disabled: bool = False
+
+
+@dataclass(frozen=True)
+class ValidatedLibraryConversationPage:
+    """Validated ordinary Conversation service page."""
+
+    items: tuple[Mapping[str, Any], ...]
+    limit: int
+    offset: int
+    total: int
+    has_more: bool
 
 
 @dataclass(frozen=True)
@@ -64,7 +84,97 @@ class _ConversationEntry:
     title: str
     updated_raw: str
     message_count: int | None
-    sort_timestamp: datetime | None
+
+
+def _stable_conversation_identity(record: Mapping[str, Any]) -> str:
+    for key in _ID_KEYS:
+        if key not in record:
+            continue
+        value = record[key]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("item must have a stable conversation identity")
+        return value.strip()
+    raise ValueError("item must have a stable conversation identity")
+
+
+def _validate_conversation_items(
+    items: Sequence[object],
+) -> tuple[Mapping[str, Any], ...]:
+    validated: list[Mapping[str, Any]] = []
+    identities: set[str] = set()
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise ValueError("item must be a mapping with a stable conversation identity")
+        identity = _stable_conversation_identity(item)
+        if identity in identities:
+            raise ValueError("page contains a duplicate stable conversation identity")
+        identities.add(identity)
+        validated.append(item)
+    return tuple(validated)
+
+
+def _validated_page_integer(value: object, name: str, *, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if value < minimum or value > _SQLITE_SIGNED_INT_MAX:
+        raise ValueError(f"{name} is outside SQLite signed-integer bounds")
+    return value
+
+
+def validate_library_conversation_page(
+    response: Mapping[str, Any],
+    *,
+    requested_limit: int,
+    requested_offset: int,
+) -> ValidatedLibraryConversationPage:
+    """Validate one ordinary Conversation service page before rendering."""
+
+    expected_limit = _validated_page_integer(
+        requested_limit,
+        "requested_limit",
+        minimum=1,
+    )
+    expected_offset = _validated_page_integer(
+        requested_offset,
+        "requested_offset",
+        minimum=0,
+    )
+    if not isinstance(response, Mapping):
+        raise ValueError("conversation page response must be a mapping")
+
+    raw_items = response.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("conversation page items must be a list")
+    items = _validate_conversation_items(raw_items)
+
+    pagination = response.get("pagination")
+    if not isinstance(pagination, Mapping):
+        raise ValueError("conversation page pagination must be a mapping")
+    limit = _validated_page_integer(pagination.get("limit"), "limit", minimum=1)
+    offset = _validated_page_integer(pagination.get("offset"), "offset", minimum=0)
+    total = _validated_page_integer(pagination.get("total"), "total", minimum=0)
+    has_more = pagination.get("has_more")
+    if not isinstance(has_more, bool):
+        raise ValueError("has_more must be a boolean")
+
+    if limit != expected_limit or offset != expected_offset:
+        raise ValueError("conversation page coordinate echo does not match the request")
+    if total and offset >= total:
+        raise ValueError("conversation page offset is out of range for its total")
+
+    expected_count = min(limit, max(total - offset, 0))
+    if len(items) != expected_count:
+        raise ValueError("conversation page cardinality does not match its coordinates")
+    if has_more != (offset + len(items) < total):
+        raise ValueError("has_more disagrees with conversation page coordinates")
+
+    return ValidatedLibraryConversationPage(
+        items=items,
+        limit=limit,
+        offset=offset,
+        total=total,
+        has_more=has_more,
+    )
 
 
 def _first_present_text(record: Mapping[str, Any], keys: Sequence[str]) -> str:
@@ -97,31 +207,12 @@ def _record_message_count(record: Mapping[str, Any]) -> int | None:
     return None
 
 
-def _parse_timestamp(value: str) -> datetime | None:
-    text = (value or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
 def _secondary_text(message_count: int | None, age: str) -> str:
     if message_count is None:
         return "conversation"
     if age:
         return f"{message_count} messages - {age}"
     return f"{message_count} messages"
-
-
-def _sort_key(entry: _ConversationEntry) -> tuple[int, float]:
-    if entry.sort_timestamp is None:
-        return (1, 0.0)
-    return (0, -entry.sort_timestamp.timestamp())
 
 
 def build_library_conversations_state(
@@ -131,32 +222,42 @@ def build_library_conversations_state(
     selected_id: str = "",
     now: datetime | None = None,
     page: int = 1,
+    requested_page: int | None = None,
     page_size: int = 20,
     total_count: int | None = None,
     total_known: bool = True,
     has_more: bool = False,
+    freshness: PageFreshness | None = None,
+    stale_copy: str = "",
     loading: bool = False,
     error_copy: str = "",
     select_mode: bool = False,
     selected_ids: frozenset[str] = frozenset(),
+    selection_notice: str = "",
 ) -> LibraryConversationsCanvasState:
     """Build the Library Browse ▸ Conversations canvas display state.
 
     Args:
         records: Conversation records from the screen's conversation service.
-            This is one already-filtered, already-paged result. Records with
-            missing/None fields are tolerated.
+            This is one already-filtered, already-paged result. Every record
+            needs a unique stable identity; other missing fields use display
+            fallbacks.
         query: Submitted query used for display copy.
         selected_id: Requested selected conversation id; falls back to the
             first displayed row when absent from the supplied page.
         now: Reference time for relative age labels; defaults to current UTC time.
         page: One-based page number.
+        requested_page: One-based page targeted by the current or last request.
         page_size: Maximum service page size.
         total_count: Total matching records when known.
         total_known: Whether total_count is authoritative.
-        has_more: Whether the service reports a subsequent page.
+        has_more: Legacy service flag retained for caller compatibility; exact
+            boundaries come from the shared pager display and total.
+        freshness: Whether page metadata is absent, authoritative, or stale.
+        stale_copy: Source-owned reason for retained stale rows.
         loading: Whether a page request is in flight.
         error_copy: Recoverable page-load error copy.
+        selection_notice: Source-owned notice for cleared page selection.
 
     Returns:
         Immutable canvas state: rows, status/empty copy, selection, and
@@ -164,22 +265,11 @@ def build_library_conversations_state(
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
     normalized_query = str(query or "").strip()
-    resolved_page_size = max(1, int(page_size))
-    requested_page = max(1, int(page))
-    resolved_total_known = total_known and total_count is not None
-    known_total = max(0, int(total_count or 0))
-    page_count = max(1, (known_total + resolved_page_size - 1) // resolved_page_size)
-    resolved_page = (
-        min(requested_page, page_count) if resolved_total_known else requested_page
-    )
+    requested_page = page if requested_page is None else requested_page
 
     entries: list[_ConversationEntry] = []
-    for record in records:
-        if not isinstance(record, Mapping):
-            continue
-        conversation_id = _first_present_text(record, _ID_KEYS)
-        if not conversation_id:
-            continue
+    for record in _validate_conversation_items(records):
+        conversation_id = _stable_conversation_identity(record)
         updated_raw = _first_present_text(record, _UPDATED_KEYS)
         entries.append(
             _ConversationEntry(
@@ -187,11 +277,33 @@ def build_library_conversations_state(
                 title=_record_title(record),
                 updated_raw=updated_raw,
                 message_count=_record_message_count(record),
-                sort_timestamp=_parse_timestamp(updated_raw),
             )
         )
 
-    entries.sort(key=_sort_key)
+    resolved_freshness: PageFreshness
+    if freshness is not None:
+        resolved_freshness = freshness
+    elif total_known and total_count is not None:
+        resolved_freshness = "fresh"
+    elif entries:
+        resolved_freshness = "stale"
+    else:
+        resolved_freshness = "uninitialized"
+    resolved_stale_copy = stale_copy
+    if resolved_freshness == "stale" and not resolved_stale_copy:
+        resolved_stale_copy = "List may be out of date"
+
+    pager = build_library_pager_display(
+        applied_page=None if resolved_freshness == "uninitialized" else page,
+        requested_page=requested_page,
+        page_size=page_size,
+        row_count=len(entries),
+        total=total_count if resolved_freshness == "fresh" else None,
+        freshness=resolved_freshness,
+        loading=loading,
+        error_copy=error_copy,
+        stale_copy=resolved_stale_copy,
+    )
 
     resolved_selected_id = str(selected_id or "")
     displayed_ids = {entry.conversation_id for entry in entries}
@@ -213,36 +325,21 @@ def build_library_conversations_state(
     )
     selected_count = sum(1 for r in rows if r.checked)
 
-    normalized_error_copy = str(error_copy or "")
-    if normalized_error_copy:
-        status_copy = normalized_error_copy
-    elif loading:
-        status_copy = "Loading conversations…"
-    elif normalized_query:
-        match_count = known_total if resolved_total_known else len(entries)
+    if pager.status_copy:
+        status_copy = pager.status_copy
+    elif normalized_query and resolved_freshness == "fresh":
+        match_count = pager.title_count
         suffix = "match" if match_count == 1 else "matches"
         status_copy = f"{match_count} {suffix} for '{normalized_query}'"
     else:
         status_copy = ""
 
-    if normalized_error_copy or loading or rows:
+    if pager.status_copy or loading or rows or resolved_freshness != "fresh":
         empty_copy = ""
     elif normalized_query:
         empty_copy = f"No conversations match '{normalized_query}'."
     else:
         empty_copy = LIBRARY_CONVERSATIONS_EMPTY_COPY
-
-    start = (resolved_page - 1) * resolved_page_size + 1 if entries else 0
-    end = (resolved_page - 1) * resolved_page_size + len(entries) if entries else 0
-    if resolved_total_known:
-        range_copy = f"{start}-{end} of {known_total}" if entries else f"0 of {known_total}"
-        page_copy = f"Page {resolved_page} of {page_count}"
-    else:
-        range_copy = f"{start}-{end}" if entries else "0"
-        page_copy = f"Page {resolved_page}"
-
-    previous_disabled = loading or resolved_page == 1
-    next_disabled = loading or not has_more
 
     selected_entry = next(
         (
@@ -274,12 +371,15 @@ def build_library_conversations_state(
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
         query=normalized_query,
-        range_copy=range_copy,
-        page_copy=page_copy,
-        previous_disabled=previous_disabled,
-        next_disabled=next_disabled,
+        range_copy=pager.range_copy,
+        page_copy=pager.page_copy,
+        previous_disabled=pager.previous_disabled,
+        next_disabled=pager.next_disabled,
         select_mode=select_mode,
         selected_count=selected_count,
         loading=loading,
-        error_copy=normalized_error_copy,
+        error_copy=error_copy,
+        pager=pager,
+        selection_notice=selection_notice,
+        actions_disabled=resolved_freshness == "stale",
     )
