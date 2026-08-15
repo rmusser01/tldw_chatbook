@@ -1360,13 +1360,16 @@ class ConsoleMarkdownMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            if (
-                transcript.selection_manager.state.active
-                or transcript.selection_manager.just_finished
-            ):
+            manager = transcript.selection_manager
+            if manager.state.active or manager.just_finished:
                 # This click completed (or landed during) a text-selection
                 # drag; it must not toggle message selection (console
-                # selection phase 1).
+                # selection phase 1). Consume the finish flag so the
+                # suppression swallows exactly this one click -- presses on
+                # this row type cannot arm a drag, so without consuming here
+                # these clicks would stay suppressed until some other
+                # transcript-layer click cleared the flag.
+                manager.consume_just_finished()
                 return
             transcript.toggle_message_selection(self.message_id)
 
@@ -1542,14 +1545,15 @@ class ConsoleTranscriptMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
-            if (
-                transcript.selection_manager.state.active
-                or transcript.selection_manager.just_finished
-            ):
+            manager = transcript.selection_manager
+            if manager.state.active or manager.just_finished:
                 # This click completed (or landed during) a text-selection
                 # drag; it must not toggle message selection (console
                 # selection phase 1). Markdown rows are not selectable yet,
-                # but their click must still be suppressed on drag release.
+                # but their click must still be suppressed on drag release --
+                # and the flag consumed here, because a markdown press never
+                # arms a drag so nothing else would clear the suppression.
+                manager.consume_just_finished()
                 return
             transcript.toggle_message_selection(self.message_id)
 
@@ -3153,10 +3157,14 @@ class ConsoleTranscript(VerticalScroll):
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
-        if event.button != 1:
-            return
-        row = self._selection_row_for(event.control)
+        row = self._selection_row_for(event.control) if event.button == 1 else None
         if row is None:
+            # A fresh press that cannot arm a drag (non-left button, or a
+            # markdown/protected/non-row control) ends the drag-release
+            # suppression window: the NEXT genuine click must behave
+            # normally. The drag's own release Click arrives with no
+            # intervening MouseDown, so same-press suppression is intact.
+            self.selection_manager.consume_just_finished()
             return
         offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
         self.selection_manager.begin_drag(row.id, offset)

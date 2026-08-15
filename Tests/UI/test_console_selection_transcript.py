@@ -219,6 +219,31 @@ async def test_plain_click_on_markdown_row_still_selects_message():
 
 
 @pytest.mark.asyncio
+async def test_click_after_drag_on_markdown_row_toggles_selection():
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        await _drag_over_body(pilot, row, start_x=3, end_x=11)
+        assert transcript.selection_manager.just_finished is True
+
+        # Regression (review fix round 1): a genuine click on a MARKDOWN row
+        # whose MouseDown can never arm a drag must not inherit the plain
+        # row's drag-release suppression -- the flag has to be consumed by
+        # the fresh press (or the suppressed click itself), not stick until
+        # some plain-row/negative-space click happens to clear it.
+        await pilot.click("#console-message-m3")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m3"
+
+        # And a second markdown-row click still behaves normally (toggles
+        # the selection back off).
+        await pilot.click("#console-message-m3")
+        await pilot.pause()
+        assert transcript.selected_message_id is None
+
+
+@pytest.mark.asyncio
 async def test_drag_extends_while_mouse_is_captured():
     app = _SelectionTranscriptApp()
     async with app.run_test(size=(40, 30)) as pilot:
