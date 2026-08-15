@@ -6,9 +6,26 @@ Modal over the Console (task-4 of the trajectory view; spec:
 from the pure projection (``Chat/trajectory.py``) and never queries the
 DB itself.
 
-Layout (vertical): title line, search ``Input``, ``DataTable`` ledger
+Layout (vertical): title line, search ``Input``, brushable timeline strip
+(:class:`TrajectoryTimeline`, task-16315 -- always mounted so its zoom
+state survives; the widget itself collapses to a ``no timing data``
+placeholder when the snapshot has no timing), ``DataTable`` ledger
 (``cursor_type="row"``), inspector ``Static`` (hidden until toggled),
 footer hints line.
+
+Timeline <-> ledger integration:
+
+- The strip is fed the same snapshot as the ledger, live refreshes
+  included (``_apply_live_snapshot``).
+- A brush range filters the ledger to records ACTIVE in the range (the
+  widget model's ``records_in_range`` semantics), composed with the
+  search query (AND); brush=None clears only the time filter. The
+  strip's caption is the brush status note (range + active count) --
+  deliberately not duplicated elsewhere.
+- Bar click moves the ledger cursor to that record (growing the mounted
+  window if the record is only paginated out); the ledger cursor
+  highlights the bar via ``set_selected``. The search filter is never
+  touched by the timeline.
 
 Ledger semantics pinned by the projection's contracts:
 
@@ -55,6 +72,7 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectorySnapshot,
     TrajectoryTurn,
 )
+from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 
 __all__ = [
     "LOAD_EARLIER_ROW_KEY",
@@ -205,6 +223,12 @@ class TrajectoryScreen(ModalScreen[None]):
         }
         self._collapsed: set[str] = set()
         self._query = ""
+        #: Active brush time range from the timeline strip (None = no
+        #: time filter); mirrors the widget's brush state.
+        self._brush_range: tuple[float, float] | None = None
+        #: The always-mounted timeline strip (created here so filters,
+        #: pagination growth and selection sync can reach it pre-mount).
+        self._timeline = TrajectoryTimeline(id="trajectory-timeline")
         #: Number of newest records mounted (grows one page per `e` press).
         self._visible_count = min(self._total_records, PAGE_SIZE)
         #: Row key -> record (None for header/control rows), in row order.
@@ -227,6 +251,7 @@ class TrajectoryScreen(ModalScreen[None]):
         with Vertical(id="trajectory-screen"):
             yield Static(self._title_text(), id="trajectory-title", markup=False)
             yield Input(placeholder="Search records…", id="trajectory-search")
+            yield self._timeline  # always mounted: zoom state survives
             yield DataTable(id="trajectory-table", cursor_type="row")
             inspector = Static("", id="trajectory-inspector", markup=False)
             inspector.display = False  # hidden until toggled (spec)
@@ -237,6 +262,7 @@ class TrajectoryScreen(ModalScreen[None]):
         table = self.query_one("#trajectory-table", DataTable)
         for label, width in _COLUMNS:
             table.add_column(label, width=width)
+        self._timeline.set_snapshot(self._snapshot)
         self._refresh_hints()
         if self._total_records > WORKER_THRESHOLD:
             # Large conversation: build the row specs off the UI thread.
@@ -317,6 +343,13 @@ class TrajectoryScreen(ModalScreen[None]):
         self._turn_numbers = {
             turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
         }
+        # Feed the strip the same data the ledger renders. set_snapshot
+        # resets the widget's brush/selection WITHOUT posting, so mirror
+        # the brush clear here -- the ledger's time filter can never
+        # outlive the visual brush. (Follow still scrolls to the tail;
+        # the brush only ever filtered, so nothing fights it.)
+        self._timeline.set_snapshot(snapshot)
+        self._brush_range = None
         # Keep collapsed turns and the search query; never shrink the window.
         self._visible_count = max(
             self._visible_count, min(self._total_records, PAGE_SIZE)
@@ -428,31 +461,62 @@ class TrajectoryScreen(ModalScreen[None]):
             )
 
         query = self._query.lower()
+        brush_seqs = self._brush_active_seqs()
         open_turn: TrajectoryTurn | None = None
         turn_records: list[TrajectoryRecord] = []
         for turn, record in self._flat_slice():
             if open_turn is not None and turn.turn_id != open_turn.turn_id:
-                specs.extend(self._turn_row_specs(open_turn, turn_records, query))
+                specs.extend(
+                    self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
+                )
                 turn_records = []
             open_turn = turn
             turn_records.append(record)
         if open_turn is not None:
-            specs.extend(self._turn_row_specs(open_turn, turn_records, query))
+            specs.extend(
+                self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
+            )
         return specs
 
+    def _brush_active_seqs(self) -> frozenset[int] | None:
+        """Seqs of records ACTIVE in the brush; ``None`` when no brush.
+
+        Reuses the timeline model's ``records_in_range`` semantics (a
+        record is active when its interval intersects the range; untimed
+        records are never in the model, so a brush hides them) instead
+        of reimplementing the interval math here.
+        """
+        if self._brush_range is None:
+            return None
+        lo, hi = self._brush_range
+        return frozenset(
+            record.seq for record in self._timeline.model.records_in_range(lo, hi)
+        )
+
     def _turn_row_specs(
-        self, turn: TrajectoryTurn, records: list[TrajectoryRecord], query: str
+        self,
+        turn: TrajectoryTurn,
+        records: list[TrajectoryRecord],
+        query: str,
+        brush_seqs: frozenset[int] | None = None,
     ) -> list[tuple[str, tuple[Text, ...]]]:
         """Header row + child rows for one turn under the current filter.
 
         Search semantics (spec): child rows match on their own text; the
         turn header survives iff any child matches. A search overrides
         collapse (searching reveals), otherwise collapsed turns show the
-        header only.
+        header only. A brush composes with the search (AND) and follows
+        the same header-survival and reveal rules.
         """
-        matching = [rec for rec in records if self._record_matches(rec, query)]
-        if query and not matching:
-            return []  # nothing in this turn matches: header included, hidden
+        matching = [
+            rec
+            for rec in records
+            if self._record_matches(rec, query)
+            and (brush_seqs is None or rec.seq in brush_seqs)
+        ]
+        filtering = bool(query) or brush_seqs is not None
+        if filtering and not matching:
+            return []  # nothing in this turn is visible: header included, hidden
         header_key = f"turn:{turn.turn_id}"
         collapsed = turn.turn_id in self._collapsed
         number = self._turn_numbers.get(turn.turn_id, 0)
@@ -473,7 +537,7 @@ class TrajectoryScreen(ModalScreen[None]):
                 ),
             )
         ]
-        if collapsed and not query:
+        if collapsed and not filtering:
             return specs
         for rec in matching:
             specs.append((str(rec.seq), self._record_cells(rec)))
@@ -589,6 +653,7 @@ class TrajectoryScreen(ModalScreen[None]):
                     "Trajectory cursor restore skipped: {}", type(exc).__name__
                 )
         self._refresh_hints()
+        self._sync_timeline_selection()
         if self.query_one("#trajectory-inspector", Static).display:
             self._refresh_inspector()
 
@@ -746,8 +811,71 @@ class TrajectoryScreen(ModalScreen[None]):
     def _on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Cursor moves refresh an OPEN inspector (live follow)."""
         event.stop()
+        self._sync_timeline_selection()
         if self.query_one("#trajectory-inspector", Static).display:
             self._refresh_inspector()
+
+    # -- timeline integration (task-16315) -----------------------------------
+
+    def _sync_timeline_selection(self) -> None:
+        """Highlight the bar for the record under the ledger cursor.
+
+        Header/control rows (and a missing record) clear the highlight;
+        ``set_selected`` is pull-only so this cannot echo a bar-click
+        event back into the ledger.
+        """
+        key = self._cursor_key()
+        record = self._row_records.get(key) if key is not None else None
+        self._timeline.set_selected(record.seq if record is not None else None)
+
+    @on(TrajectoryTimeline.TrajectoryBrushChanged)
+    def _on_brush_changed(
+        self, event: TrajectoryTimeline.TrajectoryBrushChanged
+    ) -> None:
+        """Brush range filters the ledger (AND with the search query)."""
+        self._brush_range = event.brush_range
+        self._render_ledger()
+
+    @on(TrajectoryTimeline.TrajectoryBarSelected)
+    def _on_bar_selected(self, event: TrajectoryTimeline.TrajectoryBarSelected) -> None:
+        """Bar click: move the ledger cursor to that record's row.
+
+        The widget clears its own brush before posting, so mirror that
+        here (the time filter drops; the SEARCH stays). If the record is
+        only paginated out, grow the mounted window to cover it; if the
+        search still hides it, that is a no-op on the cursor.
+        """
+        if self._brush_range is not None:
+            self._brush_range = None
+            self._render_ledger()
+        key = str(event.record_key)
+        if key in self._visible_keys:
+            self._move_cursor_to_key(key)
+            return
+        flat = [record for turn in self._turns for record in turn.records]
+        try:
+            flat_index = next(
+                i for i, record in enumerate(flat) if record.seq == event.record_key
+            )
+        except StopIteration:
+            return  # unknown record (stale bar from a live snapshot): no-op
+        if flat_index < len(flat) - self._visible_count:
+            self._visible_count = len(flat) - flat_index
+            self._render_ledger()
+        if key in self._visible_keys:
+            self._move_cursor_to_key(key)
+
+    def _move_cursor_to_key(self, key: str) -> None:
+        """Best-effort cursor move to the row with ``key``."""
+        try:
+            index = self._visible_keys.index(key)
+        except ValueError:
+            return
+        table = self.query_one("#trajectory-table", DataTable)
+        try:
+            table.move_cursor(row=index, animate=False)
+        except Exception as exc:  # noqa: BLE001 - cursor clamp is best-effort
+            logger.debug("Trajectory bar-select cursor move skipped: {}", type(exc))
 
     # -- actions (ADR-031: single-letter htop-style) ----------------------------
 

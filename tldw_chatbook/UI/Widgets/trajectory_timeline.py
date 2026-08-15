@@ -82,6 +82,9 @@ _FALLBACK_STYLE = Style(color="white")
 #: Background applied to every cell inside the brushed region.
 BRUSH_STYLE = Style(bgcolor="#264f78")
 
+#: Overlay for the selected record's bar (host-screen ledger cursor).
+_SELECTED_STYLE = Style(reverse=True)
+
 _CAPTION_STYLE = Style(color="grey62")
 
 
@@ -259,6 +262,10 @@ class TrajectoryTimeline(Widget):
       keys on the strip center); ```,`' ``/`` .`` pan left/right. Every
       viewport change posts :class:`TrajectoryViewportChanged`.
 
+    The host screen drives bar highlighting via :meth:`set_selected`
+    (pull-only: it posts no messages, so a ledger cursor move can
+    highlight a bar without echoing a selection event back).
+
     All keys are single-character (ADR-031 legal).
     """
 
@@ -297,6 +304,7 @@ class TrajectoryTimeline(Widget):
         self._model = TimelineModel()
         self._window: tuple[float, float] | None = None
         self._brush: tuple[float, float] | None = None
+        self._selected: int | None = None
         self._drag_x: int | None = None
         self._drag_moved = False
 
@@ -317,12 +325,30 @@ class TrajectoryTimeline(Widget):
         """Current brush range ``(lo, hi)`` in time, or ``None``."""
         return self._brush
 
+    @property
+    def selected(self) -> int | None:
+        """Ledger seq of the highlighted bar, or ``None``."""
+        return self._selected
+
+    def set_selected(self, record_key: int | None) -> None:
+        """Highlight the bar for ``record_key`` (``None`` clears it).
+
+        Dumb, pull-only selection driven by the host screen's ledger
+        cursor: no message is posted, so highlighting cannot echo back
+        into a ledger cursor move (the bar-click path owns that arc).
+        """
+        if self._selected == record_key:
+            return
+        self._selected = record_key
+        self.refresh()
+
     def set_snapshot(self, snapshot: TrajectorySnapshot) -> None:
         """Load a snapshot: flatten turns, reset viewport to the domain."""
         records = [record for turn in snapshot.turns for record in turn.records]
         self._model = TimelineModel(records)
         self._window = self._model.domain
         self._brush = None
+        self._selected = None
         self._drag_x = None
         self.refresh()
 
@@ -355,6 +381,8 @@ class TrajectoryTimeline(Widget):
             if cols is None:
                 continue
             style = KIND_STYLES.get(record.kind, _FALLBACK_STYLE)
+            if record.seq == self._selected:
+                style = style + _SELECTED_STYLE
             for col in range(cols[0], cols[1] + 1):
                 cells[col] = (BAR_CHAR, style)
         if self._brush is not None:
