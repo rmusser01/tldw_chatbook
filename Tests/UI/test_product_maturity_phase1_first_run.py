@@ -629,7 +629,18 @@ async def test_fresh_config_auto_offers_wizard_over_initial_screen(
             assert app.current_tab == "home"
 
 
-@pytest.mark.parametrize("prefix", LOCAL_PATH_PREFIXES)
+@pytest.mark.parametrize(
+    "prefix",
+    LOCAL_PATH_PREFIXES,
+    ids=(
+        "macos-home",
+        "linux-home",
+        "var-home",
+        "darwin-temp",
+        "windows-backslash-home",
+        "windows-slash-home",
+    ),
+)
 def test_local_path_guard_rejects_common_home_and_temp_prefixes(prefix: str) -> None:
     with pytest.raises(AssertionError):
         _assert_no_local_path_prefixes(f"Fresh HOME: {prefix}developer/project")

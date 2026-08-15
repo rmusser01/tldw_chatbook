@@ -750,6 +750,16 @@ def test_failure_documents_accept_only_stable_codes_and_stages(
         ("username", "runneradmin"),
         ("command", "python -m pytest"),
     ),
+    ids=(
+        "posix-home-path",
+        "posix-opt-path",
+        "windows-user-path",
+        "unc-path",
+        "pid",
+        "handle",
+        "username",
+        "command",
+    ),
 )
 def test_result_validation_rejects_path_process_and_user_material(
     key: str, value: str

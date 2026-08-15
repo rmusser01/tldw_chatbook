@@ -317,6 +317,13 @@ def test_builder_rejects_self_referential_retry_lineage(
         ("failed_attempt", "precision", r"C:\Users\alice\Secret\precision.txt"),
         ("failed_attempt", "attempt_id", "../../private-attempt"),
     ],
+    ids=(
+        "document-model-posix-path",
+        "document-precision-posix-path",
+        "attempt-model-windows-path",
+        "attempt-precision-windows-path",
+        "attempt-id-traversal",
+    ),
 )
 def test_loader_rejects_local_paths_in_identity_fields(
     target_field: str | None,
