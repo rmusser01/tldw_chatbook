@@ -64,6 +64,7 @@ def test_clone_rejects_malformed_outer_or_source_shapes(malformed):
         {"available_skills": [{"name": "alpha"}, "not-a-record"], "blocked_skills": []},
         {"available_skills": [], "blocked_skills": [object()]},
     ],
+    ids=["available-not-list", "available-mixed-items", "blocked-non-record"],
 )
 def test_clone_rejects_malformed_nested_skills_payloads(skills_context):
     malformed = _snapshot()

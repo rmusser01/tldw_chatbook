@@ -2510,6 +2510,7 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
             "Skill import is not wired in this shell yet.",
         ),
     ],
+    ids=("skills",),
 )
 @pytest.mark.asyncio
 async def test_unwired_destination_actions_are_disabled_with_honest_copy(

@@ -909,6 +909,15 @@ def test_diagnostic_projection_excludes_free_form_user_reason() -> None:
             False,
         ),
     ],
+    ids=(
+        "new-create",
+        "unchanged-skip",
+        "changed-update",
+        "uncertain-create",
+        "confirmed-update",
+        "unsupported",
+        "failed",
+    ),
 )
 def test_classification_action_matrix_accepts_only_valid_contracts(
     classification: ImportClassification,
@@ -5059,6 +5068,12 @@ def test_skip_and_create_overrides_set_their_only_valid_effects() -> None:
         (ImportAction.UPDATE_EXISTING, False, 0),
         (ImportAction.CREATE_NEW, True, False),
     ],
+    ids=(
+        "invalid-action-type",
+        "invalid-replace-flag",
+        "invalid-membership-flag",
+        "invalid-create-replace",
+    ),
 )
 def test_item_override_rejects_coerced_actions_bools_and_invalid_effects(
     action: object,

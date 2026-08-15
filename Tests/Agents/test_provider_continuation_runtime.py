@@ -295,6 +295,20 @@ def test_finished_failure_emits_no_result_record_step_history_or_next_model() ->
         ("run_log_slice", {}, "run_log_slice"),
         ("generic_tool", {}, "invoke_tool"),
     ],
+    ids=[
+        "spawn-subagent",
+        "wait-agents",
+        "check-agents",
+        "find-tools",
+        "load-schemas",
+        "read-skill-file",
+        "install-skill",
+        "run-skill-script",
+        "search-run-log",
+        "run-log-stats",
+        "run-log-slice",
+        "generic-tool",
+    ],
 )
 def test_common_executing_barrier_dominates_every_dispatch_branch(
     tool_name: str, args: dict, dependency: str

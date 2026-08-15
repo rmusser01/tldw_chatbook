@@ -256,6 +256,12 @@ def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
         "SK-DONOTUSEEXAMPLEONLY1234567890",
         "AIZA" + "DO_NOT_USE_EXAMPLE_ONLY_" + "0" * 11,
     ],
+    ids=(
+        "openai-project-uppercase",
+        "anthropic-uppercase",
+        "openai-legacy-uppercase",
+        "google-uppercase",
+    ),
 )
 def test_uppercase_standalone_credential_shapes_are_not_recognized(raw: str) -> None:
     """Keep standalone credential family recognition intentionally case-sensitive."""
