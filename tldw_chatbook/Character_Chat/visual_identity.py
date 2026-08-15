@@ -8,6 +8,7 @@ import json
 import os
 import re
 import stat
+import threading
 import warnings
 import zipfile
 from collections.abc import Mapping
@@ -1098,6 +1099,8 @@ _SAMIRA_TOP_LEVEL_FILES = frozenset(
 )
 _SAMIRA_TEXT_LIMIT = 2 * 1024 * 1024
 _SAMIRA_PORTRAIT_LIMIT = 10 * 1024 * 1024
+_SAMIRA_SEED_LOCKS: dict[str, threading.Lock] = {}
+_SAMIRA_SEED_LOCKS_GUARD = threading.Lock()
 
 
 def ensure_builtin_samira(
@@ -1117,69 +1120,85 @@ def ensure_builtin_samira(
     if state["terminal"]:
         return
 
-    card = state["card"]
-    try:
-        card_json, portrait, parsed_card = _load_samira_card(package_root)
-    except Exception as exc:  # noqa: BLE001 - startup seed must not prevent boot
-        logger.warning("samira_card_seed_failed category={}", type(exc).__name__)
-        return
-
-    if card is None:
-        parsed_card["name"] = _available_samira_name(db)
-        parsed_card["image"] = portrait
-        character_id = db.add_character_card(parsed_card)
-        if character_id is None:
-            logger.warning("samira_card_seed_failed category=insert")
+    with _samira_seed_lock(db):
+        state = _samira_seed_preflight(db)
+        if state["terminal"]:
             return
-    else:
-        character_id = int(card["id"])
 
-    try:
-        manifest_data, manifest, loaded_assets = _load_samira_pack(
-            package_root,
-            card_bytes=len(card_json),
-            portrait_bytes=len(portrait),
-        )
-        from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+        card = state["card"]
+        try:
+            card_json, portrait, parsed_card = _load_samira_card(package_root)
+        except Exception as exc:  # noqa: BLE001 - startup seed must not prevent boot
+            logger.warning("samira_card_seed_failed category={}", type(exc).__name__)
+            return
 
-        VisualIdentityRepository(db).activate_pack(
-            pack={
-                "title": manifest.title,
-                "description": "Bundled Samira reaction pack.",
-                "default_expression_key": manifest.default_expression_key,
-                "source_kind": "builtin",
-                "source_context": {
-                    "source_id": SAMIRA_PACK_ID,
-                    "pack_content_sha256": manifest.pack_content_sha256,
+        if card is None:
+            parsed_card["name"] = _available_samira_name(db)
+            parsed_card["image"] = portrait
+            character_id = db.add_character_card(parsed_card)
+            if character_id is None:
+                logger.warning("samira_card_seed_failed category=insert")
+                return
+        else:
+            character_id = int(card["id"])
+
+        try:
+            manifest_data, manifest, loaded_assets = _load_samira_pack(
+                package_root,
+                card_bytes=len(card_json),
+                portrait_bytes=len(portrait),
+            )
+            from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+            VisualIdentityRepository(db).activate_pack(
+                pack={
+                    "title": manifest.title,
+                    "description": "Bundled Samira reaction pack.",
+                    "default_expression_key": manifest.default_expression_key,
+                    "source_kind": "builtin",
+                    "source_context": {
+                        "source_id": SAMIRA_PACK_ID,
+                        "pack_content_sha256": manifest.pack_content_sha256,
+                    },
                 },
-            },
-            manifest=manifest_data,
-            assets=[
-                {
-                    "expression_key": loaded.asset.expression_key,
-                    "original_expression_key": loaded.asset.original_label,
-                    "display_label": loaded.asset.display_label,
-                    "source_filename": PurePosixPath(loaded.asset.storage_relpath).name,
-                    "storage_relpath": loaded.asset.storage_relpath,
-                    "content_type": loaded.asset.content_type,
-                    "bytes": loaded.asset.bytes,
-                    "sha256": loaded.asset.sha256,
-                    "width": loaded.asset.width,
-                    "height": loaded.asset.height,
-                    "source_context": _asset_generation_context(
-                        manifest_data, loaded.asset.original_label
-                    ),
-                    "is_animated": loaded.asset.is_animated,
-                    "frame_count": loaded.asset.frame_count,
-                    "duration_ms": loaded.asset.duration_ms,
-                }
-                for loaded in loaded_assets
-            ],
-            actor_kind="character",
-            actor_id=character_id,
-        )
-    except Exception as exc:  # noqa: BLE001 - card remains usable on pack failure
-        logger.warning("samira_pack_activation_failed category={}", type(exc).__name__)
+                manifest=manifest_data,
+                assets=[
+                    {
+                        "expression_key": loaded.asset.expression_key,
+                        "original_expression_key": loaded.asset.original_label,
+                        "display_label": loaded.asset.display_label,
+                        "source_filename": PurePosixPath(
+                            loaded.asset.storage_relpath
+                        ).name,
+                        "storage_relpath": loaded.asset.storage_relpath,
+                        "content_type": loaded.asset.content_type,
+                        "bytes": loaded.asset.bytes,
+                        "sha256": loaded.asset.sha256,
+                        "width": loaded.asset.width,
+                        "height": loaded.asset.height,
+                        "source_context": _asset_generation_context(
+                            manifest_data, loaded.asset.original_label
+                        ),
+                        "is_animated": loaded.asset.is_animated,
+                        "frame_count": loaded.asset.frame_count,
+                        "duration_ms": loaded.asset.duration_ms,
+                    }
+                    for loaded in loaded_assets
+                ],
+                actor_kind="character",
+                actor_id=character_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - card remains usable on pack failure
+            logger.warning(
+                "samira_pack_activation_failed category={}", type(exc).__name__
+            )
+
+
+def _samira_seed_lock(db: Any) -> threading.Lock:
+    db_path = str(getattr(db, "db_path_str", ":memory:"))
+    key = f"memory:{id(db)}" if db_path == ":memory:" else str(Path(db_path).resolve())
+    with _SAMIRA_SEED_LOCKS_GUARD:
+        return _SAMIRA_SEED_LOCKS.setdefault(key, threading.Lock())
 
 
 def _samira_seed_preflight(db: Any) -> dict[str, Any]:
@@ -1353,17 +1372,16 @@ def _load_samira_pack(
         package_root, "ASSET_LICENSE.md", max_bytes=_SAMIRA_TEXT_LIMIT
     )
     manifest_data = _strict_json_object(manifest_raw)
-    raw_assets = manifest_data.get("assets")
-    if not isinstance(raw_assets, list):  # noqa: TRY004 - stable validation category
-        raise ValueError("samira_manifest_invalid")
+    metadata_manifest = validate_visual_identity_manifest(
+        manifest_data,
+        require_samira_bundle=True,
+        directory_bytes=0,
+    )
 
     asset_bytes: dict[str, bytes] = {}
     directory_bytes = card_bytes + portrait_bytes + len(manifest_raw) + len(license_raw)
-    for raw_asset in raw_assets:
-        if not isinstance(raw_asset, dict):  # noqa: TRY004 - stable validation category
-            raise ValueError("samira_manifest_invalid")
-        relpath = str(raw_asset.get("storage_relpath", ""))
-        parts = _safe_relative_parts(relpath)
+    for asset in metadata_manifest.assets:
+        parts = _safe_relative_parts(asset.storage_relpath)
         if parts[:3] != ("characters", "samira", "expressions"):
             raise ValueError("samira_manifest_invalid")
         data = _read_samira_resource(
@@ -1371,7 +1389,7 @@ def _load_samira_pack(
             "/".join(parts[2:]),
             max_bytes=SAMIRA_MAX_REACTION_BYTES + 1,
         )
-        asset_bytes[relpath] = data
+        asset_bytes[asset.storage_relpath] = data
         directory_bytes += len(data)
 
     manifest = parse_visual_identity_manifest_json(

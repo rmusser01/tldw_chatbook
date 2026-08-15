@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -252,6 +254,98 @@ def test_pack_failure_keeps_card_warns_once_and_retries_only_absent_pack(
     after = _samira_row(db)
     assert after == preserved
     _assert_complete_seed(db)
+
+
+def test_concurrent_eligible_repair_claims_one_pack_graph_and_one_reaction_set_read(
+    db: CharactersRAGDB, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken_root = tmp_path / "broken-concurrent" / "tldw_chatbook"
+    shutil.copytree(PACKAGE_ROOT / "assets", broken_root / "assets")
+    (broken_root / "assets/characters/samira/expressions/anger.webp").unlink()
+    visual_identity.ensure_builtin_samira(db, package_root=broken_root)
+    assert _samira_row(db) is not None
+    assert not _rows(db, "visual_identity_packs")
+
+    handles = [
+        CharactersRAGDB(db.db_path_str, f"concurrent-{index}") for index in range(2)
+    ]
+    original_preflight = visual_identity._samira_seed_preflight
+    original_read = visual_identity._read_samira_resource
+    ready = threading.Barrier(2)
+    first_preflight_threads: set[int] = set()
+    guard = threading.Lock()
+    reaction_reads = 0
+
+    def synchronized_initial_preflight(handle):
+        state = original_preflight(handle)
+        thread_id = threading.get_ident()
+        with guard:
+            first = thread_id not in first_preflight_threads
+            first_preflight_threads.add(thread_id)
+        if first:
+            ready.wait(timeout=5)
+        return state
+
+    def count_reads(package_root, relative_path, *, max_bytes):
+        nonlocal reaction_reads
+        if str(relative_path).startswith("expressions/"):
+            with guard:
+                reaction_reads += 1
+        return original_read(package_root, relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(
+        visual_identity, "_samira_seed_preflight", synchronized_initial_preflight
+    )
+    monkeypatch.setattr(visual_identity, "_read_samira_resource", count_reads)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    visual_identity.ensure_builtin_samira,
+                    handle,
+                    package_root=PACKAGE_ROOT,
+                )
+                for handle in handles
+            ]
+            for future in futures:
+                future.result(timeout=10)
+    finally:
+        for handle in handles:
+            handle.close_connection()
+
+    _assert_complete_seed(db)
+    assert reaction_reads == 31
+
+
+def test_oversized_samira_manifest_is_rejected_before_reaction_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    malformed_root = tmp_path / "oversized" / "tldw_chatbook"
+    shutil.copytree(PACKAGE_ROOT / "assets", malformed_root / "assets")
+    manifest_path = (
+        malformed_root / "assets/characters/samira/visual_identity_pack.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["assets"] = [manifest["assets"][0] for _ in range(129)]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    reaction_reads: list[str] = []
+    original_read = visual_identity._read_samira_resource
+
+    def count_reads(package_root, relative_path, *, max_bytes):
+        if str(relative_path).startswith("expressions/"):
+            reaction_reads.append(str(relative_path))
+        return original_read(package_root, relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(visual_identity, "_read_samira_resource", count_reads)
+
+    with pytest.raises(ValueError, match="visual_identity_budget_exceeded"):
+        visual_identity._load_samira_pack(
+            malformed_root,
+            card_bytes=1,
+            portrait_bytes=1,
+        )
+
+    assert reaction_reads == []
 
 
 def test_valid_profile_owned_fork_is_terminal_without_package_reads_or_warning(
