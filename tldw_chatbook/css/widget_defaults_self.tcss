@@ -2161,10 +2161,6 @@
         outline: heavy $accent;
     }
 
-    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview {
+    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
         display: none;
-    }
-
-    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-results {
-        width: 100%;
     }

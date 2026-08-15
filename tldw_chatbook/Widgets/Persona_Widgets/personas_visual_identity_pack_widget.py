@@ -7,6 +7,7 @@ from typing import Any, Literal
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -97,12 +98,8 @@ class PersonasVisualIdentityPackWidget(Vertical):
         outline: heavy $accent;
     }
 
-    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview {
+    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
         display: none;
-    }
-
-    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-results {
-        width: 100%;
     }"""
 
     def __init__(
@@ -236,7 +233,15 @@ class PersonasVisualIdentityPackWidget(Vertical):
             return
         holder = self.query_one("#personas-visual-identity-preview-image", Container)
         holder.remove_children()
-        holder.mount(Static(renderable))
+        holder.mount(
+            renderable if isinstance(renderable, Widget) else Static(renderable)
+        )
+
+    @property
+    def selected_asset(self) -> VisualIdentityAssetMetadata | None:
+        """Return the selected path-free asset metadata."""
+
+        return self._selected
 
     def set_staged_change(
         self,

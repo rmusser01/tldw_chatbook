@@ -12,9 +12,10 @@ open-editor boilerplate per test.
 """
 
 import asyncio
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 
 import pytest
 import pytest_asyncio
@@ -196,7 +197,7 @@ async def personas_editor_with_bound_pack(mock_app_instance, monkeypatch, expr_d
             expression_id=None,
             storage_source="builtin",
             storage_relpath="redacted",
-            content_type="image/png",
+            content_type="image/webp",
             is_animated=False,
             resolution_source="pack_manual",
             fallback_reason="none",
@@ -265,7 +266,7 @@ async def test_bound_pack_decodes_only_the_selected_lazy_preview(
     app, screen, _db, _char_id, preview_calls = personas_editor_with_bound_pack
     browser = screen.query_one(PersonasVisualIdentityPackWidget)
     await app.workers.wait_for_complete()
-    assert preview_calls == ["custom:admiration"]
+    assert preview_calls == ["custom:admiration", "custom:admiration"]
     assert (
         len(browser.query_one("#personas-visual-identity-preview-image").children) == 1
     )
@@ -279,10 +280,59 @@ async def test_bound_pack_decodes_only_the_selected_lazy_preview(
     browser.apply_filter("joy")
     await asyncio.sleep(0.1)
     await app.workers.wait_for_complete()
-    assert preview_calls == ["custom:admiration", "happy"]
+    assert preview_calls == [
+        "custom:admiration",
+        "custom:admiration",
+        "happy",
+        "happy",
+    ]
     assert (
         len(browser.query_one("#personas-visual-identity-preview-image").children) == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_rapid_preview_selection_never_overlaps_sync_resolution(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    guard = Lock()
+    first_started = Event()
+    release = Event()
+    overlap_seen = Event()
+    active = 0
+    peak = 0
+
+    def blocked_resolve(*args, **kwargs):
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+            if active > 1:
+                overlap_seen.set()
+        first_started.set()
+        try:
+            assert release.wait(2)
+            return original_resolve(*args, **kwargs)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", blocked_resolve
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(first_started.wait, 2)
+    browser.apply_filter("fear")
+    overlapped = await asyncio.to_thread(overlap_seen.wait, 0.5)
+    release.set()
+    await asyncio.sleep(0.5)
+
+    assert not overlapped
+    assert peak == 1
 
 
 @pytest.mark.asyncio
@@ -314,6 +364,164 @@ async def test_late_preview_cannot_paint_a_newer_editor_session(
     assert await asyncio.to_thread(started.wait, 2)
     screen._character_editor_generation += 1
     release.set()
+    await app.workers.wait_for_complete()
+
+    assert applied == []
+
+
+@pytest.mark.asyncio
+async def test_preview_cannot_paint_after_character_editor_mode_exit(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    started = Event()
+    release = Event()
+
+    def delayed_resolve(*args, **kwargs):
+        started.set()
+        assert release.wait(2)
+        return original_resolve(*args, **kwargs)
+
+    applied: list[str] = []
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", delayed_resolve
+    )
+    monkeypatch.setattr(
+        PersonasVisualIdentityPackWidget,
+        "set_preview",
+        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(started.wait, 2)
+    screen.state.active_mode = "personas"
+    screen._show_center("#ccp-persona-card-view")
+    release.set()
+    await app.workers.wait_for_complete()
+
+    assert applied == []
+
+
+@pytest.mark.asyncio
+async def test_preview_cannot_paint_after_same_character_editor_session_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    started = Event()
+    release = Event()
+
+    def delayed_resolve(*args, **kwargs):
+        started.set()
+        assert release.wait(2)
+        return original_resolve(*args, **kwargs)
+
+    applied: list[str] = []
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", delayed_resolve
+    )
+    monkeypatch.setattr(editor, "_reset_visual_identity_browser", lambda: None)
+    monkeypatch.setattr(
+        PersonasVisualIdentityPackWidget,
+        "set_preview",
+        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(started.wait, 2)
+    editor.load_character({"id": char_id, "name": "Reloaded same character"})
+    release.set()
+    await app.workers.wait_for_complete()
+
+    assert applied == []
+
+
+@pytest.mark.asyncio
+async def test_preview_rechecks_active_asset_identity_after_decode(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    from tldw_chatbook.Chat.console_image_view import ConsoleImageRenderCache
+
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    original_prepare = ConsoleImageRenderCache.prepare
+    decode_started = Event()
+    release_decode = Event()
+    identity_changed = Event()
+
+    def changing_resolve(*args, **kwargs):
+        resolution = original_resolve(*args, **kwargs)
+        if not identity_changed.is_set():
+            return resolution
+        return replace(
+            resolution,
+            pack_version_id=(resolution.pack_version_id or 0) + 1,
+            asset_id=(resolution.asset_id or 0) + 100,
+            storage_source="manual",
+            storage_relpath="redacted-new-source",
+            cache_identity=("changed-during-decode",),
+        )
+
+    def delayed_prepare(self, cache_key, image_bytes):
+        decode_started.set()
+        assert release_decode.wait(2)
+        return original_prepare(self, cache_key, image_bytes)
+
+    applied: list[str] = []
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", changing_resolve
+    )
+    monkeypatch.setattr(ConsoleImageRenderCache, "prepare", delayed_prepare)
+    monkeypatch.setattr(
+        PersonasVisualIdentityPackWidget,
+        "set_preview",
+        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(decode_started.wait, 2)
+    identity_changed.set()
+    release_decode.set()
+    await app.workers.wait_for_complete()
+
+    assert applied == []
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_binding_transition_during_decode(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    from tldw_chatbook.Chat.console_image_view import ConsoleImageRenderCache
+
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_prepare = ConsoleImageRenderCache.prepare
+    decode_started = Event()
+    release_decode = Event()
+
+    def delayed_prepare(self, cache_key, image_bytes):
+        decode_started.set()
+        assert release_decode.wait(2)
+        return original_prepare(self, cache_key, image_bytes)
+
+    applied: list[str] = []
+    monkeypatch.setattr(ConsoleImageRenderCache, "prepare", delayed_prepare)
+    monkeypatch.setattr(
+        PersonasVisualIdentityPackWidget,
+        "set_preview",
+        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(decode_started.wait, 2)
+    assert browser.pack is not None
+    browser.pack = replace(browser.pack, binding_id=browser.pack.binding_id + 1)
+    release_decode.set()
     await app.workers.wait_for_complete()
 
     assert applied == []

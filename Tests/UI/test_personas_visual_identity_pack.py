@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 from textual.app import App, ComposeResult
 from textual.containers import Container
+from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Static
 
 from tldw_chatbook.Character_Chat.visual_identity import (
@@ -56,6 +57,7 @@ def _samira_pack():
         for index, label in enumerate(SAMIRA_REACTION_LABELS, start=1)
     )
     return Pack(
+        binding_id=5,
         pack_id=10,
         pack_version_id=20,
         title="Samira Reactions",
@@ -212,6 +214,22 @@ async def test_selected_preview_is_screen_supplied_and_replaces_the_prior_child(
 
 
 @pytest.mark.asyncio
+async def test_textual_graphics_widget_preview_mounts_directly():
+    app = _browser_host(_samira_pack())
+    async with app.run_test(size=(120, 40)) as pilot:
+        browser = app.query_one(_browser_class())
+        holder = browser.query_one("#personas-visual-identity-preview-image", Container)
+        graphics_widget = Static("graphics preview")
+
+        browser.set_preview(graphics_widget, expression_key="custom:admiration")
+        await pilot.pause()
+
+        assert isinstance(graphics_widget, Widget)
+        assert len(holder.children) == 1
+        assert holder.children[0] is graphics_widget
+
+
+@pytest.mark.asyncio
 async def test_builtin_notice_dirty_summary_and_typed_action_messages():
     messages = importlib.import_module(
         "tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages"
@@ -263,4 +281,8 @@ async def test_browser_geometry_stays_in_bounds_and_hides_preview_first(size):
         assert browser.query_one("#personas-visual-identity-results").display
         assert browser.query_one("#personas-visual-identity-actions").display
         preview = browser.query_one("#personas-visual-identity-preview")
-        assert preview.display is (size != (80, 24))
+        assert preview.display
+        assert browser.query_one("#personas-visual-identity-label").display
+        assert browser.query_one("#personas-visual-identity-key").display
+        image = browser.query_one("#personas-visual-identity-preview-image")
+        assert image.display is (size != (80, 24))

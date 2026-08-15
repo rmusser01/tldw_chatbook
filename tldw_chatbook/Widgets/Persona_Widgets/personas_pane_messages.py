@@ -29,6 +29,7 @@ class VisualIdentityAssetMetadata:
 class VisualIdentityPackMetadata:
     """Path-free active-pack metadata safe to hand to a widget."""
 
+    binding_id: int
     pack_id: int
     pack_version_id: int
     title: str

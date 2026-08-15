@@ -389,6 +389,7 @@ class PersonasCharacterEditorWidget(Container):
         #: Which field the visible preview belongs to, or None when idle.
         self._pending_generation_field: str | None = None
         self._generation_context_mode: str = "whole_character"
+        self._visual_identity_session_token: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -723,6 +724,7 @@ class PersonasCharacterEditorWidget(Container):
 
     def load_character(self, data: Dict[str, Any]) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
+        self._visual_identity_session_token += 1
         self._reset_visual_identity_browser()
         self._loading = True
         try:
@@ -806,6 +808,12 @@ class PersonasCharacterEditorWidget(Container):
     def new_character(self) -> None:
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
         self.load_character({})
+
+    @property
+    def visual_identity_session_token(self) -> int:
+        """Return the editor-load generation used to fence lazy previews."""
+
+        return self._visual_identity_session_token
 
     def _reset_visual_identity_browser(self) -> None:
         """Return immediately to legacy controls while a new binding loads."""

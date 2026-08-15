@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import dataclasses
 import json
 import re
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -46,7 +47,10 @@ from ...Character_Chat.expression_generation import (
 )
 from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
 from ...Character_Chat.persona_list_paging import page_persona_profiles
-from ...Character_Chat.visual_identity import resolve_visual_identity
+from ...Character_Chat.visual_identity import (
+    VisualIdentityResolution,
+    resolve_visual_identity,
+)
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -449,6 +453,23 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
 )
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _VisualIdentityPreviewSnapshot:
+    """Weak, path-free authority snapshot for one selected preview."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
+    db: object
+    character_id: int
+    screen_generation: int
+    editor_session_token: int
+    binding_id: int
+    pack_id: int
+    pack_version_id: int
+    source_kind: str
+    asset: VisualIdentityAssetMetadata
+
+
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, dictionaries, and behavior profiles."""
 
@@ -710,6 +731,7 @@ class PersonasScreen(BaseAppScreen):
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
+        self._visual_identity_preview_lock = asyncio.Lock()
         # Image-gen P3 Task 3: (character_id, state) pairs with an expression
         # generation worker currently in flight - refuses a re-entrant
         # generate click for the same slot rather than racing two writes.
@@ -6100,6 +6122,7 @@ class PersonasScreen(BaseAppScreen):
         pack_row = graph["pack"]
         version_row = graph["version"]
         metadata = VisualIdentityPackMetadata(
+            binding_id=int(graph["binding"]["id"]),
             pack_id=int(pack_row["id"]),
             pack_version_id=int(version_row["id"]),
             title=str(pack_row["title"]),
@@ -6712,107 +6735,276 @@ class PersonasScreen(BaseAppScreen):
         character_id = editor.expression_character_id()
         if character_id is None:
             return
+        try:
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return
+        pack = browser.pack
+        if pack is None or browser.selected_asset != message.asset:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        snapshot = _VisualIdentityPreviewSnapshot(
+            editor_ref=weakref.ref(editor),
+            browser_ref=weakref.ref(browser),
+            db=db,
+            character_id=character_id,
+            screen_generation=self._character_editor_generation,
+            editor_session_token=editor.visual_identity_session_token,
+            binding_id=pack.binding_id,
+            pack_id=pack.pack_id,
+            pack_version_id=pack.pack_version_id,
+            source_kind=pack.source_kind,
+            asset=message.asset,
+        )
         self.run_worker(
-            self._render_visual_identity_pack_preview(
-                character_id,
-                message.asset,
-                self._character_editor_generation,
-            ),
+            self._render_visual_identity_pack_preview(snapshot),
             group="personas-visual-identity-preview",
             exit_on_error=False,
             exclusive=True,
         )
 
+    def _visual_identity_snapshot_is_current(
+        self,
+        snapshot: _VisualIdentityPreviewSnapshot,
+        resolution: VisualIdentityResolution | None = None,
+    ) -> bool:
+        """Check editor session, active browser, and selected metadata identity."""
+
+        editor = snapshot.editor_ref()
+        browser = snapshot.browser_ref()
+        if (
+            editor is None
+            or browser is None
+            or not self.is_mounted
+            or self.state.active_mode != "characters"
+            or self._character_editor_generation != snapshot.screen_generation
+            or getattr(self.app_instance, "chachanotes_db", None) is not snapshot.db
+            or not editor.display
+            or editor.expression_character_id() != snapshot.character_id
+            or editor.visual_identity_session_token != snapshot.editor_session_token
+            or not browser.is_mounted
+        ):
+            return False
+        try:
+            current_browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return False
+        pack = browser.pack
+        if (
+            current_browser is not browser
+            or pack is None
+            or pack.binding_id != snapshot.binding_id
+            or pack.pack_id != snapshot.pack_id
+            or pack.pack_version_id != snapshot.pack_version_id
+            or pack.source_kind != snapshot.source_kind
+            or browser.selected_asset != snapshot.asset
+        ):
+            return False
+        if resolution is None:
+            return True
+        return (
+            resolution.actor_kind == "character"
+            and resolution.actor_id == str(snapshot.character_id)
+            and resolution.manual_expression_key == snapshot.asset.expression_key
+            and resolution.resolved_expression_key == snapshot.asset.expression_key
+            and resolution.pack_id == snapshot.pack_id
+            and resolution.pack_version_id == snapshot.pack_version_id
+            and resolution.asset_id == snapshot.asset.asset_id
+            and resolution.storage_source == snapshot.source_kind
+            and resolution.content_type == snapshot.asset.content_type
+            and resolution.is_animated == snapshot.asset.is_animated
+            and bool(resolution.image_bytes)
+        )
+
+    @staticmethod
+    def _visual_identity_graph_matches_snapshot(
+        snapshot: _VisualIdentityPreviewSnapshot,
+        graph: dict[str, Any] | None,
+    ) -> bool:
+        """Check the live binding graph without reading or decoding asset bytes."""
+
+        if graph is None:
+            return False
+        binding = graph["binding"]
+        pack = graph["pack"]
+        version = graph["version"]
+        asset = next(
+            (
+                row
+                for row in graph["assets"]
+                if str(row["expression_key"]) == snapshot.asset.expression_key
+            ),
+            None,
+        )
+        return bool(
+            asset is not None
+            and int(binding["id"]) == snapshot.binding_id
+            and int(pack["id"]) == snapshot.pack_id
+            and int(version["id"]) == snapshot.pack_version_id
+            and str(pack["source_kind"]) == snapshot.source_kind
+            and int(asset["id"]) == snapshot.asset.asset_id
+            and str(asset["content_type"]) == snapshot.asset.content_type
+            and bool(asset["is_animated"]) == snapshot.asset.is_animated
+        )
+
+    @staticmethod
+    def _visual_identity_resolution_identity(
+        resolution: VisualIdentityResolution,
+    ) -> tuple[object, ...]:
+        """Return every source field that can distinguish selected pixels."""
+
+        return (
+            resolution.actor_kind,
+            resolution.actor_id,
+            resolution.requested_expression_key,
+            resolution.manual_expression_key,
+            resolution.resolved_expression_key,
+            resolution.pack_id,
+            resolution.pack_version_id,
+            resolution.asset_id,
+            resolution.expression_id,
+            resolution.storage_source,
+            resolution.storage_relpath,
+            resolution.content_type,
+            resolution.is_animated,
+            resolution.resolution_source,
+            resolution.fallback_reason,
+            resolution.cache_identity,
+        )
+
+    @staticmethod
+    async def _drain_visual_identity_stage(function: Callable, *args, **kwargs):
+        """Keep a cancelled ``to_thread`` stage owned until its thread exits."""
+
+        stage = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        try:
+            return await asyncio.shield(stage)
+        except asyncio.CancelledError:
+            while not stage.done():
+                try:
+                    await asyncio.shield(stage)
+                except asyncio.CancelledError:
+                    continue
+            try:
+                stage.result()
+            except Exception:
+                pass
+            raise
+
     async def _render_visual_identity_pack_preview(
         self,
-        character_id: int,
-        asset: VisualIdentityAssetMetadata,
-        token: int,
+        snapshot: _VisualIdentityPreviewSnapshot,
     ) -> None:
         """Resolve and decode one selected preview without exposing paths."""
 
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None:
-            return
-        try:
-            resolution = await asyncio.to_thread(
-                resolve_visual_identity,
-                db,
-                actor_kind="character",
-                actor_id=character_id,
-                requested_state="idle",
-                manual_expression_key=asset.expression_key,
-            )
-        except (TypeError, ValueError, OverflowError):
-            logger.opt(exception=True).debug(
-                "Personas Visual Identity preview resolution failed for character {}.",
-                character_id,
-            )
-            return
-        if (
-            token != self._character_editor_generation
-            or not self.is_mounted
-            or getattr(self.app_instance, "chachanotes_db", None) is not db
-            or resolution.asset_id != asset.asset_id
-            or resolution.resolved_expression_key != asset.expression_key
-            or not resolution.image_bytes
-        ):
-            return
-
-        from ...Chat.console_image_view import (
-            ConsoleImageRenderCache,
-            resolve_default_mode,
-        )
-
-        if getattr(self, "_avatar_render_cache", None) is None:
-            self._avatar_render_cache = ConsoleImageRenderCache()
-        cache = self._avatar_render_cache
-        cache_key = (
-            "personas-visual-identity-preview-"
-            f"{token}-{resolution.pack_version_id}-{asset.asset_id}"
-        )
-        try:
-            ok = await asyncio.to_thread(
-                cache.prepare, cache_key, bytes(resolution.image_bytes)
-            )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Personas Visual Identity preview decode failed."
-            )
-            return
-        editor = self._editor_or_none()
-        if (
-            not ok
-            or token != self._character_editor_generation
-            or not self.is_mounted
-            or editor is None
-            or editor.expression_character_id() != character_id
-            or getattr(self.app_instance, "chachanotes_db", None) is not db
-        ):
-            return
-        mode = resolve_default_mode(getattr(self.app_instance, "app_config", {}) or {})
-        renderable = None
-        if mode == "graphics":
+        async with self._visual_identity_preview_lock:
+            if not self._visual_identity_snapshot_is_current(snapshot):
+                return
             try:
-                from textual_image.widget import Image as GraphicsImage
+                resolution = await self._drain_visual_identity_stage(
+                    resolve_visual_identity,
+                    snapshot.db,
+                    actor_kind="character",
+                    actor_id=snapshot.character_id,
+                    requested_state="idle",
+                    manual_expression_key=snapshot.asset.expression_key,
+                )
+            except (TypeError, ValueError, OverflowError):
+                logger.opt(exception=True).debug(
+                    "Personas Visual Identity preview resolution failed for character {}.",
+                    snapshot.character_id,
+                )
+                return
+            if not self._visual_identity_snapshot_is_current(snapshot, resolution):
+                return
 
-                pil = cache.get_pil(cache_key)
-                if pil is not None:
-                    renderable = GraphicsImage(pil)
-                    width, height = self._fit_avatar_cell_size(pil.width, pil.height)
-                    renderable.styles.width = width
-                    renderable.styles.height = height
+            from ...Chat.console_image_view import (
+                ConsoleImageRenderCache,
+                resolve_default_mode,
+            )
+
+            if getattr(self, "_avatar_render_cache", None) is None:
+                self._avatar_render_cache = ConsoleImageRenderCache()
+            cache = self._avatar_render_cache
+            cache_key = (
+                "personas-visual-identity-preview-"
+                f"{snapshot.screen_generation}-{resolution.pack_version_id}-"
+                f"{snapshot.asset.asset_id}-{hash(resolution.cache_identity)}"
+            )
+            try:
+                ok = await self._drain_visual_identity_stage(
+                    cache.prepare, cache_key, bytes(resolution.image_bytes)
+                )
             except Exception:
+                logger.opt(exception=True).debug(
+                    "Personas Visual Identity preview decode failed."
+                )
+                return
+            if not ok or not self._visual_identity_snapshot_is_current(
+                snapshot, resolution
+            ):
+                return
+            try:
+                graph = await self._drain_visual_identity_stage(
+                    VisualIdentityRepository(snapshot.db).get_active_actor_pack,
+                    "character",
+                    snapshot.character_id,
+                )
+            except (TypeError, ValueError, OverflowError):
+                return
+            if not self._visual_identity_snapshot_is_current(
+                snapshot, resolution
+            ) or not self._visual_identity_graph_matches_snapshot(snapshot, graph):
+                return
+            try:
+                latest = await self._drain_visual_identity_stage(
+                    resolve_visual_identity,
+                    snapshot.db,
+                    actor_kind="character",
+                    actor_id=snapshot.character_id,
+                    requested_state="idle",
+                    manual_expression_key=snapshot.asset.expression_key,
+                )
+            except (TypeError, ValueError, OverflowError):
+                return
+            if not self._visual_identity_snapshot_is_current(
+                snapshot, latest
+            ) or self._visual_identity_resolution_identity(
+                latest
+            ) != self._visual_identity_resolution_identity(resolution):
+                return
+
+            mode = resolve_default_mode(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
+            renderable = None
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = GraphicsImage(pil)
+                        width, height = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = width
+                        renderable.styles.height = height
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
                 renderable = self._build_avatar_pixels(cache, cache_key)
-        else:
-            renderable = self._build_avatar_pixels(cache, cache_key)
-        if renderable is None:
-            return
-        try:
-            browser = editor.query_one(PersonasVisualIdentityPackWidget)
-        except QueryError:
-            return
-        browser.set_preview(renderable, expression_key=asset.expression_key)
+            if renderable is None or not self._visual_identity_snapshot_is_current(
+                snapshot, latest
+            ):
+                return
+            browser = snapshot.browser_ref()
+            if browser is not None:
+                browser.set_preview(
+                    renderable, expression_key=snapshot.asset.expression_key
+                )
 
     async def _render_character_expression_slot(
         self, character_id: int, state: str
