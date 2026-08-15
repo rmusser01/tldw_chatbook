@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,12 +16,29 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Model_Artifacts.acquisition import (
+    ArtifactPreflightEntry,
+    PreflightReport,
+)
+from tldw_chatbook.Model_Artifacts.service import ArtifactRef, ProvenanceClass
+from tldw_chatbook.Prompt_Management.prompt_variables import (
+    PromptVariableApplication,
+)
+from tldw_chatbook.Third_Party.textual_fspicker import (
+    FileOpen,
+    FileSave,
+    SelectDirectory,
+)
 from tldw_chatbook.Library.library_prompts_state import (
     begin_prompt_collection_catalog,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collections import (
+    PromptCollectionManagerResult,
 )
 from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
     PromptCollectionManagerModal,
 )
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.UI.Screens.skills_screen import (
     SkillTrustBootstrapModal,
     SkillTrustPassphraseModal,
@@ -47,13 +66,782 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     FileNotesRootDetailsDialog,
 )
 from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
+    PromptDeleteDecision,
     PromptDeleteConfirmationModal,
+    PromptDeleteItem,
+    PromptDeleteRequest,
 )
 from tldw_chatbook.Widgets.ModelArtifacts.install_modal import ModelInstallModal
+from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
+    PromptVariablesDialog,
+    PromptVariablesDialogRequest,
+)
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileOpen,
+    EnhancedFileSave,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
 _STABLE_OPENER_ID = "library-stable-opener"
+
+
+@dataclass(frozen=True)
+class LibraryModalContract:
+    """One concrete Library modal's independently mounted behavior contract."""
+
+    concrete_type: type[ModalScreen[Any]]
+    factory: Callable[[], ModalScreen[Any]]
+    content_selector: str
+    visible_negative_selector: str
+    negative_assertion: Callable[[object], None]
+    positive_type: type[object] | tuple[type[object], ...]
+    active_guard: str | None
+    focus_postcondition: str
+    non_dismissible_reason: str | None
+
+
+@dataclass(frozen=True)
+class LibraryModalLaunchEdge:
+    """One supported production presenter edge to a concrete modal type."""
+
+    owner_file: str
+    owner_class: str
+    presenter_name: str
+    concrete_type: type[ModalScreen[Any]]
+
+
+def _assert_none(result: object) -> None:
+    assert result is None
+
+
+def _assert_false(result: object) -> None:
+    assert result is False
+
+
+def _assert_prompt_delete_negative(result: object) -> None:
+    assert result == PromptDeleteDecision(False, "library-contract")
+
+
+def _model_install_modal() -> ModelInstallModal:
+    reference = ArtifactRef("library-contract", "revision", "int8")
+    report = PreflightReport(
+        root=reference,
+        closure_fingerprint="f" * 64,
+        entries=(
+            ArtifactPreflightEntry(
+                ref=reference,
+                source_url="https://example.test/model",
+                repository="publisher/library-contract",
+                revision="revision",
+                license_id="CC-BY-4.0",
+                license_url="https://example.test/license",
+                precision="int8",
+                total_bytes=1,
+                file_count=1,
+                already_installed=False,
+                provenance=(ProvenanceClass.CHATBOOK_CURATED,),
+            ),
+        ),
+        download_bytes=1,
+        already_staged_bytes=0,
+        staging_overhead_bytes=0,
+        retained_bytes=0,
+        destination=Path("/tmp/library-modal-contract-model"),
+        free_bytes=2,
+        required_bytes=1,
+        sufficient_space=True,
+        gating_errors=(),
+    )
+    return ModelInstallModal(report, model_label="Library contract")
+
+
+def _contract_prompt_collection_modal() -> PromptCollectionManagerModal:
+    async def load(*, query: str, offset: int):
+        del offset
+        return begin_prompt_collection_catalog(query=query, request_token=1)
+
+    async def unused(*_args, **_kwargs):
+        raise AssertionError("collection mutation was not requested")
+
+    return PromptCollectionManagerModal(
+        mode="browse",
+        selected_collection_id=None,
+        staged_collection_ids=(),
+        load_catalog=load,
+        create_collection=unused,
+        rename_collection=unused,
+    )
+
+
+def _prompt_delete_modal() -> PromptDeleteConfirmationModal:
+    return PromptDeleteConfirmationModal(
+        PromptDeleteRequest(
+            items=(PromptDeleteItem("Contract prompt", "prompt"),),
+            fingerprint="library-contract",
+        )
+    )
+
+
+def _prompt_variables_modal() -> PromptVariablesDialog:
+    return PromptVariablesDialog(
+        PromptVariablesDialogRequest(
+            system_text=None,
+            user_text="Hello {name}",
+            destination="replace_snapshot",
+            target_session_id="library-contract",
+            composer_fingerprint="a" * 64,
+            system_fingerprint=None,
+        )
+    )
+
+
+def _contract_push_destination() -> PushDestinationProjection:
+    return PushDestinationProjection(
+        "https",
+        "push.example.test",
+        443,
+        "/team/notes.git",
+        "refs/heads/session-notes",
+    )
+
+
+def _contract_push_authorization_dialog() -> PushDestinationAuthorizationDialog:
+    candidate = PushCandidateProjection(
+        local_branch_ref="refs/heads/main",
+        parent_oid="a" * 40,
+        candidate_oid="b" * 40,
+        subject="Publish notes",
+        included_notes=(),
+    )
+    return PushDestinationAuthorizationDialog(
+        candidate,
+        PushAuthorizationProjection(_contract_push_destination()),
+    )
+
+
+def _contract_conflict_compare_dialog() -> FileNotesConflictCompareDialog:
+    comparison = build_conflict_comparison(
+        ConflictSide.from_text("Base", "base"),
+        ConflictSide.from_text("Draft", "draft"),
+        ConflictSide.from_text("Disk", "disk"),
+    )
+    return FileNotesConflictCompareDialog("note.md", comparison)
+
+
+_FOCUS_POSTCONDITION = "restore the exact eligible opener identity"
+
+
+LIBRARY_MODAL_CONTRACTS = (
+    LibraryModalContract(
+        SkillTrustPassphraseModal,
+        lambda: SkillTrustPassphraseModal(confirm_bootstrap=False),
+        "#skill-trust-passphrase-modal",
+        "#skill-trust-passphrase-cancel",
+        _assert_none,
+        str,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        SkillTrustBootstrapModal,
+        SkillTrustBootstrapModal,
+        "#skill-trust-bootstrap-modal",
+        "#skill-trust-bootstrap-cancel",
+        _assert_none,
+        str,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        ModelInstallModal,
+        _model_install_modal,
+        ".model-install-modal",
+        "#model-install-cancel",
+        _assert_false,
+        bool,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        FileOpen,
+        lambda: FileOpen("/tmp", must_exist=False, default_file="open.txt"),
+        "#file-system-picker-dialog",
+        "#cancel",
+        _assert_none,
+        Path,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        FileSave,
+        lambda: FileSave("/tmp", default_file="save.txt"),
+        "#file-system-picker-dialog",
+        "#cancel",
+        _assert_none,
+        Path,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        SelectDirectory,
+        lambda: SelectDirectory("/tmp"),
+        "#file-system-picker-dialog",
+        "#cancel",
+        _assert_none,
+        Path,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        PromptDeleteConfirmationModal,
+        _prompt_delete_modal,
+        "#prompt-delete-modal",
+        "#prompt-delete-cancel",
+        _assert_prompt_delete_negative,
+        PromptDeleteDecision,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        LibraryNoteFolderNameDialog,
+        lambda: LibraryNoteFolderNameDialog(title="New folder"),
+        "#library-note-folder-name-dialog",
+        "#library-note-folder-dialog-cancel",
+        _assert_none,
+        str,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        LibraryNoteFolderTargetDialog,
+        lambda: LibraryNoteFolderTargetDialog(
+            title="Move note", folders=(), include_root=True
+        ),
+        "#library-note-folder-target-dialog",
+        "#library-note-folder-target-cancel",
+        _assert_none,
+        str,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        PromptCollectionManagerModal,
+        _contract_prompt_collection_modal,
+        "#prompt-collection-manager",
+        "#prompt-collection-manager-cancel",
+        _assert_none,
+        PromptCollectionManagerResult,
+        "_mutation_in_flight",
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        FileNotesRootDetailsDialog,
+        lambda: FileNotesRootDetailsDialog("/notes"),
+        "#file-notes-root-details-dialog",
+        "#file-notes-root-details-close",
+        _assert_none,
+        type(None),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        FileNotesConflictCompareDialog,
+        _contract_conflict_compare_dialog,
+        "#file-notes-conflict-dialog",
+        "#file-notes-conflict-close",
+        _assert_none,
+        type(None),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        SessionGitTrustDialog,
+        lambda: SessionGitTrustDialog("/notes"),
+        "#confirmation-dialog",
+        "#cancel-button",
+        _assert_false,
+        bool,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        PushEndpointDetailsDialog,
+        lambda: PushEndpointDetailsDialog(_contract_push_destination()),
+        "#file-notes-push-endpoint-details-dialog",
+        "#file-notes-push-endpoint-details-close",
+        _assert_none,
+        type(None),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        PushDestinationAuthorizationDialog,
+        _contract_push_authorization_dialog,
+        "#file-notes-push-auth-dialog",
+        "#file-notes-push-auth-cancel",
+        _assert_false,
+        bool,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        WorkbenchHelpPanel,
+        lambda: WorkbenchHelpPanel(
+            WorkbenchHelpState(route_id="library", title="Library")
+        ),
+        "#workbench-help-panel",
+        "#workbench-help-close",
+        _assert_none,
+        type(None),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        PromptVariablesDialog,
+        _prompt_variables_modal,
+        "#prompt-variables-dialog",
+        "#prompt-variables-cancel",
+        _assert_none,
+        PromptVariableApplication,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    LibraryModalContract(
+        ConfirmationDialog,
+        ConfirmationDialog,
+        "#confirmation-dialog",
+        "#cancel-button",
+        _assert_false,
+        bool,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+)
+
+
+ENHANCED_PICKER_COMPATIBILITY_TYPES = (EnhancedFileOpen, EnhancedFileSave)
+
+
+_LIBRARY_SCREEN_FILE = "tldw_chatbook/UI/Screens/library_screen.py"
+_COLLECTIONS_FILE = "tldw_chatbook/UI/Library_Modules/prompt_collections.py"
+_FILE_NOTES_WORKSPACE_FILE = (
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py"
+)
+_FILE_NOTES_GIT_FILE = "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py"
+
+
+@dataclass(frozen=True)
+class _OwnerScope:
+    owner_file: str
+    owner_class: str
+    presenter_names: tuple[str, ...]
+
+
+_SUPPORTED_OWNER_SCOPES = (
+    _OwnerScope(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        (
+            "_export_library_note",
+            "handle_library_skills_import_browse",
+            "handle_library_skills_import_browse_folder",
+            "action_show_workbench_help",
+            "_request_library_skill_trust_passphrase",
+            "_request_library_skill_trust_bootstrap_passphrase",
+            "handle_library_prompts_import_browse",
+            "handle_library_prompt_history_restore",
+            "_stage_library_prompt_for_console",
+            "_export_library_prompt",
+            "_open_library_prompt_delete_confirmation",
+            "handle_library_notes_import",
+            "handle_library_notes_sync_browse",
+            "handle_library_ingest_browse",
+            "handle_library_ingest_directory_browse",
+            "_open_transcribe_cpp_gguf_picker",
+            "_apply_parakeet_v2_preflight_result",
+            "_apply_library_external_preparation",
+            "handle_library_export_choose_destination",
+            "handle_library_notes_folder_new",
+            "handle_library_notes_folder_rename",
+            "handle_library_notes_folder_move",
+            "handle_library_notes_folder_remove",
+            "_choose_library_notes_placement_target",
+        ),
+    ),
+    _OwnerScope(
+        _COLLECTIONS_FILE,
+        "LibraryPromptCollectionsController",
+        ("open_manager",),
+    ),
+    _OwnerScope(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        (
+            "_open_push_authorization",
+            "_open_session_git",
+            "_choose_root",
+            "_show_root_details",
+            "_session_git_push_endpoint_details",
+            "_compare_conflict",
+        ),
+    ),
+    # This production owner currently has no direct modal edge. Keeping the
+    # empty scope explicit makes a future nested presenter detectable.
+    _OwnerScope(_FILE_NOTES_GIT_FILE, "LibraryFileNotesGitPanel", ()),
+    _OwnerScope(
+        _FILE_NOTES_GIT_FILE,
+        "PushDestinationAuthorizationDialog",
+        ("_details_pressed",),
+    ),
+)
+
+
+def _edge(
+    owner_file: str,
+    owner_class: str,
+    presenter_name: str,
+    concrete_type: type[ModalScreen[Any]],
+) -> LibraryModalLaunchEdge:
+    return LibraryModalLaunchEdge(
+        owner_file, owner_class, presenter_name, concrete_type
+    )
+
+
+LIBRARY_MODAL_LAUNCH_EDGES = (
+    _edge(_LIBRARY_SCREEN_FILE, "LibraryScreen", "_export_library_note", FileSave),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_skills_import_browse",
+        FileOpen,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_skills_import_browse_folder",
+        SelectDirectory,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "action_show_workbench_help",
+        WorkbenchHelpPanel,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_request_library_skill_trust_passphrase",
+        SkillTrustPassphraseModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_request_library_skill_trust_bootstrap_passphrase",
+        SkillTrustBootstrapModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_prompts_import_browse",
+        FileOpen,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_prompt_history_restore",
+        ConfirmationDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_stage_library_prompt_for_console",
+        PromptVariablesDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_export_library_prompt",
+        FileSave,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_open_library_prompt_delete_confirmation",
+        PromptDeleteConfirmationModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_import",
+        FileOpen,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_sync_browse",
+        SelectDirectory,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_ingest_browse",
+        FileOpen,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_ingest_directory_browse",
+        SelectDirectory,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_open_transcribe_cpp_gguf_picker",
+        FileOpen,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_apply_parakeet_v2_preflight_result",
+        ModelInstallModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_apply_library_external_preparation",
+        ModelInstallModal,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_export_choose_destination",
+        FileSave,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_folder_new",
+        LibraryNoteFolderNameDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_folder_rename",
+        LibraryNoteFolderNameDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_folder_move",
+        LibraryNoteFolderTargetDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "handle_library_notes_folder_remove",
+        ConfirmationDialog,
+    ),
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "_choose_library_notes_placement_target",
+        LibraryNoteFolderTargetDialog,
+    ),
+    _edge(
+        _COLLECTIONS_FILE,
+        "LibraryPromptCollectionsController",
+        "open_manager",
+        PromptCollectionManagerModal,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_open_push_authorization",
+        PushDestinationAuthorizationDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_open_session_git",
+        SessionGitTrustDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_choose_root",
+        SelectDirectory,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_show_root_details",
+        FileNotesRootDetailsDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_session_git_push_endpoint_details",
+        PushEndpointDetailsDialog,
+    ),
+    _edge(
+        _FILE_NOTES_WORKSPACE_FILE,
+        "LibraryFileNotesWorkspace",
+        "_compare_conflict",
+        FileNotesConflictCompareDialog,
+    ),
+    _edge(
+        _FILE_NOTES_GIT_FILE,
+        "PushDestinationAuthorizationDialog",
+        "_details_pressed",
+        PushEndpointDetailsDialog,
+    ),
+)
+
+
+_MODAL_TYPES_BY_NAME = {
+    contract.concrete_type.__name__: contract.concrete_type
+    for contract in LIBRARY_MODAL_CONTRACTS
+}
+
+
+def _import_aliases(
+    tree: ast.Module, presenter: ast.FunctionDef | ast.AsyncFunctionDef
+) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    top_level_imports = (
+        node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
+    )
+    for node in (*top_level_imports, *ast.walk(presenter)):
+        if isinstance(node, ast.ImportFrom):
+            for imported in node.names:
+                aliases[imported.asname or imported.name] = imported.name
+    return aliases
+
+
+def _expression_name(expression: ast.expr, aliases: dict[str, str]) -> str | None:
+    if isinstance(expression, ast.Name):
+        return aliases.get(expression.id, expression.id)
+    if isinstance(expression, ast.Attribute):
+        return aliases.get(expression.attr, expression.attr)
+    if isinstance(expression, ast.Call):
+        return _expression_name(expression.func, aliases)
+    return None
+
+
+def _is_modal_presenter(call: ast.Call) -> bool:
+    function = call.func
+    if isinstance(function, ast.Name):
+        return function.id in {"push_screen", "push_screen_wait"}
+    if isinstance(function, ast.Attribute):
+        return function.attr in {"push_screen", "push_screen_wait"}
+    return (
+        isinstance(function, ast.Call)
+        and isinstance(function.func, ast.Attribute)
+        and function.func.attr == "_push_modal"
+    )
+
+
+def _modal_argument_type(
+    expression: ast.expr,
+    *,
+    aliases: dict[str, str],
+    assignments: dict[str, ast.expr],
+) -> type[ModalScreen[Any]] | None:
+    if isinstance(expression, ast.Name) and expression.id in assignments:
+        return _modal_argument_type(
+            assignments[expression.id], aliases=aliases, assignments=assignments
+        )
+    name = _expression_name(expression, aliases)
+    return _MODAL_TYPES_BY_NAME.get(name or "")
+
+
+def _discover_library_modal_edges(
+    sources: dict[str, str],
+    scopes: tuple[_OwnerScope, ...] = _SUPPORTED_OWNER_SCOPES,
+) -> set[LibraryModalLaunchEdge]:
+    """Resolve modal constructors only inside the explicitly supported owners."""
+    discovered: set[LibraryModalLaunchEdge] = set()
+    for scope in scopes:
+        tree = ast.parse(sources[scope.owner_file])
+        owner = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == scope.owner_class
+        )
+        methods = {
+            node.name: node
+            for node in owner.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for presenter_name in scope.presenter_names:
+            presenter = methods[presenter_name]
+            aliases = _import_aliases(tree, presenter)
+            assignments = {
+                target.id: node.value
+                for node in ast.walk(presenter)
+                if isinstance(node, (ast.Assign, ast.AnnAssign))
+                and (
+                    targets := (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                )
+                for target in targets
+                if isinstance(target, ast.Name) and node.value is not None
+            }
+            for call in (
+                node for node in ast.walk(presenter) if isinstance(node, ast.Call)
+            ):
+                if not call.args or not _is_modal_presenter(call):
+                    continue
+                concrete_type = _modal_argument_type(
+                    call.args[0], aliases=aliases, assignments=assignments
+                )
+                assert concrete_type is not None, (
+                    "unresolved modal constructor in supported presenter: "
+                    f"{scope.owner_file}:{scope.owner_class}.{presenter_name} "
+                    f"({ast.unparse(call.args[0])})"
+                )
+                discovered.add(
+                    _edge(
+                        scope.owner_file,
+                        scope.owner_class,
+                        presenter_name,
+                        concrete_type,
+                    )
+                )
+    return discovered
+
+
+def _assert_exact_library_modal_inventory(
+    discovered: set[LibraryModalLaunchEdge],
+    declared: set[LibraryModalLaunchEdge],
+) -> None:
+    undeclared = discovered - declared
+    missing = declared - discovered
+    assert not undeclared and not missing, (
+        f"undeclared Library modal edges: {sorted(map(repr, undeclared))}; "
+        f"missing Library modal edges: {sorted(map(repr, missing))}"
+    )
 
 
 ORDINARY_LIBRARY_MODAL_CONTRACTS = (
@@ -64,39 +852,6 @@ ORDINARY_LIBRARY_MODAL_CONTRACTS = (
     (LibraryNoteFolderNameDialog, "#library-note-folder-name-dialog"),
     (LibraryNoteFolderTargetDialog, "#library-note-folder-target-dialog"),
 )
-
-
-def _push_destination() -> PushDestinationProjection:
-    return PushDestinationProjection(
-        "https",
-        "push.example.test",
-        443,
-        "/team/notes.git",
-        "refs/heads/session-notes",
-    )
-
-
-def _push_authorization_dialog() -> PushDestinationAuthorizationDialog:
-    candidate = PushCandidateProjection(
-        local_branch_ref="refs/heads/main",
-        parent_oid="a" * 40,
-        candidate_oid="b" * 40,
-        subject="Publish notes",
-        included_notes=(),
-    )
-    return PushDestinationAuthorizationDialog(
-        candidate,
-        PushAuthorizationProjection(_push_destination()),
-    )
-
-
-def _conflict_compare_dialog() -> FileNotesConflictCompareDialog:
-    comparison = build_conflict_comparison(
-        ConflictSide.from_text("Base", "base"),
-        ConflictSide.from_text("Draft", "draft"),
-        ConflictSide.from_text("Disk", "disk"),
-    )
-    return FileNotesConflictCompareDialog("note.md", comparison)
 
 
 @dataclass(frozen=True)
@@ -122,7 +877,7 @@ FILE_NOTES_MODAL_CONTRACTS = (
     _FileNotesModalContract(
         "conflict-compare",
         FileNotesConflictCompareDialog,
-        _conflict_compare_dialog,
+        _contract_conflict_compare_dialog,
         "#file-notes-conflict-dialog",
         "#file-notes-conflict-close",
         None,
@@ -139,7 +894,7 @@ FILE_NOTES_MODAL_CONTRACTS = (
     _FileNotesModalContract(
         "endpoint-details",
         PushEndpointDetailsDialog,
-        lambda: PushEndpointDetailsDialog(_push_destination()),
+        lambda: PushEndpointDetailsDialog(_contract_push_destination()),
         "#file-notes-push-endpoint-details-dialog",
         "#file-notes-push-endpoint-details-close",
         None,
@@ -147,7 +902,7 @@ FILE_NOTES_MODAL_CONTRACTS = (
     _FileNotesModalContract(
         "authorization",
         PushDestinationAuthorizationDialog,
-        _push_authorization_dialog,
+        _contract_push_authorization_dialog,
         "#file-notes-push-auth-dialog",
         "#file-notes-push-auth-cancel",
         False,
@@ -310,7 +1065,7 @@ async def test_authorization_endpoint_details_nested_modal_dismissal_restores_fo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _FileNotesModalHarness()
-    authorization = _push_authorization_dialog()
+    authorization = _contract_push_authorization_dialog()
     details_focus_calls = 0
     original_focus = Button.focus
 
@@ -360,24 +1115,6 @@ def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
         assert escape_actions == ["request_safe_cancel"]
 
 
-def _prompt_collection_manager_modal() -> PromptCollectionManagerModal:
-    async def load(*, query: str, offset: int):
-        del offset
-        return begin_prompt_collection_catalog(query=query, request_token=1)
-
-    async def unused(*_args, **_kwargs):
-        raise AssertionError("collection mutation was not requested")
-
-    return PromptCollectionManagerModal(
-        mode="browse",
-        selected_collection_id=None,
-        staged_collection_ids=(),
-        load_catalog=load,
-        create_collection=unused,
-        rename_collection=unused,
-    )
-
-
 def test_prompt_collection_modal_contract_adopts_exact_safe_boundary() -> None:
     assert issubclass(PromptCollectionManagerModal, SafeModalDismissMixin)
     assert (
@@ -397,7 +1134,7 @@ async def test_prompt_collection_modal_contract_idle_cancel_returns_none(
     source: str,
 ) -> None:
     app = _FileNotesModalHarness()
-    modal = _prompt_collection_manager_modal()
+    modal = _contract_prompt_collection_modal()
 
     async with app.run_test(size=(120, 48)) as pilot:
         await app.push_screen(modal, callback=app.results.append)
@@ -701,3 +1438,295 @@ async def test_stable_focus_leaves_unusable_identity_to_revealed_screen_policy(
         assert app.host.focused is not app.host.query_one(
             "#library-unrelated-action", Input
         )
+
+
+def _production_owner_sources() -> dict[str, str]:
+    repository_root = Path(__file__).resolve().parents[2]
+    return {
+        scope.owner_file: (repository_root / scope.owner_file).read_text()
+        for scope in _SUPPORTED_OWNER_SCOPES
+    }
+
+
+class _LibraryContractHarness(_FileNotesModalHarness):
+    CSS_PATH = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+def test_library_modal_contract_table_covers_every_discovered_concrete_type() -> None:
+    contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
+    edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
+
+    assert len(contract_types) == len(set(contract_types)) == 18
+    assert edge_types == set(contract_types)
+    assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
+    assert {SessionGitTrustDialog}.issubset(contract_types)
+    assert all(
+        issubclass(row.concrete_type, SafeModalDismissMixin)
+        for row in LIBRARY_MODAL_CONTRACTS
+    )
+    assert all(
+        row.concrete_type.SAFE_MODAL_CONTENT == row.content_selector
+        for row in LIBRARY_MODAL_CONTRACTS
+    )
+    assert {
+        row.concrete_type: row.active_guard
+        for row in LIBRARY_MODAL_CONTRACTS
+        if row.active_guard is not None
+    } == {PromptCollectionManagerModal: "_mutation_in_flight"}
+    assert all(
+        row.focus_postcondition == _FOCUS_POSTCONDITION
+        for row in LIBRARY_MODAL_CONTRACTS
+    )
+    assert all(row.non_dismissible_reason is None for row in LIBRARY_MODAL_CONTRACTS)
+
+
+def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> None:
+    discovered = _discover_library_modal_edges(_production_owner_sources())
+    declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
+
+    assert len(discovered) == len(declared) == 32
+    _assert_exact_library_modal_inventory(discovered, declared)
+
+
+def test_library_modal_inventory_controller_route_uses_app_push_screen() -> None:
+    tree = ast.parse(_production_owner_sources()[_LIBRARY_SCREEN_FILE])
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
+    )
+    initializer = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    controller_call = next(
+        node
+        for node in ast.walk(initializer)
+        if isinstance(node, ast.Call)
+        and _expression_name(node.func, {}) == "LibraryPromptCollectionsController"
+    )
+    push_modal = next(
+        keyword.value
+        for keyword in controller_call.keywords
+        if keyword.arg == "push_modal"
+    )
+
+    assert isinstance(push_modal, ast.Lambda)
+    assert ast.unparse(push_modal.body) == "self.app.push_screen"
+
+
+def _assert_synthetic_edge_is_rejected(
+    *, source: str, scope: _OwnerScope, expected_type: type[ModalScreen[Any]]
+) -> None:
+    discovered = _discover_library_modal_edges(
+        {scope.owner_file: source}, scopes=(scope,)
+    )
+    assert {edge.concrete_type for edge in discovered} == {expected_type}
+    with pytest.raises(AssertionError, match="undeclared Library modal edges"):
+        _assert_exact_library_modal_inventory(discovered, set())
+
+
+def test_library_modal_inventory_detects_controller_injected_edge() -> None:
+    _assert_synthetic_edge_is_rejected(
+        source="""
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
+class LibraryPromptCollectionsController:
+    def open_manager(self):
+        modal = Hidden()
+        self._push_modal()(modal)
+""",
+        scope=_OwnerScope(
+            "synthetic_controller.py",
+            "LibraryPromptCollectionsController",
+            ("open_manager",),
+        ),
+        expected_type=ConfirmationDialog,
+    )
+
+
+def test_library_modal_inventory_detects_nested_edge() -> None:
+    _assert_synthetic_edge_is_rejected(
+        source="""
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
+class LibraryFileNotesGitPanel:
+    def _open_injected(self):
+        self.app.push_screen(Hidden())
+""",
+        scope=_OwnerScope(
+            "synthetic_nested.py",
+            "LibraryFileNotesGitPanel",
+            ("_open_injected",),
+        ),
+        expected_type=ConfirmationDialog,
+    )
+
+
+def test_library_modal_inventory_detects_modal_to_modal_edge() -> None:
+    _assert_synthetic_edge_is_rejected(
+        source="""
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog as Hidden
+class PushDestinationAuthorizationDialog:
+    def _details_pressed(self):
+        self.app.push_screen(Hidden())
+""",
+        scope=_OwnerScope(
+            "synthetic_modal.py",
+            "PushDestinationAuthorizationDialog",
+            ("_details_pressed",),
+        ),
+        expected_type=ConfirmationDialog,
+    )
+
+
+@pytest.mark.parametrize(
+    "contract",
+    LIBRARY_MODAL_CONTRACTS,
+    ids=lambda row: row.concrete_type.__name__,
+)
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_concrete_library_modal_exact_negative_for_every_gesture(
+    contract: LibraryModalContract,
+    source: str,
+) -> None:
+    app = _LibraryContractHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        assert modal.query_one(contract.content_selector).is_mounted
+        if source == "visible":
+            await pilot.click(contract.visible_negative_selector)
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0), button=1)
+        await pilot.pause()
+
+    assert len(app.results) == 1
+    contract.negative_assertion(app.results[0])
+
+
+@pytest.mark.parametrize(
+    "contract",
+    LIBRARY_MODAL_CONTRACTS,
+    ids=lambda row: row.concrete_type.__name__,
+)
+@pytest.mark.asyncio
+async def test_concrete_library_modal_inside_and_non_primary_clicks_stay_open(
+    contract: LibraryModalContract,
+) -> None:
+    app = _LibraryContractHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        await pilot.click(contract.content_selector, offset=(1, 1), button=1)
+        await pilot.click(offset=(0, 0), button=3)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
+    if isinstance(modal, SkillTrustPassphraseModal):
+        modal.query_one("#skill-trust-passphrase-input", Input).value = "secret"
+        await pilot.click("#skill-trust-passphrase-submit")
+    elif isinstance(modal, SkillTrustBootstrapModal):
+        modal.query_one("#skill-trust-bootstrap-input", Input).value = "secret"
+        modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "secret"
+        await pilot.click("#skill-trust-bootstrap-submit")
+    elif isinstance(modal, ModelInstallModal):
+        await pilot.click("#model-install-confirm")
+    elif isinstance(modal, (FileOpen, FileSave, SelectDirectory)):
+        await pilot.click("#select")
+    elif isinstance(modal, PromptDeleteConfirmationModal):
+        await pilot.click("#prompt-delete-confirm")
+    elif isinstance(modal, LibraryNoteFolderNameDialog):
+        modal.query_one("#library-note-folder-name", Input).value = "Folder"
+        await pilot.click("#library-note-folder-dialog-confirm")
+    elif isinstance(modal, LibraryNoteFolderTargetDialog):
+        await pilot.click("#library-note-folder-target-confirm")
+    elif isinstance(modal, PromptCollectionManagerModal):
+        await pilot.click("#prompt-collection-manager-done")
+    elif isinstance(modal, PushDestinationAuthorizationDialog):
+        await pilot.click("#file-notes-push-auth-confirm")
+    elif isinstance(modal, PromptVariablesDialog):
+        await pilot.click("#prompt-variables-original")
+    elif isinstance(modal, ConfirmationDialog):
+        await pilot.click("#confirm-button")
+    else:
+        raise AssertionError(f"No feasible positive action for {type(modal).__name__}")
+
+
+@pytest.mark.parametrize(
+    "contract",
+    [row for row in LIBRARY_MODAL_CONTRACTS if row.positive_type is not type(None)],
+    ids=lambda row: row.concrete_type.__name__,
+)
+@pytest.mark.asyncio
+async def test_concrete_library_modal_public_positive_result_type(
+    contract: LibraryModalContract,
+) -> None:
+    app = _LibraryContractHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        await _drive_public_positive(modal, pilot)
+        await pilot.pause()
+
+    assert len(app.results) == 1
+    assert isinstance(app.results[0], contract.positive_type)
+
+
+@pytest.mark.parametrize(
+    "contract",
+    LIBRARY_MODAL_CONTRACTS,
+    ids=lambda row: row.concrete_type.__name__,
+)
+@pytest.mark.asyncio
+async def test_library_modal_lifecycle_runs_shared_handlers_exactly_once(
+    contract: LibraryModalContract,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mount_calls = 0
+    unmount_calls = 0
+    original_mount = SafeModalDismissMixin.on_mount
+    original_unmount = SafeModalDismissMixin.on_unmount
+
+    def count_mount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal mount_calls
+        mount_calls += 1
+        original_mount(self)
+
+    def count_unmount(self) -> None:  # type: ignore[no-untyped-def]
+        nonlocal unmount_calls
+        unmount_calls += 1
+        original_unmount(self)
+
+    monkeypatch.setattr(SafeModalDismissMixin, "on_mount", count_mount)
+    monkeypatch.setattr(SafeModalDismissMixin, "on_unmount", count_unmount)
+    app = _LibraryContractHarness()
+    modal = contract.factory()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        assert mount_calls == 1
+        await pilot.press("escape")
+        await pilot.pause()
+        assert unmount_calls == 1
