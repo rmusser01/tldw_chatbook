@@ -436,6 +436,7 @@ class _RealLauncher:
         return _OwnedAudioCppProcess(
             process=process,
             close_parent_pipes=owned.close_parent_pipes,
+            close_native_transport=owned.close_native_transport,
         )
 
 
@@ -831,6 +832,34 @@ async def test_generated_artifact_is_revalidated_and_cleaned_after_exact_stop(
     assert artifact.validate_calls == 2
     assert artifact.cleanup_calls == 1
     assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_snapshot_projects_only_bounded_generated_artifact_privacy_posture(
+    tmp_path: Path,
+) -> None:
+    artifact = _GeneratedArtifactSpy()
+    artifact.privacy_posture = "windows_account_protected"
+    process = _FakeProcess()
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=_FakeLauncher([process]),
+        port_preflight=_available_preflight,
+    )
+
+    await supervisor.ensure_running(
+        replace(_make_launch(tmp_path), generated_artifact=artifact),
+        generation_hooks_factory=_HooksFactory(),
+    )
+
+    assert (
+        supervisor.snapshot().generated_artifact_privacy_posture
+        == "windows_account_protected"
+    )
+    artifact.privacy_posture = "PRIVATE_UNKNOWN_POSTURE"
+    assert supervisor.snapshot().generated_artifact_privacy_posture == "unverified"
+    await supervisor.stop()
+    assert supervisor.snapshot().generated_artifact_privacy_posture == "not_applicable"
 
 
 @pytest.mark.asyncio
@@ -1328,6 +1357,14 @@ async def test_spawn_uses_exact_argv_cwd_stdin_and_environment(
 ) -> None:
     process = _FakeProcess()
     captured: dict[str, Any] = {}
+    transport_closes = 0
+
+    class Transport:
+        def close(self) -> None:
+            nonlocal transport_closes
+            transport_closes += 1
+
+    process._transport = Transport()
 
     async def create_subprocess_exec(*argv: str, **kwargs: Any) -> _FakeProcess:
         captured["argv"] = argv
@@ -1361,6 +1398,176 @@ async def test_spawn_uses_exact_argv_cwd_stdin_and_environment(
         "stderr": asyncio.subprocess.PIPE,
     }
     await supervisor.stop()
+    assert transport_closes == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_spawn_settles_late_process_and_native_transport(
+    tmp_path: Path,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    process = _FakeProcess()
+    transport_closes = 0
+
+    def close_transport() -> None:
+        nonlocal transport_closes
+        transport_closes += 1
+
+    async def cancellation_resistant_launcher(
+        _launch: AudioCppManagedLaunchConfig,
+        _environment: dict[str, str],
+    ) -> _OwnedAudioCppProcess:
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return _OwnedAudioCppProcess(
+            process=process,
+            close_parent_pipes=process.close_parent_pipes,
+            close_native_transport=close_transport,
+        )
+
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=cancellation_resistant_launcher,
+        port_preflight=_available_preflight,
+    )
+    start = asyncio.create_task(
+        supervisor.ensure_running(
+            _make_launch(tmp_path), generation_hooks_factory=_HooksFactory()
+        )
+    )
+    await entered.wait()
+    stopping = asyncio.create_task(supervisor.stop())
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    release.set()
+
+    await stopping
+    await asyncio.gather(start, return_exceptions=True)
+
+    assert process.terminate_calls == 1
+    assert process.wait_calls == 1
+    assert transport_closes == 1
+    assert supervisor._generation is None
+    await supervisor.close()
+
+
+@pytest.mark.asyncio
+async def test_process_launcher_settlement_retains_late_owner_after_cancellation() -> (
+    None
+):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    owned = _OwnedAudioCppProcess(
+        process=_FakeProcess(),
+        close_parent_pipes=lambda: None,
+    )
+
+    async def cancellation_resistant_launcher() -> _OwnedAudioCppProcess:
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return owned
+
+    settlement = asyncio.create_task(
+        supervisor_module._settle_process_launcher(
+            cancellation_resistant_launcher(),
+            timeout=10.0,
+        )
+    )
+    await entered.wait()
+    settlement.cancel()
+    await asyncio.sleep(0)
+    completed_before_owner = settlement.done()
+    release.set()
+
+    cancellation, timed_out, settled_owner, error = await settlement
+
+    assert completed_before_owner is False
+    assert cancellation is not None
+    assert timed_out is False
+    assert settled_owner is owned
+    assert error is None
+
+
+@pytest.mark.asyncio
+async def test_native_transport_closes_after_wait_hooks_and_artifact_then_retries(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    process = _FakeProcess()
+    real_wait = process.wait
+
+    async def ordered_wait() -> int:
+        result = await real_wait()
+        events.append("wait")
+        return result
+
+    process.wait = ordered_wait  # type: ignore[method-assign]
+    artifact = _GeneratedArtifactSpy()
+    real_artifact_cleanup = artifact.cleanup
+
+    def ordered_artifact_cleanup() -> None:
+        events.append("artifact")
+        real_artifact_cleanup()
+
+    artifact.cleanup = ordered_artifact_cleanup  # type: ignore[method-assign]
+    transport_attempts = 0
+
+    def close_transport() -> None:
+        nonlocal transport_attempts
+        transport_attempts += 1
+        events.append("transport")
+        if transport_attempts == 1:
+            raise RuntimeError("PRIVATE TRANSPORT DETAIL")
+
+    async def launcher(
+        _launch: AudioCppManagedLaunchConfig,
+        _environment: dict[str, str],
+    ) -> _OwnedAudioCppProcess:
+        return _OwnedAudioCppProcess(
+            process=process,
+            close_parent_pipes=process.close_parent_pipes,
+            close_native_transport=close_transport,
+        )
+
+    class OrderedHooks(_HooksFactory):
+        async def __call__(self, generation: int) -> AudioCppGenerationHooks:
+            hooks = await super().__call__(generation)
+
+            async def cleanup() -> None:
+                events.append("hooks")
+
+            return AudioCppGenerationHooks(
+                contract_probe=hooks.contract_probe,
+                health_probe=hooks.health_probe,
+                cleanup=cleanup,
+            )
+
+    launch = replace(_make_launch(tmp_path), generated_artifact=artifact)
+    supervisor = AudioCppSupervisor(
+        source_environment={},
+        process_launcher=launcher,
+        port_preflight=_available_preflight,
+    )
+    await supervisor.ensure_running(launch, generation_hooks_factory=OrderedHooks())
+
+    with pytest.raises(TTSOperationError) as first:
+        await supervisor.stop()
+
+    assert first.value.code == "cleanup_failed"
+    assert events.index("wait") < events.index("hooks")
+    assert events.index("hooks") < events.index("artifact")
+    assert events.index("artifact") < events.index("transport")
+    assert supervisor._generation is not None
+    await supervisor.stop()
+    assert transport_attempts == 2
+    assert supervisor._generation is None
 
 
 @pytest.mark.asyncio
@@ -1380,6 +1587,7 @@ async def test_default_launcher_suppresses_paths_in_asyncio_debug_logs(
         owned = await supervisor_module._default_process_launcher(launch, {})
         await asyncio.wait_for(owned.process.wait(), timeout=1)
         owned.close_parent_pipes()
+        owned.close_native_transport()
         asyncio_logger.debug("UNRELATED_ASYNCIO_AFTER")
     finally:
         loop.set_debug(prior_debug)
@@ -1388,6 +1596,47 @@ async def test_default_launcher_suppresses_paths_in_asyncio_debug_logs(
     assert str(launch.server_json_path) not in caplog.text
     assert "UNRELATED_ASYNCIO_BEFORE" in caplog.text
     assert "UNRELATED_ASYNCIO_AFTER" in caplog.text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows subprocesses")
+@pytest.mark.asyncio
+async def test_native_windows_transport_close_invalidates_only_exact_child_handle() -> (
+    None
+):
+    import _winapi
+
+    child = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "raise SystemExit(0)",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    sibling = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import time; time.sleep(10)",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    transport = child._transport
+    native_process = transport.get_extra_info("subprocess")
+    native_handle = native_process._handle
+    close_transport = supervisor_module._process_native_transport_closer(child)
+    try:
+        assert await child.wait() == 0
+        _winapi.GetExitCodeProcess(native_handle)
+        close_transport()
+        close_transport()
+        with pytest.raises(OSError):
+            _winapi.GetExitCodeProcess(native_handle)
+        assert sibling.returncode is None
+    finally:
+        if sibling.returncode is None:
+            sibling.terminate()
+        await sibling.wait()
 
 
 @pytest.mark.asyncio
