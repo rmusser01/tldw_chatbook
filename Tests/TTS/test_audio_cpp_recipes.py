@@ -698,6 +698,21 @@ def test_recipe_has_exact_reviewed_layout_and_safe_projection(
         assert recipe.projection.model_relative_path is None
 
 
+def test_every_approved_recipe_has_expected_windows_x86_and_x64_cpu_evidence() -> None:
+    registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
+
+    for recipe in registry.recipes:
+        windows_cpu = {
+            (evidence.architecture, evidence.backend.value, evidence.state.value)
+            for evidence in recipe.backend_evidence
+            if evidence.system == "windows"
+        }
+        assert windows_cpu == {
+            ("x86", "cpu", "expected"),
+            ("x86_64", "cpu", "expected"),
+        }
+
+
 def test_initial_tasks_and_pocket_language_options_follow_the_pinned_specs() -> None:
     registry = _api()["AUDIO_CPP_RECIPE_REGISTRY"]
     reference_requirement = _api()["AudioCppReferenceRequirement"]

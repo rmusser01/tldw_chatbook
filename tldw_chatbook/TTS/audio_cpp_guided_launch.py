@@ -12,7 +12,7 @@ import stat
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, NoReturn, cast
 
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactRef,
@@ -455,6 +455,8 @@ class _WindowsGeneratedLaunchArtifact(AudioCppGeneratedLaunchArtifact):
 
 def _normalize_architecture(value: str, *, system: str) -> str:
     folded = value.casefold()
+    if system == "windows" and folded in {"x86", "i386", "i486", "i586", "i686"}:
+        return "x86"
     if folded in {"arm64", "aarch64"}:
         return "arm64" if system == "darwin" else "aarch64"
     return {
@@ -463,11 +465,58 @@ def _normalize_architecture(value: str, *, system: str) -> str:
     }.get(folded, folded)
 
 
-def _validate_binary(path: str) -> Path | None:
+def _windows_pe_machine(owner: Any) -> int | None:
+    header = owner.read(4096)
+    if len(header) < 0x40 or header[:2] != b"MZ":
+        return None
+    offset = int.from_bytes(header[0x3C:0x40], "little")
+    if offset < 0x40 or offset > len(header) - 6:
+        return None
+    if header[offset : offset + 4] != b"PE\0\0":
+        return None
+    return int.from_bytes(header[offset + 4 : offset + 6], "little")
+
+
+def _validate_binary(
+    path: str,
+    *,
+    system: str | None = None,
+    architecture: str | None = None,
+) -> Path | None:
     from tldw_chatbook.Utils.path_validation import validate_path_simple
 
+    host_system = (platform.system() if system is None else system).casefold()
     try:
         candidate = validate_path_simple(path, require_exists=True)
+        if host_system == "windows":
+            filesystem = _windows_artifact_filesystem
+            if (
+                filesystem is None
+                or not candidate.is_absolute()
+                or candidate.suffix.casefold() != ".exe"
+            ):
+                return None
+            host_architecture = _normalize_architecture(
+                platform.machine() if architecture is None else architecture,
+                system="windows",
+            )
+            expected_machine = {"x86": 0x014C, "x86_64": 0x8664}.get(host_architecture)
+            if expected_machine is None:
+                return None
+            owner = filesystem.open_file_no_reparse(candidate)
+            valid = (
+                owner.identity.kind == "file"
+                and owner.identity.reparse_tag == 0
+                and _windows_pe_machine(owner) == expected_machine
+            )
+            try:
+                owner.close()
+            except WindowsArtifactError:
+                try:
+                    owner.close()
+                except WindowsArtifactError:
+                    return None
+            return candidate if valid else None
         info = candidate.stat()
         if (
             not candidate.is_absolute()
@@ -475,7 +524,7 @@ def _validate_binary(path: str) -> Path | None:
             or not os.access(candidate, os.X_OK)
         ):
             return None
-    except (OSError, ValueError):
+    except (OSError, ValueError, WindowsArtifactError):
         return None
     return candidate
 
@@ -630,7 +679,7 @@ def select_audio_cpp_guided_backend(
     """
 
     host_system = (platform.system() if system is None else system).casefold()
-    if host_system not in {"darwin", "linux"}:
+    if host_system not in {"darwin", "linux", "windows"}:
         return None
     host_architecture = _normalize_architecture(
         platform.machine() if architecture is None else architecture,
@@ -1076,7 +1125,7 @@ def _managed_acquire_outcome(
 async def _raise_guided_failure_after_cleanup(
     artifact: AudioCppGeneratedLaunchArtifact,
     code: AudioCppGuidedLaunchErrorCode,
-) -> None:
+) -> NoReturn:
     if not await _cleanup_succeeded(artifact):
         raise AudioCppGuidedLaunchError(
             "artifact_cleanup_failed",
@@ -1122,7 +1171,12 @@ async def materialize_audio_cpp_guided_launch(
     ):
         raise AudioCppGuidedLaunchError("configuration_invalid") from None
 
-    binary = await asyncio.to_thread(_validate_binary, settings.guided_binary_path)
+    binary = await asyncio.to_thread(
+        _validate_binary,
+        settings.guided_binary_path,
+        system=system,
+        architecture=architecture,
+    )
     if binary is None:
         raise AudioCppGuidedLaunchError("binary_invalid") from None
     recipes: list[AudioCppPackageRecipe] = []
@@ -1141,7 +1195,10 @@ async def materialize_audio_cpp_guided_launch(
     exact_recipes = tuple(recipes)
 
     host_system = (platform.system() if system is None else system).casefold()
-    if os.name != "posix" or host_system not in {"darwin", "linux"}:
+    supported_host = (os.name == "posix" and host_system in {"darwin", "linux"}) or (
+        host_system == "windows" and _windows_artifact_filesystem is not None
+    )
+    if not supported_host:
         raise AudioCppGuidedLaunchError("backend_unsupported") from None
     backend = select_audio_cpp_guided_backend(
         settings.guided_backend_preference,

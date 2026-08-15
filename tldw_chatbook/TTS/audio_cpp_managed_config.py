@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 from collections.abc import Mapping, Set as AbstractSet
 from dataclasses import dataclass
@@ -236,6 +237,12 @@ def _expanded_path(value: str, diagnostic: str) -> Path:
 
 def _validated_binary_path(value: str) -> Path:
     path = _expanded_path(value, _BINARY_DIAGNOSTIC)
+    if platform.system().casefold() == "windows":
+        from tldw_chatbook.TTS.audio_cpp_guided_launch import _validate_binary
+
+        if _validate_binary(value) is None:
+            raise ValueError(_BINARY_DIAGNOSTIC)
+        return path
     try:
         valid = path.is_file() and os.access(path, os.X_OK)
     except (OSError, ValueError):

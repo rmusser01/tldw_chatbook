@@ -1271,6 +1271,147 @@ class _FakeWindowsArtifactFilesystem:
         return self._handle(Path(path), "file")
 
 
+def _write_pe(path: Path, machine: int) -> None:
+    raw = bytearray(512)
+    raw[:2] = b"MZ"
+    raw[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    raw[0x80:0x84] = b"PE\0\0"
+    raw[0x84:0x86] = machine.to_bytes(2, "little")
+    path.write_bytes(raw)
+
+
+@pytest.mark.parametrize(
+    ("architecture", "machine"),
+    (("x86", 0x014C), ("AMD64", 0x8664)),
+)
+def test_windows_binary_validation_requires_matching_bounded_pe_machine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    architecture: str,
+    machine: int,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    binary = tmp_path / "audiocpp_server.exe"
+    _write_pe(binary, machine)
+    filesystem = _FakeWindowsArtifactFilesystem()
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+
+    assert (
+        launch_module._validate_binary(
+            str(binary), system="windows", architecture=architecture
+        )
+        == binary
+    )
+    assert filesystem.handles[-1].closed
+
+
+def test_windows_binary_validation_rejects_wrong_machine_and_non_pe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    binary = tmp_path / "audiocpp_server.exe"
+    _write_pe(binary, 0x014C)
+    filesystem = _FakeWindowsArtifactFilesystem()
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+
+    assert (
+        launch_module._validate_binary(
+            str(binary), system="windows", architecture="AMD64"
+        )
+        is None
+    )
+    binary.write_bytes(b"not-a-pe")
+    assert (
+        launch_module._validate_binary(
+            str(binary), system="windows", architecture="x86"
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("architecture", ("x86", "AMD64"))
+def test_windows_auto_and_explicit_cpu_backend_are_evidenced(
+    architecture: str,
+) -> None:
+    from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppBackendPreference
+    from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+        select_audio_cpp_guided_backend,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig")
+
+    assert (
+        select_audio_cpp_guided_backend(
+            AudioCppBackendPreference.AUTO,
+            (recipe,),
+            system="windows",
+            architecture=architecture,
+        )
+        is AudioCppBackendPreference.CPU
+    )
+    assert (
+        select_audio_cpp_guided_backend(
+            AudioCppBackendPreference.CPU,
+            (recipe,),
+            system="windows",
+            architecture=architecture,
+        )
+        is AudioCppBackendPreference.CPU
+    )
+
+
+def test_windows_arm64_backend_remains_unsupported() -> None:
+    from tldw_chatbook.TTS.audio_cpp_guided_config import AudioCppBackendPreference
+    from tldw_chatbook.TTS.audio_cpp_guided_launch import (
+        select_audio_cpp_guided_backend,
+    )
+    from tldw_chatbook.TTS.audio_cpp_recipes import AUDIO_CPP_RECIPE_REGISTRY
+
+    recipe = AUDIO_CPP_RECIPE_REGISTRY.for_package("supertonic_3_orig")
+
+    assert (
+        select_audio_cpp_guided_backend(
+            AudioCppBackendPreference.AUTO,
+            (recipe,),
+            system="windows",
+            architecture="ARM64",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_windows_guided_materialization_accepts_exact_pe_and_cpu_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    binary = tmp_path / "audiocpp_server.exe"
+    _write_pe(binary, 0x8664)
+    package_root = tmp_path / "package"
+    _write_gguf(package_root, "supertonic-3-orig.gguf")
+    accepted = _accept(package_root, "supertonic_3_orig", "narrator")
+    filesystem = _FakeWindowsArtifactFilesystem()
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+
+    launch = await launch_module.materialize_audio_cpp_guided_launch(
+        _settings(binary, [accepted]),
+        artifact_root=tmp_path / "generated",
+        port_selector=lambda: 50_131,
+        system="windows",
+        architecture="AMD64",
+    )
+
+    assert json.loads(launch.server_json_path.read_text())["backend"] == "cpu"
+    assert launch.generated_artifact is not None
+    launch.generated_artifact.cleanup()
+
+
 def test_windows_generated_artifact_is_verified_and_cleanup_is_exact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -863,6 +863,7 @@ _EXPECTED_CPU_BACKENDS = tuple(
         ("darwin", "x86_64"),
         ("linux", "aarch64"),
         ("linux", "x86_64"),
+        ("windows", "x86"),
         ("windows", "x86_64"),
     )
 )
