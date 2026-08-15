@@ -224,16 +224,21 @@ class TestDBInitialization:
         db = CharactersRAGDB(db_path, client_id)
         conn = db.get_connection()
 
-        # Simulate a v17-shaped DB: the shared registry removes everything
-        # newer migrations added (columns, triggers, tables) and rolls the
-        # recorded schema version back so re-opening replays V17->current.
+        # Roll back to a replayable v17 stamp: the shared registry removes
+        # the post-v17 artifacts that would collide on replay and rewinds
+        # the recorded version. The result is NOT a faithful v17 snapshot
+        # (replay-tolerant migrations' tables/columns survive) — it is
+        # exactly sufficient for replaying the migrations under test.
         rollback_chachanotes_schema(conn, 17)
         conn.commit()
 
-        # Assert the v17 preconditions before reopening: the column and the
-        # triggers under test, and the post-v17 tables whose baked presence
-        # broke this fixture before (task-15765: note_folders "already
-        # exists" at the V35->V36 replay step).
+        # Guard the replay preconditions before reopening: the column and
+        # triggers the V17->V18 migration must (re)create are genuinely
+        # absent (a real v17 DB HAS sync triggers; the fixture drops them so
+        # SQLite lets the column go, and replay recreates them), and so are
+        # the post-v17 tables whose baked presence broke this fixture before
+        # (task-15765: note_folders "already exists" at the V35->V36 replay
+        # step). These pin the fixture's own bake-guards, not a v17 shape.
         columns_before = {
             row["name"]
             for row in conn.execute("PRAGMA table_info(conversations)").fetchall()

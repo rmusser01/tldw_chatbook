@@ -67,15 +67,18 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     db = CharactersRAGDB(str(db_path), client_id="test-client")
     conn = db.get_connection()
     # A fresh DB bootstraps at the current schema version; the shared
-    # registry removes everything the post-V16 migrations added and rolls
-    # the recorded version back so reopening replays V16->current.
+    # registry removes the post-V16 artifacts that would collide on replay
+    # and rewinds the recorded version. The result is NOT a faithful V16
+    # snapshot (replay-tolerant migrations' tables/columns survive) — it is
+    # exactly sufficient for replaying the migrations under test.
     rollback_chachanotes_schema(conn, 16)
     conn.commit()
 
-    # Assert the V16 preconditions before reopening: the marks table the
-    # V16->V17 migration must create, and the post-V16 tables whose baked
-    # presence broke this fixture before (task-16197: note_folders "already
-    # exists" at the V35->V36 replay step).
+    # Guard the replay preconditions before reopening: the marks table the
+    # V16->V17 migration must (re)create is genuinely absent, as are the
+    # post-V16 tables whose baked presence broke this fixture before
+    # (task-16197: note_folders "already exists" at the V35->V36 replay
+    # step). These pin the fixture's own bake-guards, not a full V16 shape.
     table_names = {
         row["name"]
         for row in conn.execute(

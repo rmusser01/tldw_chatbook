@@ -89,3 +89,32 @@ Introducing commits per instance:
   stale contract vs v38, present on origin/dev `48ad9e7de`, unrelated).
 - Lessons: incident chain recorded in
   `backlog/docs/lessons-testing-evidence.md`.
+
+### Review follow-up (same session, pre-merge)
+
+Independent review verdict: MERGE, two pre-merge fixes applied:
+
+- **F1 (oracle depth)**: the sweep's parity oracle compared sqlite_master
+  (type, name) only — blind to column loss, though half the registry is
+  `DROP COLUMN`. `_schema_objects` now also emits a
+  ("column", "<table>.<column>") entry per table column (SETS, not
+  positions — F4: replay legitimately re-appends dropped columns at the
+  table end). Born-red with the reviewer's exact mutation (a seeded
+  `DROP COLUMN active_leaf_message_id` in entry 28): previously 22/22
+  green; now exactly v24..v27 red naming the lost column, v16..v23
+  repaired by the V23->V24 replay, v28..v37 unaffected. Restored
+  Edit-based; unmutated registry green (23/23) — replayed column sets are
+  identical to a fresh bootstrap.
+- **F2 (comment truth)**: the registry docstring and both fixture comments
+  no longer claim a "historical"/"genuine vN" schema. They now state what
+  the fixture is — a current-version DB with the specific colliding
+  artifacts removed, sufficient for replaying the migrations under test,
+  NOT a faithful vN snapshot (at a v17 stamp: 7 post-v17 tables, 9
+  indexes, 5 columns survive; real-vN sync triggers deliberately absent
+  until replay). Precondition asserts relabelled as the fixture's own
+  bake-guards. Docstring also records the F4 column-order caveat and
+  points to the knowledge-free alternative (bootstrap under a patched
+  `_CURRENT_SCHEMA_VERSION`, as test_chachanotes_note_folders_migration.py
+  does) as the follow-up direction.
+- Re-run: guards+sweep 23 passed; both formerly-red tests + dictionary
+  suite green (53 passed total); ruff check/format clean.

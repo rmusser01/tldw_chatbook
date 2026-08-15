@@ -23,11 +23,25 @@ That is not a hypothetical: it fired three times in three days.
   fixture), each then repaired separately (task-16201, task-16207).
 
 The registry below is the single place that knowledge now lives. Each key is
-a schema version ``v``; its value removes exactly what the ``(v-1)->v``
-migration adds, in a safe order (triggers that reference a column before the
-column itself). ``rollback_chachanotes_schema`` walks the registry from the
-recorded version down to the requested target, so every fixture — current and
-future — shares one drop list instead of hand-maintaining its own.
+a schema version ``v``; its value removes the ``(v-1)->v`` migration's
+artifacts whose baked presence would collide on replay (plus a few removed
+so the migration under test genuinely re-creates them), in a safe order
+(triggers that reference a column before the column itself). Be precise
+about what the rolled-back DB IS: a current-version DB with those SPECIFIC
+artifacts removed — sufficient for replaying the migrations under test, NOT
+a faithful historical vN snapshot. Replay-tolerant migrations' artifacts
+survive at the rolled-back stamp (measured at a v17 stamp: 7 post-v17
+tables, 9 indexes, 5 columns), and the sync triggers a real vN DB has are
+deliberately absent until replay recreates them. After replay, column ORDER
+may also diverge from a fresh bootstrap (a dropped column is re-appended at
+the end of its table), so compare column membership as a set, never by
+position. ``rollback_chachanotes_schema`` walks the registry from the
+recorded version down to the requested target, so every fixture — current
+and future — shares one drop list instead of hand-maintaining its own. For
+a genuinely vN-shaped fixture, bootstrap under a patched
+``_CURRENT_SCHEMA_VERSION`` instead (as
+``Tests/DB/test_chachanotes_note_folders_migration.py`` does) — the
+knowledge-free direction a follow-up will evaluate for these fixtures.
 
 Contract for migration authors: when you bump ``_CURRENT_SCHEMA_VERSION``,
 add an entry here for the new version. Declare an empty tuple if (and only
