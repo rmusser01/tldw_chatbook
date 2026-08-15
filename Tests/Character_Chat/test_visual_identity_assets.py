@@ -1021,6 +1021,42 @@ def _walk_mapping_keys(value: object):
             yield from _walk_mapping_keys(nested)
 
 
+def _assert_no_private_json_metadata_keys(*values: object) -> None:
+    private_keys = sorted(
+        {
+            key
+            for value in values
+            for key in _walk_mapping_keys(value)
+            if "private" in key.casefold()
+        }
+    )
+    assert not private_keys, f"private JSON metadata key: {', '.join(private_keys)}"
+
+
+@pytest.mark.parametrize(
+    "private_metadata",
+    [
+        {"private": True},
+        {"provenance": {"MiXeD_PrIvAtE_Flag": "legacy"}},
+    ],
+    ids=("top-level-private", "nested-mixed-case-private"),
+)
+def test_packaging_key_guard_rejects_private_manifest_metadata_even_when_parser_accepts(
+    private_metadata: dict[str, object],
+) -> None:
+    manifest = _samira_manifest_data()
+    manifest.update(private_metadata)
+
+    parsed = parse_visual_identity_manifest_json(
+        json.dumps(manifest).encode("utf-8"),
+        require_samira_bundle=True,
+        directory_bytes=_samira_directory_bytes(),
+    )
+    assert parsed.pack_id == SAMIRA_PACK_ID
+    with pytest.raises(AssertionError, match="private JSON metadata key"):
+        _assert_no_private_json_metadata_keys(manifest)
+
+
 def test_bundled_samira_package_inventory_is_exact() -> None:
     assert {
         path.name for path in SAMIRA_ASSET_DIR.iterdir()
@@ -1193,9 +1229,9 @@ def test_bundled_samira_card_has_only_public_namespaced_metadata() -> None:
     }
     assert "image" not in data
     assert "data:image" not in json.dumps(card)
+    _assert_no_private_json_metadata_keys(card)
     assert not any(
-        key.casefold().startswith("vademhq/") or "private" in key.casefold()
-        for key in _walk_mapping_keys(card)
+        key.casefold().startswith("vademhq/") for key in _walk_mapping_keys(card)
     )
 
 
@@ -1237,6 +1273,8 @@ def test_bundled_samira_assets_have_public_license_and_no_legacy_provenance() ->
         (SAMIRA_ASSET_DIR / "Sammy.png").read_bytes()
     )
     assert png_metadata is not None
+    embedded_card = json.loads(png_metadata)
+    _assert_no_private_json_metadata_keys(card, embedded_card, manifest)
     assert not any(token in png_metadata.lower().encode() for token in forbidden)
 
 
