@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import json
+import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -20,6 +23,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
+from tldw_chatbook.DB.ChaChaNotes_DB import TrajectoryRowWrite
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     SealedCitationWrite,
@@ -74,6 +78,12 @@ from tldw_chatbook.Video_Generation.video_store import video_content_marker
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
+
+#: Trajectory sidecar (schema v38): stored tool-result payload cap. The full
+#: untruncated output remains available live in-session via
+#: ``ConsoleChatMessage.tool_output_full``; beyond this cap the sidecar row
+#: stores a truncated result plus ``{"truncated": true}`` in its payload.
+TRAJECTORY_RESULT_CAP_BYTES = 256 * 1024
 
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
@@ -751,6 +761,22 @@ class ConsoleChatStore:
         ] = {}
         self._next_message_completed_subscriber_id = 1
         self._speech_preference_epochs: dict[str, int] = {}
+
+        # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
+        # ``message_trajectory_metadata`` table is never synced. Timing is
+        # armed by the controller (step start / completion) and stamped here
+        # (first token, at the chunk seam); rows are written through the
+        # persistence adapter in ONE batched upsert per turn. Every write is
+        # best-effort: a sidecar failure must never fail the turn.
+        self._trajectory_lock = threading.Lock()
+        self._trajectory_timing: dict[str, dict[str, Any]] = {}
+        self._trajectory_written_ids: set[str] = set()
+        self._session_turn_ids: dict[str, str] = {}
+        # TOOL markers appended while their parent assistant row is still
+        # streaming (no durable id yet): payload captured at marker-append
+        # time, flushed -- remapped to the parent's persisted id -- when the
+        # parent message persists. Keyed by the parent's NATIVE message id.
+        self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
 
     def subscribe_message_completed(
         self,
@@ -2131,6 +2157,13 @@ class ConsoleChatStore:
                 (anchor, message)
             )
             self._messages_by_session[session_id].append(message)
+            # Trajectory sidecar (schema v38): the marker itself is never
+            # persisted, but its tool_call/tool_result records ARE -- keyed
+            # to the anchor (parent assistant) message. Best-effort.
+            anchor_node = self._nodes_by_session.get(session_id, {}).get(anchor)
+            self._record_trajectory_tool_marker(
+                session_id, anchor_node, content, tool_output_full
+            )
             return self._snapshot(message)
         old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
@@ -4198,7 +4231,342 @@ class ConsoleChatStore:
         buffer.append(chunk)
         message.status = "streaming"
         self._bump_message_speech_revision(message.id)
+        # Trajectory sidecar (schema v38): the first provider chunk is the
+        # first-token boundary. Stamped at THIS seam (rather than in the
+        # controller's direct-provider loop) because it is the single point
+        # both streaming paths -- direct provider and agent bridge -- flow
+        # through. Only stamps an armed capture: no step-start, no timing.
+        stash = self._trajectory_timing.get(message.id)
+        if (
+            stash is not None
+            and stash.get("step_started_at") is not None
+            and stash.get("first_token_at") is None
+        ):
+            stash["first_token_at"] = time.time()
         return self._snapshot(message)
+
+    # --- Trajectory sidecar (schema v38) -----------------------------------
+    #
+    # LOCAL-ONLY capture of per-turn step observations for the Console
+    # trajectory view. All methods on this seam are best-effort: a sidecar
+    # failure is logged with context and NEVER fails the turn/chat action
+    # that triggered it.
+
+    def record_trajectory_timing(
+        self,
+        message_id: str,
+        *,
+        step_started_at: float | None = None,
+        first_token_at: float | None = None,
+        completed_at: float | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        flush: bool = False,
+    ) -> None:
+        """Merge timing facts for one message's trajectory capture; never raises.
+
+        ``step_started_at``/``first_token_at``/``model``/``provider`` are
+        set-once (first writer wins); ``completed_at`` is last-write-wins so
+        a finalize path can refine a provisional completion stamp. With
+        ``flush=True``, a message that is already persisted gets its
+        assistant/user sidecar row written immediately (the finalize path --
+        usage attachment time); an unpersisted message's row is written by
+        the persist seam instead, reading this same stash.
+        """
+        try:
+            stash = self._trajectory_timing.setdefault(message_id, {})
+            for key, value in (
+                ("step_started_at", step_started_at),
+                ("first_token_at", first_token_at),
+                ("model", model),
+                ("provider", provider),
+            ):
+                if value is not None and stash.get(key) is None:
+                    stash[key] = value
+            if completed_at is not None:
+                stash["completed_at"] = completed_at
+            if not flush:
+                return
+            message = self._nodes_lookup(message_id)
+            if message is not None:
+                self._write_trajectory_row_for_message(message)
+        except Exception as exc:
+            logger.bind(message_id=message_id, error=repr(exc)).warning(
+                "trajectory_timing_record_failed"
+            )
+
+    def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
+        """Route sidecar rows through the persistence adapter; never raises.
+
+        Serialized by an in-process lock so concurrent Console writers
+        (hands-free sessions, compaction auxiliary turns) cannot interleave
+        ``seq`` assignments. Fakes without the adapter method are skipped
+        silently (pre-existing test doubles keep working).
+        """
+        if self.persistence is None or not rows:
+            return False
+        writer = getattr(self.persistence, "write_trajectory_rows", None)
+        if not callable(writer):
+            return False
+        with self._trajectory_lock:
+            try:
+                result = writer(list(rows))
+            except Exception as exc:
+                logger.bind(row_count=len(rows), error=repr(exc)).warning(
+                    "trajectory_rows_write_failed"
+                )
+                return False
+        if result is not False:
+            # task-5: a successful sidecar write is trajectory-visible state.
+            # Bump the revision bus (conversation key + every live session
+            # bound to that conversation) so the polling trajectory screen
+            # rebuilds its snapshot; without this, tail-follow sees nothing.
+            for conversation_id in dict.fromkeys(
+                row.conversation_id for row in rows
+            ):
+                self._bump_payload_revision(conversation_id)
+                for session in self._sessions.values():
+                    if session.persisted_conversation_id == conversation_id:
+                        self._bump_payload_revision(session.id)
+        return result is not False
+
+    def variant_sets_for_conversation(
+        self, conversation_id: str
+    ) -> list[ConsoleVariantSet]:
+        """Collect the live in-memory variant sets for one conversation.
+
+        Variant CONTENTS are process-local (only selection metadata
+        persists), so this covers sessions currently open in THIS store; a
+        cold conversation restored purely from the DB legitimately
+        contributes no variant contents and the trajectory ledger renders
+        without superseded variants. Deduplicated per ``turn_id``, newest
+        selection state last (the projection over-attaches a set to every
+        assistant record of its turn; duplicates would double the contents).
+        """
+        sets_by_turn: dict[str, ConsoleVariantSet] = {}
+        for session in self._sessions.values():
+            if session.persisted_conversation_id != conversation_id:
+                continue
+            for message in self._nodes_by_session.get(session.id, {}).values():
+                variants = getattr(message, "variants", None)
+                if variants is None:
+                    continue
+                turn_id = getattr(variants, "turn_id", None) or getattr(
+                    message, "turn_id", None
+                )
+                if not turn_id:
+                    continue
+                sets_by_turn[str(turn_id)] = variants
+        return list(sets_by_turn.values())
+
+    def _nodes_lookup(self, message_id: str) -> ConsoleChatMessage | None:
+        session_id = self._message_session_index.get(message_id)
+        if session_id is None:
+            return None
+        return self._nodes_by_session.get(session_id, {}).get(message_id)
+
+    @staticmethod
+    def _trajectory_tool_payload(content: str, tool_output_full: str | None) -> str:
+        """Build the ``payload_json`` for one tool record.
+
+        ``name`` is best-effort parsed from the marker text (the live bridge
+        formats tool markers as ``⚙ <tool_name> → <preview>``); ``result``
+        is the full untruncated output when available, capped at
+        ``TRAJECTORY_RESULT_CAP_BYTES`` with a ``{"truncated": true}``
+        marker beyond that. ``args`` is ``None``: the marker-append seam
+        carries no argument dict, and fabricating one from display text
+        would be worse than absent.
+        """
+        text = content or ""
+        name: str | None = None
+        if text.startswith("⚙ "):
+            name = text[2:].split(" →", 1)[0].strip() or None
+        result = tool_output_full if tool_output_full is not None else text
+        payload: dict[str, Any] = {"name": name, "args": None, "result": result}
+        encoded = result.encode("utf-8")
+        if len(encoded) > TRAJECTORY_RESULT_CAP_BYTES:
+            # Cap BYTES, not characters: a character slice of multibyte
+            # text (up to 4 bytes/codepoint) could leave the stored result
+            # up to 4x over budget. Truncate the encoded form and decode
+            # back with errors="ignore" so a split codepoint is dropped
+            # rather than crashing or being replaced by a longer escape.
+            payload["result"] = encoded[:TRAJECTORY_RESULT_CAP_BYTES].decode(
+                "utf-8", errors="ignore"
+            )
+            payload["truncated"] = True
+        return json.dumps(payload)
+
+    def _record_trajectory_tool_marker(
+        self,
+        session_id: str,
+        anchor: ConsoleChatMessage | None,
+        content: str,
+        tool_output_full: str | None,
+    ) -> None:
+        """Capture one TOOL marker's trajectory records at append time.
+
+        TOOL-marker invariant: the marker itself is NEVER persisted to
+        ``messages`` -- its ``tool_call``/``tool_result`` rows live entirely
+        in the sidecar, keyed to the parent (anchor) assistant message's
+        persisted id. When the anchor has no durable id yet (a marker that
+        arrives while the assistant row is still streaming), the payload is
+        stashed and flushed -- remapped -- when the anchor persists.
+        """
+        try:
+            session = self._sessions.get(session_id)
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            payload_json = self._trajectory_tool_payload(content, tool_output_full)
+            now = time.time()
+            if (
+                conversation_id is not None
+                and anchor is not None
+                and anchor.persisted_message_id is not None
+            ):
+                turn_id = self._trajectory_turn_id(session_id, anchor)
+                rows = self._trajectory_tool_rows(
+                    message_id=anchor.persisted_message_id,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    payload_json=payload_json,
+                    captured_at=now,
+                )
+                self.write_trajectory_rows(rows)
+                return
+            anchor_key = anchor.id if anchor is not None else "__unanchored__"
+            self._pending_trajectory_tool_rows.setdefault(anchor_key, []).append(
+                {
+                    "session_id": session_id,
+                    "payload_json": payload_json,
+                    "captured_at": now,
+                }
+            )
+        except Exception as exc:
+            logger.bind(session_id=session_id, error=repr(exc)).warning(
+                "trajectory_tool_marker_capture_failed"
+            )
+
+    @staticmethod
+    def _trajectory_tool_rows(
+        *,
+        message_id: str,
+        conversation_id: str,
+        turn_id: str,
+        payload_json: str,
+        captured_at: float,
+    ) -> list[TrajectoryRowWrite]:
+        """Build the ``tool_call`` + ``tool_result`` row pair for one marker."""
+        shared = dict(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            seq=None,
+            payload_json=payload_json,
+            step_started_at=captured_at,
+            completed_at=captured_at,
+        )
+        return [
+            TrajectoryRowWrite(event_kind="tool_call", **shared),
+            TrajectoryRowWrite(event_kind="tool_result", **shared),
+        ]
+
+    def _trajectory_turn_id(
+        self, session_id: str, message: ConsoleChatMessage
+    ) -> str:
+        """Resolve (and memoize) the turn id for a persisted message.
+
+        A USER message opens a turn and registers its id as the session's
+        current turn; an ASSISTANT message inherits the open turn, falling
+        back to its own id for assistant-first sessions.
+        """
+        if message.turn_id:
+            return message.turn_id
+        if message.role is ConsoleMessageRole.USER:
+            turn_id = message.persisted_message_id or message.id
+            self._session_turn_ids[session_id] = turn_id
+        else:
+            turn_id = self._session_turn_ids.get(session_id) or message.id
+        message.turn_id = turn_id
+        return turn_id
+
+    def _write_trajectory_row_for_message(self, message: ConsoleChatMessage) -> None:
+        """Write one persisted message's sidecar row (and any stashed tool rows).
+
+        The single writer for ``user``/``assistant`` rows, called from the
+        persist seam (``_persist_new_message``) and the finalize flush
+        (``record_trajectory_timing(flush=True)``). Idempotent per message:
+        once written, later flushes are no-ops. Never raises.
+        """
+        try:
+            # LOAD-BEARING invariant (final review): this write is TERMINAL.
+            # The row snapshots ``self._trajectory_timing`` at write time and
+            # the ``_trajectory_written_ids`` guard below makes every later
+            # flush a no-op. ``completed_at``/``model``/``provider`` therefore
+            # land ONLY if usage/timing is attached (via
+            # ``record_trajectory_timing``) BEFORE the terminal persist mark.
+            # A future path that persists first will silently lose those
+            # facts -- there is no update, only a dropped write.
+            if message.id in self._trajectory_written_ids:
+                return
+            if message.role not in (
+                ConsoleMessageRole.USER,
+                ConsoleMessageRole.ASSISTANT,
+            ):
+                return
+            if message.persisted_message_id is None:
+                return
+            session_id = self._message_session_index.get(message.id)
+            session = self._sessions.get(session_id) if session_id else None
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is None:
+                return
+            turn_id = self._trajectory_turn_id(session_id, message)
+            timing = self._trajectory_timing.get(message.id, {})
+            event_kind = (
+                "user" if message.role is ConsoleMessageRole.USER else "assistant"
+            )
+            rows: list[TrajectoryRowWrite] = [
+                TrajectoryRowWrite(
+                    message_id=message.persisted_message_id,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    seq=None,
+                    event_kind=event_kind,
+                    # User records get a step-start only (spec: no token
+                    # boundaries on the user's own action); assistant rows
+                    # carry whatever the controller's capture armed --
+                    # NULL timing when nothing was armed (never fabricated).
+                    step_started_at=(
+                        time.time()
+                        if event_kind == "user"
+                        else timing.get("step_started_at")
+                    ),
+                    first_token_at=timing.get("first_token_at"),
+                    completed_at=timing.get("completed_at"),
+                    model=timing.get("model"),
+                    provider=timing.get("provider"),
+                )
+            ]
+            pending = self._pending_trajectory_tool_rows.pop(message.id, None)
+            for entry in pending or ():
+                rows.extend(
+                    self._trajectory_tool_rows(
+                        message_id=message.persisted_message_id,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        payload_json=entry["payload_json"],
+                        captured_at=entry["captured_at"],
+                    )
+                )
+            if self.write_trajectory_rows(rows):
+                self._trajectory_written_ids.add(message.id)
+        except Exception as exc:
+            logger.bind(message_id=message.id, error=repr(exc)).warning(
+                "trajectory_row_write_failed"
+            )
 
     def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
         """Discard streamed content once a turn is reclassified as a tool call.
@@ -5462,6 +5830,11 @@ class ConsoleChatStore:
             if message.id == self._active_leaf_by_session.get(session_id):
                 self._persist_active_leaf(session_id, message.id)
             self._enqueue_sync_v2_message_if_ready(message)
+        # Trajectory sidecar (schema v38): every persisted Console message
+        # gets a user/assistant row in the LOCAL-ONLY sidecar, batched with
+        # any tool rows stashed while this row was still streaming.
+        # Best-effort -- never fails the persist that triggered it.
+        self._write_trajectory_row_for_message(message)
 
     def _create_terminal_message(
         self,
@@ -6256,6 +6629,21 @@ class ConsoleChatStore:
         self._payload_revisions[session_id] = (
             self._payload_revisions.get(session_id, 0) + 1
         )
+
+    def get_payload_revision(self, session_or_conversation_id: str) -> int:
+        """Return the payload-revision counter for a session or conversation.
+
+        Public read side of the revision bus the trajectory live view polls
+        (task-5): the counter has no observer interface, so the screen
+        ``set_interval``-polls this getter. Accepts either a Console session
+        id or a persisted conversation id -- the trajectory write path bumps
+        BOTH keys -- returning the newest of the matches (0 when unknown).
+        """
+        revision = self._payload_revisions.get(session_or_conversation_id, 0)
+        for session in self._sessions.values():
+            if session.persisted_conversation_id == session_or_conversation_id:
+                revision = max(revision, self._payload_revisions.get(session.id, 0))
+        return revision
 
     def _bump_conversation_context_epoch(self, session_id: str) -> None:
         """Advance one live session's provider-context change token."""

@@ -42,6 +42,7 @@ from ..Navigation.pending_handoff_store import (
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
+from .trajectory_screen import TrajectoryScreen
 from .provider_model_resolution import (
     ResolvedProviderModelOption,
     resolve_effective_provider_model,
@@ -119,6 +120,7 @@ from ...Chat.console_cost_tracker import (
 )
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage, as_seconds
+from ...Chat.trajectory import TrajectorySnapshot, derive_trajectory
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -1134,6 +1136,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send / queue"),
+    ("Y", "trajectory"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -1147,6 +1150,75 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
+
+
+def _build_trajectory_snapshot(store: Any, conversation_id: str) -> "TrajectorySnapshot":
+    """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
+
+    task-5 (console trajectory view). Best-effort at every seam: any source
+    that is unavailable contributes an empty iterable rather than failing
+    the launch -- the ledger degrades to fewer records, never to no screen.
+    Variant contents are process-local (see
+    ``ConsoleChatStore.variant_sets_for_conversation``): cold conversations
+    render without superseded variants by design.
+    """
+    messages: list[Any] = []
+    traj_rows: list[Any] = []
+    variant_sets: list[Any] = []
+    compaction_records: list[Any] = []
+    active_leaf: str | None = None
+    persistence = getattr(store, "persistence", None)
+    db = getattr(persistence, "db", None)
+    if db is not None:
+        try:
+            messages = list(
+                db.get_messages_for_conversation(
+                    conversation_id,
+                    limit=1_000_000,
+                    # Text-only projection: skip the image BLOB I/O (task-260).
+                    include_image_data=False,
+                )
+            )
+        except Exception:  # noqa: BLE001 - launch must degrade, not fail
+            messages = []
+        try:
+            traj_rows = list(db.get_trajectory_rows(conversation_id))
+        except Exception:  # noqa: BLE001
+            traj_rows = []
+        try:
+            active_leaf = db.get_conversation_active_leaf(conversation_id)
+        except Exception:  # noqa: BLE001
+            active_leaf = None
+    usage_by_id: dict[str, ProviderUsage] = {}
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        usage = ProviderUsage.from_json(message.get("usage_json"))
+        if usage is not None:
+            usage_by_id[str(message.get("id"))] = usage
+    try:
+        variant_sets = list(store.variant_sets_for_conversation(conversation_id))
+    except Exception:  # noqa: BLE001
+        variant_sets = []
+    context_repository = getattr(persistence, "context_repository", None)
+    if context_repository is not None:
+        try:
+            # The projection itself filters purpose == "conversation_compaction".
+            compaction_records = list(
+                context_repository.list_auxiliary_attempts(
+                    conversation_id, limit=500
+                )
+            )
+        except Exception:  # noqa: BLE001
+            compaction_records = []
+    return derive_trajectory(
+        messages,
+        usage_by_id,
+        traj_rows,
+        variant_sets,
+        compaction_records,
+        active_leaf_message_id=active_leaf,
+    )
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
@@ -1721,6 +1793,14 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
+        # task-5 (console trajectory view): single-letter htop-style launch
+        # key per ADR-031. 'y', NOT 'j': the focused transcript consumes
+        # j/k for next/previous-message selection (console_transcript.py
+        # on_key), which would make the advertised footer hint a lie in
+        # exactly the surface a trajectory reader comes from. The footer
+        # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
+        # of the Console vocabulary.
+        Binding("y", "open_trajectory_view", "Trajectory", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
@@ -2908,6 +2988,47 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(
             ConsoleSessionSwitcherModal(rows=tuple(rows)),
             callback=self._session._apply_console_switcher_choice,
+        )
+
+    def action_open_trajectory_view(self) -> None:
+        """Open the trajectory ledger for the active Console conversation (``y``).
+
+        task-5: the snapshot is built off the UI thread (DB reads); the
+        screen is pushed with live tail-follow callables wired to the
+        store's payload-revision bus.
+        """
+        store = self._console_chat_store or self._ensure_console_chat_store()
+        session = getattr(store, "_sessions", {}).get(
+            getattr(store, "active_session_id", None)
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            self.notify("The active conversation has no persisted trajectory yet.")
+            return
+        conv_id = str(conversation_id)
+        screen_title = str(getattr(session, "title", "") or "Console")
+
+        def build() -> TrajectorySnapshot:
+            return _build_trajectory_snapshot(store, conv_id)
+
+        def present(snapshot: TrajectorySnapshot) -> None:
+            self.push_screen(
+                TrajectoryScreen(
+                    snapshot,
+                    screen_title=screen_title,
+                    conversation_id=conv_id,
+                    revision_provider=lambda: store.get_payload_revision(conv_id),
+                    snapshot_builder=build,
+                )
+            )
+
+        def build_worker() -> None:
+            snapshot = build()
+            self.call_from_thread(present, snapshot)
+
+        self.notify("Building trajectory…")
+        self.run_worker(
+            build_worker, thread=True, exclusive=True, group="trajectory-launch"
         )
 
     async def action_open_console_model_popover(self) -> None:

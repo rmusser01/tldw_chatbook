@@ -9140,6 +9140,19 @@ class ConsoleChatController:
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
         stream_signals = ConsoleProviderStreamSignals()
+        # Trajectory sidecar (schema v38): arm this turn's timing capture at
+        # the single dispatch choke point covering BOTH the direct-provider
+        # and agent paths, BEFORE the provider call. First-token is stamped
+        # at the store's chunk seam; completion at usage-attach. Best-effort
+        # -- a sidecar failure must never fail the send.
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id, step_started_at=time.time()
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_step_start_failed"
+            )
         try:
             if (
                 bool(
@@ -9503,6 +9516,22 @@ class ConsoleChatController:
         call's ``prompt_tokens`` would be priced against an earlier call's
         stale ``prompt_tokens_details.cached_tokens``.
         """
+        # Trajectory sidecar (schema v38): completion stamp + finalize flush.
+        # Runs BEFORE the usage early-returns so a turn with no usage still
+        # gets its completed_at stamped and its assistant row flushed. Never
+        # fails the send (same posture as the usage attach below).
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id,
+                completed_at=time.time(),
+                model=str(getattr(resolution, "model", "") or "") or None,
+                provider=str(getattr(resolution, "provider", "") or "") or None,
+                flush=True,
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_completion_failed"
+            )
         if stream_signals is None:
             return
         payloads = self._usage_payloads(stream_signals)
