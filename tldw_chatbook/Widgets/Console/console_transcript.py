@@ -1480,7 +1480,11 @@ class ConsoleMarkdownMessage(Vertical):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
-            if manager.state.active or manager.just_finished:
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
                 # This click completed (or landed during) a text-selection
                 # drag on this selectable row (markdown rows arm drags too,
                 # task G); it must not toggle message selection (console
@@ -1663,7 +1667,11 @@ class ConsoleTranscriptMessage(Vertical):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
             manager = transcript.selection_manager
-            if manager.state.active or manager.just_finished:
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
                 # This click completed (or landed during) a text-selection
                 # drag on this row; it must not toggle message selection
                 # (console selection phase 1). A genuine click never reaches
@@ -2075,11 +2083,7 @@ class ConsoleTranscript(VerticalScroll):
 
     can_focus = True
 
-    DEFAULT_CSS = """
-    ConsoleTranscript {
-        layers: base overlay;
-    }
-    """
+
 
     class TranscriptTextSelected(Message):
         """Posted when a mouse drag finished with a non-empty text selection.
@@ -3486,17 +3490,23 @@ class ConsoleTranscript(VerticalScroll):
     async def _text_selected(self, event: TranscriptTextSelected) -> None:
         """Mount the floating selection menu at the drag-release cell.
 
-        Console selection phase 1. The menu is DOCKED (out of the scroll
-        flow): mounting it as a plain flow child rendered at the end of the
-        scroll content -- far below the fold on a tall transcript -- so it
-        docks top with an overlay layer and a transcript-local offset
-        instead. Deliberately does not stop the event: the owning screen
-        also consumes TranscriptTextSelected (selection lifecycle).
+        Console selection phase 1, live-spike round 3 rework: the menu is
+        mounted on the owning SCREEN with an ``absolute_offset`` (the
+        tooltip anchoring mechanism). The previous approaches -- plain flow
+        child (rendered at the end of the scroll content), and a docked
+        transcript child with ``styles.offset`` -- were both broken in a
+        live terminal: the flow child sat below the fold, and the docked
+        child painted translated by its offset while being CLIPPED to the
+        un-translated dock slot (the user saw one button; hit-tests used
+        the un-translated region, so the rest were unclickable). Screen
+        mounting folds the position into the widget's region, so paint,
+        clipping, and hit-testing agree. Deliberately does not stop the
+        event: the owning screen also consumes TranscriptTextSelected
+        (selection lifecycle).
 
-        The event carries SCREEN coordinates; ``self.region`` translates
-        them transcript-local, and the clamp keeps the anchor within the
-        transcript bounds (the ``+1`` sits the menu just below the release
-        row).
+        The event carries SCREEN coordinates directly; the clamp keeps the
+        anchor within the screen bounds (the ``+1`` sits the menu just
+        below the release row).
 
         Async and awaiting the previous menu's removal is load-bearing:
         ``Widget.remove()`` only SCHEDULES removal while ``mount()``
@@ -3511,17 +3521,24 @@ class ConsoleTranscript(VerticalScroll):
         stopped by the row's ``on_click`` (drag-release suppression), so it
         never reaches this transcript's own ``on_click`` removal.
         """
-        for menu in self.query(ConsoleSelectionMenu):
+        for menu in self._attached_selection_menus():
             await menu.remove()
-        region = self.region
-        self.mount(
+        # Mounting on the screen triggers a layout refresh that re-engages
+        # Textual's bottom anchor and yanks the view to the tail -- away
+        # from the selection the user just made. Release the tail-follow
+        # for the menu's lifetime (the jump pill appears, the standard
+        # detached-reader affordance).
+        self.release_anchor()
+        screen_size = self.screen.size
+        self.screen.mount(
             ConsoleSelectionMenu(
-                local_x=self._clamp_menu_offset(
-                    event.screen_x - region.x, region.width, margin=2
+                screen_x=self._clamp_menu_offset(
+                    event.screen_x, screen_size.width, margin=2
                 ),
-                local_y=self._clamp_menu_offset(
-                    event.screen_y - region.y + 1, region.height, margin=2
+                screen_y=self._clamp_menu_offset(
+                    event.screen_y + 1, screen_size.height, margin=2
                 ),
+                owner=self,
             )
         )
 
@@ -3617,7 +3634,7 @@ class ConsoleTranscript(VerticalScroll):
         """
         return [
             menu
-            for menu in self.query(ConsoleSelectionMenu)
+            for menu in self.screen.query(ConsoleSelectionMenu)
             if not getattr(menu, "_pruning", False)
         ]
 
@@ -3637,8 +3654,11 @@ class ConsoleTranscript(VerticalScroll):
         row = self._active_selection_row()
         if row is not None:
             row.clear_selection()
-        self.selection_manager.cancel()
-        self._selection_origin_row = None
+        # Deliberately NOT cancelling the drag manager here: the drag's own
+        # release Click is still in the queue, and its suppression flag is
+        # what stops it from toggling the row's message selection. The
+        # click cycle consumes that flag (empty finish or non-arming press),
+        # and the next armed drag replaces the selection state wholesale.
         for menu in self._attached_selection_menus():
             menu.remove()
 

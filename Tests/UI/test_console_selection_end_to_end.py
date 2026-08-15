@@ -157,7 +157,7 @@ async def test_click_outside_transcript_dismisses_selection_menu():
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
         # Mount the menu exactly as a real selection release would (onto the
         # transcript); only the click-outside seam is under test here.
-        await transcript.mount(ConsoleSelectionMenu(local_x=2, local_y=2))
+        await transcript.mount(ConsoleSelectionMenu(screen_x=2, screen_y=2))
         await pilot.pause()
         assert screen.query_one(ConsoleSelectionMenu)
 

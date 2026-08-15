@@ -42,7 +42,7 @@ class _MenuApp(App[None]):
         self.ask_side_chat_events: list[ConsoleSelectionMenu.AskInSideChat] = []
 
     def compose(self) -> ComposeResult:
-        yield ConsoleSelectionMenu(local_x=4, local_y=6)
+        yield ConsoleSelectionMenu(screen_x=4, screen_y=6)
 
     def on_console_selection_menu_add_to_chat(
         self, event: ConsoleSelectionMenu.AddToChat
@@ -610,7 +610,7 @@ async def test_escape_returns_focus_to_previously_focused_transcript():
         await pilot.pause()
         await _finish_drag_selection(pilot)
         menu = app.query_one(ConsoleSelectionMenu)
-        assert app.focused is menu  # the menu grabbed focus on mount
+        assert app.focused is app.query_one("#console-selection-add-to-chat")  # first button focused for keyboard nav
         assert menu._previous_focus is transcript  # captured before the grab
 
         await pilot.press("escape")

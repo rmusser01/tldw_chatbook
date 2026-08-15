@@ -40,6 +40,7 @@ class SelectionManager:
         self._active: bool = False
         self._finished: TextSelection | None = None
         self._just_finished: bool = False
+        self._release_click_pending: bool = False
 
     @property
     def state(self) -> SelectionState:
@@ -56,7 +57,21 @@ class SelectionManager:
     def consume_just_finished(self) -> None:
         self._just_finished = False
 
+    def consume_release_click(self) -> bool:
+        """Consume the pending drag-release click, if any.
+
+        Live-spike round 3: Textual synthesizes the release Click for a
+        drag LATE -- it can dispatch after an intervening press already
+        consumed ``just_finished``. This one-shot token is consumed ONLY
+        by the row-click suppression, so the release Click is suppressed
+        exactly once no matter when it arrives.
+        """
+        pending = self._release_click_pending
+        self._release_click_pending = False
+        return pending
+
     def begin_drag(self, row_key: str, offset: int) -> None:
+        self._release_click_pending = False
         self._origin_row = row_key
         self._origin_offset = max(0, offset)
         self._current_offset = self._origin_offset
@@ -75,6 +90,8 @@ class SelectionManager:
         self._active = False
         self._finished = None if state.selection is None or state.selection.is_empty else state.selection
         self._just_finished = True
+        if self._finished is not None:
+            self._release_click_pending = True
         return self._finished
 
     def cancel(self) -> None:

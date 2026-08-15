@@ -19981,20 +19981,15 @@ class ChatScreen(BaseAppScreen):
             if isinstance(node, ConsoleTranscript):
                 return  # the transcript's own handlers own in-area dismissal
             node = getattr(node, "parent", None)
+        # Menus mount on the screen now; route the dismissal through every
+        # transcript's centralized selection-UI cleanup (clears highlight +
+        # manager state), then remove any stragglers (e.g. menus mounted by
+        # harnesses without a transcript ancestor).
+        for transcript in self.query(ConsoleTranscript):
+            transcript._remove_selection_menu()
         for menu in self.query(ConsoleSelectionMenu):
             if not getattr(menu, "_pruning", False):
-                # Route through the transcript's dismissal so the text
-                # selection/highlight clears with the menu (live-spike fix).
-                parent = menu.parent
-                transcript = None
-                while parent is not None and transcript is None:
-                    if isinstance(parent, ConsoleTranscript):
-                        transcript = parent
-                    parent = parent.parent
-                if transcript is not None:
-                    transcript._remove_selection_menu()
-                else:
-                    menu.remove()
+                menu.remove()
 
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
