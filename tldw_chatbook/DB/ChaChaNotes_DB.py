@@ -7810,7 +7810,7 @@ UPDATE db_schema_version
             )
             raise
 
-    def search_conversations_page(
+    def _conversation_search_filter(
         self,
         query: Optional[str],
         *,
@@ -7823,10 +7823,7 @@ UPDATE db_schema_version
         topic_label: Optional[str] = None,
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
-        **_: Any,
-    ) -> Tuple[List[Dict[str, Any]], int, float]:
+    ) -> Tuple[str, List[Any]]:
         clauses: List[str] = []
         params: List[Any] = []
         if str(scope_type or "").strip().lower() == CONVERSATION_SCOPE_ALL:
@@ -7918,6 +7915,40 @@ UPDATE db_schema_version
             params.extend([like_query, normalized_query, fts_query])
 
         where_clause = " AND ".join(clauses) if clauses else "1 = 1"
+        return where_clause, params
+
+    def _after_conversation_page_count(self) -> None:
+        """Test coordination seam between the count and page statements."""
+
+    def search_conversations_page(
+        self,
+        query: Optional[str],
+        *,
+        client_id: Optional[str] = None,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        character_id: Optional[int] = None,
+        character_scope: Optional[str] = None,
+        state: Optional[str] = None,
+        topic_label: Optional[str] = None,
+        scope_type: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        **_: Any,
+    ) -> Tuple[List[Dict[str, Any]], int, float]:
+        where_clause, params = self._conversation_search_filter(
+            query,
+            client_id=client_id,
+            include_deleted=include_deleted,
+            deleted_only=deleted_only,
+            character_id=character_id,
+            character_scope=character_scope,
+            state=state,
+            topic_label=topic_label,
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+        )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
         )
@@ -7927,14 +7958,109 @@ UPDATE db_schema_version
             "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
         )
 
-        count_cursor = self.execute_query(count_query, tuple(params))
-        count_row = count_cursor.fetchone()
-        total = int(count_row["total"] if count_row else 0)
-
-        page_params = tuple(params + [limit, offset])
-        cursor = self.execute_query(page_query, page_params)
-        rows = [dict(row) for row in cursor.fetchall()]
+        with self.transaction() as conn:
+            count_row = conn.execute(count_query, tuple(params)).fetchone()
+            total = int(count_row["total"] if count_row else 0)
+            self._after_conversation_page_count()
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    page_query, (*params, limit, offset)
+                ).fetchall()
+            ]
         return rows, total, 0.0
+
+    def locate_conversation_page(
+        self,
+        conversation_id: str,
+        query: Optional[str] = None,
+        *,
+        client_id: Optional[str] = None,
+        include_deleted: bool = False,
+        deleted_only: bool = False,
+        character_id: Optional[int] = None,
+        character_scope: Optional[str] = None,
+        state: Optional[str] = None,
+        topic_label: Optional[str] = None,
+        scope_type: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        limit: int = 20,
+        **_: Any,
+    ) -> Optional[Dict[str, Any]]:
+        normalized_id = self._normalize_nullable_text(conversation_id)
+        if normalized_id is None or not isinstance(conversation_id, str):
+            raise InputError("conversation_id must be a non-empty string.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise InputError("limit must be a positive integer.")
+
+        where_clause, params = self._conversation_search_filter(
+            query,
+            client_id=client_id,
+            include_deleted=include_deleted,
+            deleted_only=deleted_only,
+            character_id=character_id,
+            character_scope=character_scope,
+            state=state,
+            topic_label=topic_label,
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+        )
+        locator_query = f"""
+            WITH ranked AS (
+                SELECT conversations.*,
+                       ROW_NUMBER() OVER (
+                           ORDER BY last_modified DESC, id DESC
+                       ) - 1 AS __row_index,
+                       COUNT(*) OVER () AS __total
+                FROM conversations
+                WHERE {where_clause}
+            ), target AS (
+                SELECT __row_index AS __target_index, __total
+                FROM ranked
+                WHERE id = ?
+            )
+            SELECT ranked.*, target.__target_index
+            FROM ranked, target
+            WHERE ranked.__row_index >= (target.__target_index / ?) * ?
+              AND ranked.__row_index < (target.__target_index / ?) * ? + ?
+            ORDER BY ranked.__row_index
+        """
+        with self.transaction() as conn:
+            result_rows = conn.execute(
+                locator_query,
+                (*params, normalized_id, limit, limit, limit, limit, limit),
+            ).fetchall()
+        if not result_rows:
+            return None
+
+        target_index = int(result_rows[0]["__target_index"])
+        total = int(result_rows[0]["__total"])
+        resolved_offset = (target_index // limit) * limit
+        rows = []
+        for result_row in result_rows:
+            row = dict(result_row)
+            row.pop("__row_index")
+            row.pop("__total")
+            row.pop("__target_index")
+            rows.append(row)
+
+        local_index = target_index - resolved_offset
+        if (
+            resolved_offset % limit
+            or local_index < 0
+            or local_index >= len(rows)
+            or rows[local_index].get("id") != normalized_id
+            or len(rows) != min(limit, total - resolved_offset)
+        ):
+            raise CharactersRAGDBError(
+                "Conversation page locator returned invalid coordinates."
+            )
+        return {
+            "rows": rows,
+            "offset": resolved_offset,
+            "target_index": target_index,
+            "total": total,
+        }
 
     def get_all_conversation_ids(self) -> List[str]:
         """Return every non-deleted conversation id owned by this client (no page cap).

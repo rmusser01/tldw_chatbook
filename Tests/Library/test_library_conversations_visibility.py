@@ -12,11 +12,16 @@ in-memory ``CharactersRAGDB``.
 
 from __future__ import annotations
 
+import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_conversation_scope_service import (
+    ChatConversationScopeService,
+)
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
@@ -208,3 +213,51 @@ def test_scoped_listing_keeps_client_filter(tmp_path) -> None:
 
     assert [item["title"] for item in result["items"]] == ["Mine global"]
     assert result["pagination"]["total"] == 1
+
+
+class _LocatorLocalService:
+    def __init__(self, *, is_memory_db: bool) -> None:
+        self.db = SimpleNamespace(is_memory_db=is_memory_db)
+        self.thread_idents: list[int] = []
+
+    def locate_conversation_page(self, conversation_id: str, **kwargs: Any):
+        self.thread_idents.append(threading.get_ident())
+        return {"items": [{"id": conversation_id}], "pagination": kwargs}
+
+
+@pytest.mark.asyncio
+async def test_scope_locator_routes_file_backed_local_work_off_loop() -> None:
+    local = _LocatorLocalService(is_memory_db=False)
+    service = ChatConversationScopeService(local_service=local, server_service=None)
+    caller_thread = threading.get_ident()
+
+    result = await service.locate_conversation_page(
+        "conv-target", mode="local", scope_type="all", limit=20
+    )
+
+    assert result["items"] == [{"id": "conv-target"}]
+    assert local.thread_idents and local.thread_idents[0] != caller_thread
+
+
+@pytest.mark.asyncio
+async def test_scope_locator_keeps_memory_db_inline() -> None:
+    local = _LocatorLocalService(is_memory_db=True)
+    service = ChatConversationScopeService(local_service=local, server_service=None)
+    caller_thread = threading.get_ident()
+
+    await service.locate_conversation_page("conv-target", mode="local", limit=20)
+
+    assert local.thread_idents == [caller_thread]
+
+
+@pytest.mark.asyncio
+async def test_scope_locator_explicitly_rejects_unsupported_server_mode() -> None:
+    service = ChatConversationScopeService(
+        local_service=_LocatorLocalService(is_memory_db=True),
+        server_service=object(),
+    )
+
+    with pytest.raises(ValueError, match="Server conversation page locator"):
+        await service.locate_conversation_page(
+            "conv-target", mode="server", scope_type="all", limit=20
+        )

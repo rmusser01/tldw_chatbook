@@ -17,10 +17,12 @@ guarantee for FTS5-syntax-hazard input.
 """
 
 import inspect
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
 
 @pytest.fixture
@@ -126,16 +128,214 @@ class TestFtsSyntaxHazardsDoNotRaise:
 
 
 class TestSqlShapePin:
+    @staticmethod
+    def _search_source():
+        return "\n".join(
+            (
+                inspect.getsource(CharactersRAGDB._conversation_search_filter),
+                inspect.getsource(CharactersRAGDB.search_conversations_page),
+            )
+        )
+
     def test_no_more_correlated_content_like_in_source(self):
         """Lexical pin against regression: the content-match branch must no
         longer build a `m.content LIKE` clause."""
-        source = inspect.getsource(CharactersRAGDB.search_conversations_page)
+        source = self._search_source()
         assert "m.content LIKE" not in source
 
     def test_uses_messages_fts_match(self):
-        source = inspect.getsource(CharactersRAGDB.search_conversations_page)
+        source = self._search_source()
         assert "messages_fts" in source
         assert "MATCH" in source
+
+
+def _seed_coherent_conversation_population(db: CharactersRAGDB) -> list[str]:
+    conversation_ids = []
+    for index in range(45):
+        scope = (
+            {"scope_type": "workspace", "workspace_id": f"workspace-{index % 3}"}
+            if index % 2
+            else {"scope_type": "global"}
+        )
+        conversation_ids.append(
+            db.add_conversation({"title": f"Conversation {index:02d}", **scope})
+        )
+
+    db.add_message(
+        {
+            "conversation_id": conversation_ids[17],
+            "sender": "user",
+            "content": "coherentlocatorneedle appears only in this message",
+        }
+    )
+    deleted_id = db.add_conversation({"title": "Deleted conversation"})
+    deleted = db.get_conversation_by_id(deleted_id)
+    db.soft_delete_conversation(deleted_id, expected_version=deleted["version"])
+
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE conversations SET last_modified = ? WHERE deleted = 0",
+            ("2026-08-14T12:00:00.000Z",),
+        )
+    return sorted(conversation_ids, reverse=True)
+
+
+class TestCoherentConversationPages:
+    def test_pages_are_exact_stable_partitions_under_all_supported_filters(self, db):
+        expected_ids = _seed_coherent_conversation_population(db)
+
+        pages = [
+            db.search_conversations_page(
+                None, scope_type="all", limit=20, offset=offset
+            )
+            for offset in (0, 20, 40)
+        ]
+
+        assert [total for _, total, _ in pages] == [45, 45, 45]
+        assert [len(rows) for rows, _, _ in pages] == [20, 20, 5]
+        actual_ids = [row["id"] for rows, _, _ in pages for row in rows]
+        assert actual_ids == expected_ids
+        assert len(actual_ids) == len(set(actual_ids))
+
+        global_rows, global_total, _ = db.search_conversations_page(
+            None, scope_type="global", limit=20, offset=0
+        )
+        assert global_total == 23
+        assert all(row["scope_type"] == "global" for row in global_rows)
+
+        workspace_rows, workspace_total, _ = db.search_conversations_page(
+            None,
+            scope_type="workspace",
+            workspace_id="workspace-1",
+            limit=20,
+            offset=0,
+        )
+        assert workspace_total == 8
+        assert all(row["workspace_id"] == "workspace-1" for row in workspace_rows)
+
+        fts_rows, fts_total, _ = db.search_conversations_page(
+            "coherentlocator", scope_type="all", limit=20, offset=0
+        )
+        assert fts_total == 1
+        assert fts_rows[0]["title"] == "Conversation 17"
+
+    @pytest.mark.parametrize("mutation", ["insert", "delete"])
+    def test_count_and_rows_share_one_wal_snapshot(self, tmp_path, mutation):
+        counted = threading.Event()
+        release = threading.Event()
+
+        class CoordinatedReaderDB(CharactersRAGDB):
+            def _after_conversation_page_count(self) -> None:
+                counted.set()
+                assert release.wait(5), "writer did not release the coordinated reader"
+
+        db_path = tmp_path / f"coherent-{mutation}.db"
+        reader = CoordinatedReaderDB(db_path, "reader")
+        writer = CharactersRAGDB(db_path, "writer")
+        before_ids = _seed_coherent_conversation_population(reader)
+        expected_before = (45, tuple(before_ids[:20]))
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                reader.search_conversations_page,
+                None,
+                scope_type="all",
+                limit=20,
+                offset=0,
+            )
+            assert counted.wait(5), "reader never reached the count/page boundary"
+            if mutation == "insert":
+                changed_id = writer.add_conversation({"title": "Concurrent insert"})
+                _set_conversation_last_modified(
+                    writer, changed_id, "2026-08-15T00:00:00.000Z"
+                )
+                after_ids = [changed_id, *before_ids]
+                expected_after = (46, tuple(after_ids[:20]))
+            else:
+                changed_id = before_ids[0]
+                changed = writer.get_conversation_by_id(changed_id)
+                writer.soft_delete_conversation(
+                    changed_id, expected_version=changed["version"]
+                )
+                after_ids = before_ids[1:]
+                expected_after = (44, tuple(after_ids[:20]))
+            release.set()
+            rows, total, _ = future.result(timeout=5)
+
+        observed = (total, tuple(row["id"] for row in rows))
+        assert observed in {expected_before, expected_after}
+        reader.close_connection()
+        writer.close_connection()
+
+
+class TestLocateConversationPage:
+    def test_returns_only_the_bounded_page_owning_the_target(self, db):
+        expected_ids = _seed_coherent_conversation_population(db)
+        target_id = expected_ids[24]
+
+        located = db.locate_conversation_page(
+            target_id, scope_type="all", limit=20
+        )
+
+        assert located["offset"] == 20
+        assert located["target_index"] == 24
+        assert located["total"] == 45
+        assert target_id in {row["id"] for row in located["rows"]}
+        assert located["rows"][located["target_index"] - located["offset"]][
+            "id"
+        ] == target_id
+        assert len(located["rows"]) == 20
+
+    def test_handles_first_final_and_exactly_aligned_pages(self, db):
+        expected_ids = _seed_coherent_conversation_population(db)
+
+        first = db.locate_conversation_page(
+            expected_ids[0], scope_type="all", limit=20
+        )
+        aligned = db.locate_conversation_page(
+            expected_ids[20], scope_type="all", limit=20
+        )
+        final = db.locate_conversation_page(
+            expected_ids[-1], scope_type="all", limit=20
+        )
+
+        assert (first["target_index"], first["offset"], len(first["rows"])) == (
+            0,
+            0,
+            20,
+        )
+        assert (
+            aligned["target_index"],
+            aligned["offset"],
+            aligned["rows"][0]["id"],
+        ) == (20, 20, expected_ids[20])
+        assert (final["target_index"], final["offset"], len(final["rows"])) == (
+            44,
+            40,
+            5,
+        )
+
+    def test_unavailable_or_invalid_target_fails_closed(self, db):
+        expected_ids = _seed_coherent_conversation_population(db)
+        target_id = expected_ids[0]
+        target = db.get_conversation_by_id(target_id)
+        db.soft_delete_conversation(target_id, expected_version=target["version"])
+
+        assert (
+            db.locate_conversation_page(target_id, scope_type="all", limit=20) is None
+        )
+        assert (
+            db.locate_conversation_page(
+                "00000000-0000-4000-8000-000000000000",
+                scope_type="all",
+                limit=20,
+            )
+            is None
+        )
+        with pytest.raises(InputError, match="conversation_id"):
+            db.locate_conversation_page("  ", scope_type="all", limit=20)
+        with pytest.raises(InputError, match="limit"):
+            db.locate_conversation_page(expected_ids[1], scope_type="all", limit=0)
 
 
 # ---------------------------------------------------------------------------
