@@ -773,6 +773,9 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
+        # Side-chat phase 2 (task-2): ephemeral selection side-chat prefs.
+        "console.sidechat_model",
+        "console.sidechat_prompt_template",
         "console.background_effects.*",
         # task-15512: same commit as the context-window entry above
         # (2d88425ba) -- new owned sections, tuple left behind.
