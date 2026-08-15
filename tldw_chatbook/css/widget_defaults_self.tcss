@@ -171,7 +171,7 @@
     Select-width lesson (`#mcp-tools-filter-server-slot Select`,
     mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
     `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own DEFAULT_CSS
+    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
     once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
     regardless of selector specificity) -- so styling
     `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
@@ -496,7 +496,7 @@
 
 
 
-    /* T7 (P3 UX batch): same fix as MCPServersMode.DEFAULT_CSS's
+    /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
@@ -1274,7 +1274,7 @@
        card entirely at 100x30, and left a dead void between the panels at
        170x50. Each section is now a one-line collapsed header by default,
        so no explicit max-height cap is needed here (the panels' own
-       DEFAULT_CSS keeps every part height: auto, which the old cap existed
+       BUNDLED_CSS keeps every part height: auto, which the old cap existed
        to force). */
 
     
@@ -1454,7 +1454,7 @@
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonaProfileEditorWidget .is-invalid {
         border: round red;
@@ -1774,7 +1774,7 @@
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonasCharacterEditorWidget .is-invalid {
         border: round red;
