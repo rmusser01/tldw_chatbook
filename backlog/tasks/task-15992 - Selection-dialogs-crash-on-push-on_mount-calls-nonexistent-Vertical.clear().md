@@ -81,14 +81,29 @@ made the conversation dialog unusable even after the crash fix.
   idiom; toggling the selected radio off clears the selection and disables
   Generate). Born-red first: both conversation driving tests failed with the
   ValueError/never-enabled symptoms before the fix.
-- **New tests**: `Tests/UI/test_selection_dialogs.py` drives each dialog
-  end-to-end on `ConsolidatedCSSApp` — note dialog: check a note, count label
-  updates, Generate enables, dismissal returns `[note_id]`; conversation
-  dialog: pick a conversation, Generate enables, dismissal returns the full
-  options dict; plus a mutual-exclusivity/untoggle test.
+- **New tests**: `Tests/UI/test_selection_dialogs.py` drives each dialog on
+  `ConsolidatedCSSApp`. The note dialog is driven as a user would (a pilot
+  click on a checkbox works: count label updates, Generate enables,
+  dismissal returns `[note_id]`). The conversation dialog is driven
+  PROGRAMMATICALLY — `query_one(...).value = True`, which bypasses layout,
+  hit-testing and focus — because a `pilot.click` drive fails today: the
+  dialog's own layout CSS collapses the list container to 2 rows and stacks
+  both items on identical coordinates outside the clip, so a mouse click
+  lands on the options section instead of a radio (filed as TASK-16470).
+  Selection, exclusivity, untoggle, and the dismissal options-dict are
+  asserted at the message/handler level.
 - Verification: `Tests/UI/test_selection_dialogs.py` +
   `Tests/UI/test_widget_css_consolidation.py` → 18 passed. ruff check clean,
   ruff format applied on the four touched files. No User_Guide page covers
-  these dialogs (searched), so no doc stamp needed. Visual delta from removing
-  the RadioSet wrapper (its `tall` border) is inside a dialog no user has ever
-  seen open — it crashed on push since introduction.
+  these dialogs (searched), so no doc stamp needed. The measured visual delta
+  from removing the RadioSet wrapper is nil: the TASK-15992 review rendered
+  both structures and the list region draws empty either way, because of the
+  pre-existing layout collapse now tracked as TASK-16470.
+- **Scope honesty / follow-ups filed**: these dialogs are currently
+  UNREACHABLE in production — both STTS import paths import four DB helpers
+  that do not exist in `DB/ChaChaNotes_DB.py`, and a broad `except Exception`
+  swallows the ImportError into a toast before `push_screen` ever runs
+  (TASK-16471) — so this fix has no user-facing value until that lands. The
+  conversation dialog's collapsed/unclickable list is TASK-16470. The same
+  `.clear()`-on-a-container bug class survives at two currently-unreachable
+  sites in `Widgets/embedding_template_selector.py` (TASK-16472).
