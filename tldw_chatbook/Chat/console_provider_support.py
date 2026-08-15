@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass
+from typing import Any
+
+from loguru import logger
 
 from tldw_chatbook.Chat.provider_readiness import (
     PROVIDERS_REQUIRING_API_KEY_KEYS,
@@ -90,6 +93,78 @@ def _provider_display_name(provider_key: str) -> str:
         provider_key,
         provider_key.replace("_", " ").replace("-", " ").title(),
     )
+
+
+# ADR-066: per-execution-key wire formats for Console thinking controls.
+# Level = reasoning_effort; budget = thinking_budget_tokens.
+_LLAMA_CPP_THINKING_KEYS = frozenset(
+    {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
+)
+_VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
+_CUSTOM_OPENAI_THINKING_KEYS = frozenset(
+    {"custom-openai-api", "custom-openai-api-2"}
+)
+# MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
+# support; if unsupported this row degrades to drop-and-log.
+_TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})
+
+
+def build_local_thinking_payload_fields(
+    execution_key: str | None,
+    reasoning_effort: str | None,
+    thinking_budget_tokens: int | None,
+) -> dict[str, Any]:
+    """Compose thinking-control payload fragments for a local provider.
+
+    Args:
+        execution_key: ``chat_api_call`` provider key (e.g. ``llama_cpp``).
+        reasoning_effort: Verbatim user-selected effort level, if any.
+        thinking_budget_tokens: Max thinking tokens, if any.
+
+    Returns:
+        Fragments to merge into an OpenAI-compatible chat payload. Empty
+        dict when the key has no thinking support or no values are set.
+    """
+    key = str(execution_key or "").strip().lower()
+    effort = str(reasoning_effort or "").strip().lower() or None
+    budget: int | None = (
+        thinking_budget_tokens
+        if isinstance(thinking_budget_tokens, int)
+        and not isinstance(thinking_budget_tokens, bool)
+        else None
+    )
+    fields: dict[str, Any] = {}
+    if key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
+        if effort is not None:
+            template_kwargs: dict[str, Any] = {"reasoning_effort": effort}
+            if effort == "none":
+                template_kwargs["enable_thinking"] = False
+            fields["chat_template_kwargs"] = template_kwargs
+        if budget is not None and key in _LLAMA_CPP_THINKING_KEYS:
+            fields["reasoning_budget"] = budget
+        if budget is not None and key in _TEMPLATE_KWARGS_THINKING_KEYS:
+            logger.debug(
+                "thinking budget not supported for provider {}; dropped",
+                key,
+            )
+    elif key in _VLLM_THINKING_KEYS:
+        if effort is not None:
+            fields["reasoning_effort"] = effort
+            fields["chat_template_kwargs"] = {"reasoning_effort": effort}
+        if budget is not None:
+            logger.debug(
+                "thinking budget not supported for provider {}; dropped",
+                key,
+            )
+    elif key in _CUSTOM_OPENAI_THINKING_KEYS:
+        if effort is not None:
+            fields["reasoning_effort"] = effort
+        if budget is not None:
+            logger.debug(
+                "thinking budget not supported for provider {}; dropped",
+                key,
+            )
+    return fields
 
 
 def _handler_keys(handler_keys: Collection[str] | None = None) -> frozenset[str]:
