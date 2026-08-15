@@ -1227,10 +1227,10 @@ def _read_only_installed_tree(
     original_modes = {path: stat.S_IMODE(path.lstat().st_mode) for path in paths}
     for path in paths:
         if path.is_file():
-            path.chmod(0o444)
+            path.chmod(original_modes[path] & ~0o222)
     for path in reversed(paths):
         if path.is_dir():
-            path.chmod(0o555)
+            path.chmod(original_modes[path] & ~0o222)
     before = _target_snapshot(target)
     try:
         yield before
@@ -1245,6 +1245,9 @@ def _read_only_installed_tree(
         for path in current_paths:
             if path.is_file():
                 path.chmod(original_modes.get(path, 0o644))
+        assert {
+            path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+        } == original_modes
 
 
 def _is_sensitive_environment_name(name: str) -> bool:
@@ -1778,25 +1781,12 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
             str(path) for path in (target / "bin", target / "Scripts")
         )
         for name in ("tldw-cli", "tldw-serve"):
-            script = (
-                shutil.which(name, path=script_path)
-                if os.name == "nt"
-                else str(target / "bin" / name)
-            )
+            script = shutil.which(name, path=script_path)
             assert script is not None, (
                 f"missing installed script {name!r}; "
                 f"target files: {sorted(_target_hashes(target))}"
             )
-            assert Path(script).is_file()
-            results.append(
-                _run_child(
-                    [script, "--help"]
-                    if os.name == "nt"
-                    else [sys.executable, script, "--help"],
-                    run_root,
-                    env,
-                )
-            )
+            results.append(_run_child([script, "--help"], run_root, env))
 
     process_text = "\n".join(result.stdout + "\n" + result.stderr for result in results)
     log_text = "\n".join(
@@ -1824,11 +1814,28 @@ def test_read_only_installed_tree_rejects_rewrite_and_catches_touch(
     target = tmp_path / "target"
     _install_wheel(built_distributions, target)
     package_file = target / "tldw_chatbook" / "__init__.py"
+    original_modes = {
+        path: stat.S_IMODE(path.lstat().st_mode)
+        for path in (target, *sorted(target.rglob("*")))
+    }
 
     with _read_only_installed_tree(target):
+        assert {
+            path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+        } == {path: mode & ~0o222 for path, mode in original_modes.items()}
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
+        )
+        assert all(
+            shutil.which(name, path=script_path) is not None
+            for name in ("tldw-cli", "tldw-serve")
+        )
         original = package_file.read_bytes()
         with pytest.raises(PermissionError):
             package_file.write_bytes(original)
+    assert {
+        path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+    } == original_modes
 
     with pytest.raises(
         AssertionError,
