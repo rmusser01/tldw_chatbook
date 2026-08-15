@@ -380,6 +380,8 @@ from ...Chat.console_paste_attach import (
     looks_attachable,
 )
 from ...Chat.console_rail_state import (
+    CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
+    CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
@@ -388,8 +390,10 @@ from ...Chat.console_rail_state import (
     build_console_rail_state,
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
+    console_context_reveal_preferences,
     console_rail_left_open_explicit,
     console_rail_width_band,
+    resolve_console_rail_priority,
     serialize_console_rail_preferences,
 )
 from ...config import (
@@ -2140,7 +2144,13 @@ class ChatScreen(BaseAppScreen):
     def on_console_context_rail_open(self, event: Button.Pressed) -> None:
         """Open the Console context rail and persist the preference."""
         event.stop()
-        self._set_console_rail_preference(left_open=True)
+        available_columns = self._console_rail_available_columns()
+        rail_state = self._current_console_rail_state(
+            available_columns=available_columns
+        )
+        self._set_console_rail_preference(
+            **console_context_reveal_preferences(rail_state, available_columns)
+        )
 
     @on(Button.Pressed, "#console-inspector-rail-collapse")
     def on_console_inspector_rail_collapse(self, event: Button.Pressed) -> None:
@@ -2772,7 +2782,13 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
         elif action_id == "attach-context":
-            self._set_console_rail_preference(left_open=True)
+            available_columns = self._console_rail_available_columns()
+            rail_state = self._current_console_rail_state(
+                available_columns=available_columns
+            )
+            self._set_console_rail_preference(
+                **console_context_reveal_preferences(rail_state, available_columns)
+            )
         elif action_id == "run-library-rag":
             self._run_console_library_rag_from_visible_action()
         elif action_id == "send":
@@ -11739,6 +11755,11 @@ class ChatScreen(BaseAppScreen):
             preference_key.value,
             preference_key.fallback_value,
         )
+        resolved_available_columns = (
+            available_columns
+            if available_columns is not None
+            else self._console_rail_available_columns()
+        )
         rail_state = build_console_rail_state(
             preference_key=preference_key,
             stored_preferences=stored_preferences,
@@ -11751,16 +11772,13 @@ class ChatScreen(BaseAppScreen):
             tool_count=self._console_tool_count(),
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
-            available_columns=(
-                available_columns
-                if available_columns is not None
-                else self._console_rail_available_columns()
-            ),
+            available_columns=resolved_available_columns,
         )
         if self._should_open_standard_width_inspector(
             rail_state=rail_state,
             stored_preferences=stored_preferences,
             inspector_state=inspector_state,
+            available_columns=resolved_available_columns,
         ):
             return replace(rail_state, right_open=True, right_forced_collapsed=False)
         return rail_state
@@ -11771,14 +11789,19 @@ class ChatScreen(BaseAppScreen):
         rail_state: ConsoleRailState,
         stored_preferences: Any,
         inspector_state: ConsoleInspectorState,
+        available_columns: int | None,
     ) -> bool:
         """Return whether the 120-column Console contract should show Inspector."""
         if rail_state.right_open:
             return False
         if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
             return False
-        available_columns = self._console_rail_available_columns()
-        if available_columns is None or not 118 <= available_columns <= 128:
+        if (
+            available_columns is None
+            or not CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS
+            <= available_columns
+            <= CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS
+        ):
             return False
         labels = {str(row.label).strip() for row in inspector_state.rows}
         return "Run recipe" in labels and bool(
@@ -11924,6 +11947,11 @@ class ChatScreen(BaseAppScreen):
         self, *, available_columns: int | None = None
     ) -> ConsoleRailState:
         """Build the current effective rail state from mounted Console context."""
+        resolved_available_columns = (
+            available_columns
+            if available_columns is not None
+            else self._console_rail_available_columns()
+        )
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
         inspector_state = self._build_console_inspector_state(pending_launch)
@@ -11934,12 +11962,19 @@ class ChatScreen(BaseAppScreen):
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
-            available_columns=available_columns,
+            available_columns=resolved_available_columns,
+        )
+        rail_state = resolve_console_rail_priority(
+            rail_state, resolved_available_columns
         )
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state, pending_launch
         )
-        return self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = resolve_console_rail_priority(
+            rail_state, resolved_available_columns
+        )
+        rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        return resolve_console_rail_priority(rail_state, resolved_available_columns)
 
     def _set_console_rail_preference(
         self,
@@ -14405,16 +14440,21 @@ class ChatScreen(BaseAppScreen):
         # and the Inspector's retrieval-scope row below -- one zero-DB
         # state, two renderers.
         retrieval_scope_state = self._build_console_retrieval_scope_state()
+        available_columns = self._console_rail_available_columns()
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
             workspace_context_state=workspace_context_state,
+            available_columns=available_columns,
         )
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._apply_pending_launch_inspector_auto_open(
             rail_state,
             pending_launch,
         )
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
+        rail_state = resolve_console_rail_priority(rail_state, available_columns)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"
@@ -20687,9 +20727,35 @@ class ChatScreen(BaseAppScreen):
             self.query_one("#console-workspace-grid")
         except QueryError:
             return
-        self._sync_console_rail_visibility_if_changed(
-            self._current_console_rail_state(available_columns=event.size.width)
+        focused = self.app.focused
+        left_rail = self.query_one("#console-left-rail")
+        right_rail = self.query_one("#console-right-rail")
+        focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
+        focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
+        rail_state = self._current_console_rail_state(
+            available_columns=event.size.width
         )
+        self._sync_console_rail_visibility_if_changed(rail_state)
+        for focused_in_rail, rail_open, handle_selector, button_selector in (
+            (
+                focused_in_left_rail,
+                rail_state.left_open,
+                "#console-context-rail-handle",
+                "#console-context-rail-open",
+            ),
+            (
+                focused_in_right_rail,
+                rail_state.right_open,
+                "#console-inspector-rail-handle",
+                "#console-inspector-rail-open",
+            ),
+        ):
+            if not focused_in_rail or rail_open:
+                continue
+            handle = self.query_one(handle_selector)
+            button = self.query_one(button_selector, Button)
+            if handle.display and button.display:
+                button.focus()
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:

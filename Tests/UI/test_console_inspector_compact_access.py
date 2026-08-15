@@ -17,6 +17,8 @@ Both rails' manual toggles must always produce visible feedback.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from textual.widgets import Button
 
@@ -32,6 +34,82 @@ def _stored_rail_preferences(app) -> dict:
     rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
     assert len(rail_state_config) == 1
     return next(iter(rail_state_config.values()))
+
+
+@pytest.mark.asyncio
+async def test_standard_width_inspector_priority_preserves_context_preference():
+    """At 120 columns Inspector wins without rewriting Context preference."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-grid")
+        await pilot.pause(0.2)
+
+        rail_state = console._current_console_rail_state(available_columns=120)
+
+        assert rail_state.left_open is False
+        assert rail_state.right_open is True
+        assert rail_state.right_compact_override is True
+        assert rail_state.compact_override is True
+        assert not app.app_config.get("console", {}).get("rail_state")
+
+
+@pytest.mark.asyncio
+async def test_context_reveal_switches_from_inspector_at_120_columns():
+    """The Context handle persists an exact Inspector-to-Context switch."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-context-rail-open")
+        await pilot.pause(0.2)
+        console._set_console_rail_preference(right_open=True)
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is False
+        assert console.query_one("#console-right-rail").display is True
+
+        assert await pilot.click("#console-context-rail-open")
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        stored = _stored_rail_preferences(app)
+        assert stored["left_open"] is True
+        assert stored["right_open"] is False
+
+
+@pytest.mark.asyncio
+async def test_visible_attach_context_action_switches_rails_without_file_picker():
+    """Only the visible Workbench action reveals Context at 120 columns."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-attach-context")
+        await pilot.pause(0.2)
+        file_picker = AsyncMock()
+        console._handle_console_attach_context = file_picker
+        console._set_console_rail_preference(right_open=True)
+        await pilot.pause(0.2)
+
+        assert not list(console.query("#console-attach-context"))
+        assert not list(console.query("#console-staged-context-attach"))
+        assert console.query_one("#console-control-attach-context").display is True
+
+        await pilot.click("#console-control-attach-context")
+        await pilot.pause(0.2)
+
+        assert console.query_one("#console-left-rail").display is True
+        assert console.query_one("#console-right-rail").display is False
+        stored = _stored_rail_preferences(app)
+        assert stored["left_open"] is True
+        assert stored["right_open"] is False
+        file_picker.assert_not_awaited()
 
 
 @pytest.mark.asyncio
