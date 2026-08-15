@@ -79,6 +79,7 @@ def _resolution(
         fallback_reason="none",
         cache_identity=(
             "visual-identity-v1",
+            "actor_kind=character",
             f"actor_id={character_id}",
             f"requested={requested}",
             f"manual={manual or ''}",
@@ -811,13 +812,272 @@ async def test_visual_identity_cache_uses_the_complete_resolution_identity(
     assert (character_id, "thinking") not in screen._console_expression_spec_cache
 
     identity["value"] = "pack_version_id=2|asset_id=9|sha256=bbb"
-    screen._last_console_avatar_scope = None
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._session.invalidate_visual_identity_actor("character", character_id)
     second_identity = screen._active_character_avatar["resolution_cache_identity"]
 
     assert second_identity != first_identity
+    assert first_identity not in screen._console_expression_spec_cache
     assert second_identity in screen._console_expression_spec_cache
     assert len(calls) >= 2
+
+
+@pytest.mark.parametrize(
+    "context_change", ("actor", "session", "manual", "state", "config", "store")
+)
+@pytest.mark.asyncio
+async def test_decode_completion_live_fences_every_avatar_request_input(
+    console_screen_with_db, monkeypatch, context_change
+):
+    """B completes before blocked A; no stale request may paint afterward."""
+
+    app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    controller = screen._console_chat_controller
+    original_store = controller.store
+    state = {"value": "thinking"}
+
+    def expression_state(store, _session_id, *, react_enabled):
+        if not react_enabled:
+            return "idle"
+        if store is not original_store:
+            return "speaking"
+        return state["value"]
+
+    def resolve(scope, requested_state, manual_key):
+        actor_id = int(scope[2])
+        return _resolution(
+            actor_id,
+            requested=requested_state,
+            manual=manual_key,
+            source="pack_manual" if manual_key else "pack_operational",
+            identity_suffix=f"sha256={scope[0]}:{requested_state}:{manual_key or '-'}",
+            image=_avatar_png((actor_id % 255, 20, 30)),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.chat_screen.resolve_console_expression_state",
+        expression_state,
+    )
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    _view, cache = screen._ensure_console_image_view()
+    original_prepare = cache.prepare
+    started = threading.Event()
+    release = threading.Event()
+    first = {"blocked": False}
+
+    def prepare(cache_key, image_bytes):
+        if not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            assert release.wait(timeout=5)
+        return original_prepare(cache_key, image_bytes)
+
+    monkeypatch.setattr(cache, "prepare", prepare)
+    painted: list[tuple[str, ...] | None] = []
+    original_build = screen._build_character_avatar_widget
+
+    def build(spec):
+        painted.append(
+            tuple(spec["resolution_cache_identity"]) if spec is not None else None
+        )
+        return original_build(spec)
+
+    monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
+
+    stale = asyncio.create_task(
+        screen._refresh_active_character_avatar_if_scope_changed(force=True)
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+    if context_change == "actor":
+        replacement_id = db.add_character_card(
+            {"name": "Mira", "image": _avatar_png((2, 2, 2))}
+        )
+        _set_active_console_character(screen, replacement_id, "Mira")
+    elif context_change == "session":
+        original_store.create_session(
+            session_id="replacement-session",
+            character_id=character_id,
+            character_name="Samira",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+        )
+    elif context_change == "manual":
+        screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    elif context_change == "state":
+        state["value"] = "speaking"
+    elif context_change == "config":
+        _set_chat_images_setting(app, "react_character_expressions", False)
+    else:
+        replacement_store = type(
+            "ReplacementStore",
+            (),
+            {"active_session_id": original_store.active_session_id},
+        )()
+        controller.store = replacement_store
+
+    await screen._refresh_active_character_avatar_if_scope_changed(force=True)
+    current_identity = tuple(
+        screen._active_character_avatar["resolution_cache_identity"]
+    )
+    current_paint = len(painted)
+    release.set()
+    await stale
+    controller.store = original_store
+
+    assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
+        current_identity
+    )
+    assert painted[current_paint:] == []
+
+
+@pytest.mark.parametrize("blocked_await", ("remove", "mount"))
+@pytest.mark.asyncio
+async def test_render_awaits_never_resume_a_stale_avatar_paint(
+    console_screen_with_db, monkeypatch, blocked_await
+):
+    """Once B paints, A may not mount or update labels after either await."""
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+
+    def resolve(_scope, requested_state, manual_key):
+        return _resolution(
+            character_id,
+            requested=requested_state,
+            manual=manual_key,
+            source="pack_manual" if manual_key else "pack_operational",
+            identity_suffix=f"sha256={manual_key or 'automatic'}",
+            image=_avatar_png((20 if manual_key else 10, 30, 40)),
+        )
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.chat_screen.resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+    holder = screen.query_one("#console-character-avatar")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    first = {"blocked": False}
+    original_remove = holder.remove_children
+    original_mount = holder.mount
+
+    async def remove_children():
+        await original_remove()
+        if blocked_await == "remove" and not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            await release.wait()
+
+    async def mount(*widgets, **kwargs):
+        await original_mount(*widgets, **kwargs)
+        if blocked_await == "mount" and not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            await release.wait()
+
+    monkeypatch.setattr(holder, "remove_children", remove_children)
+    monkeypatch.setattr(holder, "mount", mount)
+    builds: list[tuple[str, ...] | None] = []
+    original_build = screen._build_character_avatar_widget
+
+    def build(spec):
+        builds.append(
+            tuple(spec["resolution_cache_identity"]) if spec is not None else None
+        )
+        return original_build(spec)
+
+    monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
+    name = screen.query_one("#console-character-name", Static)
+    reaction = screen.query_one("#console-character-reaction-state", Static)
+    original_name_update = name.update
+    original_reaction_update = reaction.update
+    updates: list[str] = []
+
+    def update_name(value):
+        updates.append("name")
+        return original_name_update(value)
+
+    def update_reaction(value):
+        updates.append("reaction")
+        return original_reaction_update(value)
+
+    monkeypatch.setattr(name, "update", update_name)
+    monkeypatch.setattr(reaction, "update", update_reaction)
+
+    stale = asyncio.create_task(
+        screen._refresh_active_character_avatar_if_scope_changed(force=True)
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    await screen._refresh_active_character_avatar_if_scope_changed(force=True)
+    current_identity = tuple(
+        screen._active_character_avatar["resolution_cache_identity"]
+    )
+    builds_after_current = len(builds)
+    updates_after_current = len(updates)
+    release.set()
+    await stale
+
+    assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
+        current_identity
+    )
+    assert builds[builds_after_current:] == []
+    assert updates[updates_after_current:] == []
+
+
+def test_visual_identity_expected_errors_fail_soft(monkeypatch):
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = object
+    scope = ("session-a", "character", "7")
+
+    def expected_error(*_args, **_kwargs):
+        raise ValueError("invalid visual identity metadata")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.resolve_visual_identity",
+        expected_error,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.VisualIdentityRepository.get_active_actor_pack",
+        expected_error,
+    )
+
+    assert controller._resolve_visual_identity(scope, "idle", None) is None
+    assert controller._visual_identity_options(scope) == ()
+
+
+def test_visual_identity_unexpected_programming_errors_propagate(monkeypatch):
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = object
+    scope = ("session-a", "character", "7")
+
+    def programming_error(*_args, **_kwargs):
+        raise RuntimeError("programming defect")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.resolve_visual_identity",
+        programming_error,
+    )
+    with pytest.raises(RuntimeError, match="programming defect"):
+        controller._resolve_visual_identity(scope, "idle", None)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.VisualIdentityRepository.get_active_actor_pack",
+        programming_error,
+    )
+    with pytest.raises(RuntimeError, match="programming defect"):
+        controller._visual_identity_options(scope)
 
 
 @pytest.mark.asyncio

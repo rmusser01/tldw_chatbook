@@ -117,6 +117,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
+from sqlite3 import Error as SQLiteError
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
@@ -438,7 +439,7 @@ class ConsoleSessionController:
         session_id_for_workspace_conversation: Callable[[str], str | None],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
         visual_identity_db_accessor: Callable[[], Any | None],
-        refresh_character_avatar: Callable[[], Any],
+        refresh_character_avatar: Callable[..., Any],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -803,6 +804,15 @@ class ConsoleSessionController:
             return None
         return key.rsplit(":", 1)[-1].replace("_", " ").replace("-", " ").title()
 
+    async def invalidate_visual_identity_actor(
+        self, actor_kind: str, actor_id: int | str
+    ) -> None:
+        """Invalidate and refresh one actor after Visual Identity publication."""
+
+        await self._refresh_character_avatar_fn(
+            invalidate_actor=(str(actor_kind), str(actor_id))
+        )
+
     def _visual_identity_request_context(
         self,
     ) -> tuple[tuple[str, str, str] | None, str, str | None]:
@@ -838,11 +848,13 @@ class ConsoleSessionController:
                 requested_state=requested_state,
                 manual_expression_key=manual_expression_key,
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Console reaction resolution failed for actor_kind={} actor_id={}",
+        except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+            logger.debug(
+                "Console reaction resolution failed for actor_kind={} actor_id={} "
+                "error_type={}",
                 actor_kind,
                 actor_id,
+                type(exc).__name__,
             )
             return None
 
@@ -859,11 +871,13 @@ class ConsoleSessionController:
             graph = VisualIdentityRepository(db).get_active_actor_pack(
                 actor_kind, actor_id
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Console reaction inventory failed for actor_kind={} actor_id={}",
+        except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+            logger.debug(
+                "Console reaction inventory failed for actor_kind={} actor_id={} "
+                "error_type={}",
                 actor_kind,
                 actor_id,
+                type(exc).__name__,
             )
             return ()
         if graph is None:

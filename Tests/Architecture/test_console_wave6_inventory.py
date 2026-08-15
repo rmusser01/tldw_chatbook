@@ -274,11 +274,11 @@ WAVE6_GROUPS = {
                 "_current_console_rail_character_id",
                 "_current_console_rail_character_name",
                 "_fetch_character_card_for_avatar",
-                "_fetch_expression_image_bytes",
                 "_apply_console_character_choice_async",
                 "_refresh_active_character_avatar_if_scope_changed",
             }
         ),
+        deleted=frozenset({"_fetch_expression_image_bytes"}),
         raw_lines=281,
     ),
     "fleet": Wave6Group(

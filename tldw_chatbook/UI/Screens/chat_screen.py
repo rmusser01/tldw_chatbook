@@ -10034,12 +10034,47 @@ class ChatScreen(BaseAppScreen):
             return None
 
     async def _refresh_active_character_avatar_if_scope_changed(
-        self, *, force: bool = False
+        self,
+        *,
+        force: bool = False,
+        invalidate_actor: tuple[str, str] | None = None,
     ) -> None:
         """Resolve and paint one race-fenced Visual Identity avatar."""
-        if not resolve_show_character_avatar(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        ):
+        if invalidate_actor is not None:
+            actor_kind, actor_id = invalidate_actor
+            actor_tokens = (f"actor_kind={actor_kind}", f"actor_id={actor_id}")
+
+            def belongs_to_actor(identity: tuple[str, ...]) -> bool:
+                return all(token in identity for token in actor_tokens)
+
+            for identity in tuple(self._console_expression_spec_cache):
+                if belongs_to_actor(identity):
+                    self._console_expression_spec_cache.pop(identity, None)
+            active_identity = (
+                self._active_character_avatar.get("resolution_cache_identity", ())
+                if self._active_character_avatar is not None
+                else ()
+            )
+            if belongs_to_actor(tuple(active_identity)):
+                self._active_character_avatar = None
+            previous_actor = (
+                self._last_console_avatar_scope[0]
+                if isinstance(self._last_console_avatar_scope, tuple)
+                and self._last_console_avatar_scope
+                else None
+            )
+            if (
+                isinstance(previous_actor, tuple)
+                and len(previous_actor) == 3
+                and previous_actor[1:] == (actor_kind, actor_id)
+            ):
+                self._last_console_avatar_scope = None
+            force = True
+
+        def live_config() -> Mapping[str, Any]:
+            return getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+
+        if not resolve_show_character_avatar(live_config()):
             # Feature is config-off: the rail section isn't composed, so
             # skip the off-thread DB fetch + PIL decode below entirely and
             # keep the cache empty for when the section is next shown.
@@ -10052,31 +10087,76 @@ class ChatScreen(BaseAppScreen):
             # the next config-on tick.
             self._last_console_avatar_scope = None
             return
-        controller = getattr(self, "_console_chat_controller", None)
-        store = getattr(controller, "store", None) if controller is not None else None
-        react = resolve_react_character_expressions(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        )
 
-        def current_request() -> tuple[tuple[str, str, str] | None, str, str | None]:
+        def current_request() -> tuple[
+            tuple[str, str, str] | None,
+            str,
+            str | None,
+            int,
+            str | None,
+            bool,
+            bool,
+            str | None,
+        ]:
+            config = live_config()
+            controller = getattr(self, "_console_chat_controller", None)
+            store = (
+                getattr(controller, "store", None) if controller is not None else None
+            )
             actor = self._session._current_visual_identity_actor_scope()
             session_id = getattr(store, "active_session_id", None) if store else None
+            react = resolve_react_character_expressions(config)
             state = resolve_console_expression_state(
                 store, session_id, react_enabled=react
             )
             manual = self._session._manual_reaction_key(actor) if actor else None
-            return actor, state, manual
+            return (
+                actor,
+                state,
+                manual,
+                id(store),
+                session_id,
+                react,
+                resolve_show_character_avatar(config),
+                self._current_console_rail_character_name(),
+            )
 
-        actor_scope, state, manual_key = current_request()
+        request = current_request()
+        actor_scope, state, manual_key = request[:3]
         scope = (actor_scope, state, manual_key)
         if not force and scope == self._last_console_avatar_scope:
             return
         self._last_console_avatar_scope = scope
-        name = self._current_console_rail_character_name()
-        self._active_character_avatar_name = name
+        name = request[-1]
+        manual_label = (
+            manual_key.rsplit(":", 1)[-1].replace("_", " ").replace("-", " ").title()
+            if manual_key
+            else None
+        )
+
+        async def paint(spec: dict | None) -> None:
+            if current_request() != request or not self.is_mounted:
+                return
+            self._active_character_avatar = spec
+            self._active_character_avatar_name = name
+
+            def is_current() -> bool:
+                return (
+                    current_request() == request
+                    and self.is_mounted
+                    and self._active_character_avatar is spec
+                    and self._active_character_avatar_name == name
+                )
+
+            await self._render_character_avatar_into_section(
+                spec=spec,
+                name=name,
+                manual_label=manual_label,
+                is_current=is_current,
+            )
+
         if actor_scope is None:
-            self._active_character_avatar = None
-            await self._render_character_avatar_into_section()
+            await paint(None)
             return
         character_id = int(actor_scope[2])
         resolution = await asyncio.to_thread(
@@ -10085,17 +10165,15 @@ class ChatScreen(BaseAppScreen):
             state,
             manual_key,
         )
-        if current_request() != scope or not self.is_mounted:
+        if current_request() != request or not self.is_mounted:
             return
         if resolution is None:
-            self._active_character_avatar = None
-            await self._render_character_avatar_into_section()
+            await paint(None)
             return
         identity = resolution.cache_identity
         cached = self._console_expression_spec_cache.get(identity)
         if cached is not None:
-            self._active_character_avatar = cached
-            await self._render_character_avatar_into_section()
+            await paint(cached)
             return
         _, cache = self._ensure_console_image_view()
         mode = getattr(self, "_console_image_default_mode", "pixels")
@@ -10113,7 +10191,7 @@ class ChatScreen(BaseAppScreen):
         try:
             if resolution.image_bytes:
                 ok = await asyncio.to_thread(cache.prepare, key, resolution.image_bytes)
-                if current_request() != scope or not self.is_mounted:
+                if current_request() != request or not self.is_mounted:
                     return
                 if ok:
                     spec["pil"] = cache.get_pil(key)
@@ -10124,7 +10202,7 @@ class ChatScreen(BaseAppScreen):
                     manual_key,
                 )
                 if (
-                    current_request() != scope
+                    current_request() != request
                     or not self.is_mounted
                     or current is None
                     or current.cache_identity != identity
@@ -10132,7 +10210,7 @@ class ChatScreen(BaseAppScreen):
                     return
         except Exception:
             logger.opt(exception=True).debug("avatar: expression decode failed")
-        if current_request() != scope or not self.is_mounted:
+        if current_request() != request or not self.is_mounted:
             return
         self._console_expression_spec_cache[identity] = spec
         # Bound the cache: evict oldest insertion-ordered entries (dicts
@@ -10142,10 +10220,16 @@ class ChatScreen(BaseAppScreen):
             del self._console_expression_spec_cache[
                 next(iter(self._console_expression_spec_cache))
             ]
-        self._active_character_avatar = spec
-        await self._render_character_avatar_into_section()
+        await paint(spec)
 
-    async def _render_character_avatar_into_section(self) -> None:
+    async def _render_character_avatar_into_section(
+        self,
+        *,
+        spec: dict | None,
+        name: str | None,
+        manual_label: str | None,
+        is_current: Callable[[], bool],
+    ) -> None:
         """Re-mount the avatar widget + name into the (already-composed) section.
 
         Async because Textual `Widget.mount()` returns an `AwaitMount` that
@@ -10154,20 +10238,34 @@ class ChatScreen(BaseAppScreen):
         DOM state (not just the cached spec dict) right after the refresh
         awaits this.
         """
+        if not is_current():
+            return
         try:
             holder = self.query_one("#console-character-avatar", Container)
         except QueryError:
             return  # section not composed (config off / not mounted)
         try:
+            if not is_current():
+                return
             await holder.remove_children()
-            await holder.mount(
-                self._build_character_avatar_widget(self._active_character_avatar)
-            )
+            if not is_current():
+                return
+            avatar_widget = self._build_character_avatar_widget(spec)
+            if not is_current():
+                return
+            await holder.mount(avatar_widget)
+            if not is_current():
+                if avatar_widget.parent is holder:
+                    await avatar_widget.remove()
+                return
             try:
-                self.query_one("#console-character-name", Static).update(
+                name_widget = self.query_one("#console-character-name", Static)
+                if not is_current():
+                    return
+                name_widget.update(
                     Text(
                         sanitize_character_display_label(
-                            self._active_character_avatar_name,
+                            name,
                             max_characters=180,
                         )
                         or "No character in this chat"
@@ -10176,8 +10274,12 @@ class ChatScreen(BaseAppScreen):
             except QueryError:
                 pass
             try:
-                manual_label = self._session._manual_reaction_label_for_current_actor()
-                self.query_one("#console-character-reaction-state", Static).update(
+                reaction_widget = self.query_one(
+                    "#console-character-reaction-state", Static
+                )
+                if not is_current():
+                    return
+                reaction_widget.update(
                     f"Reaction: {manual_label} (manual)"
                     if manual_label
                     else "Reaction: Automatic"

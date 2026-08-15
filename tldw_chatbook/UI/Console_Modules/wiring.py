@@ -380,7 +380,9 @@ def build_console_controllers(
             lambda: getattr(screen.app_instance, "chachanotes_db", None)
         ),
         refresh_character_avatar=(
-            lambda: screen._refresh_active_character_avatar_if_scope_changed(force=True)
+            lambda **kwargs: screen._refresh_active_character_avatar_if_scope_changed(
+                force=True, **kwargs
+            )
         ),
     )
     #: Dictation's own state and lifecycle moved to
