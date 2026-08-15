@@ -22,6 +22,7 @@ documentation:
   - Docs/superpowers/specs/2026-08-09-audio-cpp-guided-model-setup-design.md
   - Docs/superpowers/specs/2026-08-14-audio-cpp-windows-lifecycle-parity-design.md
   - Docs/superpowers/plans/2026-08-14-task-13208-audio-cpp-windows-lifecycle-parity.md
+  - Docs/superpowers/qa/audio-cpp-windows-2026-08-14/README.md
 priority: high
 ---
 
@@ -70,3 +71,28 @@ Detailed executable plan:
 8. Add a hermetic Windows 3.12 CI gate and one parameterized PowerShell UAT.
 9. Close the task only after hosted Windows evidence, clean shutdown, and human
    audible confirmation pass; otherwise keep it In Progress.
+
+## Implementation Notes
+
+- Added one stdlib Win32 artifact capability and reused the existing scanner,
+  generated-config, clone-materialization, supervisor, managed-store, Settings,
+  and Speech Lab ownership boundaries. No dependency, secondary supervisor,
+  Job Object, descendant ownership claim, or Windows-only UX was added.
+- Windows 10+ x86/x64 on Python 3.12+ is capability-gated. ARM remains
+  unsupported pending separately provisioned runtime/backend evidence and UAT.
+- Amended ADR-029 only for verified protected-DACL posture on generated
+  audio.cpp configs and operation-scoped clone references; all raw native
+  failures remain behind bounded path-free outcomes.
+- Added a required hermetic `windows-latest` x86/x64 job and a generic
+  parameterized PowerShell UAT. The UAT launches a user-provided server in
+  place, copies only the clone model package into its disposable managed store,
+  requires structural text/clone WAV evidence, and cannot report final pass
+  without explicit audible-and-intelligible confirmation.
+- Host-side focused verification reached 1,037 passing tests plus two expected
+  native-Windows skips. Four sandbox-denied loopback real-child tests passed
+  when granted loopback access. Two unrelated mounted UI baseline failures
+  reproduced outside this change; changed-file Ruff, format, scoped mypy, CI
+  shape, harness, and diff gates pass.
+- Release gate: hosted Windows CI and provisioned objective/audible UAT evidence
+  are not yet available for both x86 and x64. TASK-13208 therefore remains In
+  Progress and all acceptance criteria remain unchecked.

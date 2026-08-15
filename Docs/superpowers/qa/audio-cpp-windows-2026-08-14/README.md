@@ -2,6 +2,10 @@
 
 Status: **NOT RUN — TASK-13208 remains In Progress**
 
+Implementation checkpoint: branch `codex/task-13208-windows-audio-cpp`, UAT
+harness commit `5a3b2e22e`. Hosted Windows results and provisioned machine
+evidence are pending; this document does not claim either architecture yet.
+
 This handoff validates Windows 10+ on x86 or x64 with Python 3.12+. ARM is not
 claimed. The checked-in harness is generic and contains no workstation path,
 username, server build, model version, or device assumption.
@@ -85,3 +89,16 @@ If either x86 or x64 lacks a compatible provisioned server/package combination,
 or any objective or audible step is unavailable, record that tuple as PARTIAL
 and leave TASK-13208 In Progress. Evidence from one architecture must not be
 projected onto the other.
+
+## Host-side pre-handoff evidence
+
+- Focused lifecycle/UI/CI/harness matrix: 1,037 passed, two native-Windows
+  probes skipped on the non-Windows host.
+- Four real-child supervisor cases initially denied by the restricted loopback
+  sandbox: all four passed with loopback access.
+- Two unrelated mounted UI baseline tests remain failing and were previously
+  reproduced at the parent commit; neither failure intersects the Windows diff.
+- Changed Python files pass Ruff and Ruff format; the eight scoped production
+  modules pass mypy; CI shape, harness tests, and `git diff --check` pass.
+- No new reusable incident was found beyond the repository's existing testing
+  and live-verification lessons, so no lessons file was changed.
