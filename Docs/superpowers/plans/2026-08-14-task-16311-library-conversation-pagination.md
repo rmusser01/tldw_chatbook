@@ -409,7 +409,7 @@ git commit -m "refactor(library): validate conversation page display"
 Using the real `LibraryHarness` and mounted controls, assert:
 
 - initial load renders `Loading page 1…` without a title count;
-- first failure keeps the filter, renders `No page loaded · Total unavailable`, and mounts enabled `#library-conversations-retry` while both pagers are disabled;
+- first failure keeps the filter, exposes retryable screen state, and renders `No page loaded · Total unavailable` while both pagers are disabled; Task 5 owns mounting `#library-conversations-retry` in the source canvas;
 - a failed scope change retains old rows/applied title/range, the requested input text, and `Filter wasn’t applied; showing previous results.`;
 - Retry uses the requested scope, while a later successful authoritative request atomically replaces applied scope;
 - save/restore persists only the last successful applied page/query, never records, loading/error, failed requested scope, or unsubmitted drafts;
@@ -456,15 +456,15 @@ self._library_conversation_selection_notice = ""
 self._library_conversation_focus_after_apply = ""
 ```
 
-Preparation records requested scope, invalidates generation, captures focus intent, clears current-page selection with notice, and publishes loading without mutating applied page/query/total. The loader validates the envelope before applying all applied fields together. Malformed/service failures remain in the canvas and mount Retry.
+Preparation records requested scope, invalidates generation, captures focus intent, clears current-page selection with notice, and publishes loading without mutating applied page/query/total. The loader validates the envelope before applying all applied fields together. Malformed/service failures remain in the canvas and expose retryable state.
 
-Implement at most one automatic limit/offset clamp. A second out-of-range response enters stale state exactly as the design specifies. `on_unmount` increments the Conversation generation and cancels screen-owned debounce/timers without claiming to stop an already-running thread call.
+Implement at most one automatic limit/offset clamp. A second out-of-range response enters stale state exactly as the design specifies. Malformed/service failures expose retryable screen state without crossing into the Task 5 canvas-rendering owner. `on_unmount` increments the Conversation generation and cancels screen-owned debounce/timers without claiming to stop an already-running thread call.
 
 Save only applied page/query. Restore exact non-boolean positive integers after checked offset arithmetic; otherwise page 1. Do not restore records, freshness, loading, errors, stale copy, requested-but-unapplied scope, or selection.
 
 - [ ] **Step 7: Replace point-lookup/prepend deep linking with the locator**
 
-In `_open_library_item_by_id("conversations", ...)`, preserve dirty-editor admission and navigation precedence, then call the source locator. Validate and atomically apply its page before selecting the target. Remove the page-1 prepend/truncate branch and any total fabrication. Unavailable targets retain the existing warning.
+In `_open_library_item_by_id("conversations", ...)`, preserve dirty-editor admission and navigation precedence, then call the source locator. Validate and atomically apply its page before selecting the target. Remove the page-1 prepend/truncate branch and any total fabrication. Unavailable targets retain the existing warning and retryable state; Task 5 mounts the Retry control.
 
 - [ ] **Step 8: Run the exact mounted group and focused Conversation suites**
 
