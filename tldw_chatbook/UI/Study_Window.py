@@ -97,11 +97,12 @@ class StructuredLearningWidget(Widget):
                         disabled=True,
                     )
 
-            # Add new topic section
-            yield Label("Add New Topic:", classes="subsection-title")
-            with Horizontal(classes="form-row"):
-                yield Input(placeholder="Topic title...", id="new-topic-title")
-                yield Button("Add Topic", id="add-topic-btn", variant="primary")
+            # task-16195: the "Add New Topic" row (Input #new-topic-title +
+            # Button #add-topic-btn) was removed here. Its only handler lived
+            # in the legacy Event_Handlers/Study_Events table, which nothing
+            # dispatches since the Study rebuild, and no code in the app reads
+            # the topics table back -- the button was a dead affordance whose
+            # restored flow would have been a write-only sink.
 
 
 class AnkiFlashcardsWidget(Widget):

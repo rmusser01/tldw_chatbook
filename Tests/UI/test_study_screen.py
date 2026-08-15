@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.containers import Container
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, Tree
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import (
@@ -725,3 +725,31 @@ async def test_study_window_switch_to_global_button_clears_scope_and_hides_banne
         assert screen.current_scope.scope_type == StudyScopeType.GLOBAL
         assert banner.display is False
         app_instance.open_notes_workspace.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_structured_learning_pane_composes_no_orphaned_add_topic_controls():
+    """task-16195: the Study rebuild left the legacy add-topic flow without a
+    dispatcher, and nothing in the app reads the topics table, so the
+    Structured Learning pane must not render the dead 'Add New Topic'
+    affordance (button + title input) while still rendering its topic tree."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        # The pane itself still renders: the topic tree is composed...
+        study_window.query_one("#topic-tree", Tree)
+        # ...but the orphaned add-topic affordance is gone end-to-end.
+        assert not study_window.query("#add-topic-btn")
+        assert not study_window.query("#new-topic-title")
