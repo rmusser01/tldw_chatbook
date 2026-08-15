@@ -14,6 +14,12 @@ from textual.screen import ModalScreen, Screen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_prompts_state import (
+    begin_prompt_collection_catalog,
+)
+from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+    PromptCollectionManagerModal,
+)
 from tldw_chatbook.UI.Screens.skills_screen import (
     SkillTrustBootstrapModal,
     SkillTrustPassphraseModal,
@@ -352,6 +358,60 @@ def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
             if key == "escape"
         ]
         assert escape_actions == ["request_safe_cancel"]
+
+
+def _prompt_collection_manager_modal() -> PromptCollectionManagerModal:
+    async def load(*, query: str, offset: int):
+        del offset
+        return begin_prompt_collection_catalog(query=query, request_token=1)
+
+    async def unused(*_args, **_kwargs):
+        raise AssertionError("collection mutation was not requested")
+
+    return PromptCollectionManagerModal(
+        mode="browse",
+        selected_collection_id=None,
+        staged_collection_ids=(),
+        load_catalog=load,
+        create_collection=unused,
+        rename_collection=unused,
+    )
+
+
+def test_prompt_collection_modal_contract_adopts_exact_safe_boundary() -> None:
+    assert issubclass(PromptCollectionManagerModal, SafeModalDismissMixin)
+    assert (
+        PromptCollectionManagerModal.SAFE_MODAL_CONTENT == "#prompt-collection-manager"
+    )
+    assert [
+        action
+        for binding in PromptCollectionManagerModal.BINDINGS
+        for key, action in [_binding_key_action(binding)]
+        if key == "escape"
+    ] == ["request_safe_cancel"]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_prompt_collection_modal_contract_idle_cancel_returns_none(
+    source: str,
+) -> None:
+    app = _FileNotesModalHarness()
+    modal = _prompt_collection_manager_modal()
+
+    async with app.run_test(size=(120, 48)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+
+        if source == "visible":
+            await pilot.click("#prompt-collection-manager-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert app.results == [None]
 
 
 @pytest.mark.parametrize(
