@@ -76,15 +76,19 @@ def _is_safe_focus_target(widget: Widget | None) -> bool:
 
 def _restore_focus_after_dismissal(
     app: App[Any],
+    revealed_screen: Screen[Any],
     opener_ref: ReferenceType[Widget] | None,
     opener_id: str | None,
 ) -> None:
-    revealed_screen = app.screen
+    if app.screen is not revealed_screen:
+        return
+
     opener = opener_ref() if opener_ref is not None else None
     if _is_safe_focus_target(opener):
         assert opener is not None
-        opener.focus()
-        return
+        if opener.screen is revealed_screen:
+            opener.focus()
+            return
 
     if opener_id is not None:
         eligible_matches = [
@@ -269,11 +273,13 @@ class SafeModalDismissMixin:
         opener_id = self._safe_opener_focus_id
         backdrop_event = self._safe_backdrop_event_in_attempt
         host.dismiss(result)
+        revealed_screen = app.screen
         if backdrop_event is not None:
             _shield_revealed_screen_from_click_chain(app, *backdrop_event)
-        app.screen.call_after_refresh(
+        revealed_screen.call_after_refresh(
             _restore_focus_after_dismissal,
             app,
+            revealed_screen,
             opener_ref,
             opener_id,
         )

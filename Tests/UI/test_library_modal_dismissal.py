@@ -1230,6 +1230,12 @@ class _LibraryFocusModal(SafeModalDismissMixin, ModalScreen[None]):
             yield Static("Library modal")
 
 
+class _CompetingFocusModal(ModalScreen[None]):
+    def compose(self) -> ComposeResult:
+        yield Input(id=_STABLE_OPENER_ID)
+        yield Input(id="new-modal-current-focus")
+
+
 async def _mount_focus_modal(
     app: _LibraryFocusHarness,
     pilot,
@@ -1358,6 +1364,56 @@ async def test_stable_focus_rejects_an_inaccessible_opener_ancestor_for_replacem
 
         assert original.is_mounted
         assert app.host.focused is replacement
+
+
+@pytest.mark.asyncio
+async def test_stable_focus_ignores_a_callback_after_another_modal_is_pushed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _LibraryFocusHarness()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal, original = await _mount_focus_modal(app, pilot)
+        original_call_after_refresh = app.host.call_after_refresh
+        deferred: list[
+            tuple[Callable[..., object], tuple[object, ...], dict[str, object]]
+        ] = []
+
+        def delay_focus_restoration(
+            callback: Callable[..., object],
+            *args: object,
+            **kwargs: object,
+        ) -> bool:
+            if callback.__name__ == "_restore_focus_after_dismissal":
+                deferred.append((callback, args, kwargs))
+                return True
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(
+            app.host,
+            "call_after_refresh",
+            delay_focus_restoration,
+        )
+        await modal.action_request_safe_cancel()
+        await pilot.pause()
+        assert app.screen is app.host
+        assert len(deferred) == 1
+
+        original.disabled = True
+        competing_modal = _CompetingFocusModal()
+        app.push_screen(competing_modal)
+        await pilot.pause()
+        current_focus = competing_modal.query_one("#new-modal-current-focus", Input)
+        current_focus.focus()
+        await pilot.pause()
+        assert competing_modal.focused is current_focus
+
+        callback, args, kwargs = deferred.pop()
+        callback(*args, **kwargs)
+        await pilot.pause()
+
+        assert app.screen is competing_modal
+        assert competing_modal.focused is current_focus
 
 
 @pytest.mark.parametrize(
