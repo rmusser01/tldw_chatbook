@@ -64,7 +64,6 @@ class SelectDirectory(FileSystemPickerScreen):
 
     def on_mount(self) -> None:
         """Configure the dialog once the DOM is ready."""
-        super().on_mount()  # Call parent's on_mount
         navigation = self.query_one(DirectoryNavigation)
         navigation.show_files = False
 
@@ -85,16 +84,6 @@ class SelectDirectory(FileSystemPickerScreen):
         Args:
             event: The event with the selection information in.
         """
-        # This combines the original _show_selected from SelectDirectory
-        # and the _on_directory_changed from FileSystemPickerScreen
-        # We need to ensure error clearing and path label (if kept separate) update happen.
-        # For now, the main path label is in FileSystemPickerScreen.
-        # This handler is specific to SelectDirectory's path_input.
-
-        super()._on_directory_changed(
-            event
-        )  # Call parent handler for main path label and error clearing
-        event.stop()  # Stop event propagation if necessary, depending on desired interactions
         path_input = self.query_one("#path_input", Input)
         path_input.value = str(event.control.location)
 

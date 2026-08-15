@@ -29,7 +29,6 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryE
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
-from .modal_dismissal import SafeModalDismissMixin
 from ..config import (
     get_cli_setting,
     save_setting_to_cli_config,
@@ -947,7 +946,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
 SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 
 
-class EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog):
+class EnhancedFileDialog(BaseFileDialog):
     """Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search"""
 
     DEFAULT_CSS = BaseFileDialog.DEFAULT_CSS + """
@@ -1715,10 +1714,10 @@ class EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog):
         self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#cancel")
-    def _cancel_safe(self, event: Button.Pressed) -> None:
+    async def _cancel_safe(self, event: Button.Pressed) -> None:
         """Route the visible Cancel button through terminal safe dismissal."""
         event.stop()
-        self.dismiss_safe_once(None)
+        await self.request_safe_cancel(source="visible")
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.

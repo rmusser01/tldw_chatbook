@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual import on
+from textual import events, on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -247,6 +247,108 @@ async def test_confirm_and_cancel_return_decisions(tmp_path: Path) -> None:
         await pilot.click("#model-install-cancel")
         await pilot.pause()
         assert decisions == [True, False]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_exact_negative_once(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(
+        _report(tmp_path / "managed", license_id="NOASSERTION"),
+        model_label="Parakeet v2",
+        required_acknowledgment="I reviewed the source.",
+    )
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        assert modal.query_one(".model-install-modal")
+
+        if source == "visible":
+            await pilot.click("#model-install-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert results[0] is False
+    assert modal._acknowledged is False
+
+
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_inside_and_non_primary_stay_open(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.click(".model-plan-panel")
+        event = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=3,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+        await modal._dispatch_message(event)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert results == []
+
+
+@pytest.mark.asyncio
+async def test_model_install_library_modal_contract_positive_is_exact_true(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.click("#model-install-confirm")
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert results[0] is True
+    assert type(results[0]) is bool
+
+
+@pytest.mark.asyncio
+async def test_model_install_repeated_input_dismisses_once(tmp_path: Path) -> None:
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallModal
+
+    app = _ModalApp()
+    results: list[bool] = []
+    modal = ModelInstallModal(_report(tmp_path / "managed"), model_label="Parakeet v2")
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+
+    assert results == [False]
 
 
 @pytest.mark.asyncio

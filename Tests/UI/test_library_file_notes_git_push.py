@@ -1295,8 +1295,9 @@ async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
 
 
 @pytest.mark.asyncio
-async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
+async def test_workspace_push_review_adopts_operations_and_restores_endpoint_details_focus_once(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Using returned waiters as identity or bypassing authorization must fail."""
     owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
@@ -1318,6 +1319,16 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
     preflight_result = PushPreflightResult("review", handle, review)
     service.plan_push_operation("local_proof", local_result, local_release)
     service.plan_push_operation("preflight", preflight_result, preflight_release)
+    details_focus_calls = 0
+    original_focus = Button.focus
+
+    def count_details_focus(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal details_focus_calls
+        if self.id == "file-notes-git-push-review-details":
+            details_focus_calls += 1
+        return original_focus(self, *args, **kwargs)
+
+    monkeypatch.setattr(Button, "focus", count_details_focus)
 
     async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
         await _until(
@@ -1408,9 +1419,11 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
             ),
             "review endpoint details did not open",
         )
+        details_focus_calls = 0
         await pilot.press("escape")
         await pilot.pause()
         assert details.has_focus
+        assert details_focus_calls == 1
 
         service.cancel_push_result = True
         workspace.query_one("#file-notes-git-push-back", Button).press()
@@ -1421,6 +1434,76 @@ async def test_workspace_push_review_adopts_retained_operations_and_authorizes(
         )
         assert service.cancel_push_calls == [binding]
         assert workspace._push_review_handle is None
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_endpoint_details_close_rejects_stale_push_operation_focus(
+    tmp_path: Path,
+) -> None:
+    """Closing old details must not focus controls for a newer push operation."""
+    owner, _binding, replica, _service, workspace = _push_workspace_fixture(tmp_path)
+    projection = _push_panel_review_projection()
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._push_review_projection = projection
+        workspace._push_view_phase = "review"
+        workspace._push_operation_id = 41
+        workspace._git_panel_widget.render_push_review(
+            projection,
+            operation_id=41,
+        )
+        await pilot.pause()
+
+        technical = workspace.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        )
+        technical.collapsed = False
+        await pilot.pause()
+        details = workspace.query_one(
+            "#file-notes-git-push-review-details",
+            Button,
+        )
+        details.focus()
+        details.press()
+        await _until(
+            pilot,
+            lambda: isinstance(
+                workspace.app.screen,
+                git_panel_module.PushEndpointDetailsDialog,
+            ),
+            "review endpoint details did not open",
+        )
+
+        workspace._git_panel_widget.render_push_review(
+            projection,
+            operation_id=42,
+        )
+        await pilot.pause()
+        workspace.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        ).collapsed = False
+        await pilot.pause()
+        back = workspace.query_one("#file-notes-git-push-back", Button)
+        back.focus()
+        assert back.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert back.has_focus
 
     await workspace.shutdown()
     owner.shutdown()
