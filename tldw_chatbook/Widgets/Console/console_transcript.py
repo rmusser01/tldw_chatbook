@@ -67,6 +67,10 @@ from tldw_chatbook.Widgets.Console.console_selection import (
     cap_quote,
     offset_for_cell,
 )
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionMenu,
+    ConsoleSelectionQuoteRequested,
+)
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
@@ -1896,6 +1900,12 @@ class ConsoleTranscript(VerticalScroll):
 
     can_focus = True
 
+    DEFAULT_CSS = """
+    ConsoleTranscript {
+        layers: base overlay;
+    }
+    """
+
     class TranscriptTextSelected(Message):
         """Posted when a mouse drag finished with a non-empty text selection.
 
@@ -3222,8 +3232,73 @@ class ConsoleTranscript(VerticalScroll):
             )
         )
 
+    @on(TranscriptTextSelected)
+    def _text_selected(self, event: TranscriptTextSelected) -> None:
+        """Mount the floating selection menu at the drag-release cell.
+
+        Console selection phase 1. The menu is DOCKED (out of the scroll
+        flow): mounting it as a plain flow child rendered at the end of the
+        scroll content -- far below the fold on a tall transcript -- so it
+        docks top with an overlay layer and a transcript-local offset
+        instead. Deliberately does not stop the event: the owning screen
+        also consumes TranscriptTextSelected (selection lifecycle).
+
+        The event carries SCREEN coordinates; ``self.region`` translates
+        them transcript-local, and the clamp keeps the anchor within the
+        transcript bounds (the ``+1`` sits the menu just below the release
+        row).
+        """
+        self._remove_selection_menu()
+        region = self.region
+        self.mount(
+            ConsoleSelectionMenu(
+                local_x=self._clamp_menu_offset(
+                    event.screen_x - region.x, region.width, margin=2
+                ),
+                local_y=self._clamp_menu_offset(
+                    event.screen_y - region.y + 1, region.height, margin=2
+                ),
+            )
+        )
+
+    @staticmethod
+    def _clamp_menu_offset(value: int, extent: int, *, margin: int) -> int:
+        """Clamp a transcript-local menu offset so the menu stays on the transcript."""
+        return max(0, min(value, max(0, extent - margin)))
+
+    @on(ConsoleSelectionMenu.AddToChat)
+    def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:
+        """Quote the active row selection up to the owning screen and clean up."""
+        event.stop()
+        manager = self.selection_manager
+        sel = manager.state.selection
+        row: ConsoleTranscriptMessage | None = None
+        if sel is not None:
+            try:
+                row = self.query_one(f"#{sel.row_key}", ConsoleTranscriptMessage)
+            except NoMatches:
+                row = None
+        if row is not None:
+            self.post_message(
+                ConsoleSelectionQuoteRequested(quote=cap_quote(row.get_selection_text()))
+            )
+            row.clear_selection()
+        manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    def _remove_selection_menu(self) -> None:
+        """Remove any mounted selection menu (no side effects)."""
+        for menu in self.query(ConsoleSelectionMenu):
+            menu.remove()
+
     def on_click(self, event: Click) -> None:
         """Clear selection when the user clicks negative space in the transcript.
+
+        Any click that reaches this handler is outside the floating selection
+        menu (the menu stops clicks that land inside it), so the menu is
+        removed first: click-outside dismisses it with no other side effect,
+        then the normal click handling continues.
 
         A drag release (``just_finished``) is consumed here instead: it must
         not clear message selection, and the next genuine click must work.
@@ -3233,6 +3308,7 @@ class ConsoleTranscript(VerticalScroll):
         empty-state panel, or scrollbars) keep the current selection active. All
         other clicks that bubble up to the transcript itself clear the selection.
         """
+        self._remove_selection_menu()
         if self.selection_manager.just_finished:
             event.stop()
             self.selection_manager.consume_just_finished()
