@@ -27,14 +27,6 @@ class LibraryPagerDisplay:
     retry_visible: bool
 
 
-def _require_int(name: str, value: object, *, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} must be an integer")
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}")
-    return value
-
-
 def build_library_pager_display(
     *,
     applied_page: int | None,
@@ -68,13 +60,28 @@ def build_library_pager_display(
         ValueError: Page metadata or presentation state is contradictory.
     """
 
-    requested_page = _require_int("requested_page", requested_page, minimum=1)
-    page_size = _require_int("page_size", page_size, minimum=1)
-    row_count = _require_int("row_count", row_count, minimum=0)
+    if isinstance(requested_page, bool) or not isinstance(requested_page, int):
+        raise TypeError("requested_page must be an integer")
+    if requested_page < 1:
+        raise ValueError("requested_page must be at least 1")
+    if isinstance(page_size, bool) or not isinstance(page_size, int):
+        raise TypeError("page_size must be an integer")
+    if page_size < 1:
+        raise ValueError("page_size must be at least 1")
+    if isinstance(row_count, bool) or not isinstance(row_count, int):
+        raise TypeError("row_count must be an integer")
+    if row_count < 0:
+        raise ValueError("row_count must be at least 0")
     if applied_page is not None:
-        applied_page = _require_int("applied_page", applied_page, minimum=1)
+        if isinstance(applied_page, bool) or not isinstance(applied_page, int):
+            raise TypeError("applied_page must be an integer")
+        if applied_page < 1:
+            raise ValueError("applied_page must be at least 1")
     if total is not None:
-        total = _require_int("total", total, minimum=0)
+        if isinstance(total, bool) or not isinstance(total, int):
+            raise TypeError("total must be an integer")
+        if total < 0:
+            raise ValueError("total must be at least 0")
     if freshness not in ("uninitialized", "fresh", "stale"):
         raise ValueError("freshness must be uninitialized, fresh, or stale")
     if not isinstance(loading, bool):
