@@ -317,6 +317,8 @@ def test_source_row_cells_render_the_normalizer_status_summary():
 # at debug and showed nothing, so a denied `items.list` policy rendered
 # byte-identically to "this run produced no items". `LOADERS_THAT_MUST_NOTIFY`
 # below turns the price into a contract, so the next loader cannot do the same.
+# Item delete gestures now converge on the listed ``_update_item_status`` path;
+# the former direct ``_delete_item`` writer was intentionally retired.
 USER_INITIATED_MUTATIONS = (
     "_start_tree_write",
     "_run_tree_write",
