@@ -22,6 +22,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
 )
+from Tests.ChaChaNotesDB.schema_rollback import rollback_chachanotes_schema
 
 
 #
@@ -223,49 +224,42 @@ class TestDBInitialization:
         db = CharactersRAGDB(db_path, client_id)
         conn = db.get_connection()
 
-        # Simulate a v17-shaped DB: drop the sync triggers that reference the
-        # new column (SQLite refuses to drop a column referenced by a
-        # trigger), drop the column itself, then roll the recorded schema
-        # version back to 17 so re-opening replays the V17->V18 migration.
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
-        # A version-only rollback is not a valid pre-v25 fixture because the
-        # citation migration deliberately rejects pre-existing/partial tables.
-        # Remove the current provenance schema before replaying from v17.
-        for table in (
-            "note_folder_memberships",
-            "note_folders",
-            "rag_artifact_owner_operations",
-            "rag_artifact_owner_leases",
-            "rag_source_observations",
-            "rag_message_trace_owners",
-            "rag_trace_evidence_refs",
-            "rag_answer_attempt_payloads",
-            "rag_evidence_runs",
-            "rag_citation_traces",
-            "rag_evidence_snapshots",
-            "rag_payload_tombstones",
-            "rag_legacy_migration_journal",
-            "rag_identity_context",
-        ):
-            conn.execute(f"DROP TABLE {table}")
-        # A V17 fixture also predates the V27->V28 character-authority column.
-        conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
-        # A V17 fixture also predates the V29->V30 local-only usage_json column.
-        conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
-        # A V17 fixture predates the V33->V34 visual-compaction preference.
-        conn.execute(
-            "ALTER TABLE console_conversation_context_policy "
-            "DROP COLUMN compaction_representation"
-        )
-        conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
-        conn.execute(
-            "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
-            (db._SCHEMA_NAME,),
-        )
+        # Simulate a v17-shaped DB: the shared registry removes everything
+        # newer migrations added (columns, triggers, tables) and rolls the
+        # recorded schema version back so re-opening replays V17->current.
+        rollback_chachanotes_schema(conn, 17)
         conn.commit()
+
+        # Assert the v17 preconditions before reopening: the column and the
+        # triggers under test, and the post-v17 tables whose baked presence
+        # broke this fixture before (task-15765: note_folders "already
+        # exists" at the V35->V36 replay step).
+        columns_before = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+        }
+        assert "system_prompt" not in columns_before
+        trigger_names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                "AND name LIKE 'conversations_sync_%'"
+            ).fetchall()
+        }
+        assert trigger_names == set()
+        table_names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert "note_folders" not in table_names
+        assert "note_folder_memberships" not in table_names
+        version_before = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_before["version"] == 17
         db.close_connection()
 
         migrated = CharactersRAGDB(db_path, client_id)
