@@ -10,6 +10,7 @@ from typing import Any, Iterable, Literal, Mapping
 
 from loguru import logger
 from PIL import Image as PILImage
+from rich.text import Text
 from rich_pixels import Pixels
 from textual import events, on
 from textual.app import ComposeResult
@@ -59,6 +60,7 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from tldw_chatbook.Widgets.Console.console_selection import cap_quote
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
@@ -1375,6 +1377,9 @@ class ConsoleTranscriptMessage(Vertical):
         )
         self._selected = selected
         self._speech_state = speech_state
+        # Text-selection range over the BODY text domain (header excluded),
+        # console selection phase 1. None = no highlight.
+        self._selection_range: tuple[int, int] | None = None
         super().__init__(
             id=f"console-message-{message.id}",
             classes=" ".join(
@@ -1412,6 +1417,72 @@ class ConsoleTranscriptMessage(Vertical):
     def _speaker_label(self) -> str:
         return _speaker_label(self._message, self._presentation)
 
+    # -- Text-selection protocol (console selection phase 1) -----------------
+    # Offsets are BODY-only: the speaker header is a separate child widget and
+    # never part of the selection domain.
+
+    def get_display_text(self) -> str:
+        """Return the plain body text this row renders (selection domain)."""
+        return _message_body_render_text(self._message, self._presentation).plain
+
+    def get_selection_text(self) -> str:
+        """Return the currently highlighted text, capped for quoting."""
+        if self._selection_range is None:
+            return ""
+        start, end = sorted(self._selection_range)
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight ``[start, end)`` in the body and re-render it."""
+        self._selection_range = (start, end)
+        self._refresh_body_highlight()
+
+    def clear_selection(self) -> None:
+        """Remove any highlight and re-render the plain body."""
+        if self._selection_range is None:
+            return
+        self._selection_range = None
+        self._refresh_body_highlight()
+
+    def _clamp_selection_to_text(self) -> None:
+        """Clamp the stored range to the current text length (streaming sync).
+
+        Streaming updates shrink/grow the body text; if the new text no longer
+        contains the range start, drop the selection entirely.
+        """
+        if self._selection_range is None:
+            return
+        start, end = self._selection_range
+        new_len = len(self.get_display_text())
+        if start >= new_len:
+            self._selection_range = None
+        else:
+            self._selection_range = (min(start, new_len), min(end, new_len))
+
+    def _refresh_body_highlight(self) -> None:
+        """Re-render the body Static with a reverse-video span over the range.
+
+        The body Static is ``markup=False``, so a rich ``Text`` with spans is
+        safe; with no range the original ``Content`` renderable is restored
+        exactly, so non-selecting rows render byte-identically to before.
+        """
+        try:
+            body = self.query_one(".console-transcript-message-body", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_range is None:
+            body.update(_message_body_render_text(self._message, self._presentation))
+            return
+        plain = self.get_display_text()
+        start, end = sorted(self._selection_range)
+        start, end = max(0, start), min(end, len(plain))
+        rich_text = Text(plain)
+        if end > start:
+            rich_text.stylize("reverse", start, end)
+        body.update(rich_text)
+
     def sync_message(
         self,
         message: ConsoleChatMessage,
@@ -1436,11 +1507,15 @@ class ConsoleTranscriptMessage(Vertical):
         )
         try:
             header = self.query_one(ConsoleMessageHeader)
-            body = self.query_one(".console-transcript-message-body", Static)
+            self.query_one(".console-transcript-message-body", Static)
         except NoMatches:
             return
         header.sync_header(message, presentation, speech_state)
-        body.update(_message_body_render_text(message, presentation))
+        # Clamp any live text-selection range to the NEW body length before
+        # re-rendering: streaming deltas shrink/grow the text under the
+        # selection (console selection phase 1).
+        self._clamp_selection_to_text()
+        self._refresh_body_highlight()
 
     def on_click(self, event: Click) -> None:
         if event.control is not None and event.control.has_class(
