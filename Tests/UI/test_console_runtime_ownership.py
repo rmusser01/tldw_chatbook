@@ -145,8 +145,21 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         assert visit_one_event.is_set()
         # ...every screen-owned slot is back at its viewless default...
         assert controller_one.notify_run_outcome is None
-        assert controller_one.wake_conversation_in_view is None
         assert controller_one.fleet_wake.delivery_ui_hook is None
+        # task-15860 Task 4: the view probe's viewless default is NOT None
+        # (its read site reads an unwired probe as IN VIEW). Asserted here
+        # through the DECISION the production path makes, after a real
+        # navigation -- an unwatched delivery must not be able to report
+        # itself as watched and clear the ◈ mark.
+        assert (
+            controller_one.fleet_wake._conversation_in_view(
+                "conv-anything", "sess-anything"
+            )
+            is False
+        ), (
+            "with Console genuinely unmounted the runtime still reported the "
+            "conversation as being watched"
+        )
         assert runtime_one.view is None
         # ...and the runtime itself is untouched and still the app's.
         assert runtime_one.generation == 0, "leaving Console must NOT dispose"
