@@ -15,11 +15,15 @@ import re
 import stat
 from typing import Any
 import warnings
+import zipfile
 
 from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.config import get_user_data_dir
 
+# Begin pinned server normalization block (byte-for-byte from):
+# tldw_Server_API/app/core/Visual_Identities/expression_slots.py at
+# commit 385afa951922c8a9dc2002c675bb6cad65e4ac23.
 CANONICAL_EXPRESSION_SLOTS = (
     "neutral",
     "happy",
@@ -123,9 +127,7 @@ def _sanitize_expression_token(value: str) -> str:
     return normalized.strip("_")
 
 
-# Pinned byte-for-byte from
-# tldw_Server_API/app/core/Visual_Identities/expression_slots.py at
-# commit 385afa951922c8a9dc2002c675bb6cad65e4ac23.
+# End pinned server normalization block.
 
 SAMIRA_REACTION_LABELS = (
     "admiration",
@@ -210,6 +212,8 @@ MAX_EXPRESSION_IMAGE_DIMENSION = 4096
 MAX_EXPRESSION_FRAME_COUNT = 512
 MAX_EXPRESSION_PACK_ASSETS = 128
 MAX_EXPRESSION_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_EXPRESSION_ASSET_DECODED_PIXELS = MAX_EXPRESSION_IMAGE_DIMENSION**2 * 4
+MAX_EXPRESSION_PACK_DECODED_PIXELS = MAX_EXPRESSION_IMAGE_DIMENSION**2 * 16
 
 _READ_CHUNK_SIZE = 1024 * 1024
 
@@ -487,6 +491,8 @@ def load_visual_identity_asset(
         or asset.width > MAX_EXPRESSION_IMAGE_DIMENSION
         or asset.height > MAX_EXPRESSION_IMAGE_DIMENSION
         or asset.frame_count > MAX_EXPRESSION_FRAME_COUNT
+        or _decoded_pixels(asset.width, asset.height, asset.frame_count)
+        > MAX_EXPRESSION_ASSET_DECODED_PIXELS
     ):
         raise ValueError("visual_identity_budget_exceeded")
 
@@ -512,7 +518,7 @@ def _read_builtin_asset(parts: tuple[str, ...], *, expected_bytes: int) -> bytes
         candidate = resources.files("tldw_chatbook").joinpath("assets", *parts)
         with candidate.open("rb") as stream:
             return _read_stream_bounded(stream, expected_bytes=expected_bytes)
-    except (OSError, RuntimeError, TypeError, AttributeError):
+    except (OSError, RuntimeError, TypeError, AttributeError, zipfile.BadZipFile):
         raise ValueError("visual_identity_asset_unavailable") from None
 
 
@@ -593,9 +599,11 @@ def _read_user_asset_secure(
             parent_fd = directory_fd
 
         leaf = parts[-1]
-        leaf_fd = os.open(leaf, flags, dir_fd=parent_fd)
+        leaf_fd = os.open(leaf, flags | os.O_NONBLOCK, dir_fd=parent_fd)
         opened_fds.append(leaf_fd)
         opened_stat = os.fstat(leaf_fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError("visual_identity_path_invalid")
         _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
         data = _read_fd_bounded(leaf_fd, expected_bytes=expected_bytes)
         _verify_opened_leaf_identity(parent_fd, leaf, opened_stat)
@@ -640,10 +648,21 @@ def _read_user_asset_fallback(
     *,
     expected_bytes: int,
 ) -> bytes:
+    descriptor: int | None = None
+    flags = os.O_RDONLY
+    if os.name == "posix":
+        flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
     try:
         _verify_fallback_directories(assets_root, parts)
-        with candidate.open("rb") as stream:
-            opened_stat = os.fstat(stream.fileno())
+        descriptor = os.open(candidate, flags)
+        opened_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError("visual_identity_path_invalid")
+        _verify_fallback_directories(assets_root, parts)
+        _verify_fallback_identity(candidate, opened_stat)
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            descriptor = None
             _verify_fallback_directories(assets_root, parts)
             _verify_fallback_identity(candidate, opened_stat)
             data = _read_stream_bounded(stream, expected_bytes=expected_bytes)
@@ -652,8 +671,21 @@ def _read_user_asset_fallback(
             return data
     except ValueError:
         raise
-    except (OSError, RuntimeError, AttributeError, TypeError):
+    except OSError as error:
+        category = (
+            "visual_identity_path_invalid"
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}
+            else "visual_identity_asset_unavailable"
+        )
+        raise ValueError(category) from None
+    except (RuntimeError, AttributeError, TypeError):
         raise ValueError("visual_identity_asset_unavailable") from None
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _verify_fallback_directories(assets_root: Path, parts: tuple[str, ...]) -> None:
@@ -746,13 +778,17 @@ def validate_visual_identity_assets(
         _validate_samira_manifest(manifest, directory_bytes=directory_bytes)
 
     loaded_assets: list[LoadedVisualIdentityAsset] = []
+    decoded_pixels = 0
     for asset in manifest.assets:
         loaded = load_visual_identity_asset(
             asset,
             source_kind=source_kind,
             user_data_dir=user_data_dir,
         )
-        _validate_image_bytes(loaded)
+        decoded_pixels += _validate_image_bytes(
+            loaded,
+            decoded_pixels_before=decoded_pixels,
+        )
         loaded_assets.append(loaded)
     return tuple(loaded_assets)
 
@@ -882,6 +918,10 @@ def _require_unique_assets(assets: tuple[VisualIdentityManifestAsset, ...]) -> N
         raise ValueError
 
 
+def _decoded_pixels(width: int, height: int, frame_count: int) -> int:
+    return width * height * frame_count
+
+
 def _validate_general_budgets(
     assets: tuple[VisualIdentityManifestAsset, ...],
 ) -> None:
@@ -890,10 +930,20 @@ def _validate_general_budgets(
         or asset.width > MAX_EXPRESSION_IMAGE_DIMENSION
         or asset.height > MAX_EXPRESSION_IMAGE_DIMENSION
         or asset.frame_count > MAX_EXPRESSION_FRAME_COUNT
+        or _decoded_pixels(asset.width, asset.height, asset.frame_count)
+        > MAX_EXPRESSION_ASSET_DECODED_PIXELS
         for asset in assets
     ):
         raise _VisualIdentityBudgetError
     if sum(asset.bytes for asset in assets) > MAX_EXPRESSION_TOTAL_BYTES:
+        raise _VisualIdentityBudgetError
+    if (
+        sum(
+            _decoded_pixels(asset.width, asset.height, asset.frame_count)
+            for asset in assets
+        )
+        > MAX_EXPRESSION_PACK_DECODED_PIXELS
+    ):
         raise _VisualIdentityBudgetError
 
 
@@ -959,7 +1009,11 @@ def _validate_samira_manifest(
         raise ValueError("visual_identity_budget_exceeded")
 
 
-def _validate_image_bytes(loaded: LoadedVisualIdentityAsset) -> None:
+def _validate_image_bytes(
+    loaded: LoadedVisualIdentityAsset,
+    *,
+    decoded_pixels_before: int = 0,
+) -> int:
     asset = loaded.asset
     try:
         with warnings.catch_warnings():
@@ -977,10 +1031,21 @@ def _validate_image_bytes(loaded: LoadedVisualIdentityAsset) -> None:
                     or frame_count > MAX_EXPRESSION_FRAME_COUNT
                 ):
                     raise _VisualIdentityImageLimitError
+                decoded_pixels = _decoded_pixels(
+                    image_size[0], image_size[1], frame_count
+                )
+                if (
+                    decoded_pixels > MAX_EXPRESSION_ASSET_DECODED_PIXELS
+                    or decoded_pixels_before + decoded_pixels
+                    > MAX_EXPRESSION_PACK_DECODED_PIXELS
+                ):
+                    raise _VisualIdentityBudgetError
                 decoded_duration_ms = _image_duration_ms(image, frame_count)
                 duration_ms = decoded_duration_ms if is_animated else None
     except _VisualIdentityImageLimitError:
         raise ValueError("visual_identity_asset_limits_exceeded") from None
+    except _VisualIdentityBudgetError:
+        raise ValueError("visual_identity_budget_exceeded") from None
     except (
         OSError,
         EOFError,
@@ -1008,6 +1073,7 @@ def _validate_image_bytes(loaded: LoadedVisualIdentityAsset) -> None:
         or duration_ms != asset.duration_ms
     ):
         raise ValueError("visual_identity_asset_frame_mismatch")
+    return decoded_pixels
 
 
 def _image_duration_ms(image: Image.Image, frame_count: int) -> int:

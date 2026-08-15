@@ -139,6 +139,8 @@ MAX_EXPRESSION_IMAGE_DIMENSION = 4096
 MAX_EXPRESSION_FRAME_COUNT = 512
 MAX_EXPRESSION_PACK_ASSETS = 128
 MAX_EXPRESSION_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_EXPRESSION_ASSET_DECODED_PIXELS = MAX_EXPRESSION_IMAGE_DIMENSION**2 * 4
+MAX_EXPRESSION_PACK_DECODED_PIXELS = MAX_EXPRESSION_IMAGE_DIMENSION**2 * 16
 
 
 def _asset(
@@ -221,6 +223,18 @@ def test_server_expression_constants_are_frozen() -> None:
     assert CANONICAL_EXPRESSION_SLOTS == SERVER_CANONICAL_SLOTS
     assert CUSTOM_EXPRESSION_PREFIX == "custom:"
     assert EXPRESSION_ALIASES == SERVER_ALIAS_FIXTURES
+
+
+def test_pinned_normalization_block_has_explicit_source_markers() -> None:
+    source = inspect.getsource(visual_identity)
+    start = source.index(
+        "# Begin pinned server normalization block (byte-for-byte from):"
+    )
+    canonical = source.index("CANONICAL_EXPRESSION_SLOTS =")
+    end = source.index("# End pinned server normalization block.")
+    samira = source.index("SAMIRA_REACTION_LABELS =")
+
+    assert start < canonical < end < samira
 
 
 @pytest.mark.parametrize("value", SERVER_CANONICAL_SLOTS)
@@ -426,6 +440,8 @@ def test_general_manifest_accepts_exact_pinned_server_boundaries() -> None:
         frame_count=MAX_EXPRESSION_FRAME_COUNT,
         duration_ms=1,
     )
+    animated_asset["width"] = 1
+    animated_asset["height"] = 1
     data = _manifest_data([static_asset, animated_asset])
 
     manifest = validate_visual_identity_manifest(data)
@@ -442,6 +458,57 @@ def test_general_limit_constants_match_the_pinned_server_contract() -> None:
     assert visual_identity.MAX_EXPRESSION_FRAME_COUNT == MAX_EXPRESSION_FRAME_COUNT
     assert visual_identity.MAX_EXPRESSION_PACK_ASSETS == MAX_EXPRESSION_PACK_ASSETS
     assert visual_identity.MAX_EXPRESSION_TOTAL_BYTES == MAX_EXPRESSION_TOTAL_BYTES
+    assert (
+        visual_identity.MAX_EXPRESSION_ASSET_DECODED_PIXELS
+        == MAX_EXPRESSION_ASSET_DECODED_PIXELS
+    )
+    assert (
+        visual_identity.MAX_EXPRESSION_PACK_DECODED_PIXELS
+        == MAX_EXPRESSION_PACK_DECODED_PIXELS
+    )
+
+
+def _full_dimension_animation(label: str, frame_count: int = 4):
+    asset = _asset(
+        label,
+        f"custom:{label}",
+        is_animated=True,
+        frame_count=frame_count,
+        duration_ms=1,
+    )
+    asset["width"] = MAX_EXPRESSION_IMAGE_DIMENSION
+    asset["height"] = MAX_EXPRESSION_IMAGE_DIMENSION
+    return asset
+
+
+def test_general_manifest_accepts_exact_decoded_pixel_boundaries() -> None:
+    assets = [_full_dimension_animation(f"animated_{index}") for index in range(4)]
+    data = _manifest_data(assets)
+
+    manifest = validate_visual_identity_manifest(data)
+
+    assert len(manifest.assets) == 4
+    assert (
+        manifest.assets[0].width
+        * manifest.assets[0].height
+        * manifest.assets[0].frame_count
+        == MAX_EXPRESSION_ASSET_DECODED_PIXELS
+    )
+
+
+def test_general_manifest_rejects_per_asset_decoded_pixel_work_over_limit() -> None:
+    data = _manifest_data([_full_dimension_animation("animated", frame_count=5)])
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_manifest(data)
+
+
+def test_general_manifest_rejects_cumulative_decoded_pixel_work_over_limit() -> None:
+    assets = [_full_dimension_animation(f"animated_{index}") for index in range(5)]
+    data = _manifest_data(assets)
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_manifest(data)
 
 
 @pytest.mark.parametrize(

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 from io import BytesIO
 import os
 from pathlib import Path
+import subprocess
+import sys
 import zipfile
 
 import pytest
@@ -375,6 +378,43 @@ def test_builtin_loader_supports_real_non_path_traversable(
     assert loaded.data == image_bytes
 
 
+def test_builtin_loader_normalizes_corrupt_zip_crc_without_member_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_bytes = _image_bytes()
+    manifest = _manifest_for_bytes(image_bytes)
+    member = "assets/characters/samira/expressions/neutral.webp"
+    archive_path = tmp_path / "corrupt-package.zip"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(member, image_bytes)
+    with zipfile.ZipFile(archive_path) as archive:
+        info = archive.getinfo(member)
+        data_offset = (
+            info.header_offset
+            + 30
+            + len(info.filename.encode("utf-8"))
+            + len(info.extra)
+        )
+    with archive_path.open("r+b") as archive_file:
+        archive_file.seek(data_offset)
+        original = archive_file.read(1)
+        archive_file.seek(data_offset)
+        archive_file.write(bytes([original[0] ^ 0xFF]))
+
+    with zipfile.ZipFile(archive_path) as archive:
+        monkeypatch.setattr(
+            visual_identity.resources,
+            "files",
+            lambda package: zipfile.Path(archive),
+        )
+        with pytest.raises(ValueError) as error:
+            load_visual_identity_asset(manifest.assets[0], source_kind="builtin")
+
+    assert str(error.value) == "visual_identity_asset_unavailable"
+    assert error.value.__cause__ is None
+    assert member not in str(error.value)
+
+
 def test_builtin_stream_read_is_bounded_to_expected_bytes_plus_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -568,6 +608,56 @@ def test_user_open_oserror_is_normalized_without_raw_path(
     assert "/private/raw/denied" not in str(error.value)
 
 
+@pytest.mark.skipif(
+    os.name != "posix" or not hasattr(os, "mkfifo"),
+    reason="FIFO behavior is POSIX-specific",
+)
+@pytest.mark.parametrize("force_fallback", [False, True])
+def test_user_fifo_is_rejected_without_blocking(
+    force_fallback: bool, tmp_path: Path
+) -> None:
+    user_data_dir = tmp_path / "profile"
+    fifo = user_data_dir / "visual_identities/packs/example/neutral.webp"
+    fifo.parent.mkdir(parents=True)
+    os.mkfifo(fifo)
+    script = "\n".join(
+        [
+            "import sys",
+            "import tldw_chatbook.Character_Chat.visual_identity as module",
+            "from tldw_chatbook.Character_Chat.visual_identity import (",
+            "    VisualIdentityManifestAsset, load_visual_identity_asset)",
+            f"module._supports_secure_dir_fd = lambda: {not force_fallback!r}",
+            "asset = VisualIdentityManifestAsset(",
+            "    expression_key='neutral', original_label='neutral',",
+            "    display_label='Neutral',",
+            "    storage_relpath='packs/example/neutral.webp',",
+            "    content_type='image/webp', bytes=1, width=1, height=1,",
+            "    sha256='0' * 64, is_animated=False, frame_count=1,",
+            "    duration_ms=None)",
+            "try:",
+            "    load_visual_identity_asset(",
+            "        asset, source_kind='manual', user_data_dir=sys.argv[1])",
+            "except ValueError as error:",
+            "    assert error.__cause__ is None",
+            "    print(str(error))",
+            "else:",
+            "    raise AssertionError('FIFO was accepted')",
+        ]
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(user_data_dir)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "visual_identity_path_invalid"
+    assert str(fifo) not in completed.stdout
+
+
 def test_complete_validation_checks_webp_format(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -692,6 +782,68 @@ def test_complete_validation_rejects_actual_frame_count_before_iteration(
 
     with pytest.raises(ValueError, match="^visual_identity_asset_limits_exceeded$"):
         validate_visual_identity_assets(manifest, source_kind="builtin")
+
+
+def test_complete_validation_rejects_actual_decoded_work_before_iteration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_bytes = _image_bytes()
+    manifest = _manifest_for_bytes(image_bytes)
+    package_root = tmp_path / "package"
+    _write_builtin_asset(package_root, manifest.assets[0].storage_relpath, image_bytes)
+    monkeypatch.setattr(
+        visual_identity.resources, "files", lambda package: package_root
+    )
+    loaded = load_visual_identity_asset(manifest.assets[0], source_kind="builtin")
+    monkeypatch.setattr(visual_identity, "MAX_EXPRESSION_ASSET_DECODED_PIXELS", 63)
+    monkeypatch.setattr(
+        visual_identity,
+        "_image_duration_ms",
+        lambda image, frame_count: (_ for _ in ()).throw(
+            AssertionError("iterated over decoded-work limit")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        visual_identity._validate_image_bytes(loaded)
+
+
+def test_complete_validation_rechecks_cumulative_actual_decoded_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image_bytes = _image_bytes()
+    manifest = _manifest_for_bytes(image_bytes)
+    first = manifest.assets[0]
+    second = replace(
+        first,
+        expression_key="thinking",
+        original_label="thinking",
+        display_label="Thinking",
+        storage_relpath="characters/samira/expressions/thinking.webp",
+        width=1,
+        height=1,
+    )
+    manifest = replace(manifest, assets=(first, second))
+    package_root = tmp_path / "package"
+    _write_builtin_asset(package_root, first.storage_relpath, image_bytes)
+    _write_builtin_asset(package_root, second.storage_relpath, image_bytes)
+    monkeypatch.setattr(
+        visual_identity.resources, "files", lambda package: package_root
+    )
+    monkeypatch.setattr(visual_identity, "MAX_EXPRESSION_PACK_DECODED_PIXELS", 100)
+    original_duration = visual_identity._image_duration_ms
+    iterations: list[int] = []
+
+    def record_iteration(image: Image.Image, frame_count: int) -> int:
+        iterations.append(frame_count)
+        return original_duration(image, frame_count)
+
+    monkeypatch.setattr(visual_identity, "_image_duration_ms", record_iteration)
+
+    with pytest.raises(ValueError, match="^visual_identity_budget_exceeded$"):
+        validate_visual_identity_assets(manifest, source_kind="builtin")
+
+    assert iterations == [1]
 
 
 @pytest.mark.parametrize("max_pixels", [40, 10])
