@@ -310,3 +310,35 @@ def test_tool_footer_silent_without_verification(monkeypatch):
     )
     out = web_deep_search("what is love")
     assert "Citations:" not in out
+
+
+# --- per-claim detail (task-16325) ----------------------------------------------
+
+def test_verify_extracts_sentence_level_claims_with_source_ids():
+    answer = "Ice is less dense than water[1]. Paris is the capital of France[1][2]. Mars hosts cities[99]."
+    out = verify_citations(answer, _EVIDENCE)
+    claims = out["claims"]
+    assert [c["claim_id"] for c in claims] == ["claim-1", "claim-2", "claim-3"]
+    assert claims[0]["text"] == "Ice is less dense than water[1]."
+    assert claims[0]["source_ids"] == [1]
+    assert claims[0]["status"] == "supported"
+    assert claims[1]["source_ids"] == [1, 2]
+    assert claims[2]["source_ids"] == []
+    assert claims[2]["unknown_marker_ids"] == [99]
+    assert claims[2]["status"] == "unverified"
+
+
+def test_verify_claims_carry_per_sentence_quote_verdicts():
+    answer = 'One source says "the ocean is blue and vast"[1]. Another claims "mars hosts a breathable atmosphere"[1].'
+    out = verify_citations(answer, _EVIDENCE)
+    claims = {c["claim_id"]: c for c in out["claims"]}
+    assert claims["claim-1"]["quotes_checked"] == 1
+    assert claims["claim-1"]["quotes_verified"] == 1
+    assert claims["claim-1"]["status"] == "supported"
+    assert claims["claim-2"]["quotes_verified"] == 0
+    assert claims["claim-2"]["status"] == "unverified"
+
+
+def test_verify_claims_skip_uncited_sentences():
+    out = verify_citations("Cited[1]. Uncited sentence.", _EVIDENCE)
+    assert [c["text"] for c in out["claims"]] == ["Cited[1]."]

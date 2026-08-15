@@ -188,6 +188,52 @@ def verify_citations(
     sentences = [s for s in _SENTENCE_SPLIT_RE.split(annotated) if s.strip()]
     uncited_sentences = sum(1 for s in sentences if not CITATION_MARKER_RE.search(s))
 
+    # Per-claim detail (task-16325): every sentence carrying at least one
+    # citation marker becomes a claim record -- resolved source ids, unknown
+    # ids, per-sentence quote verdicts, and a supported/unverified status.
+    # Uncited sentences are counted above but are not claims (no citation to
+    # verify). Status is "supported" only when every marker resolves AND
+    # every quote in the sentence verified. Sentences come from the ORIGINAL
+    # answer: the annotated form's "[n?]" flags do not match the marker
+    # regex, and the claim record should quote what was actually written.
+    claims: List[Dict[str, Any]] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(answer_text):
+        if not sentence.strip():
+            continue
+        sentence_markers = CITATION_MARKER_RE.findall(sentence)
+        if not sentence_markers:
+            continue
+        sentence_source_ids: List[int] = []
+        sentence_unknown: List[int] = []
+        for marker in sentence_markers:
+            marker_id = int(marker)
+            if marker_id in known_ids:
+                if marker_id not in sentence_source_ids:
+                    sentence_source_ids.append(marker_id)
+            elif marker_id not in sentence_unknown:
+                sentence_unknown.append(marker_id)
+        sentence_quotes_checked = 0
+        sentence_quotes_verified = 0
+        for span in QUOTE_SPAN_RE.findall(sentence):
+            sentence_quotes_checked += 1
+            if match_quote_in_sources(span, source_texts)["matched"]:
+                sentence_quotes_verified += 1
+        supported = (
+            not sentence_unknown
+            and sentence_quotes_verified == sentence_quotes_checked
+        )
+        claims.append(
+            {
+                "claim_id": f"claim-{len(claims) + 1}",
+                "text": sentence,
+                "source_ids": sentence_source_ids,
+                "unknown_marker_ids": sentence_unknown,
+                "quotes_checked": sentence_quotes_checked,
+                "quotes_verified": sentence_quotes_verified,
+                "status": "supported" if supported else "unverified",
+            }
+        )
+
     return {
         "markers_total": markers_total,
         "markers_resolved": resolved,
@@ -197,6 +243,7 @@ def verify_citations(
         "quotes_misquoted": quotes_checked - quotes_verified,
         "uncited_sentences": uncited_sentences,
         "annotated_text": annotated,
+        "claims": claims,
     }
 
 

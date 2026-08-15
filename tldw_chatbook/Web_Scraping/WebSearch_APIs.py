@@ -1775,6 +1775,7 @@ def aggregate_results(
                         "quotes_verified",
                         "quotes_misquoted",
                         "uncited_sentences",
+                        "claims",
                     )
                 },
             }

@@ -431,3 +431,130 @@ def test_engine_default_gap_fn_returns_empty_without_llm():
     engine = LocalResearchEngine(_make_service())
     gaps = asyncio.run(engine._default_gap_fn({"answer_text": "x", "sub_questions": []}))
     assert gaps == []
+
+
+# --- claims artifact + follow-up Q&A (task-16325) -------------------------------
+
+_CLAIMS_CV = {
+    "markers_total": 2, "markers_resolved": 1, "unknown_marker_ids": [2],
+    "quotes_checked": 0, "quotes_verified": 0, "quotes_misquoted": 0,
+    "uncited_sentences": 0,
+    "claims": [
+        {"claim_id": "claim-1", "text": "Supported fact[1].", "source_ids": [1],
+         "unknown_marker_ids": [], "quotes_checked": 0, "quotes_verified": 0,
+         "status": "supported"},
+        {"claim_id": "claim-2", "text": "Shaky claim[2].", "source_ids": [],
+         "unknown_marker_ids": [2], "quotes_checked": 0, "quotes_verified": 0,
+         "status": "unverified"},
+    ],
+}
+
+
+def _claims_pipeline(question):
+    def search_fn(q, params):
+        return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
+                {"sub_questions": ["sq1", "sq2"], "main_goal": q})
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {
+                "text": "Supported fact[1]. Shaky claim[2?].",
+                "evidence": [{"id": 1, "url": "https://t.example/", "title": "T",
+                              "content": "c", "original_content": "o", "reasoning": "r",
+                              "chunk_index": 1}],
+                "confidence": 0.7, "chunks": [],
+                "citation_verification": dict(_CLAIMS_CV),
+            },
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
+
+    return search_fn, analyze_fn
+
+
+def test_engine_persists_claims_artifact_with_counts():
+    service = _make_service()
+    run = service.launch_run(query="Claims question")
+    search_fn, analyze_fn = _claims_pipeline("Claims question")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    claims_artifact = _artifact_content(service.get_bundle(run["id"]), "claims.json")
+    assert claims_artifact["claim_count"] == 2
+    assert claims_artifact["supported_claim_count"] == 1
+    assert claims_artifact["unverified_claim_count"] == 1
+    assert claims_artifact["claims"][0]["claim_id"] == "claim-1"
+
+
+def _completed_claims_run(service):
+    run = service.launch_run(query="Claims question")
+    search_fn, analyze_fn = _claims_pipeline("Claims question")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    asyncio.run(engine.execute_run(run["id"]))
+    return run
+
+
+def test_follow_up_answers_from_stored_evidence_with_bounded_seed():
+    service = _make_service()
+    run = _completed_claims_run(service)
+    captured = {}
+
+    async def answer_fn(seed, question):
+        captured["seed"] = seed
+        captured["question"] = question
+        return {"sufficient": True, "answer": "From the stored claims: yes."}
+
+    engine = LocalResearchEngine(service)
+    result = asyncio.run(
+        engine.answer_follow_up(run["id"], "Is the supported fact reliable?", answer_fn=answer_fn)
+    )
+
+    assert result["status"] == "answered"
+    assert result["answer"] == "From the stored claims: yes."
+    seed = captured["seed"]
+    # Server follow_up contract bounds: outline <= 7, key claims <= 5,
+    # unresolved <= 5, plus verification counts.
+    assert len(seed["outline"]) <= 7
+    assert len(seed["key_claims"]) <= 5
+    assert len(seed["unresolved_questions"]) <= 5
+    assert seed["verification_summary"] == {
+        "supported_claim_count": 1, "unsupported_claim_count": 1
+    }
+    assert seed["key_claims"][0]["claim_id"] == "claim-1"
+    assert captured["question"] == "Is the supported fact reliable?"
+    # The exchange is recorded for auditability.
+    assert "follow_up_answered" in _events(service, run["id"])
+
+
+def test_follow_up_insufficient_evidence_falls_back_explicitly():
+    service = _make_service()
+    run = _completed_claims_run(service)
+
+    async def answer_fn(seed, question):
+        return {"sufficient": False, "answer": None}
+
+    engine = LocalResearchEngine(service)
+    result = asyncio.run(engine.answer_follow_up(run["id"], "Unrelated?", answer_fn=answer_fn))
+
+    assert result["status"] == "insufficient_evidence"
+    assert result["answer"] is None
+    assert result["suggestion"]
+    assert "follow_up_insufficient" in _events(service, run["id"])
+
+
+def test_follow_up_without_claims_artifact_never_calls_the_llm():
+    service = _make_service()
+    run = service.launch_run(query="No claims here")
+    called = {"n": 0}
+
+    async def answer_fn(seed, question):
+        called["n"] += 1
+        return {"sufficient": True, "answer": "fabricated"}
+
+    engine = LocalResearchEngine(service)
+    result = asyncio.run(engine.answer_follow_up(run["id"], "Anything?", answer_fn=answer_fn))
+
+    assert result["status"] == "insufficient_evidence"
+    assert called["n"] == 0

@@ -472,6 +472,25 @@ class LocalResearchEngine:
             content_type="application/json",
             content=verification_summary,
         )
+        # Claims artifact (task-16325): the sentence-level claims extracted
+        # by citation verification, persisted so follow-up questions can be
+        # answered from stored evidence without new searches.
+        claims = list(
+            (final_answer.get("citation_verification") or {}).get("claims") or []
+        )
+        if claims:
+            supported = sum(1 for c in claims if c.get("status") == "supported")
+            self.service.save_artifact(
+                run_id,
+                artifact_name="claims.json",
+                content_type="application/json",
+                content={
+                    "claims": claims,
+                    "claim_count": len(claims),
+                    "supported_claim_count": supported,
+                    "unverified_claim_count": len(claims) - supported,
+                },
+            )
         self.service.save_artifact(
             run_id,
             artifact_name="bundle.json",
@@ -491,4 +510,146 @@ class LocalResearchEngine:
             run_id,
             progress_message=f"Completed with {len(evidence)} source(s)",
         )
+
+    # -- follow-up Q&A over stored claims (task-16325) ----------------------
+
+    _FOLLOW_UP_SEED_OUTLINE_MAX = 7
+    _FOLLOW_UP_SEED_KEY_CLAIMS_MAX = 5
+    _FOLLOW_UP_SEED_UNRESOLVED_MAX = 5
+
+    def _build_follow_up_seed(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        """Build the bounded follow-up seed from a completed run's stored
+        artifacts (server ``follow_up_json`` contract: question, <=7 outline
+        items, <=5 key claims, <=5 unresolved questions, verification and
+        source-trust counts). Returns None when no claims exist to answer
+        from."""
+        run_id = run["id"]
+        claims_artifact = self.service.get_artifact(run_id, "claims.json")
+        claims_payload = getattr(claims_artifact, "get", lambda *_: None)("content") or {}
+        claims = [c for c in claims_payload.get("claims") or [] if isinstance(c, dict)]
+        if not claims:
+            return None
+        plan_artifact = self.service.get_artifact(run_id, "plan.json")
+        plan = getattr(plan_artifact, "get", lambda *_: None)("content") or {}
+        bundle_artifact = self.service.get_artifact(run_id, "bundle.json")
+        bundle = getattr(bundle_artifact, "get", lambda *_: None)("content") or {}
+
+        supported_claims = [c for c in claims if c.get("status") == "supported"]
+        key_claims = (supported_claims or claims)[
+            : self._FOLLOW_UP_SEED_KEY_CLAIMS_MAX
+        ]
+        outline_titles = list(plan.get("sub_questions") or [])[
+            : self._FOLLOW_UP_SEED_OUTLINE_MAX
+        ]
+        return {
+            "question": run.get("query"),
+            "outline": [
+                {"title": title, "focus_area": "web"} for title in outline_titles
+            ],
+            "key_claims": [
+                {"claim_id": c.get("claim_id"), "text": c.get("text")}
+                for c in key_claims
+            ],
+            "unresolved_questions": list(bundle.get("remaining_gaps") or [])[
+                : self._FOLLOW_UP_SEED_UNRESOLVED_MAX
+            ],
+            "verification_summary": {
+                "supported_claim_count": claims_payload.get("supported_claim_count"),
+                "unsupported_claim_count": claims_payload.get("unverified_claim_count"),
+            },
+            "source_trust_summary": {
+                "high_trust_count": claims_payload.get("supported_claim_count"),
+                "low_trust_count": claims_payload.get("unverified_claim_count"),
+            },
+        }
+
+    async def _default_follow_up_answer_fn(
+        self, seed: dict[str, Any], question: str
+    ) -> dict[str, Any]:
+        """Default follow-up answerer: the synthesis LLM answers STRICTLY
+        from the seed; without an LLM configured it is honestly
+        insufficient, never a guess."""
+        llm = str(self.search_params.get("final_answer_llm") or "").strip()
+        if not llm:
+            return {"sufficient": False, "answer": None, "reason": "no synthesis LLM configured"}
+        from ..Chat.Chat_Functions import chat_api_call
+
+        prompt = (
+            "Answer the follow-up question using ONLY the research seed below. "
+            "If the seed does not contain enough to answer it, reply with "
+            "exactly INSUFFICIENT_EVIDENCE and nothing else.\n\n"
+            f"Seed:\n{json.dumps(seed, ensure_ascii=False, default=str)}\n\n"
+            f"Follow-up question: {question}"
+        )
+        try:
+            response = str(
+                chat_api_call(
+                    api_endpoint=llm,
+                    messages_payload=[{"role": "user", "content": prompt}],
+                    api_key=None,
+                    temp=0.2,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                    topk=None,
+                    topp=None,
+                )
+                or ""
+            ).strip()
+        except Exception as exc:  # noqa: BLE001 - follow-up degrades, never fails hard
+            logger.warning(f"Follow-up answer call failed: {exc}")
+            return {"sufficient": False, "answer": None, "reason": str(exc)}
+        if response.upper().startswith("INSUFFICIENT_EVIDENCE"):
+            return {"sufficient": False, "answer": None}
+        return {"sufficient": True, "answer": response}
+
+    async def answer_follow_up(
+        self,
+        run_id: str,
+        question: str,
+        *,
+        answer_fn: "GapFn | None" = None,
+    ) -> dict[str, Any]:
+        """Answer a follow-up question from a completed run's stored claims
+        (task-16325). Insufficient evidence returns an explicit fallback
+        verdict -- never a fabricated answer."""
+        run = self._get_run(run_id)
+        answerer = answer_fn or self._default_follow_up_answer_fn
+        seed = self._build_follow_up_seed(run)
+        if seed is None:
+            self.service.update_run_progress(
+                run_id,
+                event="follow_up_insufficient",
+                data={"question": question, "reason": "no stored claims"},
+            )
+            return {
+                "status": "insufficient_evidence",
+                "question": question,
+                "answer": None,
+                "reason": "no stored claims",
+                "suggestion": "Launch a new research run (or a fresh search) for this question.",
+            }
+        result = await self._maybe_await(answerer(seed, question))
+        if not isinstance(result, dict):
+            result = {"sufficient": True, "answer": str(result)}
+        event = "follow_up_answered" if result.get("sufficient") else "follow_up_insufficient"
+        self.service.update_run_progress(
+            run_id, event=event, data={"question": question}
+        )
+        if result.get("sufficient"):
+            return {
+                "status": "answered",
+                "question": question,
+                "answer": result.get("answer"),
+                "seed": seed,
+            }
+        return {
+            "status": "insufficient_evidence",
+            "question": question,
+            "answer": None,
+            "reason": result.get("reason") or "stored evidence does not support the question",
+            "suggestion": "Launch a new research run (or a fresh search) for this question.",
+        }
 
