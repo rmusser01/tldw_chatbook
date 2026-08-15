@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
+from tldw_chatbook.Library.library_expand_policy import expand_hint
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
@@ -279,17 +280,44 @@ class LibraryRagToolProvider:
     @staticmethod
     def _project_row(row: Any) -> dict[str, Any]:
         """Project one evidence row to agent-safe fields (never raw source
-        identities, chunk ids, citations, or provenance)."""
+        identities, chunk ids, citations, or provenance).
+
+        The one provenance-DERIVED field is ``expand_hint`` (TASK-16174): a
+        verdict on whether following this row into its document would add
+        anything, computed by the pure
+        ``Library.library_expand_policy.expand_hint`` helper. It carries only
+        ``expandable``/``reason`` -- no identity, no provenance value -- and
+        is omitted entirely for rows nothing can expand, so the payload's
+        no-raw-identity contract is unchanged. Without it, 54% of the rows an
+        agent is fed are label-only snippets it has no way to recognize as
+        labels.
+        """
         score = getattr(row, "score", None)
-        return {
+        snippet = str(getattr(row, "snippet", "") or "")
+        projected = {
             "result_id": str(getattr(row, "result_id", "") or "")[:_MAX_RESULT_ID_CHARS],
             "title": str(getattr(row, "title", "") or "")[:_MAX_TITLE_CHARS],
-            "snippet": str(getattr(row, "snippet", "") or "")[:_MAX_SNIPPET_CHARS],
+            "snippet": snippet[:_MAX_SNIPPET_CHARS],
             "score": score if isinstance(score, (int, float)) else None,
             "runtime_backend": str(getattr(row, "runtime_backend", "") or "")[
                 :_MAX_RUNTIME_BACKEND_CHARS
             ],
         }
+        # Computed from the UNPROJECTED snippet against this adapter's own
+        # cap, so a snippet the projection above cuts is reported as
+        # truncated rather than read back as complete text.
+        hint = expand_hint(
+            {
+                "source_id": getattr(row, "source_id", ""),
+                "chunk_id": getattr(row, "chunk_id", ""),
+                "snippet": snippet,
+                "provenance": getattr(row, "provenance", None),
+            },
+            snippet_cap=_MAX_SNIPPET_CHARS,
+        )
+        if hint is not None:
+            projected["expand_hint"] = hint
+        return projected
 
 
 __all__ = [

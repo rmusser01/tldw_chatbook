@@ -389,3 +389,138 @@ def test_rag_invoke_rejects_overlong_query():
     decoded = _error_payload(provider.invoke(f"library:{RAG_TOOL_NAME}", arguments))
 
     assert decoded["code"] == "invalid_argument"
+
+
+# --------------------------------------------------------------------------
+# LibraryRagToolProvider: per-row expansion hints (TASK-16174, Phase P)
+# --------------------------------------------------------------------------
+
+
+def _label_row(source_type: str, index: int) -> dict:
+    """A label-only row exactly as the local search service builds one."""
+    snippet = (
+        "Matched media · pdf"
+        if source_type == "media"
+        else "Matched conversation · 7 messages"
+    )
+    return {
+        "title": f"Label {index}",
+        "snippet": snippet,
+        "score": 0.5,
+        "source_id": f"{index}",
+        "chunk_id": "",
+        "provenance": {"source_type": source_type},
+    }
+
+
+def _text_row(index: int, *, chars: int = 300) -> dict:
+    return {
+        "title": f"Note {index}",
+        "snippet": f"note-{index}: " + ("the plan says a great deal. " * 200)[:chars],
+        "score": 0.4,
+        "source_id": f"note-{index}",
+        "chunk_id": "",
+        "provenance": {"source_type": "note"},
+    }
+
+
+def test_provider_rows_carry_expand_hint():
+    """The policy reaches the agent through the payload it actually reads."""
+    rows = [_label_row("media", 1), _label_row("conversation", 2), _text_row(3)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 3})
+
+    assert result.ok is True
+    projected = json.loads(result.content)["results"]
+    assert [row["expand_hint"] for row in projected] == [
+        {"expandable": True, "reason": "label_only"},
+        {"expandable": True, "reason": "label_only"},
+        {"expandable": False, "reason": "text_bearing"},
+    ]
+    for row in projected:
+        # Still no raw identities or provenance: the hint is derived, not raw.
+        assert set(row) <= {
+            "result_id",
+            "title",
+            "snippet",
+            "score",
+            "runtime_backend",
+            "expand_hint",
+        }
+
+
+def test_provider_row_without_expandable_identity_omits_the_hint():
+    row = _text_row(9)
+    row["provenance"] = {}
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert "expand_hint" not in json.loads(result.content)["results"][0]
+
+
+def test_provider_hint_reads_the_untruncated_snippet_length():
+    """The hint is computed against the provider's own projection cap, so a
+    snippet the payload cuts is reported as truncated, not text-bearing."""
+    row = _text_row(4, chars=4000)
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert projected["expand_hint"] == {
+        "expandable": True,
+        "reason": "truncated_snippet",
+    }
+    assert len(projected["snippet"]) < 4000  # the payload really did cut it
+
+
+def test_sealed_payload_survives_hints():
+    """A normal ten-row payload keeps every row AND every hint under the
+    32 KiB ceiling: the added per-row key must not push the sealing loop
+    into dropping rows."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_text_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    assert serialized_size(json.loads(result.content)) <= MAX_RESULT_BYTES
+    payload = json.loads(result.content)
+    assert payload["returned"] == 10
+    assert all("expand_hint" in row for row in payload["results"])
+    assert [row["expand_hint"]["reason"] for row in payload["results"]] == (
+        ["label_only"] * 5 + ["text_bearing"] * 5
+    )
+
+
+@pytest.mark.timeout(2)
+def test_sealing_loop_terminates_when_a_hinted_row_is_hostile():
+    """The shrink loop only knows four fields; a hinted row must still make
+    progress and stay bounded (the hint itself is never the last thing left
+    holding a row over the ceiling)."""
+    huge = "界" * 40_000
+    row = LibraryRagResultRow(
+        result_id=huge,
+        title=huge,
+        snippet="Matched media · pdf",
+        score=0.5,
+        source_id="12",
+        chunk_id="",
+        citations=(),
+        provenance=MappingProxyType({"source_type": "media"}),
+        runtime_backend=huge,
+    )
+    provider = LibraryRagToolProvider(
+        FakeRagService(result=LibraryRagSearchOutcome(status="ready", results=(row,)))
+    )
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    for projected in payload["results"]:
+        assert projected["expand_hint"] == {"expandable": True, "reason": "label_only"}
