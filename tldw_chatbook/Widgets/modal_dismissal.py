@@ -60,16 +60,42 @@ def is_modal_backdrop_click(
     )
 
 
+def _is_safe_focus_target(widget: Widget | None) -> bool:
+    return bool(
+        widget is not None
+        and widget.is_mounted
+        and widget.is_attached
+        and widget.display
+        and widget.visible
+        and not widget.disabled
+        and widget.can_focus
+    )
+
+
 def _restore_focus_after_dismissal(
-    app: App[Any], opener_ref: ReferenceType[Widget] | None
+    app: App[Any],
+    opener_ref: ReferenceType[Widget] | None,
+    opener_id: str | None,
 ) -> None:
+    revealed_screen = app.screen
     opener = opener_ref() if opener_ref is not None else None
-    if opener is not None and opener.is_mounted and opener.is_attached:
+    if _is_safe_focus_target(opener):
+        assert opener is not None
         opener.focus()
         return
 
+    if opener_id is not None:
+        eligible_matches = [
+            widget
+            for widget in revealed_screen.query(f"#{opener_id}")
+            if _is_safe_focus_target(widget)
+        ]
+        if len(eligible_matches) == 1:
+            eligible_matches[0].focus()
+            return
+
     focus_console_composer = getattr(
-        app.screen, "_focus_console_composer_if_needed", None
+        revealed_screen, "_focus_console_composer_if_needed", None
     )
     if callable(focus_console_composer):
         focus_console_composer(force=True)
@@ -160,6 +186,7 @@ class SafeModalDismissMixin:
     _safe_cancel_effect_committed = False
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
+    _safe_opener_focus_id: str | None = None
     _safe_backdrop_event_in_attempt: tuple[float, int, int] | None = None
     _safe_mount_generation = 0
 
@@ -169,6 +196,7 @@ class SafeModalDismissMixin:
         self._safe_cancel_effect_committed = False
         self._safe_dismiss_committed = False
         self._safe_opener_focus_ref = None
+        self._safe_opener_focus_id = None
         self._safe_backdrop_event_in_attempt = None
         self._safe_mount_generation += 1
 
@@ -177,11 +205,14 @@ class SafeModalDismissMixin:
         if len(screen_stack) < 2:
             return
         opener = screen_stack[-2].focused
-        self._safe_opener_focus_ref = ref(opener) if opener is not None else None
+        if opener is not None:
+            self._safe_opener_focus_ref = ref(opener)
+            self._safe_opener_focus_id = opener.id or None
 
     def on_unmount(self) -> None:
         """Release the opener reference when the modal leaves the DOM."""
         self._safe_opener_focus_ref = None
+        self._safe_opener_focus_id = None
 
     async def action_request_safe_cancel(self) -> None:
         """Route Escape to the modal's safe cancellation request."""
@@ -233,11 +264,17 @@ class SafeModalDismissMixin:
         self._safe_dismiss_committed = True
         app = host.app
         opener_ref = self._safe_opener_focus_ref
+        opener_id = self._safe_opener_focus_id
         backdrop_event = self._safe_backdrop_event_in_attempt
         host.dismiss(result)
         if backdrop_event is not None:
             _shield_revealed_screen_from_click_chain(app, *backdrop_event)
-        app.screen.call_after_refresh(_restore_focus_after_dismissal, app, opener_ref)
+        app.screen.call_after_refresh(
+            _restore_focus_after_dismissal,
+            app,
+            opener_ref,
+            opener_id,
+        )
         return True
 
     async def on_click(self, event: events.Click) -> None:

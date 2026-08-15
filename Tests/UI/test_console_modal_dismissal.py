@@ -2413,7 +2413,7 @@ async def test_visible_cancel_and_backdrop_return_exact_typed_value(source: str)
 
 
 @pytest.mark.asyncio
-async def test_restore_focus_returns_to_the_mounted_opener():
+async def test_opener_focus_restores_the_exact_eligible_console_opener():
     app = _ModalHarness()
     results: list[bool | None] = []
     modal = _SafeTestModal()
@@ -2432,7 +2432,7 @@ async def test_restore_focus_returns_to_the_mounted_opener():
 
 
 @pytest.mark.asyncio
-async def test_restore_focus_uses_console_fallback_when_opener_was_removed():
+async def test_console_composer_fallback_runs_when_opener_was_removed():
     app = _ModalHarness()
     results: list[bool | None] = []
     modal = _SafeTestModal()
