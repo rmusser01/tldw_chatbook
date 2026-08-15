@@ -106,7 +106,8 @@ changes:
 - `tldw/builtin_id` is `samira`;
 - role, personality-mix, and nature metadata move under the `tldw/*` namespace;
 - `tldw/license` is `AGPL-3.0-or-later`;
-- `tldw/visual_identity_pack_id` names the stable bundled pack;
+- `tldw/visual_identity_pack_id` is the stable bundled pack ID
+  `tldw.builtin.samira.reactions`;
 - tags describe the public character and feature demonstration without private
   provenance tags.
 
@@ -224,7 +225,8 @@ expressions/
   error.webp
 ```
 
-The manifest has a versioned schema identifier and records:
+The manifest schema ID is `tldw.visual_identity_pack/v1`; the bundled pack ID is
+`tldw.builtin.samira.reactions`. The manifest records:
 
 - stable built-in pack ID and title;
 - license and source provenance;
@@ -234,6 +236,15 @@ The manifest has a versioned schema identifier and records:
 - for every asset: expression key, exact original label, display label, relative
   filename, content type, byte count, dimensions, SHA-256, animation fields, and
   generation provenance.
+
+`pack_content_sha256` is the lowercase SHA-256 of UTF-8 canonical JSON containing
+the schema ID, bundled pack ID, default expression key, license, and the asset
+inventory ordered by original label. Each inventory item contributes expression
+key, original label, relative filename, content type, byte count, dimensions, and
+asset SHA-256. Canonical JSON uses sorted object keys, compact `,`/`:` separators,
+`ensure_ascii = false`, and no trailing newline. The digest field itself and
+non-content generation notes are excluded, avoiding self-reference and provenance-
+only digest churn. Tests freeze this literal payload and digest procedure.
 
 Paths are normalized relative POSIX paths. They may not be absolute, contain `..`,
 backslashes, NULs, or leave the Samira package directory. The manifest contains one
@@ -253,6 +264,11 @@ match the pinned server implementation. The omitted server tables are drafts and
 idempotency; no local empty facsimiles are created for them. The local owner sentinel
 is `0` because each Chatbook database is already profile-owned. It is documented as
 local-only and must never be sent as a server user ID.
+
+The shared schema retains the server's `actor_kind IN ('character', 'persona')`
+compatibility constraint, but TASK-16319 creates, resolves, and presents only
+`character` bindings. Persona binding behavior and the separate Persona Visual Pack
+runtime are not extended by this task.
 
 Built-in asset rows store package-relative `storage_relpath` values such as
 `characters/samira/expressions/joy.webp`. `source_kind = 'builtin'` selects the
