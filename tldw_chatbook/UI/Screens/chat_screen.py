@@ -323,10 +323,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
     console_setup_staged_receipt,
 )
-from ...Chat.console_expression_state import (
-    EXPRESSION_IMAGE_STATES,
-    resolve_console_expression_state,
-)
+from ...Chat.console_expression_state import resolve_console_expression_state
 from ...Chat.console_command_suggestions import suggestions_for_draft
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
@@ -2040,6 +2037,13 @@ class ChatScreen(BaseAppScreen):
         """
         self._toggle_console_rail_section(message.section_id)
 
+    @on(ConsoleLeftRail.ReactionPickerRequested)
+    async def _console_reaction_picker_requested(
+        self, message: ConsoleLeftRail.ReactionPickerRequested
+    ) -> None:
+        message.stop()
+        await self._session._open_console_reaction_picker()
+
     @on(ConsoleInspectorSection.RowActivated)
     def on_console_agent_fleet_row_activated(
         self, message: ConsoleInspectorSection.RowActivated
@@ -3677,7 +3681,7 @@ class ChatScreen(BaseAppScreen):
         # expression state already seen this session is served instantly
         # (no re-fetch/re-decode). Keyed on the full scope tuple, mirroring
         # `_last_console_avatar_scope`.
-        self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
+        self._console_expression_spec_cache: dict[tuple[str, ...], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
         # task-15470: debounce state for `watch_sidebar_state` -- see
@@ -10029,40 +10033,10 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug("avatar: character fetch failed")
             return None
 
-    def _fetch_expression_image_bytes(
-        self, character_id: int, state: str
-    ) -> bytes | None:
-        """Return the image bytes for (character, state): the expression-table
-        image for a non-idle state, else the character's idle avatar. Runs
-        off-thread (called via asyncio.to_thread). Never raises -> None on any error."""
-        try:
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                return None
-            if state in EXPRESSION_IMAGE_STATES:
-                img = db.get_character_expression_image(character_id, state)
-                if img:
-                    return img
-            card = self._fetch_character_card_for_avatar(character_id)  # idle fallback
-            image = (card or {}).get("image")
-            return (
-                bytes(image)
-                if isinstance(image, (bytes, bytearray)) and image
-                else None
-            )
-        except Exception:
-            logger.opt(exception=True).debug("avatar: expression fetch failed")
-            return None
-
-    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
-        """Refresh the cached character avatar only when the active
-        (character, expression state) scope changed.
-
-        P3d-1: widens the P3c `(character_id,)` scope to `(character_id,
-        state)` so the avatar reacts to the character thinking/speaking, via
-        `resolve_console_expression_state` (pure, DB-free, reads only the
-        active native Console session's live message statuses).
-        """
+    async def _refresh_active_character_avatar_if_scope_changed(
+        self, *, force: bool = False
+    ) -> None:
+        """Resolve and paint one race-fenced Visual Identity avatar."""
         if not resolve_show_character_avatar(
             getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
         ):
@@ -10078,38 +10052,54 @@ class ChatScreen(BaseAppScreen):
             # the next config-on tick.
             self._last_console_avatar_scope = None
             return
-        character_id = self._current_console_rail_character_id()
         controller = getattr(self, "_console_chat_controller", None)
         store = getattr(controller, "store", None) if controller is not None else None
-        active_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
         react = resolve_react_character_expressions(
             getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
         )
-        state = resolve_console_expression_state(
-            store, active_session_id, react_enabled=react
-        )
-        scope = (character_id, state)
-        if scope == self._last_console_avatar_scope:
+
+        def current_request() -> tuple[tuple[str, str, str] | None, str, str | None]:
+            actor = self._session._current_visual_identity_actor_scope()
+            session_id = getattr(store, "active_session_id", None) if store else None
+            state = resolve_console_expression_state(
+                store, session_id, react_enabled=react
+            )
+            manual = self._session._manual_reaction_key(actor) if actor else None
+            return actor, state, manual
+
+        actor_scope, state, manual_key = current_request()
+        scope = (actor_scope, state, manual_key)
+        if not force and scope == self._last_console_avatar_scope:
             return
         self._last_console_avatar_scope = scope
         name = self._current_console_rail_character_name()
         self._active_character_avatar_name = name
-        if character_id is None:
+        if actor_scope is None:
             self._active_character_avatar = None
             await self._render_character_avatar_into_section()
             return
-        # Serve from the per-state cache when this (character, state) scope
-        # was already decoded this session -- no re-fetch/re-decode.
-        cached = self._console_expression_spec_cache.get((character_id, state))
+        character_id = int(actor_scope[2])
+        resolution = await asyncio.to_thread(
+            self._session._resolve_visual_identity,
+            actor_scope,
+            state,
+            manual_key,
+        )
+        if current_request() != scope or not self.is_mounted:
+            return
+        if resolution is None:
+            self._active_character_avatar = None
+            await self._render_character_avatar_into_section()
+            return
+        identity = resolution.cache_identity
+        cached = self._console_expression_spec_cache.get(identity)
         if cached is not None:
             self._active_character_avatar = cached
             await self._render_character_avatar_into_section()
             return
         _, cache = self._ensure_console_image_view()
         mode = getattr(self, "_console_image_default_mode", "pixels")
-        key = f"character:{character_id}:{state}"
+        key = "visual-identity:" + "|".join(identity)
         spec = {
             "character_id": character_id,
             "state": state,
@@ -10117,42 +10107,34 @@ class ChatScreen(BaseAppScreen):
             "mode": mode,
             "pil": None,
             "pixels": None,
+            "manual_expression_key": manual_key,
+            "resolution_cache_identity": identity,
         }
         try:
-            image = await asyncio.to_thread(
-                self._fetch_expression_image_bytes, character_id, state
-            )
-            if image:
-                ok = await asyncio.to_thread(cache.prepare, key, image)
+            if resolution.image_bytes:
+                ok = await asyncio.to_thread(cache.prepare, key, resolution.image_bytes)
+                if current_request() != scope or not self.is_mounted:
+                    return
                 if ok:
-                    # Always carry the PIL, never the cache's pre-baked Pixels.
-                    # `cache.get_pixels` bakes at the TRANSCRIPT box
-                    # (PIXELS_MAX_COLS x PIXELS_MAX_LINES = 80x40 cells); the
-                    # avatar rail is 16x8, and Rich clips an oversized Pixels
-                    # renderable rather than scaling it -- which showed the
-                    # user only the top-left corner of their character's
-                    # portrait. The render path scales the PIL to the avatar
-                    # box before building Pixels.
                     spec["pil"] = cache.get_pil(key)
+                current = await asyncio.to_thread(
+                    self._session._resolve_visual_identity,
+                    actor_scope,
+                    state,
+                    manual_key,
+                )
+                if (
+                    current_request() != scope
+                    or not self.is_mounted
+                    or current is None
+                    or current.cache_identity != identity
+                ):
+                    return
         except Exception:
             logger.opt(exception=True).debug("avatar: expression decode failed")
-        # Post-await staleness re-check on the FULL (character_id, state)
-        # scope: the state can flip mid-decode while streaming, so recompute
-        # it live -- both the session id and the state -- rather than reusing
-        # the `active_session_id` captured before the await, so two tabs
-        # sharing one character can't paint a stale render.
-        current_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
-        current_state = resolve_console_expression_state(
-            store, current_session_id, react_enabled=react
-        )
-        if (
-            self._current_console_rail_character_id(),
-            current_state,
-        ) != scope or not self.is_mounted:
+        if current_request() != scope or not self.is_mounted:
             return
-        self._console_expression_spec_cache[(character_id, state)] = spec
+        self._console_expression_spec_cache[identity] = spec
         # Bound the cache: evict oldest insertion-ordered entries (dicts
         # preserve insertion order) so a long session visiting many
         # characters/states doesn't retain unbounded PIL image references.
@@ -10190,6 +10172,15 @@ class ChatScreen(BaseAppScreen):
                         )
                         or "No character in this chat"
                     )
+                )
+            except QueryError:
+                pass
+            try:
+                manual_label = self._session._manual_reaction_label_for_current_actor()
+                self.query_one("#console-character-reaction-state", Static).update(
+                    f"Reaction: {manual_label} (manual)"
+                    if manual_label
+                    else "Reaction: Automatic"
                 )
             except QueryError:
                 pass
@@ -13927,6 +13918,9 @@ class ChatScreen(BaseAppScreen):
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    manual_reaction_label=(
+                        self._session._manual_reaction_label_for_current_actor()
+                    ),
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"

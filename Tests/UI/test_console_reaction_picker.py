@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
@@ -752,3 +754,120 @@ async def test_character_rail_shows_reaction_action_and_visible_manual_state(
         await pilot.pause()
 
     assert app.requests == 1
+
+
+@pytest.mark.asyncio
+async def test_preview_updates_only_the_current_highlighted_reaction() -> None:
+    """A late preview may not replace the reaction highlighted after it."""
+
+    app = PickerHarness(
+        (
+            ReactionOption("custom:alarm", "Alarm", "image/webp", False),
+            ReactionOption("custom:relief", "Relief", "image/webp", False),
+        )
+    )
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(PREVIEW_SETTLE_SECONDS)
+        modal = app.screen
+        assert isinstance(modal, ConsoleReactionPickerModal)
+        assert modal.update_preview("custom:alarm", "alarm preview") is True
+        preview = modal.query_one("#console-reaction-picker-preview-image", Static)
+        assert str(preview.renderable) == "alarm preview"
+
+        await pilot.press("down")
+        assert modal.update_preview("custom:alarm", "stale preview") is False
+        assert str(preview.renderable) != "stale preview"
+        assert modal.update_preview("custom:relief", "relief preview") is True
+        assert str(preview.renderable) == "relief preview"
+
+
+def test_manual_reaction_keys_are_session_actor_scoped_and_nonpersistent() -> None:
+    """Manual reactions live only on one controller, keyed by session + actor."""
+
+    first = ConsoleSessionController.__new__(ConsoleSessionController)
+    first._manual_reaction_overrides = {}
+    samira = ("session-a", "character", "7")
+    other_session = ("session-b", "character", "7")
+    other_actor = ("session-a", "character", "8")
+
+    first._set_manual_reaction(samira, "custom:relief")
+
+    assert first._manual_reaction_key(samira) == "custom:relief"
+    assert first._manual_reaction_key(other_session) is None
+    assert first._manual_reaction_key(other_actor) is None
+
+    restarted = ConsoleSessionController.__new__(ConsoleSessionController)
+    restarted._manual_reaction_overrides = {}
+    assert restarted._manual_reaction_key(samira) is None
+
+
+def test_clear_reaction_removes_only_the_current_actor_override() -> None:
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._manual_reaction_overrides = {
+        ("session-a", "character", "7"): "custom:relief",
+        ("session-a", "character", "8"): "custom:alarm",
+        ("session-b", "character", "7"): "custom:love",
+    }
+
+    controller._clear_manual_reaction(("session-a", "character", "7"))
+
+    assert controller._manual_reaction_overrides == {
+        ("session-a", "character", "8"): "custom:alarm",
+        ("session-b", "character", "7"): "custom:love",
+    }
+
+
+def test_actor_replacement_clears_only_the_old_actor_override() -> None:
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._manual_reaction_overrides = {
+        ("session-a", "character", "7"): "custom:relief",
+        ("session-a", "character", "8"): "custom:alarm",
+        ("session-b", "character", "7"): "custom:love",
+    }
+
+    controller._clear_replaced_actor_reactions(
+        "session-a", actor_kind="character", actor_id="8"
+    )
+
+    assert controller._manual_reaction_overrides == {
+        ("session-a", "character", "8"): "custom:alarm",
+        ("session-b", "character", "7"): "custom:love",
+    }
+
+
+@pytest.mark.asyncio
+async def test_preview_inventory_result_is_discarded_after_context_changes() -> None:
+    """A preview await may not publish into a newer operational context."""
+
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    scope = ("session-a", "character", "7")
+    context = {"value": (scope, "idle", None)}
+    started = threading.Event()
+    release = threading.Event()
+
+    def options(_scope):
+        started.set()
+        assert release.wait(timeout=5)
+        return (ReactionOption("custom:relief", "Relief", "image/webp", False),)
+
+    controller._visual_identity_request_context = lambda: context["value"]
+    controller._visual_identity_options = options
+    updates: list[tuple[str, object]] = []
+    picker = type(
+        "PreviewSink",
+        (),
+        {"update_preview": lambda _self, key, value: updates.append((key, value))},
+    )()
+
+    pending = asyncio.create_task(
+        controller._preview_console_reaction(
+            ReactionOption("custom:relief", "Relief", "image/webp", False),
+            picker,
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    context["value"] = (scope, "thinking", None)
+    release.set()
+    await pending
+
+    assert updates == []

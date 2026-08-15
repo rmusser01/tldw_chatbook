@@ -376,6 +376,12 @@ def build_console_controllers(
         # ratchet.py) that a convenience wrapper would push past, and the
         # controller's body is the pre-move closure unchanged either way.
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        visual_identity_db_accessor=(
+            lambda: getattr(screen.app_instance, "chachanotes_db", None)
+        ),
+        refresh_character_avatar=(
+            lambda: screen._refresh_active_character_avatar_if_scope_changed(force=True)
+        ),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,

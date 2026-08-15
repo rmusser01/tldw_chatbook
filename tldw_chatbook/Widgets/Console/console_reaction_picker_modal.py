@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -43,8 +43,11 @@ class ReactionOption:
 class ReactionPreviewRequested(Message):
     """Ask the Console owner to lazily load one highlighted reaction."""
 
-    def __init__(self, option: ReactionOption) -> None:
+    def __init__(
+        self, option: ReactionOption, picker: ConsoleReactionPickerModal | None = None
+    ) -> None:
         self.option = option
+        self.picker = picker
         super().__init__()
 
 
@@ -158,6 +161,12 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         color: $text-muted;
     }
 
+    #console-reaction-picker-preview-image {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+    }
+
     #console-reaction-picker-actions {
         width: 100%;
         height: 3;
@@ -209,6 +218,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         *,
         options: Sequence[ReactionOption],
         message_target: MessagePump | None = None,
+        preview_callback: Callable[[ReactionOption, ConsoleReactionPickerModal], None]
+        | None = None,
+        selection_callback: Callable[[ReactionOption], None] | None = None,
+        clear_callback: Callable[[], None] | None = None,
         **kwargs: Any,
     ) -> None:
         """Create the picker from metadata and an optional owning message pump."""
@@ -216,6 +229,9 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         super().__init__(**kwargs)
         self._options = tuple(options)
         self._message_target = message_target
+        self._preview_callback = preview_callback
+        self._selection_callback = selection_callback
+        self._clear_callback = clear_callback
         self._filtered: tuple[ReactionOption, ...] = ()
         self._highlighted_index = 0
         self._row_ids: list[str] = []
@@ -252,6 +268,11 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
                     yield Static(
                         "Preview loads only for the highlighted reaction.",
                         id="console-reaction-picker-preview-meta",
+                        markup=False,
+                    )
+                    yield Static(
+                        "Loading preview…",
+                        id="console-reaction-picker-preview-image",
                         markup=False,
                     )
             with Horizontal(id="console-reaction-picker-actions"):
@@ -524,12 +545,35 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         label.update(option.display_label)
         motion = "Animated" if option.is_animated else "Static"
         meta.update(f"{option.expression_key}\n{motion} · {option.content_type}")
+        try:
+            self.query_one("#console-reaction-picker-preview-image", Static).update(
+                "Loading preview…"
+            )
+        except (NoMatches, QueryError):
+            pass
+
+    def update_preview(self, expression_key: str, renderable: object) -> bool:
+        """Show an already-decoded preview only while its reaction is current."""
+
+        option = self._highlighted_option()
+        if option is None or option.expression_key != expression_key:
+            return False
+        try:
+            self.query_one("#console-reaction-picker-preview-image", Static).update(
+                renderable
+            )
+        except (NoMatches, QueryError):
+            return False
+        return True
 
     def _request_preview(self, option: ReactionOption) -> None:
         if option.expression_key == self._last_preview_key:
             return
         self._last_preview_key = option.expression_key
-        self._emit(ReactionPreviewRequested(option))
+        if self._preview_callback is not None:
+            self._preview_callback(option, self)
+        else:
+            self._emit(ReactionPreviewRequested(option, self))
 
     def _schedule_preview_request(self, option: ReactionOption) -> None:
         self._cancel_preview_debounce()
@@ -615,7 +659,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
     def _clear_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self._cancel_pending_updates()
-        self._emit(ReactionCleared())
+        if self._clear_callback is not None:
+            self._clear_callback()
+        else:
+            self._emit(ReactionCleared())
         self.dismiss(None)
 
     @on(Button.Pressed, "#console-reaction-picker-cancel")
@@ -628,7 +675,10 @@ class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
         if option is None:
             return
         self._cancel_pending_updates()
-        self._emit(ReactionSelected(option))
+        if self._selection_callback is not None:
+            self._selection_callback(option)
+        else:
+            self._emit(ReactionSelected(option))
         self.dismiss(None)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:

@@ -139,6 +139,8 @@ from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
+from ...Chat.console_expression_state import resolve_console_expression_state
+from ...Chat.console_image_view import resolve_react_character_expressions
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     effective_user_display_name,
@@ -153,8 +155,17 @@ from ...Chat.console_session_settings import (
 )
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
+from ...Character_Chat.visual_identity import (
+    VisualIdentityResolution,
+    resolve_visual_identity,
+)
+from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import coerce_bool_setting
 from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
+from ...Widgets.Console.console_reaction_picker_modal import (
+    ConsoleReactionPickerModal,
+    ReactionOption,
+)
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow
 from ...Workspaces.display_state import (
@@ -426,6 +437,8 @@ class ConsoleSessionController:
         merge_workspace_rows: Callable[[list, tuple], list],
         session_id_for_workspace_conversation: Callable[[str], str | None],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
+        visual_identity_db_accessor: Callable[[], Any | None],
+        refresh_character_avatar: Callable[[], Any],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -533,6 +546,10 @@ class ConsoleSessionController:
                 as a named callable rather than through `self._screen`.
                 Not DOM: the pair is plain state plus a render cache, so
                 the zero-DOM rule is untouched.
+            visual_identity_db_accessor: Current profile-local character DB.
+                Late-bound so tests and profile switches are observed.
+            refresh_character_avatar: Late-bound forced avatar refresh after
+                a validated manual reaction change.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -564,12 +581,15 @@ class ConsoleSessionController:
             session_id_for_workspace_conversation
         )
         self._ensure_console_image_view_fn = ensure_console_image_view
+        self._visual_identity_db_accessor = visual_identity_db_accessor
+        self._refresh_character_avatar_fn = refresh_character_avatar
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._closing_session_requests: set[str] = set()
+        self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -589,6 +609,12 @@ class ConsoleSessionController:
         """`Screen.app.push_screen_wait`, bound. See `__init__`'s docstring."""
 
         return self._screen.app.push_screen_wait
+
+    @property
+    def run_app_worker(self) -> Any:
+        """App worker service for work that must survive a modal dismissal."""
+
+        return self._screen.app.run_worker
 
     # -- Sibling cluster's reach-back (disclosed) ---------------------------
 
@@ -720,6 +746,284 @@ class ConsoleSessionController:
         """`ConsoleWorkspaceController._console_session_id_for_workspace_
         conversation`. Same prefix-drop as above."""
         return self._session_id_for_workspace_conversation_fn
+
+    # -- Session-local character reactions ----------------------------------
+
+    def _manual_reaction_key(self, scope: tuple[str, str, str]) -> str | None:
+        """Return one session-and-actor-local manual reaction key."""
+
+        return self._manual_reaction_overrides.get(scope)
+
+    def _set_manual_reaction(
+        self, scope: tuple[str, str, str], expression_key: str
+    ) -> None:
+        """Set one already-validated session-and-actor-local reaction key."""
+
+        self._manual_reaction_overrides[scope] = expression_key
+
+    def _clear_manual_reaction(self, scope: tuple[str, str, str]) -> None:
+        """Clear the manual reaction for one exact session and actor."""
+
+        self._manual_reaction_overrides.pop(scope, None)
+
+    def _clear_session_manual_reactions(self, session_id: str) -> None:
+        """Drop all in-memory reaction choices for one disposed session."""
+
+        for scope in tuple(self._manual_reaction_overrides):
+            if scope[0] == session_id:
+                self._manual_reaction_overrides.pop(scope, None)
+
+    def _clear_replaced_actor_reactions(
+        self, session_id: str, *, actor_kind: str, actor_id: str
+    ) -> None:
+        """Drop old-actor overrides after a session is rebound successfully."""
+
+        current = (session_id, actor_kind, actor_id)
+        for scope in tuple(self._manual_reaction_overrides):
+            if scope[0] == session_id and scope != current:
+                self._manual_reaction_overrides.pop(scope, None)
+
+    def _current_visual_identity_actor_scope(self) -> tuple[str, str, str] | None:
+        """Return the active local character's session-and-actor scope."""
+
+        session = self._active_native_console_session()
+        if session is None or session.runtime_backend != "local":
+            return None
+        actor_id = session.local_character_id()
+        if actor_id is None:
+            return None
+        return (session.id, "character", str(actor_id))
+
+    def _manual_reaction_label_for_current_actor(self) -> str | None:
+        """Return a compact display label for the active manual reaction."""
+
+        scope = self._current_visual_identity_actor_scope()
+        key = self._manual_reaction_key(scope) if scope else None
+        if not key:
+            return None
+        return key.rsplit(":", 1)[-1].replace("_", " ").replace("-", " ").title()
+
+    def _visual_identity_request_context(
+        self,
+    ) -> tuple[tuple[str, str, str] | None, str, str | None]:
+        """Snapshot the active actor, operational state, and manual key."""
+
+        scope = self._current_visual_identity_actor_scope()
+        store = self._console_chat_store
+        session_id = getattr(store, "active_session_id", None) if store else None
+        react = resolve_react_character_expressions(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+        state = resolve_console_expression_state(store, session_id, react_enabled=react)
+        manual = self._manual_reaction_key(scope) if scope else None
+        return scope, state, manual
+
+    def _resolve_visual_identity(
+        self,
+        scope: tuple[str, str, str],
+        requested_state: str,
+        manual_expression_key: str | None,
+    ) -> VisualIdentityResolution | None:
+        """Resolve one reaction synchronously for an off-thread caller."""
+
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return None
+        _session_id, actor_kind, actor_id = scope
+        try:
+            return resolve_visual_identity(
+                db,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
+                requested_state=requested_state,
+                manual_expression_key=manual_expression_key,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Console reaction resolution failed for actor_kind={} actor_id={}",
+                actor_kind,
+                actor_id,
+            )
+            return None
+
+    def _visual_identity_options(
+        self, scope: tuple[str, str, str]
+    ) -> tuple[ReactionOption, ...]:
+        """Return metadata-only options for one active local actor pack."""
+
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return ()
+        _session_id, actor_kind, actor_id = scope
+        try:
+            graph = VisualIdentityRepository(db).get_active_actor_pack(
+                actor_kind, actor_id
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Console reaction inventory failed for actor_kind={} actor_id={}",
+                actor_kind,
+                actor_id,
+            )
+            return ()
+        if graph is None:
+            return ()
+        return tuple(
+            ReactionOption(
+                expression_key=str(asset["expression_key"]),
+                display_label=str(asset["display_label"]),
+                content_type=str(asset["content_type"]),
+                is_animated=bool(asset["is_animated"]),
+            )
+            for asset in graph["assets"]
+        )
+
+    async def _open_console_reaction_picker(self) -> None:
+        """Query reaction metadata off-thread and open the owned picker."""
+
+        context = self._visual_identity_request_context()
+        scope = context[0]
+        if scope is None:
+            self.app_instance.notify(
+                "Choose a local character before selecting a reaction.",
+                severity="warning",
+            )
+            return
+        options = await asyncio.to_thread(self._visual_identity_options, scope)
+        if self._visual_identity_request_context() != context:
+            return
+        if not options:
+            self.app_instance.notify(
+                "This character has no reaction pack.", severity="information"
+            )
+            return
+        self.push_screen(
+            ConsoleReactionPickerModal(
+                options=options,
+                message_target=self._screen,
+                preview_callback=self._dispatch_console_reaction_preview,
+                selection_callback=self._dispatch_console_reaction_selection,
+                clear_callback=self._dispatch_console_reaction_clear,
+            )
+        )
+
+    def _dispatch_console_reaction_preview(
+        self, option: ReactionOption, picker: ConsoleReactionPickerModal
+    ) -> None:
+        self.run_app_worker(
+            self._preview_console_reaction(option, picker),
+            group="console-reaction-preview",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _dispatch_console_reaction_selection(self, option: ReactionOption) -> None:
+        self.run_app_worker(
+            self._apply_console_reaction_selection(option),
+            group="console-reaction-selection",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _apply_console_reaction_selection(self, option: ReactionOption) -> None:
+        if await self._select_console_reaction(option):
+            await self._refresh_character_avatar_fn()
+
+    def _dispatch_console_reaction_clear(self) -> None:
+        if self._clear_current_console_reaction():
+            self.run_app_worker(
+                self._refresh_character_avatar_fn(),
+                group="console-reaction-selection",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    async def _select_console_reaction(self, option: ReactionOption) -> bool:
+        """Validate then replace the active actor's manual reaction key."""
+
+        context = self._visual_identity_request_context()
+        scope = context[0]
+        if scope is None:
+            return False
+        options = await asyncio.to_thread(self._visual_identity_options, scope)
+        if self._visual_identity_request_context() != context:
+            return False
+        if option.expression_key not in {
+            candidate.expression_key for candidate in options
+        }:
+            self.app_instance.notify(
+                "That reaction is no longer available.", severity="error"
+            )
+            return False
+        self._set_manual_reaction(scope, option.expression_key)
+        return True
+
+    def _clear_current_console_reaction(self) -> bool:
+        """Return the active actor to automatic operational reactions."""
+
+        scope = self._current_visual_identity_actor_scope()
+        if scope is None:
+            return False
+        self._clear_manual_reaction(scope)
+        return True
+
+    async def _preview_console_reaction(
+        self, option: ReactionOption, picker: ConsoleReactionPickerModal | None
+    ) -> None:
+        """Resolve and decode only the latest settled picker preview."""
+
+        if picker is None:
+            return
+        context = self._visual_identity_request_context()
+        scope, state, _manual = context
+        if scope is None:
+            return
+        options = await asyncio.to_thread(self._visual_identity_options, scope)
+        if self._visual_identity_request_context() != context:
+            return
+        if option.expression_key not in {
+            candidate.expression_key for candidate in options
+        }:
+            picker.update_preview(option.expression_key, "Preview unavailable.")
+            return
+        resolution = await asyncio.to_thread(
+            self._resolve_visual_identity, scope, state, option.expression_key
+        )
+        if self._visual_identity_request_context() != context:
+            return
+        if (
+            resolution is None
+            or resolution.resolved_expression_key != option.expression_key
+            or not resolution.image_bytes
+        ):
+            picker.update_preview(option.expression_key, "Preview unavailable.")
+            return
+        identity = resolution.cache_identity
+        _view, cache = self._ensure_console_image_view()
+        cache_key = "visual-identity-preview:" + "|".join(identity)
+        prepared = await asyncio.to_thread(
+            cache.prepare, cache_key, resolution.image_bytes
+        )
+        if self._visual_identity_request_context() != context:
+            return
+        if not prepared:
+            picker.update_preview(option.expression_key, "Preview unavailable.")
+            return
+        renderable = await asyncio.to_thread(cache.get_pixels, cache_key)
+        if self._visual_identity_request_context() != context:
+            return
+        current = await asyncio.to_thread(
+            self._resolve_visual_identity, scope, state, option.expression_key
+        )
+        if (
+            self._visual_identity_request_context() != context
+            or current is None
+            or current.cache_identity != identity
+        ):
+            return
+        picker.update_preview(
+            option.expression_key, renderable or "Preview unavailable."
+        )
 
     # -- Session switcher / rename -------------------------------------------
 
@@ -854,6 +1158,7 @@ class ConsoleSessionController:
             _state, cache = self._ensure_console_image_view()
             cache.evict_session(closing_ids)
             self._ensure_console_chat_controller().close_session(session_id)
+            self._clear_session_manual_reactions(session_id)
             self._console_undo_histories.pop(session_id, None)
             await self._sync_native_console_chat_ui()
 
@@ -1269,10 +1574,7 @@ class ConsoleSessionController:
                 canonical_settings_baseline=settings,
             )
             return settings
-        if (
-            session.has_user_work
-            or session.canonical_settings_baseline != settings
-        ):
+        if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings
         try:
             if store.messages_for_session(session.id):
@@ -1586,6 +1888,9 @@ class ConsoleSessionController:
                 severity="warning",
             )
             return False
+        self._clear_replaced_actor_reactions(
+            session_id, actor_kind="character", actor_id=str(character_id)
+        )
         return True
 
     async def _start_character_console_session(
@@ -1865,6 +2170,15 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
+        if not duplicate_handoff:
+            if local_character_id is None:
+                self._clear_session_manual_reactions(session.id)
+            else:
+                self._clear_replaced_actor_reactions(
+                    session.id,
+                    actor_kind="character",
+                    actor_id=str(local_character_id),
+                )
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
