@@ -362,6 +362,7 @@ def _make_sync_probe_screen(monitor):
     screen = MagicMock(spec=ChatScreen)
     for slot in _console_controller_slots():
         setattr(screen, slot, MagicMock())
+    screen._console_chat_store = None
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
     screen._console_chat_store = None
