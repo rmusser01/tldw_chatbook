@@ -218,3 +218,92 @@ def test_engine_rejects_terminal_run():
 
     with pytest.raises(ValueError, match="terminal"):
         asyncio.run(engine.execute_run(run["id"]))
+
+
+# --- budget enforcement (task-16323) -------------------------------------------
+
+def _budget_pipeline(question, *, results=2, captured_params=None):
+    def search_fn(q, params):
+        if captured_params is not None:
+            captured_params.update(params)
+        return (
+            {
+                "results": [
+                    {"title": f"R{i}", "url": f"https://r{i}.example/"} for i in range(results)
+                ],
+                "warnings": [],
+            },
+            {"sub_questions": ["sub q1"], "main_goal": q},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        seen["results"] = list(wsr.get("results") or [])
+        return {
+            "final_answer": {"text": "ok[1]", "evidence": [], "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+            "web_search_results_dict": wsr,
+        }
+
+    seen: dict = {}
+    return search_fn, analyze_fn, seen
+
+
+def test_engine_caps_search_fanout_at_budget_before_spend():
+    service = _make_service()
+    run = service.launch_run(query="Budgeted", limits_json={"max_searches": 2})
+    captured: dict = {}
+    search_fn, analyze_fn, _ = _budget_pipeline("Budgeted", captured_params=captured)
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    # The fan-out cap is applied in the params BEFORE phase 1 can spend.
+    assert captured["search_default_max_queries"] <= 2
+    ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
+    assert ledger["searches_used"] == 2  # question + 1 sub-query
+
+
+def test_engine_truncates_docs_to_budget():
+    service = _make_service()
+    run = service.launch_run(query="Budgeted docs", limits_json={"max_fetched_docs": 1})
+    search_fn, analyze_fn, seen = _budget_pipeline("Budgeted docs", results=3)
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert len(seen["results"]) == 1  # analyze only saw the budgeted batch
+    ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
+    assert ledger["docs_used"] == 1
+
+
+def test_engine_stops_cleanly_when_doc_budget_exhausted():
+    service = _make_service()
+    run = service.launch_run(query="No docs allowed", limits_json={"max_fetched_docs": 0})
+    search_fn, analyze_fn, seen = _budget_pipeline("No docs allowed", results=3)
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_fetched_docs" in final["progress_message"]
+    assert "results" not in seen  # synthesis never started
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    assert {"plan.json", "collection_summary.json", "budget_ledger.json"} <= names
+    assert "report_v1.md" not in names
+
+
+def test_engine_runtime_budget_stops_run_at_phase_boundary():
+    service = _make_service()
+    run = service.launch_run(query="No time", limits_json={"max_runtime_seconds": 0})
+    search_fn, analyze_fn, seen = _budget_pipeline("No time")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_runtime_seconds" in final["progress_message"]
+    assert "results" not in seen
+    ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
+    assert ledger["limits"]["max_runtime_seconds"] == 0.0

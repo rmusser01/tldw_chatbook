@@ -26,6 +26,7 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 
 from .local_research_service import LocalResearchService
+from .research_budget import BudgetLedger, ResearchLimitExceeded
 
 __all__ = ["LocalResearchEngine", "TERMINAL_RUN_STATUSES"]
 
@@ -130,23 +131,46 @@ class LocalResearchEngine:
             raise ValueError(
                 f"run {run_id} is already terminal ({status}); engine will not re-execute"
             )
+        ledger = BudgetLedger.from_limits(
+            run.get("limits") if isinstance(run.get("limits"), dict) else None
+        )
 
         try:
-            return await self._execute_phases(run)
+            return await self._execute_phases(run, ledger)
         except _RunPaused as paused:
             logger.info(f"Research run {run_id} paused between phases")
             return paused.args[0]
         except _RunCancelled as cancelled:
             logger.info(f"Research run {run_id} cancelled between phases")
             return cancelled.args[0]
+        except ResearchLimitExceeded as exceeded:
+            # Budget exhaustion is a clean stop at the phase boundary where
+            # the check fired (task-16323): persist the ledger verdict, then
+            # resolve through the service's terminal failure transition --
+            # partial artifacts saved by earlier phases are preserved.
+            logger.warning(f"Research run {run_id} stopped by budget: {exceeded}")
+            self._save_ledger(run_id, ledger)
+            return self.service.fail_run(run_id, error_msg=str(exceeded))
         except Exception as exc:
             logger.opt(exception=True).error(f"Research run {run_id} failed: {exc}")
+            self._save_ledger(run_id, ledger)
             return self.service.fail_run(run_id, error_msg=str(exc))
 
-    async def _execute_phases(self, run: dict[str, Any]) -> dict[str, Any]:
+    def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
+        self.service.save_artifact(
+            run_id,
+            artifact_name="budget_ledger.json",
+            content_type="application/json",
+            content=ledger.snapshot(),
+        )
+
+    async def _execute_phases(
+        self, run: dict[str, Any], ledger: BudgetLedger
+    ) -> dict[str, Any]:
         run_id = run["id"]
         question = str(run.get("query") or "")
         limits = run.get("limits") if isinstance(run.get("limits"), dict) else {}
+        ledger.check_runtime()  # zero/degenerate runtime budgets stop here
 
         # Draft runs (window "Create Run" flow) normalize to running here.
         if str(run.get("status") or "") != "running" or str(
@@ -176,13 +200,29 @@ class LocalResearchEngine:
 
         # -- collecting ----------------------------------------------------
         self._check_control(run_id, "collecting")
+        ledger.check_runtime()
         run = self.service.update_run_progress(
             run_id,
             phase="collecting",
             progress_percent=_PROGRESS_COLLECTING,
             progress_message="Collecting sources",
         )
-        search_outcome = await self._maybe_await(self.search_fn(question, self.search_params))
+        # Budget the fan-out BEFORE phase 1 can spend (task-16323): cap the
+        # query fan-out at the remaining search budget and hand the pipeline
+        # the remaining runtime as its phase-1 deadline.
+        search_params = dict(self.search_params)
+        remaining_searches = ledger.remaining_searches()
+        if remaining_searches is not None:
+            search_params["search_default_max_queries"] = min(
+                int(search_params.get("search_default_max_queries", 5) or 5),
+                max(1, remaining_searches),
+            )
+            ledger.reserve_searches(search_params["search_default_max_queries"])
+        if ledger.max_runtime_seconds is not None:
+            search_params["phase1_time_budget_s"] = max(
+                0.0, ledger.max_runtime_seconds - ledger.elapsed_seconds()
+            )
+        search_outcome = await self._maybe_await(self.search_fn(question, search_params))
         if isinstance(search_outcome, tuple) and len(search_outcome) == 2:
             web_search_results_dict, sub_query_dict = search_outcome
         else:  # already-shaped generate_and_search return
@@ -192,6 +232,9 @@ class LocalResearchEngine:
         sub_questions = list((sub_query_dict or {}).get("sub_questions") or [])
         raw_results = list((web_search_results_dict or {}).get("results") or [])
         warnings = list((web_search_results_dict or {}).get("warnings") or [])
+        # Record what was collected BEFORE enforcement: the collection
+        # happened, and a budget stop on processing must preserve the
+        # evidence of it (partial-artifact contract, task-16323).
         self.service.save_artifact(
             run_id,
             artifact_name="plan.json",
@@ -208,9 +251,37 @@ class LocalResearchEngine:
                 "warnings": warnings,
             },
         )
+        # Settle the actual search spend, then cap the fetched-doc batch at
+        # the remaining doc budget BEFORE synthesis processes it (allot
+        # raises on an exhausted budget -> clean phase-boundary stop).
+        ledger.settle_searches(1 + len(sub_questions))
+        allotted_docs = ledger.allot_docs(len(raw_results))
+        if allotted_docs < len(raw_results):
+            warnings = warnings + [
+                f"budget cap: processing {allotted_docs} of {len(raw_results)} fetched result(s)"
+            ]
+            web_search_results_dict = dict(web_search_results_dict)
+            web_search_results_dict["results"] = raw_results[:allotted_docs]
+        ledger.settle_docs(allotted_docs)
+        self._save_ledger(run_id, ledger)
+        if allotted_docs < len(raw_results):
+            # Upsert the collection summary with the truncation note so the
+            # artifact explains why fewer docs were processed than fetched.
+            self.service.save_artifact(
+                run_id,
+                artifact_name="collection_summary.json",
+                content_type="application/json",
+                content={
+                    "result_count": len(raw_results),
+                    "processed_count": allotted_docs,
+                    "sub_questions": sub_questions,
+                    "warnings": warnings,
+                },
+            )
 
         # -- synthesizing --------------------------------------------------
         self._check_control(run_id, "synthesizing")
+        ledger.check_runtime()
         run = self.service.update_run_progress(
             run_id,
             phase="synthesizing",
@@ -218,13 +289,14 @@ class LocalResearchEngine:
             progress_message="Synthesizing findings",
         )
         phase2 = await self.analyze_fn(
-            web_search_results_dict, sub_query_dict, self.search_params
+            web_search_results_dict, sub_query_dict, search_params
         )
         final_answer = (phase2 or {}).get("final_answer") or {}
         relevant_results = (phase2 or {}).get("relevant_results") or {}
 
         # -- packaging -----------------------------------------------------
         self._check_control(run_id, "packaging")
+        ledger.check_runtime()
         run = self.service.update_run_progress(
             run_id,
             phase="packaging",
