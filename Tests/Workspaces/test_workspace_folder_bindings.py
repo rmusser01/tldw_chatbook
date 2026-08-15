@@ -240,3 +240,37 @@ def test_remove_and_toggle_access(
         service.remove_runtime_binding(binding.binding_id)
     with pytest.raises(BindingNotFound):
         service.set_folder_binding_access(binding.binding_id, allow_write=False)
+
+
+def test_validate_folder_binding_mirrors_add_folder_binding_rejections(
+    service: LocalWorkspaceRegistryService, tmp_path: Path
+) -> None:
+    """The read-only pre-check must return the same verdicts as the write."""
+    good = tmp_path / "good"
+    good.mkdir()
+
+    assert service.validate_folder_binding("ws-a", good) is None
+    assert (
+        service.validate_folder_binding("ws-a", tmp_path / "does-not-exist")
+        is not None
+    )
+    assert service.validate_folder_binding("ws-a", str(Path.home())) is not None
+
+    # Duplicate/nested rules are checked against the workspace's existing
+    # bindings, same as the write path.
+    service.add_folder_binding("ws-a", good)
+    assert service.validate_folder_binding("ws-a", good) is not None
+    nested = good / "nested"
+    nested.mkdir()
+    assert service.validate_folder_binding("ws-a", nested) is not None
+
+
+def test_validate_workspace_name_rejects_blank_and_duplicates(
+    service: LocalWorkspaceRegistryService,
+) -> None:
+    assert service.validate_workspace_name("   ") is not None
+    assert service.validate_workspace_name("Client A") is not None
+    assert (
+        service.validate_workspace_name("client a") is not None
+    )  # case-insensitive
+    assert service.validate_workspace_name("Fresh Name") is None

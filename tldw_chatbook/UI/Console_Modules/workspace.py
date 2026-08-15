@@ -118,7 +118,6 @@ from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_roleplay_metadata import parse_console_roleplay_context
 from ...Chat.rag_scope import RagScope
-from ...Workspaces.models import DEFAULT_WORKSPACE_ID
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
@@ -126,6 +125,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.Console.console_workspace_setup_modal import (
+    ConsoleWorkspaceSetupResult,
+    ConsoleWorkspaceSetupModal,
+)
 from ...Workspaces import (
     ConsoleConversationBrowserRow,
     DEFAULT_WORKSPACE_ID,
@@ -849,7 +852,73 @@ class ConsoleWorkspaceController:
         )
 
     def _create_console_workspace(self) -> None:
-        """Create a new local workspace and activate it."""
+        """Open the new-workspace setup modal (name + required folder).
+
+        Creation itself happens in ``_confirm_console_workspace_create``
+        only on a confirmed result; Cancel/Escape creates nothing. The
+        suggested name is generated here but the collision-free identity
+        (id AND name) is recomputed at confirm time -- the user may sit
+        on the modal while another surface (e.g. Library) takes the next
+        "Workspace N" pair.
+        """
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            self.app_instance.notify(
+                "Workspace service is not ready.", severity="warning"
+            )
+            return
+
+        def _validate(name: str, path: str) -> str | None:
+            try:
+                name_error = registry_service.validate_workspace_name(name)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to pre-check workspace name for the setup modal"
+                )
+                return "Workspace registry could not be read."
+            if name_error is not None:
+                return name_error
+            try:
+                return registry_service.validate_folder_binding(
+                    "workspace-pending", path
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to pre-check folder binding for the setup modal"
+                )
+                return "Folder binding could not be checked."
+
+        try:
+            _, suggested_name = next_local_workspace_identity(registry_service)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to suggest a Console workspace name"
+            )
+            suggested_name = ""
+        self.push_screen(
+            ConsoleWorkspaceSetupModal(
+                suggested_name=suggested_name,
+                validate=_validate,
+            ),
+            callback=self._confirm_console_workspace_create,
+        )
+
+    def _confirm_console_workspace_create(
+        self, result: ConsoleWorkspaceSetupResult | None
+    ) -> None:
+        """Create + bind + activate a workspace confirmed in the setup modal.
+
+        ``None`` (Cancel/Escape) creates nothing. The workspace identity
+        is computed HERE, at confirm time, so a stale suggested name from
+        modal-open cannot collide. If the binding fails at write time
+        (a race the read-only pre-check cannot see), the workspace is
+        kept, the error is surfaced, and the user can add the binding
+        from the workspace details surface -- no half-state re-prompt.
+        """
+        if result is None:
+            return
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -859,15 +928,15 @@ class ConsoleWorkspaceController:
             )
             return
         try:
-            workspace_id, workspace_name = next_local_workspace_identity(
+            workspace_id, fallback_name = next_local_workspace_identity(
                 registry_service
             )
+            workspace_name = result.name or fallback_name
             registry_service.create_workspace(
                 workspace_id=workspace_id,
                 name=workspace_name,
                 description="Local workspace created from Console.",
             )
-            registry_service.set_active_workspace(workspace_id)
         except WorkspaceRegistryServiceError:
             logger.opt(exception=True).warning("Unable to create Console workspace")
             self.app_instance.notify(
@@ -880,6 +949,36 @@ class ConsoleWorkspaceController:
             )
             self.app_instance.notify(
                 "Workspace could not be created.", severity="error"
+            )
+            return
+        try:
+            registry_service.add_folder_binding(
+                workspace_id,
+                result.folder_path,
+                allow_write=result.allow_write,
+            )
+        except Exception:
+            # Binding raced (folder deleted/locked since validation, or a
+            # name-bound duplicate landed). Keep the workspace; do NOT
+            # reopen the modal -- the details surface can add the binding.
+            logger.opt(exception=True).warning(
+                "Console workspace '{}' created but its folder binding failed",
+                workspace_name,
+            )
+            self.app_instance.notify(
+                f"Created {workspace_name}, but the folder binding failed. "
+                "Add it from the workspace's Folders settings.",
+                severity="warning",
+            )
+        try:
+            registry_service.set_active_workspace(workspace_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to activate new Console workspace {}", workspace_id
+            )
+            self.app_instance.notify(
+                f"Created {workspace_name}, but it could not be activated.",
+                severity="warning",
             )
             return
         self._sync_console_chat_core_state()

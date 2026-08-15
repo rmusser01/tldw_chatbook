@@ -356,6 +356,27 @@ class LocalWorkspaceRegistryService:
                     f"A workspace named {name} already exists."
                 )
 
+    def validate_workspace_name(
+        self, name: str, *, exclude_workspace_id: str | None = None
+    ) -> str | None:
+        """Read-only pre-check of a workspace-name candidate (no write).
+
+        Returns the human-readable reason the name is unusable (blank, or
+        a case-insensitive duplicate of a non-archived workspace), or
+        ``None``. UI pre-checks call this instead of reaching into
+        ``_reject_duplicate_name``; ``create_workspace``/``rename``
+        still enforce it at write time.
+        """
+        if not str(name).strip():
+            return "Workspace name cannot be blank."
+        try:
+            self._reject_duplicate_name(
+                name, exclude_workspace_id=exclude_workspace_id
+            )
+        except WorkspaceRegistryServiceError as exc:
+            return str(exc)
+        return None
+
     def set_active_workspace(self, workspace_id: str) -> WorkspaceRecord:
         """Set exactly one active workspace."""
 
@@ -677,6 +698,74 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
         return stored
 
+    def _folder_binding_error(
+        self, workspace_id: str, path: str | Path
+    ) -> str | None:
+        """Return why ``path`` cannot bind to ``workspace_id``, or ``None``.
+
+        Single source of truth for the folder-binding gate: both
+        ``validate_folder_binding`` (read-only UI pre-check) and
+        ``add_folder_binding`` (write) run these exact rules, so the two
+        can never drift.
+        """
+        candidate = Path(path).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            return f"Folder path could not be resolved: {candidate}"
+        if not resolved.is_dir():
+            return f"Folder does not exist or is not a directory: {resolved}"
+        if resolved == Path(resolved.anchor):
+            return "The filesystem root cannot be bound to a workspace."
+        if resolved == Path.home().resolve():
+            return (
+                "Your home directory itself cannot be bound; choose a "
+                "project folder inside it."
+            )
+        # TASK-857: the sensitive-path denylist used to only be consulted
+        # at file-tool READ/WRITE time, never here at the binding gate --
+        # so binding e.g. ~/.config/tldw_cli (this app's own config,
+        # API keys included), get_user_data_dir() (every app database), or
+        # ~/.ssh as a workspace folder root all passed this check, widening
+        # what the agent file tools can reach up to the edge of whatever
+        # the denylist enumerates. See ``find_root_binding_conflict`` for
+        # the exact "is, or contains, or is contained by" rule.
+        conflict = find_root_binding_conflict(resolved)
+        if conflict is not None:
+            return (
+                f"'{resolved}' cannot be bound: it is, or contains, the "
+                f"protected path '{conflict}'. Choose a folder that does "
+                f"not overlap this application's own data, configuration, "
+                f"or credential directories."
+            )
+        for existing in self.list_folder_bindings(workspace_id):
+            existing_path = Path(existing.locator)
+            if resolved == existing_path:
+                return f"{resolved} is already bound to this workspace."
+            if existing_path in resolved.parents:
+                return (
+                    f"{resolved} is inside the already-bound folder "
+                    f"{existing_path}."
+                )
+            if resolved in existing_path.parents:
+                return (
+                    f"The already-bound folder {existing_path} is inside "
+                    f"{resolved}; remove it first."
+                )
+        return None
+
+    def validate_folder_binding(
+        self, workspace_id: str, path: str | Path
+    ) -> str | None:
+        """Read-only pre-check of a folder-binding candidate (no write).
+
+        Returns the human-readable reason the path is unacceptable, or
+        ``None`` when it can be bound. Used by the Console new-workspace
+        setup modal so Create only enables on a bindable path; races at
+        write time are still rejected by ``add_folder_binding`` itself.
+        """
+        return self._folder_binding_error(workspace_id, path)
+
     def add_folder_binding(
         self,
         workspace_id: str,
@@ -693,58 +782,10 @@ class LocalWorkspaceRegistryService:
         (TASK-857). Default-workspace and unknown-workspace rejection is
         delegated to ``save_runtime_binding``.
         """
-        candidate = Path(path).expanduser()
-        try:
-            resolved = candidate.resolve()
-        except OSError as exc:
-            raise WorkspaceRegistryServiceError(
-                f"Folder path could not be resolved: {candidate}"
-            ) from exc
-        if not resolved.is_dir():
-            raise WorkspaceRegistryServiceError(
-                f"Folder does not exist or is not a directory: {resolved}"
-            )
-        if resolved == Path(resolved.anchor):
-            raise WorkspaceRegistryServiceError(
-                "The filesystem root cannot be bound to a workspace."
-            )
-        if resolved == Path.home().resolve():
-            raise WorkspaceRegistryServiceError(
-                "Your home directory itself cannot be bound; choose a "
-                "project folder inside it."
-            )
-        # TASK-857: the sensitive-path denylist used to only be consulted
-        # at file-tool READ/WRITE time, never here at the binding gate --
-        # so binding e.g. ~/.config/tldw_cli (this app's own config,
-        # API keys included), get_user_data_dir() (every app database), or
-        # ~/.ssh as a workspace folder root all passed this check, widening
-        # what the agent file tools can reach up to the edge of whatever
-        # the denylist enumerates. See ``find_root_binding_conflict`` for
-        # the exact "is, or contains, or is contained by" rule.
-        conflict = find_root_binding_conflict(resolved)
-        if conflict is not None:
-            raise WorkspaceRegistryServiceError(
-                f"'{resolved}' cannot be bound: it is, or contains, the "
-                f"protected path '{conflict}'. Choose a folder that does "
-                f"not overlap this application's own data, configuration, "
-                f"or credential directories."
-            )
-        for existing in self.list_folder_bindings(workspace_id):
-            existing_path = Path(existing.locator)
-            if resolved == existing_path:
-                raise WorkspaceRegistryServiceError(
-                    f"{resolved} is already bound to this workspace."
-                )
-            if existing_path in resolved.parents:
-                raise WorkspaceRegistryServiceError(
-                    f"{resolved} is inside the already-bound folder "
-                    f"{existing_path}."
-                )
-            if resolved in existing_path.parents:
-                raise WorkspaceRegistryServiceError(
-                    f"The already-bound folder {existing_path} is inside "
-                    f"{resolved}; remove it first."
-                )
+        error = self._folder_binding_error(workspace_id, path)
+        if error is not None:
+            raise WorkspaceRegistryServiceError(error)
+        resolved = Path(path).expanduser().resolve()
         binding = WorkspaceRuntimeBinding(
             workspace_id=workspace_id,
             binding_id=f"folder-{uuid4().hex[:12]}",

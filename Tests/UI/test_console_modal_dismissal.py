@@ -71,6 +71,10 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_setup_modal import (
+    ConsoleWorkspaceSetupModal,
+    ConsoleWorkspaceSetupResult,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
@@ -546,6 +550,21 @@ TASK3_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task3ModalContract(
+        ConsoleWorkspaceSetupModal,
+        lambda: ConsoleWorkspaceSetupModal(
+            suggested_name="Workspace 1",
+            validate=lambda name, path: None,
+            debounce_seconds=0.001,
+        ),
+        "#console-workspace-setup-modal",
+        None,
+        (ConsoleWorkspaceSetupResult,),
+        "Console New Workspace action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
         PromptVariablesDialog,
         _prompt_variables_factory,
         "#prompt-variables-dialog",
@@ -1013,7 +1032,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     }
     discovered_console_types = _discover_console_modal_types()
 
-    assert len(discovered_console_types) == 28
+    assert len(discovered_console_types) == 29
     assert discovered_console_types == console_contract_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
@@ -1023,7 +1042,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 37
+    assert len(reachable_modal_types) == 38
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
@@ -1188,7 +1207,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 12
+    assert len(TASK3_MODAL_CONTRACTS) == 13
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
@@ -1200,6 +1219,7 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleSessionSwitcherModal",
         "ConsoleSystemPromptModal",
         "ConsoleWorkspaceRenameModal",
+        "ConsoleWorkspaceSetupModal",
         "ConsoleWorkspaceSwitcherModal",
         "PromptVariablesDialog",
     }
