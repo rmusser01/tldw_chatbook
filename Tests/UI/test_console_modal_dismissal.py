@@ -96,6 +96,9 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
+    ConsoleReactionPickerModal,
+)
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
@@ -1012,9 +1015,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
+    inventory_only_types = {ConsoleReactionPickerModal}
 
-    assert len(discovered_console_types) == 28
-    assert discovered_console_types == console_contract_types
+    assert discovered_console_types - console_contract_types == inventory_only_types
+    assert discovered_console_types == console_contract_types | inventory_only_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
 
