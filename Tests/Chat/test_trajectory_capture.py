@@ -230,6 +230,54 @@ def test_tool_result_capped_at_256kib_with_truncated_marker(tmp_path):
         db.close()
 
 
+def test_tool_result_cap_is_byte_safe_for_multibyte_content(tmp_path):
+    """The cap is BYTES, not characters: 4-byte emoji content truncated by a
+    character slice could leave the stored result up to 4x over budget."""
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trajectory")
+        conversation_id = store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="go",
+            persist=True,
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
+        )
+        # U+1F600 encodes to 4 UTF-8 bytes per character: ~100k chars is
+        # ~400 KiB, well over the 256 KiB byte cap.
+        huge = "😀" * (100 * 1024)
+        assert len(huge) < 256 * 1024  # characters under, bytes over
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ fs_read → preview",
+            tool_output_full=huge,
+        )
+
+        tool_rows = [
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind.startswith("tool_")
+        ]
+        assert len(tool_rows) == 2
+        for row in tool_rows:
+            payload = json.loads(row.payload_json)
+            assert payload["truncated"] is True
+            stored = payload["result"]
+            assert len(stored.encode("utf-8")) <= 256 * 1024
+            # The split codepoint at the byte boundary was dropped cleanly.
+            assert stored.endswith("😀") or stored == ""
+            assert stored != huge
+    finally:
+        db.close()
+
+
 def test_trajectory_write_failure_never_fails_the_turn(tmp_path):
     db, store = _store_with_db(tmp_path)
     try:
@@ -304,6 +352,59 @@ def test_concurrent_upserts_produce_unique_seqs(tmp_path):
         threads = [
             threading.Thread(target=write_batch, args=("t0", batch_a)),
             threading.Thread(target=write_batch, args=("t1", batch_b)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        rows = db.get_trajectory_rows(conversation_id)
+        assert len(rows) == 50
+        seqs = [row.seq for row in rows]
+        assert sorted(seqs) == list(range(1, 51))
+        assert len(set(seqs)) == 50
+    finally:
+        db.close()
+
+
+def test_concurrent_direct_db_upserts_produce_unique_seqs(tmp_path):
+    """The DB-layer upsert itself must be safe under cross-thread concurrency
+    (BEGIN IMMEDIATE write lock): no thread's batch may roll back with the
+    deferred-upgrade "database is locked" deadlock, and seqs stay unique."""
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        conversation_id = db.add_conversation(
+            {"chat_id": 1, "conversation_id": "traj-db-concurrency", "fragmentation": 0}
+        )
+        assert conversation_id is not None
+        message_ids = [
+            db.add_message(
+                {
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": f"message {index}",
+                }
+            )
+            for index in range(50)
+        ]
+
+        def write_direct_batch(ids: list) -> None:
+            for message_id in ids:
+                db.upsert_trajectory_rows(
+                    [
+                        TrajectoryRowWrite(
+                            message_id=message_id,
+                            conversation_id=conversation_id,
+                            turn_id="db-turn",
+                            seq=None,
+                            event_kind="assistant",
+                        )
+                    ]
+                )
+
+        threads = [
+            threading.Thread(target=write_direct_batch, args=(message_ids[:25],)),
+            threading.Thread(target=write_direct_batch, args=(message_ids[25:],)),
         ]
         for thread in threads:
             thread.start()

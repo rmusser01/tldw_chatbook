@@ -4344,8 +4344,16 @@ class ConsoleChatStore:
             name = text[2:].split(" →", 1)[0].strip() or None
         result = tool_output_full if tool_output_full is not None else text
         payload: dict[str, Any] = {"name": name, "args": None, "result": result}
-        if len(result.encode("utf-8")) > TRAJECTORY_RESULT_CAP_BYTES:
-            payload["result"] = result[:TRAJECTORY_RESULT_CAP_BYTES]
+        encoded = result.encode("utf-8")
+        if len(encoded) > TRAJECTORY_RESULT_CAP_BYTES:
+            # Cap BYTES, not characters: a character slice of multibyte
+            # text (up to 4 bytes/codepoint) could leave the stored result
+            # up to 4x over budget. Truncate the encoded form and decode
+            # back with errors="ignore" so a split codepoint is dropped
+            # rather than crashing or being replaced by a longer escape.
+            payload["result"] = encoded[:TRAJECTORY_RESULT_CAP_BYTES].decode(
+                "utf-8", errors="ignore"
+            )
             payload["truncated"] = True
         return json.dumps(payload)
 

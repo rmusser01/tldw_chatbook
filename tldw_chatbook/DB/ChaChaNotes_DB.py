@@ -3238,7 +3238,7 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
-    def transaction(self) -> "TransactionContextManager":
+    def transaction(self, *, immediate: bool = False) -> "TransactionContextManager":
         """
         Returns a context manager for database transactions.
 
@@ -3255,10 +3255,18 @@ UPDATE db_schema_version
         managed contexts only track depth and defer completion to their outer
         transaction.
 
+        Args:
+            immediate: Start the outermost manager-owned transaction with
+                ``BEGIN IMMEDIATE`` (write lock up front). Required for
+                read-then-write transactions (e.g. seq assignment via
+                MAX(seq)+1) that would otherwise risk SQLite's
+                non-retryable deferred-upgrade deadlock under concurrent
+                writers. Ignored for nested/borrowed transactions.
+
         Returns:
             TransactionContextManager: An object to be used in a `with` statement.
         """
-        return TransactionContextManager(self)
+        return TransactionContextManager(self, immediate=immediate)
 
     # --- Schema Initialization and Migration ---
     def _get_db_version(self, conn: sqlite3.Connection) -> int:
@@ -10026,7 +10034,14 @@ UPDATE db_schema_version
         if not rows:
             return
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (write lock up front): this is a read-then-write
+            # transaction (MAX(seq)+1 assignment before the inserts). With a
+            # DEFERRED begin, two concurrent writers on one conversation hit
+            # SQLite's non-retryable snapshot/upgrade deadlock and the loser
+            # rolls back with "database is locked" regardless of the busy
+            # timeout. IMMEDIATE makes concurrent writers queue on the busy
+            # timeout instead, so seq assignment stays unique.
+            with self.transaction(immediate=True) as conn:
                 next_seq: Dict[str, int] = {}
                 for row in rows:
                     if row.seq is None:
@@ -16242,11 +16257,26 @@ UPDATE db_schema_version
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---
 class TransactionContextManager:
-    def __init__(self, db_instance: CharactersRAGDB):
+    def __init__(
+        self,
+        db_instance: CharactersRAGDB,
+        *,
+        immediate: bool = False,
+    ):
         self.db = db_instance
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
+        # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
+        # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
+        # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
+        # when a concurrent writer commits in between -- the losing
+        # transaction rolls back with "database is locked" no matter how
+        # long the busy timeout is. IMMEDIATE takes the write lock before
+        # the first read, so concurrent writers queue on the busy timeout
+        # instead of deadlocking. Only affects the OUTERMOST
+        # manager-owned transaction; nested/borrowed paths are untouched.
+        self.immediate = bool(immediate)
 
     def __enter__(self):
         # Ensure transaction_depth is initialized for this thread
@@ -16273,7 +16303,7 @@ class TransactionContextManager:
                 return self.conn.cursor()
 
             # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE" if self.immediate else "BEGIN")
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
             logger.debug(
