@@ -8249,6 +8249,18 @@ class TldwCli(
             self._current_runtime_identity(),
         )
 
+    def library_rag_search_execution_lock(self) -> asyncio.Lock:
+        """Return the app-lifetime admission lock for Library retrieval calls.
+
+        Returns:
+            The shared Library-only admission lock for this app session.
+        """
+        lock = getattr(self, "_library_rag_search_execution_lock_instance", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._library_rag_search_execution_lock_instance = lock
+        return lock
+
     def _screen_navigation_lock(self) -> asyncio.Lock:
         """Return the lock serializing `handle_screen_navigation` attempts.
 

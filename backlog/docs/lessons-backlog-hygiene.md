@@ -235,6 +235,39 @@ one was first and what it already knew, so the board records that the second
 investigation was avoidable rather than quietly implying two independent
 confirmations.
 
+**TASK-15810, 2026-08-14 — the same trap one level up: the board was grepped,
+and it still happened.** A session picked up TASK-15810 (High, `status: To Do`),
+wrote a spec and a plan, and spent a full task building a reproduction. Another
+session had been on it for hours: 16 commits in `.worktrees/task-15810-rag-first-query`,
+a 369-line profile report naming the root cause, the fix, and 492 lines of
+tests. Its branch was **local-only and never pushed**, and it had not edited the
+task file — so the board still read `To Do`, accurately, while the work was
+essentially done.
+
+**The status field is not a lock.** It changes when someone edits the file, which
+is the last thing a session does, not the first. Reading a task and finding it
+open tells you nobody has *finished*; it tells you nothing about whether someone
+is *working*.
+
+**What to do.** Before starting an arc on a task id, check for a live claim as
+well as a filed one — two commands, both cheap:
+
+    ls .worktrees/ | grep -i <id>
+    git branch -a | grep -i <id>
+
+The first is the one that catches the local-only case, which is the common one:
+a session mid-arc has a worktree long before it has a remote branch. `ps aux |
+grep <worktree>` then tells you whether that session is still live, which decides
+whether you may touch the checkout at all (you may not — see the standing rule).
+
+**When you find one mid-flight**, the recovery is cheap if you stop early:
+contribute to the existing branch rather than racing it. Here the duplicate work
+had produced an independent reproduction that *refuted the second session's own
+leading hypothesis* before it saw the first session's profile, so it shipped as a
+corroboration commit on top of the existing tip (PR #1640) instead of a competing
+fix. Independent evidence is worth keeping; a second fix for the same defect is
+not.
+
 ---
 
 ## Check for an in-flight PR before designing — claiming the task does not reserve it

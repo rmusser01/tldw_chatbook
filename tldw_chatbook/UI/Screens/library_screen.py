@@ -5692,11 +5692,13 @@ class LibraryScreen(BaseAppScreen):
         preferences, and search history are deliberately excluded here: they
         are already persisted elsewhere (the app-owned ingest job registry and
         the CLI config, respectively) and re-seeding them from this in-memory
-        dict would fight those owners. The RAG results tuple (and its paired
-        retrieval status / recovery state, set together by
-        ``_apply_library_rag_search_outcome``) are safe to carry verbatim
-        because their rows are frozen dataclasses -- copies are taken below
-        only to avoid aliasing a live mutable set with the stashed dict.
+        dict would fight those owners.
+
+        The RAG results tuple and settled retrieval/recovery state are safe to
+        carry because their rows are frozen dataclasses. A transient
+        ``searching`` value may be snapshotted while admitted work drains, but
+        ``restore_state`` normalizes it because a fresh screen owns no matching
+        worker.
 
         The media type cycle, notes sort/filter, selected prompt id, and
         conversations query are view/selection state. The Prompt browse scope
@@ -5828,8 +5830,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_selected_result_id = str(
             state.get("library_rag_selected_result_id") or ""
         )
-        self._library_rag_retrieval_status = str(
+        restored_retrieval_status = str(
             state.get("library_rag_retrieval_status") or ""
+        )
+        self._library_rag_retrieval_status = (
+            "" if restored_retrieval_status == "searching"
+            else restored_retrieval_status
         )
         recovery_state = state.get("library_rag_recovery_state")
         self._library_rag_recovery_state = (
@@ -29139,15 +29145,15 @@ class LibraryScreen(BaseAppScreen):
         The rail box and the Search canvas's query box share one state
         field (``_library_rag_query``); this keeps the mounted WIDGETS in
         lockstep as the user types in either. The programmatic assignment
-        fires the sibling's own ``Input.Changed``, whose value-equality
-        guard makes it a no-op -- no feedback loop.
+        suppresses the sibling's own ``Input.Changed`` event.
         """
         try:
             sibling = self.query_one(selector, Input)
         except (NoMatches, QueryError):
             return
         if sibling.value != value:
-            sibling.value = value
+            with sibling.prevent(Input.Changed):
+                sibling.value = value
 
     @on(Input.Submitted, "#library-search-input")
     async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
@@ -30734,8 +30740,26 @@ class LibraryScreen(BaseAppScreen):
     async def _execute_library_rag_search(
         self, request: LibraryRagSearchRequest
     ) -> None:
-        outcome = await run_library_rag_search(self.app_instance, request)
-        await self._apply_library_rag_search_outcome(request, outcome)
+        """Serialize Library admission across screens and retain cancellation.
+
+        The app-lifetime Library-only lock prevents fresh screens from
+        overlapping admitted calls. Canceled workers drain admitted retrievals
+        under that lock, then re-raise before stale outcomes can apply.
+        """
+        async with self.app_instance.library_rag_search_execution_lock():
+            retrieval_task = asyncio.create_task(
+                run_library_rag_search(self.app_instance, request)
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while not retrieval_task.done():
+                try:
+                    await asyncio.shield(retrieval_task)
+                except asyncio.CancelledError as error:
+                    cancellation = cancellation or error
+            outcome = retrieval_task.result()
+            if cancellation is not None:
+                raise cancellation
+            await self._apply_library_rag_search_outcome(request, outcome)
 
     async def _apply_library_rag_search_outcome(
         self,
