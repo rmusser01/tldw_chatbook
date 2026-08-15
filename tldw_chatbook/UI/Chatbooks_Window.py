@@ -57,7 +57,7 @@ class ChatbooksWindow(Widget):
     ]
 
     # Reactive properties
-    chatbooks = reactive([], recompose=False)
+    chatbooks = reactive(list, recompose=False)
     selected_chatbook = reactive(None)
     current_view = reactive("welcome")  # welcome, create, load, templates
 

@@ -3323,7 +3323,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     # Reactive property for sidebar state persistence
-    sidebar_state = reactive({}, layout=False)
+    sidebar_state = reactive(dict, layout=False)
 
     #: task-15475: one-shot "the mount already did this visit's refreshes"
     #: token. Textual posts ``ScreenResume`` when a screen is PUSHED, so

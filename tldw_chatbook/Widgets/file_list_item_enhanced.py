@@ -170,7 +170,7 @@ class FileListEnhanced(RecomposeCaptureGuard, Widget):
     - Keyboard navigation
     """
 
-    files = reactive([], recompose=True)
+    files = reactive(list, recompose=True)
 
     def __init__(
         self,

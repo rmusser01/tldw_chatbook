@@ -379,10 +379,10 @@ class CCPDictionaryEditorWidget(Container):
     state: reactive[Optional[Any]] = reactive(None)
 
     # Current dictionary data being edited
-    dictionary_data: reactive[Dict[str, Any]] = reactive({})
+    dictionary_data: reactive[Dict[str, Any]] = reactive(dict)
 
     # Dictionary entries
-    entries: reactive[Dict[str, str]] = reactive({})
+    entries: reactive[Dict[str, str]] = reactive(dict)
 
     # Selected entry for editing
     selected_entry_key: reactive[Optional[str]] = reactive(None)

@@ -23,7 +23,7 @@ class ChunkPreview(Widget):
     DEFAULT_CLASSES = "chunk-preview-widget"
 
     # Reactive data
-    chunks: reactive[List[Tuple[str, int, int]]] = reactive([])  # (text, start, end)
+    chunks: reactive[List[Tuple[str, int, int]]] = reactive(list)  # (text, start, end)
     overlap_size: reactive[int] = reactive(0)
 
     def __init__(self, max_chunks: int = 5, **kwargs):

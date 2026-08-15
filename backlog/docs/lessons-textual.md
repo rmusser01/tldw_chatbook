@@ -45,6 +45,38 @@ holding stale references across `exclusive=True` cancellations.
 
 ---
 
+## A mutable `reactive([])` default is one shared object — and reassigning an empty-equal value does not un-share it
+
+**TASK-15771, 2026-08-15.** `reactive([])` / `reactive({})` with a literal default
+installs the *same* list/dict object on every instance of the widget class:
+`Reactive._initialize_reactive` does `default_or_callable() if callable(...) else
+default_or_callable`, and a literal is not callable. Any in-place mutation
+(`.append`, `[k] =`, `.insert`, `.clear`, ...) then leaks across every instance and
+every future instance, including screen remounts. The package-wide AST sweep found
+**27** such declarations; born-red two-instance tests demonstrated the leak on
+`CharacterVoiceWidget.characters`/`voice_assignments`,
+`ChapterEditorWidget.chapters`, and `CollectionsTagWindow.selected_keywords`
+(`Tests/Widgets/test_reactive_default_aliasing.py`).
+
+The half of the trap that reverses classifications: **"reassigns before use" is not
+a defense when the reassigned value is empty-equal.** `Reactive._set` in 8.2.8 only
+runs `setattr(obj, self.internal_name, value)` inside
+`if always or self._always_update or current_value != value:` — so
+`self.chapters = chapters if chapters else []` in `ChapterEditorWidget.__init__`
+compared `[] != []`, stored nothing, and the instance kept aliasing the class-shared
+default it then `.insert()`ed into. The site read as safe in review; the born-red
+test proved it was not. Only a mutation-sites trace plus this mechanism check
+classifies correctly.
+
+**What to do.** Always declare mutable reactive defaults as callables —
+`reactive(list)` / `reactive(dict)` / `reactive(set)`, or
+`reactive(lambda: [seed])` for non-empty defaults.
+`Tests/Architecture/test_reactive_mutable_default_inventory.py` now pins the class
+at zero package-wide; if it fails, fix the default — never a "reassign before use"
+workaround.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md` — includes the Pilot-harness traps (detached widget

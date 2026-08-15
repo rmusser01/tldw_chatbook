@@ -341,10 +341,10 @@ class CCPPromptEditorWidget(Container):
     state: reactive[Optional[Any]] = reactive(None)
 
     # Current prompt data being edited
-    prompt_data: reactive[Dict[str, Any]] = reactive({})
+    prompt_data: reactive[Dict[str, Any]] = reactive(dict)
 
     # Variables list
-    variables: reactive[List[Dict[str, str]]] = reactive([])
+    variables: reactive[List[Dict[str, str]]] = reactive(list)
 
     # Is system prompt
     is_system_prompt: reactive[bool] = reactive(False)

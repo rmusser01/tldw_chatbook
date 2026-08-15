@@ -13,7 +13,7 @@ from .watchlists_backend_controller import WatchlistsBackendController
 class OverviewPane(RecomposeCaptureGuard, Vertical):
     """Dashboard cards and recent failed runs for watchlists."""
 
-    data = reactive({}, recompose=True)
+    data = reactive(dict, recompose=True)
     #: TASK-998. How many watchlists exist, so the first-run panel can tell a
     #: user who has already made one that their remaining step is a source.
     #: Screen-seeded like every other reactive on these panes -- the pane has

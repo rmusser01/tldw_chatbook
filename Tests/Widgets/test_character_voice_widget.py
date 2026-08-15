@@ -26,6 +26,15 @@ pytest session (an earlier test's ``.append()`` onto the shared default
 leaked into a later test's row count). Assigning a fresh list breaks the
 aliasing for that instance going forward. Out of scope for task-15479's
 self-assignment-trigger fix; worth filing separately.
+
+Update (task-15771): filed and fixed — ``characters`` (and every other
+mutable reactive default in the package) is now a callable default
+(``reactive(list)``), so each instance gets its own list and the defensive
+``widget.characters = []`` lines below are redundant-but-harmless. They are
+kept so these tests stay valid against trees that predate the fix; the
+cross-instance aliasing itself is pinned by
+``test_reactive_default_aliasing.py`` and the AST inventory guard in
+``Tests/Architecture/test_reactive_mutable_default_inventory.py``.
 """
 
 from __future__ import annotations
