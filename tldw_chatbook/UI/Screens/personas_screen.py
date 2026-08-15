@@ -8575,15 +8575,16 @@ class PersonasScreen(BaseAppScreen):
         self, marks: tuple[tuple[str, str, str], ...]
     ) -> None:
         """Export each marked character/persona as its own JSON file (F-040)."""
-        from ...Third_Party.textual_fspicker.select_directory import (
-            SelectDirectory,
-        )
+        from ...Widgets.enhanced_file_picker import EnhancedSelectDirectory
 
         try:
             kind = marks[0][0]
             if kind == "character" and not self._local_character_actions_allowed():
                 return
-            picker = SelectDirectory(title=f"Export {len(marks)} items as JSON")
+            picker = EnhancedSelectDirectory(
+                title=f"Export {len(marks)} items as JSON",
+                context="character_export_dir",
+            )
             try:
                 target_dir = await self.app.push_screen_wait(picker)
             except Exception:

@@ -8473,6 +8473,37 @@ class TestBulkLibraryActions:
             for message, severity in notifications
         )
 
+    async def test_bulk_export_marked_pushes_enhanced_directory_picker(
+        self, mock_app_instance, stub_characters, stub_conversations, tmp_path
+    ):
+        """The marked-rows JSON export must use the enhanced picker family
+        (TASK-16477): same chrome as every other Roleplay dialog, and it
+        remembers its start directory per context."""
+        from tldw_chatbook.Widgets.enhanced_file_picker import (
+            EnhancedSelectDirectory,
+        )
+
+        pushed: list[object] = []
+
+        async def _fake_push_screen_wait(picker):
+            pushed.append(picker)
+            return tmp_path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
+            screen.query_one("#personas-export-json", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert len(pushed) == 1
+        picker = pushed[0]
+        assert isinstance(picker, EnhancedSelectDirectory)
+        assert picker._title == "Export 2 items as JSON"
+        assert picker.context == "character_export_dir"
+
     async def test_footer_discloses_sort_key_in_sortable_modes(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):

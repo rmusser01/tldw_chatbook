@@ -25,7 +25,20 @@
    (`Widgets/enhanced_file_picker.py`), which composes its own Input/Select
    with its own ids and is out of scope for this fix. */
 FileSave InputBar Select,
-FileOpen InputBar Select {
+FileOpen InputBar Select,
+EnhancedFileDialog InputBar Select {
     width: 24;
     margin-bottom: 0;
 }
+
+/* The EnhancedFileDialog selector above (TASK-16478) also defends the
+   enhanced picker's own input-bar row (`Widgets/enhanced_file_picker.py`):
+   its class-level DEFAULT_CSS cannot beat the bare `Select { width: 100% }`
+   rule (CSS_PATH-sourced rules outrank any DEFAULT_CSS specificity; the
+   same Defect 1 lesson). Before it, every filtered Enhanced picker
+   (Roleplay character import/avatar/expression uploads, Console
+   attachments) rendered the filter Select at 100% width: the filename
+   Input crushed to ~6 columns and the Select/Cancel buttons laid out past
+   the dialog's right edge, clipped out of view -- the dialog looked
+   buttonless. The type selector matches EnhancedFileOpen/
+   EnhancedFileSave/EnhancedSelectDirectory via the CSS type-name MRO. */

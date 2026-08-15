@@ -49,6 +49,18 @@ application. Assert containment and compositor text, not only a child widget's
 declared height. A shortened DOM or partial stylesheet can make both overflow
 and clipping tests pass for a product path that still hides its controls.
 
+**Recurred, TASK-16478, 2026-08-15.** A picker-comparison investigation
+rendered `EnhancedFileOpen` in a bare `App` (widget DEFAULT_CSS only) and
+concluded the dialog was fine; the user's live app showed no Select/Cancel
+buttons at all. Under the app bundle, the bare `Select { width: 100% }` rule
+beat the dialog's DEFAULT_CSS, crushed the filename input to 6 columns, and
+laid the buttons out at x=161/178 inside a 152-wide dialog -- clipped. The
+bare-host screenshot even contained the buttons, and a truncated text
+extraction of the bundled render hid their absence. The fix's regression test
+(`Tests/UI/test_enhanced_file_dialog_bundle_css.py`) registers the exact
+`TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
+against the unfixed bundle without touching app code.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test
