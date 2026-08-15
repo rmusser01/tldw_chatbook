@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -1861,6 +1862,7 @@ class ConsoleProviderGateway:
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
         )
+        think_filter = StartAnchoredThinkFilter()
         emitted_content = False
         stream_error: httpx.HTTPError | None = None
         try:
@@ -1874,14 +1876,19 @@ class ConsoleProviderGateway:
                 async for line in response.aiter_lines():
                     chunk = self._content_from_sse_line(line)
                     if chunk:
-                        emitted_content = True
-                        yield chunk
+                        visible = think_filter.feed(chunk)
+                        if visible:
+                            emitted_content = True
+                            yield visible
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
 
         if emitted_content:
+            tail = think_filter.flush()
+            if tail:
+                yield tail
             return
 
         fallback = await self.complete_llamacpp_chat(
@@ -1988,7 +1995,8 @@ class ConsoleProviderGateway:
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
-        return content or ""
+        think_filter = StartAnchoredThinkFilter()
+        return think_filter.feed(content or "") + think_filter.flush()
 
     @staticmethod
     async def _post_without_high_level_http_log(

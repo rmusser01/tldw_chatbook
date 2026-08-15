@@ -1725,6 +1725,106 @@ async def test_llamacpp_stream_chat_ignores_non_object_json_sse_lines():
     assert chunks == ["ok"]
 
 
+def make_gateway_with_sse(lines: list[str]) -> ConsoleProviderGateway:
+    """Gateway whose llama.cpp endpoint streams the given SSE lines."""
+    body = "".join(f"{line}\n\n" for line in lines).encode()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, content=body)
+
+    return ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:8080",
+        )
+    )
+
+
+def make_gateway_with_completion(payload: dict) -> ConsoleProviderGateway:
+    """Gateway whose llama.cpp endpoint answers one non-streaming completion."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json=payload)
+
+    return ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:8080",
+        )
+    )
+
+
+class TestDirectPathThinkFiltering:
+    @pytest.mark.asyncio
+    async def test_stream_strips_start_anchored_think_block(self):
+        # SSE lines whose content deltas spell:
+        #   "<think>ponder</think>Hello"
+        lines = [
+            'data: {"choices":[{"delta":{"content":"<think>pon"}}]}',
+            'data: {"choices":[{"delta":{"content":"der</think>Hello"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_mid_reply_literal_tag(self):
+        lines = [
+            'data: {"choices":[{"delta":{"content":"XML: <think>x</think>"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "XML: <think>x</think>"
+
+    @pytest.mark.asyncio
+    async def test_stream_ignores_reasoning_content_deltas(self):
+        lines = [
+            'data: {"choices":[{"delta":{"reasoning_content":"secret"}}]}',
+            'data: {"choices":[{"delta":{"content":"Answer"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "Answer"
+
+    @pytest.mark.asyncio
+    async def test_complete_strips_start_anchored_think_block(self):
+        gateway = make_gateway_with_completion(
+            {"choices": [{"message": {"content": "<think>x</think>Done"}}]}
+        )
+        text = await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:8080",
+            model="qwen",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert text == "Done"
+
+
 @pytest.mark.asyncio
 async def test_stream_chat_dispatches_llamacpp_resolution():
     async def handler(request: httpx.Request) -> httpx.Response:
