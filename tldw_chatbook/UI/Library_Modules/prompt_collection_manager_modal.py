@@ -541,19 +541,19 @@ class PromptCollectionManagerModal(
         mutation_epoch: int,
         mount_generation: int,
     ) -> None:
+        cancelled_error: asyncio.CancelledError | None = None
         try:
             if action == "create":
                 catalog = await self._create_collection_callback(name)
             else:
                 catalog = await self._rename_collection_callback(collection_id, name)  # type: ignore[arg-type]
-        except asyncio.CancelledError:
-            if self._mutation_is_current(
+        except asyncio.CancelledError as exc:
+            if not self._mutation_is_current(
                 mutation_epoch=mutation_epoch, mount_generation=mount_generation
             ):
-                self._mutation_in_flight = False
-                self._mutation_close_rejected = False
-                self._refresh()
-            raise
+                raise
+            cancelled_error = exc
+            catalog = None
         except PromptCollectionNameConflictError:
             if not self._mutation_is_current(
                 mutation_epoch=mutation_epoch, mount_generation=mount_generation
@@ -583,6 +583,8 @@ class PromptCollectionManagerModal(
             self._outcome = _CREATE_ERROR if action == "create" else _RENAME_ERROR
             self._retry_action = (action, collection_id, name)
             self._refresh(focus_id="prompt-collection-manager-retry")
+            if cancelled_error is not None:
+                raise cancelled_error
             return
         self._catalog = catalog
         success = "Collection created." if action == "create" else "Collection renamed."

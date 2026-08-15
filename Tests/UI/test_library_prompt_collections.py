@@ -732,9 +732,12 @@ class _StyledManagerHost(_ManagerHost):
 
 
 class _MutationManagerHost(ConsolidatedCSSApp):
-    def __init__(self, *, failure: BaseException | None = None) -> None:
+    def __init__(
+        self, *, failure: BaseException | None = None, action: str = "create"
+    ) -> None:
         super().__init__()
         self.failure = failure
+        self.action = action
         self.started = asyncio.Event()
         self.finished = asyncio.Event()
         self.release = asyncio.Event()
@@ -771,11 +774,18 @@ class _MutationManagerHost(ConsolidatedCSSApp):
                 self.finished.set()
 
         async def rename(_collection_id: int, _name: str):
-            raise AssertionError("rename was not requested")
+            self.started.set()
+            try:
+                if self.failure is not None:
+                    raise self.failure
+                await self.release.wait()
+                return await load(query="", offset=0)
+            finally:
+                self.finished.set()
 
         return PromptCollectionManagerModal(
             mode="browse",
-            selected_collection_id=None,
+            selected_collection_id=1 if self.action == "rename" else None,
             staged_collection_ids=(),
             load_catalog=load,
             create_collection=create,
@@ -841,9 +851,9 @@ class _GuardedMutationManagerHost(ConsolidatedCSSApp):
 
 
 class _RemountMutationManagerHost(ConsolidatedCSSApp):
-    def __init__(self, *, stale_failure: bool) -> None:
+    def __init__(self, *, stale_result: str) -> None:
         super().__init__()
-        self.stale_failure = stale_failure
+        self.stale_result = stale_result
         self.stale_started = asyncio.Event()
         self.stale_cancelled = asyncio.Event()
         self.stale_release = asyncio.Event()
@@ -890,8 +900,10 @@ class _RemountMutationManagerHost(ConsolidatedCSSApp):
                     self.stale_cancelled.set()
                     await self.stale_release.wait()
                 self.stale_finished.set()
-                if self.stale_failure:
+                if self.stale_result == "failure":
                     raise RuntimeError("stale mutation failure")
+                if self.stale_result == "cancelled":
+                    raise asyncio.CancelledError
                 return self._catalog()
 
             self.current_started.set()
@@ -1699,27 +1711,43 @@ async def test_collection_mutation_close_requests_dispatch_without_queuing(
 
 
 @pytest.mark.asyncio
-async def test_collection_mutation_cancelled_callback_restores_current_modal_controls():
-    app = _MutationManagerHost(failure=asyncio.CancelledError())
+@pytest.mark.parametrize(
+    ("action", "expected_outcome", "expected_retry"),
+    [
+        ("create", "Couldn't create collection. Retry.", ("create", None, "Cancelled")),
+        ("rename", "Couldn't rename collection. Retry.", ("rename", 1, "Cancelled")),
+    ],
+)
+async def test_collection_mutation_cancelled_callback_restores_current_modal_controls(
+    action: str,
+    expected_outcome: str,
+    expected_retry: tuple[str, int | None, str],
+):
+    app = _MutationManagerHost(failure=asyncio.CancelledError(), action=action)
     async with app.run_test(size=(120, 48)) as pilot:
         await pilot.pause()
         modal = app.screen
         modal.query_one(
             "#prompt-collection-manager-new-name", Input
         ).value = "Cancelled"
-        modal.query_one("#prompt-collection-manager-create", Button).press()
+        modal.query_one(f"#prompt-collection-manager-{action}", Button).press()
         await asyncio.wait_for(app.started.wait(), timeout=1.0)
         await asyncio.wait_for(app.finished.wait(), timeout=1.0)
-        await _wait_for_condition(
+        retry = await _wait_for_widget_state(
+            modal,
             pilot,
-            lambda: not modal._mutation_in_flight,
-            timeout=1.0,
-            message="cancelled collection mutation did not restore controls",
+            "#prompt-collection-manager-retry",
+            lambda widget: widget.display and not widget.disabled and widget.has_focus,
+            what=f"cancelled {action} did not expose focused Retry",
+            attempts=50,
         )
 
         assert app.screen is modal
         assert app.results == []
         assert not modal._mutation_in_flight
+        assert _modal_outcome(modal) == expected_outcome
+        assert modal._retry_action == expected_retry
+        assert retry.display and not retry.disabled and retry.has_focus
         for selector in (
             "#prompt-collection-manager-search",
             "#prompt-collection-manager-new-name",
@@ -1731,11 +1759,11 @@ async def test_collection_mutation_cancelled_callback_restores_current_modal_con
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stale_failure", [False, True], ids=["success", "failure"])
+@pytest.mark.parametrize("stale_result", ["success", "failure", "cancelled"])
 async def test_collection_mutation_remount_rejects_cancellation_resistant_completion(
-    stale_failure: bool,
+    stale_result: str,
 ) -> None:
-    app = _RemountMutationManagerHost(stale_failure=stale_failure)
+    app = _RemountMutationManagerHost(stale_result=stale_result)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         modal = app.modal
