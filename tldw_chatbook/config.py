@@ -4536,8 +4536,12 @@ def _maybe_encrypt_setting_value(
         encrypted_value = enc_module.encrypt_value(value, password)
         logger.info(f"Encrypted {key} in config section")
         return encrypted_value
-    except Exception as e:
-        logger.error(f"Failed to encrypt value for key {key}: {e}")
+    except Exception as error:
+        logger.error(
+            "Failed to encrypt config value (key={}, exception_category={}).",
+            key,
+            type(error).__name__,
+        )
         raise
 
 
