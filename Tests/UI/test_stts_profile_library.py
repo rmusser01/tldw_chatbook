@@ -1064,6 +1064,33 @@ async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
 
     async with app.run_test(size=(120, 48)) as pilot:
         widget = app.query_one(AudioBookGenerationWidget)
+        # Let `_initialize_audiobook_defaults` (armed via `set_timer(0.1, ...)`
+        # on mount) settle first -- since task-15772 fixed the
+        # audiobook-provider-select tuple order, this now actually succeeds
+        # and cascades into `_update_voice_options("openai")`. Without
+        # waiting for it, that cascade could otherwise land *after* the
+        # kokoro setup below (depending on how much the subsequent
+        # `pilot.press` calls advance the clock) and wipe out this test's
+        # kokoro voice options -- exactly the race a real user would never
+        # hit, since they can't interact with the widget before it finishes
+        # mounting.
+        #
+        # Poll on the actual condition rather than a fixed sleep: a fixed
+        # `pilot.pause(0.15)` races a *real* wall-clock 0.1s timer plus a
+        # message-pump round trip plus a reactive-watcher cascade against a
+        # hardcoded 0.05s margin -- comfortable under normal load, but a
+        # genuine flake risk under a contended runner (task-15772 review
+        # round 2). Bounded poll instead, so this settles as soon as it
+        # actually does and fails loudly (not silently, late) if it never
+        # does.
+        provider_select = app.query_one("#audiobook-provider-select", Select)
+        for _ in range(100):
+            if provider_select.value == "openai":
+                break
+            await pilot.pause()
+        else:
+            raise AssertionError("mount-time provider default never settled")
+
         widget._update_voice_options("kokoro")
         narrator = app.query_one("#narrator-voice-select", Select)
         option_values = tuple(value for _label, value in narrator._options)
