@@ -1356,6 +1356,124 @@ async def test_executor_async_offloads_the_whole_execution_and_keeps_loop_respon
     assert set(callback_threads) == {caller_thread}
 
 
+@pytest.mark.asyncio
+async def test_execute_async_file_backed_recursive_import_reopens_and_replays_once(
+    tmp_path: Path,
+) -> None:
+    """Smoke the complete async boundary across both durable SQLite owners."""
+    notes_path = tmp_path / "notes.sqlite3"
+    receipt_path = tmp_path / "notes-sync-state.sqlite3"
+    item = _execution_item(
+        item_id="recursive-file-backed",
+        payloads=(
+            _payload(
+                title="Nested note",
+                content="Durable body",
+                keywords=("Recursive", "Smoke"),
+            ),
+        ),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Selected Root", "Nested Folder")),),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(
+            ("Selected Root",),
+            ("Selected Root", "Nested Folder"),
+        ),
+    )
+    note_id = _expected_note_id(item.item_id, 0)
+
+    first_db = CharactersRAGDB(notes_path, client_id="file-backed-smoke")
+    try:
+        first_folders = LocalNoteFolderRepository(first_db)
+        first_executor = NoteImportExecutor(
+            target=LocalNoteImportTarget(
+                db=first_db,
+                folder_repository=first_folders,
+            ),
+            receipt_repository=NoteImportReceiptRepository(receipt_path),
+            batch_size=1,
+        )
+
+        first_receipt = await first_executor.execute_async(approved)
+
+        assert first_receipt.state is ImportSessionState.COMPLETED
+        assert first_receipt.imported == 1
+    finally:
+        first_db.close_connection()
+
+    reopened_db = CharactersRAGDB(notes_path, client_id="file-backed-smoke")
+    try:
+        reopened_folders = LocalNoteFolderRepository(reopened_db)
+        root = reopened_folders.get_folder_by_path(("Selected Root",))
+        nested = reopened_folders.get_folder_by_path(("Selected Root", "Nested Folder"))
+        assert root is not None
+        assert nested is not None
+        assert nested.parent_id == root.folder_id
+
+        note_row = (
+            reopened_db.get_connection()
+            .execute(
+                "SELECT title, content, version FROM notes "
+                "WHERE id = ? AND deleted = 0",
+                (note_id,),
+            )
+            .fetchone()
+        )
+        assert tuple(note_row) == ("Nested note", "Durable body", 1)
+        assert (
+            _active_membership_count(
+                reopened_db,
+                folder_id=nested.folder_id,
+                note_id=note_id,
+            )
+            == 1
+        )
+
+        reopened_receipts = NoteImportReceiptRepository(receipt_path)
+        durable = reopened_receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+        assert durable.state is ImportSessionState.COMPLETED
+        assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
+        assert all(
+            effect.state is ImportEffectState.APPLIED
+            for effect in (
+                *durable.folder_effects,
+                *durable.payload_effects,
+                *durable.membership_effects,
+            )
+        )
+
+        reopened_executor = NoteImportExecutor(
+            target=LocalNoteImportTarget(
+                db=reopened_db,
+                folder_repository=reopened_folders,
+            ),
+            receipt_repository=reopened_receipts,
+            batch_size=1,
+        )
+        replay_receipt = await reopened_executor.execute_async(approved)
+
+        assert replay_receipt == first_receipt
+        assert (
+            reopened_db.get_connection()
+            .execute("SELECT COUNT(*) FROM notes WHERE id = ?", (note_id,))
+            .fetchone()[0]
+            == 1
+        )
+        assert (
+            _active_membership_count(
+                reopened_db,
+                folder_id=nested.folder_id,
+                note_id=note_id,
+            )
+            == 1
+        )
+    finally:
+        reopened_db.close_connection()
+
+
 @pytest.mark.parametrize("crash_boundary", ["folder", "payload", "membership", "item"])
 def test_executor_reopens_and_reconciles_each_create_crash_window(
     target_harness,
