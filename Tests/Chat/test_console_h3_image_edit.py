@@ -26,7 +26,6 @@ from tldw_chatbook.Chat.console_image_edit_operations import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationCancelled
 from tldw_chatbook.UI.Console_Modules import image as image_module
-from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 
 from Tests.Chat.test_console_generation_actions import (
     _FakeComposer,
@@ -337,8 +336,12 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         return original_consume(*args, **kwargs)
 
     monkeypatch.setattr(store, "consume_pending_attachment", _ordered_consume)
-    screen._ensure_console_video_store = lambda: (_ for _ in ()).throw(
-        AssertionError("H3 image edit must not access the Video store")
+    monkeypatch.setattr(
+        console_video_module.ConsoleVideoController,
+        "_ensure_console_video_store",
+        lambda _self: (_ for _ in ()).throw(
+            AssertionError("H3 image edit must not access the Video store")
+        ),
     )
     # `0b8e9e408 refactor: extract Console video controller` moved video
     # generation out of `chat_screen` into `UI/Console_Modules/video.py`,

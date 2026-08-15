@@ -184,7 +184,7 @@ def test_next_app_startup_applies_session_retention_again(
 
     assert second_app.generated_video_store is not first_app.generated_video_store
     assert not current_path.exists()
-    specs = ChatScreen(second_app)._build_video_card_specs([message])
+    specs = ChatScreen(second_app)._video._build_video_card_specs([message])
     assert specs[message.id].status == "expired"
 
 
@@ -256,8 +256,12 @@ def test_video_retention_startup_failure_is_bounded(
 
     first_screen = ChatScreen(app)
     second_screen = ChatScreen(app)
-    assert first_screen._ensure_console_video_store() is app.generated_video_store
-    assert second_screen._ensure_console_video_store() is app.generated_video_store
+    assert (
+        first_screen._video._ensure_console_video_store() is app.generated_video_store
+    )
+    assert (
+        second_screen._video._ensure_console_video_store() is app.generated_video_store
+    )
     assert retention_calls == [app.generated_video_store]
 
 
@@ -330,8 +334,13 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
                 video_metadata=metadata,
                 message_id=message_id,
             )
-            assert chat._ensure_console_video_store() is app.generated_video_store
-            assert chat._build_video_card_specs([message])[message_id].status == "ready"
+            assert (
+                chat._video._ensure_console_video_store() is app.generated_video_store
+            )
+            assert (
+                chat._video._build_video_card_specs([message])[message_id].status
+                == "ready"
+            )
 
             composer.load_draft(draft)
             store = chat._ensure_console_chat_store()
@@ -371,12 +380,15 @@ async def test_registered_chat_route_uses_only_native_console_and_restores_snaps
             assert restored_composer.draft_text() == draft
             assert restored_chat is not chat
             assert (
-                restored_chat._ensure_console_video_store() is app.generated_video_store
+                restored_chat._video._ensure_console_video_store()
+                is app.generated_video_store
             )
             restored_store = restored_chat._ensure_console_chat_store()
             restored_message = restored_store.get_message(message_id)
             assert restored_message.video_metadata == metadata
-            spec = restored_chat._build_video_card_specs([restored_message])[message_id]
+            spec = restored_chat._video._build_video_card_specs([restored_message])[
+                message_id
+            ]
             assert spec.status == "ready"
             assert spec.file_path == str(stored)
             assert stored.read_bytes() == b"current-run-bytes"
