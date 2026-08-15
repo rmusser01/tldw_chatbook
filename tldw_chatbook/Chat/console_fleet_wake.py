@@ -641,6 +641,16 @@ class ConsoleFleetWakeCoordinator:
         cleared mark on an unviewed delivery is the live silent-delivery
         failure this exists to prevent.
 
+        task-15860 Task 4: a controller owned by a ``ConsoleRuntime`` is
+        never in the "unwired" case above -- attach binds the view's probe
+        and detach restores ``viewless_conversation_in_view``, which
+        reports NOT in view. The unwired branch survives only for
+        controllers built outside the runtime (doubles, the pre-screen
+        rig); if it is ever made to mean "unwatched" globally, the test
+        that pins the historical clear
+        (``test_an_unwired_view_probe_keeps_the_historical_clear``) is the
+        one to rewrite alongside it.
+
         Args:
             conversation_id: The delivered conversation.
             session_id: The session the wake turn ran in.
