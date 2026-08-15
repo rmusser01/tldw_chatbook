@@ -69,6 +69,8 @@ def _is_safe_focus_target(widget: Widget | None) -> bool:
         and widget.visible
         and not widget.disabled
         and widget.can_focus
+        and widget.focusable
+        and all(node.display for node in widget.ancestors_with_self)
     )
 
 

@@ -161,6 +161,34 @@ async def test_stable_focus_rejects_an_ineligible_exact_opener_for_replacement(
         assert app.host.focused is replacement
 
 
+@pytest.mark.parametrize("ancestor_state", ["not-displayed", "disabled"])
+@pytest.mark.asyncio
+async def test_stable_focus_rejects_an_inaccessible_opener_ancestor_for_replacement(
+    ancestor_state: str,
+) -> None:
+    app = _LibraryFocusHarness()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        modal, original = await _mount_focus_modal(app, pilot)
+        replacement = Input(id=_STABLE_OPENER_ID)
+        await app.host.query_one("#library-extra-opener-slot", Container).mount(
+            replacement
+        )
+        opener_ancestor = original.parent
+        assert isinstance(opener_ancestor, Container)
+        if ancestor_state == "not-displayed":
+            opener_ancestor.display = False
+        else:
+            opener_ancestor.disabled = True
+        await pilot.pause()
+
+        app.host.set_focus(app.host.query_one("#library-normal-focus-policy", Input))
+        await _dismiss_focus_modal(modal, pilot)
+
+        assert original.is_mounted
+        assert app.host.focused is replacement
+
+
 @pytest.mark.parametrize(
     ("identity_case", "replacement_ids", "ineligible_reasons"),
     [
