@@ -17,12 +17,17 @@ guarantee for FTS5-syntax-hazard input.
 """
 
 import inspect
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    InputError,
+)
 
 
 @pytest.fixture
@@ -181,6 +186,34 @@ def _seed_coherent_conversation_population(db: CharactersRAGDB) -> list[str]:
 
 
 class TestCoherentConversationPages:
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"limit": -1}, "limit"),
+            ({"limit": 0}, "limit"),
+            ({"limit": True}, "limit"),
+            ({"limit": 1.5}, "limit"),
+            ({"limit": "20"}, "limit"),
+            ({"offset": -1}, "offset"),
+            ({"offset": True}, "offset"),
+            ({"offset": 1.5}, "offset"),
+            ({"offset": "0"}, "offset"),
+        ],
+    )
+    def test_rejects_invalid_ordinary_page_coordinates(self, db, kwargs, message):
+        with pytest.raises(InputError, match=message):
+            db.search_conversations_page(None, scope_type="all", **kwargs)
+
+    def test_ordinary_pages_preserve_positive_non_library_limits(self, db):
+        _seed_coherent_conversation_population(db)
+
+        rows, total, _ = db.search_conversations_page(
+            None, scope_type="all", limit=19, offset=19
+        )
+
+        assert len(rows) == 19
+        assert total == 45
+
     def test_pages_are_exact_stable_partitions_under_all_supported_filters(self, db):
         expected_ids = _seed_coherent_conversation_population(db)
 
@@ -267,6 +300,23 @@ class TestCoherentConversationPages:
         reader.close_connection()
         writer.close_connection()
 
+    @pytest.mark.parametrize("method_name", ["search_conversations_page", "locate_conversation_page"])
+    def test_direct_cursor_page_reads_wrap_sqlite_errors(
+        self, db, monkeypatch, method_name
+    ):
+        monkeypatch.setattr(
+            db,
+            "_conversation_search_filter",
+            lambda *_args, **_kwargs: ("missing_page_column = ?", [1]),
+        )
+
+        method = getattr(db, method_name)
+        args = (None,) if method_name == "search_conversations_page" else ("target",)
+        with pytest.raises(CharactersRAGDBError) as exc_info:
+            method(*args, scope_type="all", limit=20)
+
+        assert isinstance(exc_info.value.__cause__, sqlite3.Error)
+
 
 class TestLocateConversationPage:
     def test_returns_only_the_bounded_page_owning_the_target(self, db):
@@ -336,6 +386,15 @@ class TestLocateConversationPage:
             db.locate_conversation_page("  ", scope_type="all", limit=20)
         with pytest.raises(InputError, match="limit"):
             db.locate_conversation_page(expected_ids[1], scope_type="all", limit=0)
+
+    @pytest.mark.parametrize("limit", [19, 21, True, -1, 1_000_000])
+    def test_locator_requires_the_fixed_library_page_size(self, db, limit):
+        target_id = db.add_conversation({"title": "Target"})
+
+        with pytest.raises(InputError, match="limit"):
+            db.locate_conversation_page(
+                target_id, scope_type="all", limit=limit
+            )
 
 
 # ---------------------------------------------------------------------------

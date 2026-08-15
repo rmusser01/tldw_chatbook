@@ -7920,6 +7920,13 @@ UPDATE db_schema_version
     def _after_conversation_page_count(self) -> None:
         """Test coordination seam between the count and page statements."""
 
+    @staticmethod
+    def _validate_conversation_page_coordinates(limit: Any, offset: Any = 0) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise InputError("limit must be a positive integer.")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise InputError("offset must be a non-negative integer.")
+
     def search_conversations_page(
         self,
         query: Optional[str],
@@ -7937,6 +7944,7 @@ UPDATE db_schema_version
         offset: int = 0,
         **_: Any,
     ) -> Tuple[List[Dict[str, Any]], int, float]:
+        self._validate_conversation_page_coordinates(limit, offset)
         where_clause, params = self._conversation_search_filter(
             query,
             client_id=client_id,
@@ -7958,16 +7966,19 @@ UPDATE db_schema_version
             "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
         )
 
-        with self.transaction() as conn:
-            count_row = conn.execute(count_query, tuple(params)).fetchone()
-            total = int(count_row["total"] if count_row else 0)
-            self._after_conversation_page_count()
-            rows = [
-                dict(row)
-                for row in conn.execute(
-                    page_query, (*params, limit, offset)
-                ).fetchall()
-            ]
+        try:
+            with self.transaction() as conn:
+                count_row = conn.execute(count_query, tuple(params)).fetchone()
+                total = int(count_row["total"] if count_row else 0)
+                self._after_conversation_page_count()
+                rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        page_query, (*params, limit, offset)
+                    ).fetchall()
+                ]
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError("Failed to read conversation page.") from exc
         return rows, total, 0.0
 
     def locate_conversation_page(
@@ -7990,8 +8001,8 @@ UPDATE db_schema_version
         normalized_id = self._normalize_nullable_text(conversation_id)
         if normalized_id is None or not isinstance(conversation_id, str):
             raise InputError("conversation_id must be a non-empty string.")
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
-            raise InputError("limit must be a positive integer.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
+            raise InputError("limit must be exactly 20.")
 
         where_clause, params = self._conversation_search_filter(
             query,
@@ -8025,11 +8036,16 @@ UPDATE db_schema_version
               AND ranked.__row_index < (target.__target_index / ?) * ? + ?
             ORDER BY ranked.__row_index
         """
-        with self.transaction() as conn:
-            result_rows = conn.execute(
-                locator_query,
-                (*params, normalized_id, limit, limit, limit, limit, limit),
-            ).fetchall()
+        try:
+            with self.transaction() as conn:
+                result_rows = conn.execute(
+                    locator_query,
+                    (*params, normalized_id, limit, limit, limit, limit, limit),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Failed to locate conversation page."
+            ) from exc
         if not result_rows:
             return None
 

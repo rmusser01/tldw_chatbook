@@ -666,6 +666,11 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer.")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("offset must be a non-negative integer.")
+
         effective_scope = scope_type
         if effective_scope is None:
             effective_scope = "workspace" if workspace_id is not None else "global"
@@ -722,6 +727,9 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
     ) -> dict[str, Any] | None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit != 20:
+            raise ValueError("limit must be exactly 20.")
+
         effective_scope = scope_type
         if effective_scope is None:
             effective_scope = "workspace" if workspace_id is not None else "global"

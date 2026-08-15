@@ -535,6 +535,32 @@ def test_list_conversations_retains_the_exact_ordinary_page_envelope():
     ]
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"limit": -1}, "limit"),
+        ({"limit": 0}, "limit"),
+        ({"limit": True}, "limit"),
+        ({"limit": 1.5}, "limit"),
+        ({"limit": "20"}, "limit"),
+        ({"offset": -1}, "offset"),
+        ({"offset": True}, "offset"),
+        ({"offset": 1.5}, "offset"),
+        ({"offset": "0"}, "offset"),
+    ],
+)
+def test_list_conversations_rejects_invalid_coordinates_before_db_call(
+    kwargs, message
+):
+    db = FakeDB(conversations_page_rows=[{"id": "conv-1"}])
+    service = ChatConversationService(db)
+
+    with pytest.raises(ValueError, match=message):
+        service.list_conversations(**kwargs)
+
+    assert db.calls == []
+
+
 def test_locate_conversation_page_normalizes_the_bounded_owning_page():
     rows = [
         {"id": f"conv-{index}", "scope_type": "global", "version": 1}
@@ -599,6 +625,17 @@ def test_locate_conversation_page_returns_none_when_target_is_unavailable():
     service = ChatConversationService(FakeDB(located_page=None))
 
     assert service.locate_conversation_page("conv-missing", limit=20) is None
+
+
+@pytest.mark.parametrize("limit", [19, 21, True, -1, 1_000_000])
+def test_locate_conversation_page_requires_fixed_limit_before_db_call(limit):
+    db = FakeDB(located_page=None)
+    service = ChatConversationService(db)
+
+    with pytest.raises(ValueError, match="limit"):
+        service.locate_conversation_page("conv-target", limit=limit)
+
+    assert db.calls == []
 
 
 def test_replace_conversation_keywords_resolves_ids_before_replacing():
