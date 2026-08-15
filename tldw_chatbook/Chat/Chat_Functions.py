@@ -977,29 +977,68 @@ def chat_api_call(
         )
         log_counter("chat_api_call_success", labels={"api_endpoint": endpoint_lower})
 
+        # OpenAI-shaped dict normalization: the local OpenAI-compatible
+        # handlers (llama.cpp/vLLM/...) return the raw decoded response body,
+        # while every string consumer (deep-search pipeline, chat windows,
+        # cloud providers) expects the assistant content. Extract the
+        # content when the shape allows; unknown dict shapes pass through
+        # untouched so specialized consumers keep working.
+        usage_recorded = False
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str):
+                    # task-16329 upgrade: local providers report REAL usage
+                    # -- record exact counts instead of estimates.
+                    usage = response.get("usage")
+                    try:
+                        from .usage_recorder import active_recorder
+
+                        recorder = active_recorder()
+                        if (
+                            recorder is not None
+                            and isinstance(usage, dict)
+                            and (
+                                usage.get("prompt_tokens") is not None
+                                or usage.get("completion_tokens") is not None
+                            )
+                        ):
+                            recorder.record_usage(
+                                prompt_tokens=usage.get("prompt_tokens") or 0,
+                                completion_tokens=usage.get("completion_tokens") or 0,
+                            )
+                            usage_recorded = True
+                    except Exception:  # noqa: BLE001 - accounting must never break a call
+                        logger.debug("usage recording skipped", exc_info=True)
+                    response = content
+
         if isinstance(response, str):
             logger.debug(
                 f"Debug - Chat API Call - Response type=str; length={len(response)}"
             )
             # task-16329: token-usage plumbing. When a usage scope is active
             # (research budget ledger), record estimated prompt/completion
-            # tokens for this exchange. One contextvar get when no scope is
+            # tokens for this exchange unless exact provider usage was
+            # already recorded above. One contextvar get when no scope is
             # active -- zero behavior change for every other caller.
-            try:
-                from .usage_recorder import active_recorder
+            if not usage_recorded:
+                try:
+                    from .usage_recorder import active_recorder
 
-                recorder = active_recorder()
-                if recorder is not None:
-                    recorder.record_exchange(
-                        prompt_text="\n".join(
-                            str(message.get("content") or "")
-                            for message in (messages_payload or [])
-                            if isinstance(message, dict)
-                        ),
-                        completion_text=response,
-                    )
-            except Exception:  # noqa: BLE001 - accounting must never break a call
-                logger.debug("usage recording skipped", exc_info=True)
+                    recorder = active_recorder()
+                    if recorder is not None:
+                        recorder.record_exchange(
+                            prompt_text="\n".join(
+                                str(message.get("content") or "")
+                                for message in (messages_payload or [])
+                                if isinstance(message, dict)
+                            ),
+                            completion_text=response,
+                        )
+                except Exception:  # noqa: BLE001 - accounting must never break a call
+                    logger.debug("usage recording skipped", exc_info=True)
         elif hasattr(response, "__iter__") and not isinstance(
             response, (str, bytes, dict)
         ):

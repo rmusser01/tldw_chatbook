@@ -111,3 +111,84 @@ def test_chat_api_call_records_nothing_without_active_recorder(monkeypatch):
 
     assert result == "hello world"
     assert active_recorder() is None
+
+
+# --- OpenAI-shaped dict normalization (task-16330 live-baseline unblock) --------
+
+def test_chat_api_call_normalizes_openai_dict_to_content_string(monkeypatch):
+    payload = {
+        "choices": [
+            {"index": 0, "finish_reason": "stop",
+             "message": {"role": "assistant", "content": "the answer"}}
+        ],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    result = chat_api_call(
+        api_endpoint="llama_cpp",
+        messages_payload=[{"role": "user", "content": "prompt"}],
+        api_key=None, temp=0.5, system_message=None, streaming=False,
+        minp=None, maxp=None, model=None, topk=None, topp=None,
+    )
+
+    assert result == "the answer"
+
+
+def test_chat_api_call_records_real_usage_from_dict_responses(monkeypatch):
+    payload = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "answer text"}}
+        ],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+    }
+    handler = _fake_handler(payload)
+    monkeypatch.setitem(Chat_Functions.API_CALL_HANDLERS, "llama_cpp", handler)
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "a much longer prompt text here"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    # EXACT counts from the provider, not character estimates.
+    assert recorder.prompt_tokens() == 11
+    assert recorder.completion_tokens() == 7
+
+
+def test_chat_api_call_dict_without_usage_falls_back_to_estimates(monkeypatch):
+    payload = {"choices": [{"message": {"role": "assistant", "content": "abcde"}}]}
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "abcdefg"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert recorder.prompt_tokens() == estimate_tokens("abcdefg")
+    assert recorder.completion_tokens() == estimate_tokens("abcde")
+
+
+def test_chat_api_call_unknown_dict_shape_passes_through(monkeypatch):
+    payload = {"error": "odd provider payload"}
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    result = chat_api_call(
+        api_endpoint="llama_cpp",
+        messages_payload=[{"role": "user", "content": "prompt"}],
+        api_key=None, temp=0.5, system_message=None, streaming=False,
+        minp=None, maxp=None, model=None, topk=None, topp=None,
+    )
+
+    assert result == {"error": "odd provider payload"}
