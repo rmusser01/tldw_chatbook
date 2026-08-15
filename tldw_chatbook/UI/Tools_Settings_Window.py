@@ -11,14 +11,15 @@
 # migrate surviving behavior to the Settings screen before this module is deleted.
 #
 # Imports
-from typing import TYPE_CHECKING, Optional, List, Dict, NamedTuple
+from typing import TYPE_CHECKING, Any, Optional, List, Dict, NamedTuple
 import asyncio
+import base64
 import io
 import json
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from functools import partial
 from pathlib import Path
 
@@ -147,6 +148,49 @@ WEB_DEEP_SEARCH_TOOL_NAME = "web_deep_search"
 #: TASK-2775: the About text's canonical home is Utils/about_text (rendered by
 #: the F9 Settings screen's About category); re-exported here for back-compat.
 from tldw_chatbook.Utils.about_text import ABOUT_MARKDOWN  # noqa: E402,F401
+
+
+def _character_backup_json_default(value: Any) -> str:
+    """json.dumps fallback for the row types SQLite hands back (task-15769).
+
+    `list_character_cards` rows carry `created_at`/`last_modified` as
+    ``datetime`` objects, which crashed the whole backup dump with
+    ``TypeError: Object of type datetime is not JSON serializable`` even for
+    image-free cards. Anything else unexpected still raises, so a new
+    non-serializable column can never silently ship garbage.
+    """
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _serialize_character_cards_for_backup(characters: List[Dict[str, Any]]) -> str:
+    """Serialize character-card rows into the JSON backup dump (task-15769).
+
+    The raw `image` BLOB (``bytes``) is replaced by a plain-base64
+    ``image_base64`` string -- the same compatibility shape
+    `Chat_Functions.load_characters` produces, and deliberately NOT the
+    data-URI form `export_character_card_to_json` embeds, because the import
+    chain (`parse_v1_card` -> `import_and_save_character_from_file*`)
+    b64decodes the raw string, so a prefixed value would not round-trip.
+    """
+    serializable: List[Dict[str, Any]] = []
+    for card in characters:
+        card = dict(card)
+        image = card.pop("image", None)
+        if isinstance(image, (bytes, bytearray, memoryview)):
+            card["image_base64"] = base64.b64encode(bytes(image)).decode("ascii")
+        elif image is not None:
+            # Not a BLOB (unexpected but conceivable via TEXT affinity);
+            # keep the value rather than silently dropping it.
+            card["image"] = image
+        serializable.append(card)
+    return json.dumps(
+        serializable,
+        indent=2,
+        ensure_ascii=False,
+        default=_character_backup_json_default,
+    )
 
 
 class ToolsSettingsWindow(Container):
@@ -6541,12 +6585,16 @@ class ToolsSettingsWindow(Container):
             chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path and chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
-                characters = db.list_character_cards(limit=10000)
+                # A backup must contain the avatar image, so opt into the
+                # image-bearing projection (task-15474 made image-free the
+                # default) and serialize through the BLOB-safe helper
+                # (task-15769).
+                characters = db.list_character_cards(limit=10000, include_image=True)
 
                 export_path = export_dir / f"characters_{timestamp}.json"
                 create_private_text(
                     export_path,
-                    json.dumps(characters, indent=2, ensure_ascii=False),
+                    _serialize_character_cards_for_backup(characters),
                     application_owned_directory=export_dir,
                 )
 
