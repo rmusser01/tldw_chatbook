@@ -607,17 +607,17 @@ class VisualIdentityRepository:
                 """,
                 (status, pack_id, LOCAL_OWNER_ID),
             )
-        row = self.db.execute_query(
-            """
-            SELECT *
-              FROM visual_identity_packs
-             WHERE id = ? AND owner_user_id = ?
-            """,
-            (pack_id, LOCAL_OWNER_ID),
-        ).fetchone()
-        if row is None:
-            raise ValueError("visual_identity_pack_not_found")
-        return dict(row)
+            row = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE id = ? AND owner_user_id = ?
+                """,
+                (pack_id, LOCAL_OWNER_ID),
+            ).fetchone()
+            if row is None:
+                raise ValueError("visual_identity_pack_not_found")
+            return dict(row)
 
     def _binding_by_id(self, binding_id: int) -> dict[str, Any]:
         row = self.db.execute_query(

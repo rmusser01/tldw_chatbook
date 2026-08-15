@@ -631,6 +631,83 @@ def test_repeated_pack_status_change_is_idempotent(
     assert second == first
 
 
+@pytest.mark.parametrize(
+    ("operation", "requested_status", "concurrent_status"),
+    [
+        ("archive_pack", "archived", "deleted"),
+        ("mark_pack_deleted", "deleted", "archived"),
+    ],
+)
+def test_pack_status_change_returns_its_own_transaction_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    requested_status: str,
+    concurrent_status: str,
+) -> None:
+    path = tmp_path / f"{operation}-ownership.db"
+    primary_db = CharactersRAGDB(path, client_id="status-primary")
+    concurrent_db = CharactersRAGDB(path, client_id="status-concurrent")
+    primary = VisualIdentityRepository(primary_db)
+    pack_id = _activate(primary)["pack"]["id"]
+    result_read_reached = Event()
+    concurrent_write_attempting = Event()
+    concurrent_write_done = Event()
+    original_execute = primary_db.execute_query
+    intercepted = False
+
+    def interleaved_execute(query: str, params: Any = None, **kwargs: Any) -> Any:
+        nonlocal intercepted
+        result_query = (
+            "SELECT * FROM visual_identity_packs WHERE id = ? AND owner_user_id = ?"
+        )
+        if not intercepted and " ".join(query.split()) == result_query:
+            intercepted = True
+            result_read_reached.set()
+            assert concurrent_write_attempting.wait(5)
+            if not primary_db.get_connection().in_transaction:
+                assert concurrent_write_done.wait(5)
+        return original_execute(query, params, **kwargs)
+
+    monkeypatch.setattr(primary_db, "execute_query", interleaved_execute)
+
+    def write_concurrently() -> None:
+        try:
+            assert result_read_reached.wait(5)
+            with concurrent_db.transaction():
+                concurrent_write_attempting.set()
+                concurrent_db.execute_query(
+                    """
+                    UPDATE visual_identity_packs
+                       SET status = ?, version = version + 1
+                     WHERE id = ?
+                    """,
+                    (concurrent_status, pack_id),
+                )
+        finally:
+            concurrent_write_done.set()
+            concurrent_db.close_connection()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(write_concurrently)
+            result = getattr(primary, operation)(pack_id)
+            future.result(timeout=5)
+
+        stored = dict(
+            primary_db.execute_query(
+                "SELECT status, version FROM visual_identity_packs WHERE id = ?",
+                (pack_id,),
+            ).fetchone()
+        )
+        assert result["status"] == requested_status
+        assert result["version"] == 2
+        assert stored == {"status": concurrent_status, "version": 3}
+    finally:
+        concurrent_db.close_connection()
+        primary_db.close_connection()
+
+
 @pytest.mark.parametrize("operation", ["archive_pack", "mark_pack_deleted"])
 @pytest.mark.parametrize("corruption", ["null", "cross_pack"])
 def test_pack_status_changes_reject_invalid_active_version_without_writing(
