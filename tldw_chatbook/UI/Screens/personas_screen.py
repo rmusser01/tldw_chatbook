@@ -46,12 +46,14 @@ from ...Character_Chat.expression_generation import (
 )
 from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
 from ...Character_Chat.persona_list_paging import page_persona_profiles
+from ...Character_Chat.visual_identity import resolve_visual_identity
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...Constants import TAB_STTS
 from ...DB.ChaChaNotes_DB import ConflictError
+from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...Image_Generation.config import get_image_generation_config
 from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Image_Generation.worker import build_request, run_generation
@@ -98,6 +100,9 @@ from ...Widgets.Persona_Widgets.personas_character_card_widget import (
 )
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
+)
+from ...Widgets.Persona_Widgets.personas_visual_identity_pack_widget import (
+    PersonasVisualIdentityPackWidget,
 )
 from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
     CharacterTTSProfileSuggestion,
@@ -164,6 +169,9 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
+    VisualIdentityAssetMetadata,
+    VisualIdentityPackMetadata,
+    VisualIdentityPackPreviewRequested,
 )
 from ..stts_profile_library import (
     TTSProfileEditorModal,
@@ -6037,17 +6045,16 @@ class PersonasScreen(BaseAppScreen):
         # posts EditorContentChanged on the first real modification.
         editor = self.query_one(PersonasCharacterEditorWidget)
         editor.load_character(record)
-        # Sync handler: dispatch the (async, off-thread-decoding) thumbnail
-        # render as a worker rather than awaiting it inline. This character
-        # is loaded from a saved record, so expression_character_id() is
-        # populated - the render also loads each expression slot's existing
-        # image (Task 4).
+        # Read only active-pack metadata first. Bound characters mount the
+        # lazy pack browser; unbound characters take the legacy three-slot
+        # path byte-for-behavior. DB work stays off the message pump.
+        token = self._character_editor_generation
+        character_id = editor.expression_character_id()
         self.run_worker(
-            self._render_all_character_editor_thumbnails(
-                editor.expression_character_id()
-            ),
-            group="personas-avatar-render",
+            self._configure_character_visual_identity(editor, character_id, token),
+            group="personas-visual-identity-load",
             exit_on_error=False,
+            exclusive=True,
         )
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
@@ -6055,6 +6062,62 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation_editing()
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_editor_name)
+
+    async def _configure_character_visual_identity(
+        self,
+        editor: PersonasCharacterEditorWidget,
+        character_id: int | None,
+        token: int,
+    ) -> None:
+        """Mount pack metadata or preserve the legacy expression controls."""
+
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        graph = None
+        if character_id is not None and db is not None:
+            try:
+                graph = await asyncio.to_thread(
+                    VisualIdentityRepository(db).get_active_actor_pack,
+                    "character",
+                    character_id,
+                )
+            except (TypeError, ValueError, OverflowError):
+                logger.opt(exception=True).debug(
+                    "Personas Visual Identity metadata read failed for character {}.",
+                    character_id,
+                )
+        if (
+            token != self._character_editor_generation
+            or not self.is_mounted
+            or editor.expression_character_id() != character_id
+            or getattr(self.app_instance, "chachanotes_db", None) is not db
+        ):
+            return
+        if graph is None:
+            await editor.show_visual_identity_pack(None)
+            await self._render_all_character_editor_thumbnails(character_id)
+            return
+
+        pack_row = graph["pack"]
+        version_row = graph["version"]
+        metadata = VisualIdentityPackMetadata(
+            pack_id=int(pack_row["id"]),
+            pack_version_id=int(version_row["id"]),
+            title=str(pack_row["title"]),
+            source_kind=str(pack_row["source_kind"]),
+            default_expression_key=str(version_row["default_expression_key"]),
+            assets=tuple(
+                VisualIdentityAssetMetadata(
+                    asset_id=int(asset["id"]),
+                    expression_key=str(asset["expression_key"]),
+                    original_label=str(asset["original_expression_key"]),
+                    display_label=str(asset["display_label"]),
+                    content_type=str(asset["content_type"]),
+                    is_animated=bool(asset["is_animated"]),
+                )
+                for asset in graph["assets"]
+            ),
+        )
+        await editor.show_visual_identity_pack(metadata)
 
     @on(EditorContentChanged)
     def _handle_editor_content_changed(self, message: EditorContentChanged) -> None:
@@ -6635,6 +6698,121 @@ class PersonasScreen(BaseAppScreen):
             return
         for state in EXPRESSION_IMAGE_STATES:
             await self._render_character_expression_slot(character_id, state)
+
+    @on(VisualIdentityPackPreviewRequested)
+    def _handle_visual_identity_preview_requested(
+        self, message: VisualIdentityPackPreviewRequested
+    ) -> None:
+        """Decode only the selected pack asset in a fenced screen worker."""
+
+        message.stop()
+        editor = self._editor_or_none()
+        if editor is None:
+            return
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            return
+        self.run_worker(
+            self._render_visual_identity_pack_preview(
+                character_id,
+                message.asset,
+                self._character_editor_generation,
+            ),
+            group="personas-visual-identity-preview",
+            exit_on_error=False,
+            exclusive=True,
+        )
+
+    async def _render_visual_identity_pack_preview(
+        self,
+        character_id: int,
+        asset: VisualIdentityAssetMetadata,
+        token: int,
+    ) -> None:
+        """Resolve and decode one selected preview without exposing paths."""
+
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return
+        try:
+            resolution = await asyncio.to_thread(
+                resolve_visual_identity,
+                db,
+                actor_kind="character",
+                actor_id=character_id,
+                requested_state="idle",
+                manual_expression_key=asset.expression_key,
+            )
+        except (TypeError, ValueError, OverflowError):
+            logger.opt(exception=True).debug(
+                "Personas Visual Identity preview resolution failed for character {}.",
+                character_id,
+            )
+            return
+        if (
+            token != self._character_editor_generation
+            or not self.is_mounted
+            or getattr(self.app_instance, "chachanotes_db", None) is not db
+            or resolution.asset_id != asset.asset_id
+            or resolution.resolved_expression_key != asset.expression_key
+            or not resolution.image_bytes
+        ):
+            return
+
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        cache_key = (
+            "personas-visual-identity-preview-"
+            f"{token}-{resolution.pack_version_id}-{asset.asset_id}"
+        )
+        try:
+            ok = await asyncio.to_thread(
+                cache.prepare, cache_key, bytes(resolution.image_bytes)
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Personas Visual Identity preview decode failed."
+            )
+            return
+        editor = self._editor_or_none()
+        if (
+            not ok
+            or token != self._character_editor_generation
+            or not self.is_mounted
+            or editor is None
+            or editor.expression_character_id() != character_id
+            or getattr(self.app_instance, "chachanotes_db", None) is not db
+        ):
+            return
+        mode = resolve_default_mode(getattr(self.app_instance, "app_config", {}) or {})
+        renderable = None
+        if mode == "graphics":
+            try:
+                from textual_image.widget import Image as GraphicsImage
+
+                pil = cache.get_pil(cache_key)
+                if pil is not None:
+                    renderable = GraphicsImage(pil)
+                    width, height = self._fit_avatar_cell_size(pil.width, pil.height)
+                    renderable.styles.width = width
+                    renderable.styles.height = height
+            except Exception:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        else:
+            renderable = self._build_avatar_pixels(cache, cache_key)
+        if renderable is None:
+            return
+        try:
+            browser = editor.query_one(PersonasVisualIdentityPackWidget)
+        except QueryError:
+            return
+        browser.set_preview(renderable, expression_key=asset.expression_key)
 
     async def _render_character_expression_slot(
         self, character_id: int, state: str

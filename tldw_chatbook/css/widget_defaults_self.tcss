@@ -1613,6 +1613,16 @@
         max-height: 10;
     }
 
+    PersonasCharacterEditorWidget #personas-char-editor-legacy-expressions,
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        min-height: 16;
+    }
+
     PersonasCharacterEditorWidget .ds-toolbar {
         height: 1;
         min-height: 1;
@@ -2076,3 +2086,85 @@
         margin-right: 1;
     }
     
+
+/* ===== WIDGET: PersonasVisualIdentityPackWidget (Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py) ===== */
+
+    PersonasVisualIdentityPackWidget {
+        width: 100%;
+        height: 1fr;
+        min-height: 16;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-title,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-label,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+        color: $text-muted;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 5;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-results {
+        width: 2fr;
+        height: 100%;
+        min-width: 0;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-preview {
+        width: 1fr;
+        height: 100%;
+        min-width: 0;
+        margin-left: 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-preview-image {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions {
+        width: 100%;
+        height: 3;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button {
+        width: 1fr;
+        height: 3;
+        min-width: 0;
+        border: none;
+        margin-right: 1;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus {
+        outline: heavy $accent;
+    }
+
+    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview {
+        display: none;
+    }
+
+    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-results {
+        width: 100%;
+    }

@@ -6,10 +6,68 @@ the foundation PR until it merges.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, Literal
 from uuid import UUID
 
 from textual.message import Message
+
+
+@dataclass(frozen=True, slots=True)
+class VisualIdentityAssetMetadata:
+    """Path-free metadata for one asset shown by the Personas browser."""
+
+    asset_id: int
+    expression_key: str
+    original_label: str
+    display_label: str
+    content_type: str
+    is_animated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class VisualIdentityPackMetadata:
+    """Path-free active-pack metadata safe to hand to a widget."""
+
+    pack_id: int
+    pack_version_id: int
+    title: str
+    source_kind: str
+    default_expression_key: str
+    assets: tuple[VisualIdentityAssetMetadata, ...]
+
+
+class _VisualIdentityAssetRequested(Message):
+    """Base for pack actions targeting one metadata-only asset."""
+
+    def __init__(self, asset: VisualIdentityAssetMetadata) -> None:
+        self.asset = asset
+        super().__init__()
+
+
+class VisualIdentityPackPreviewRequested(_VisualIdentityAssetRequested):
+    """Ask PersonasScreen to decode the selected asset lazily."""
+
+
+class VisualIdentityPackReplaceRequested(_VisualIdentityAssetRequested):
+    """Ask PersonasScreen to stage a replacement for one asset."""
+
+
+class VisualIdentityPackGenerateRequested(_VisualIdentityAssetRequested):
+    """Ask PersonasScreen to stage a generated replacement for one asset."""
+
+
+class VisualIdentityPackClearRequested(_VisualIdentityAssetRequested):
+    """Ask PersonasScreen to stage removal of one asset."""
+
+
+class VisualIdentityPackSaveRequested(Message):
+    """Ask PersonasScreen to publish the widget's staged candidate."""
+
+    def __init__(self, pack_id: int, pack_version_id: int) -> None:
+        self.pack_id = pack_id
+        self.pack_version_id = pack_version_id
+        super().__init__()
 
 
 class ConversationRowSelected(Message):

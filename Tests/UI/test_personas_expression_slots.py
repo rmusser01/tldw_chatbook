@@ -11,13 +11,15 @@ already open for a saved character, rather than repeating the mount/select/
 open-editor boilerplate per test.
 """
 
+import asyncio
 from io import BytesIO
 from pathlib import Path
+from threading import Event
 
 import pytest
 import pytest_asyncio
 from PIL import Image
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -25,10 +27,15 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Utils.paths import get_user_data_dir
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_visual_identity_pack_widget import (
+    PersonasVisualIdentityPackWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
@@ -94,6 +101,122 @@ async def personas_editor_with_saved_character(mock_app_instance, monkeypatch, e
         yield app, screen, expr_db, char_id
 
 
+def _pack_asset(label: str, index: int) -> dict:
+    from tldw_chatbook.Character_Chat.visual_identity import SAMIRA_EXPRESSION_KEYS
+
+    return {
+        "expression_key": SAMIRA_EXPRESSION_KEYS[label],
+        "original_expression_key": label,
+        "display_label": label.title(),
+        "source_filename": f"{label}.webp",
+        "storage_relpath": f"characters/samira/expressions/{label}.webp",
+        "content_type": "image/webp",
+        "bytes": 10 + index,
+        "sha256": f"fixture-{index}",
+        "width": 1024,
+        "height": 1024,
+        "source_context": {"fixture": True},
+        "is_animated": False,
+        "frame_count": 1,
+    }
+
+
+@pytest_asyncio.fixture
+async def personas_editor_with_bound_pack(mock_app_instance, monkeypatch, expr_db):
+    """Saved character whose repository graph has an active 31-asset pack."""
+
+    from tldw_chatbook.Character_Chat.visual_identity import SAMIRA_REACTION_LABELS
+
+    mock_app_instance.chachanotes_db = expr_db
+    mock_app_instance.chat_dictionary_scope_service = None
+    char_id = expr_db.add_character_card({"name": "Packed"})
+    VisualIdentityRepository(expr_db).activate_pack(
+        pack={
+            "title": "Samira Reactions",
+            "default_expression_key": "neutral",
+            "source_kind": "builtin",
+            "source_context": {"source_id": "fixture.pack"},
+        },
+        manifest={"schema_id": "fixture/v1"},
+        assets=[
+            _pack_asset(label, index)
+            for index, label in enumerate(SAMIRA_REACTION_LABELS, start=1)
+        ],
+        actor_kind="character",
+        actor_id=char_id,
+    )
+    record = {
+        "id": char_id,
+        "name": "Packed",
+        "description": "",
+        "first_message": "Hi.",
+        "version": 1,
+    }
+    monkeypatch.setattr(
+        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+    )
+    monkeypatch.setattr(
+        character_handler_module,
+        "fetch_character_by_id",
+        lambda character_id: (
+            dict(record) if str(character_id) == str(char_id) else None
+        ),
+    )
+    patch_character_paging(monkeypatch)
+
+    def _legacy_read_forbidden(*_args, **_kwargs):
+        raise AssertionError("bound pack attempted a legacy expression-image read")
+
+    monkeypatch.setattr(
+        expr_db, "get_character_expression_image", _legacy_read_forbidden
+    )
+
+    preview_calls: list[str] = []
+
+    def _resolve_preview(_db, **kwargs):
+        from tldw_chatbook.Character_Chat.visual_identity import (
+            SAMIRA_EXPRESSION_KEYS,
+            VisualIdentityResolution,
+        )
+
+        key = kwargs["manual_expression_key"]
+        preview_calls.append(key)
+        asset_id = list(SAMIRA_EXPRESSION_KEYS.values()).index(key) + 1
+        buf = BytesIO()
+        Image.new("RGB", (8, 8), (asset_id, 20, 30)).save(buf, format="PNG")
+        return VisualIdentityResolution(
+            actor_kind="character",
+            actor_id=str(char_id),
+            requested_expression_key="neutral",
+            manual_expression_key=key,
+            resolved_expression_key=key,
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=asset_id,
+            expression_id=None,
+            storage_source="builtin",
+            storage_relpath="redacted",
+            content_type="image/png",
+            is_animated=False,
+            resolution_source="pack_manual",
+            fallback_reason="none",
+            cache_identity=("fixture", key),
+            image_bytes=buf.getvalue(),
+        )
+
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", _resolve_preview
+    )
+
+    app = PersonasTestApp(mock_app_instance)
+    async with app.run_test(size=(200, 60)) as pilot:
+        screen = await _select_character(pilot, char_id)
+        await _open_editor_for(pilot, screen, char_id)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        yield app, screen, expr_db, char_id, preview_calls
+
+
 @pytest.mark.asyncio
 async def test_expression_slots_present_for_saved_character(
     personas_editor_with_saved_character,
@@ -101,6 +224,134 @@ async def test_expression_slots_present_for_saved_character(
     app, screen, db, char_id = personas_editor_with_saved_character
     for state in ("thinking", "speaking", "error"):
         assert screen.query_one(f"#char-expression-slot-{state}") is not None
+
+
+@pytest.mark.asyncio
+async def test_unbound_character_keeps_legacy_controls_and_mounts_no_pack_browser(
+    personas_editor_with_saved_character,
+):
+    _app, screen, _db, _char_id = personas_editor_with_saved_character
+    assert not screen.query(PersonasVisualIdentityPackWidget)
+    assert screen.query_one("#personas-char-editor-legacy-expressions").display
+    for state in ("thinking", "speaking", "error"):
+        slot = screen.query_one(f"#char-expression-slot-{state}")
+        assert slot.display
+        assert screen.query_one(f"#personas-char-editor-expr-{state}-upload", Button)
+        assert screen.query_one(f"#personas-char-editor-expr-{state}-generate", Button)
+        assert screen.query_one(f"#personas-char-editor-expr-{state}-clear", Button)
+
+
+@pytest.mark.asyncio
+async def test_bound_character_mounts_pack_browser_and_hides_legacy_controls(
+    personas_editor_with_bound_pack,
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    assert browser.pack is not None
+    assert len(browser.pack.assets) == 31
+    assert browser.pack.source_kind == "builtin"
+    assert not screen.query_one("#personas-char-editor-legacy-expressions").display
+    for state in ("thinking", "speaking", "error"):
+        # The legacy subtree remains byte-for-behavior and is hidden at its
+        # owning wrapper; children keep their own display value for a later
+        # unbound character session.
+        assert screen.query_one(f"#char-expression-slot-{state}").display
+
+
+@pytest.mark.asyncio
+async def test_bound_pack_decodes_only_the_selected_lazy_preview(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    await app.workers.wait_for_complete()
+    assert preview_calls == ["custom:admiration"]
+    assert (
+        len(browser.query_one("#personas-visual-identity-preview-image").children) == 1
+    )
+
+    def _path_read_forbidden(*_args, **_kwargs):
+        raise AssertionError("lazy preview attempted a direct path read")
+
+    monkeypatch.setattr(Path, "open", _path_read_forbidden)
+    monkeypatch.setattr(Path, "read_bytes", _path_read_forbidden)
+
+    browser.apply_filter("joy")
+    await asyncio.sleep(0.1)
+    await app.workers.wait_for_complete()
+    assert preview_calls == ["custom:admiration", "happy"]
+    assert (
+        len(browser.query_one("#personas-visual-identity-preview-image").children) == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_late_preview_cannot_paint_a_newer_editor_session(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(PersonasVisualIdentityPackWidget)
+    original_resolve = personas_screen_module.resolve_visual_identity
+    started = Event()
+    release = Event()
+
+    def delayed_resolve(*args, **kwargs):
+        started.set()
+        assert release.wait(2)
+        return original_resolve(*args, **kwargs)
+
+    applied: list[str] = []
+    monkeypatch.setattr(
+        personas_screen_module, "resolve_visual_identity", delayed_resolve
+    )
+    monkeypatch.setattr(
+        PersonasVisualIdentityPackWidget,
+        "set_preview",
+        lambda self, _renderable, *, expression_key: applied.append(expression_key),
+    )
+
+    browser.apply_filter("joy")
+    assert await asyncio.to_thread(started.wait, 2)
+    screen._character_editor_generation += 1
+    release.set()
+    await app.workers.wait_for_complete()
+
+    assert applied == []
+
+
+@pytest.mark.asyncio
+async def test_late_pack_metadata_cannot_remount_over_a_newer_character(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    graph = VisualIdentityRepository(db).get_active_actor_pack("character", char_id)
+    assert graph is not None
+    started = Event()
+    release = Event()
+
+    def delayed_graph(_self, _kind, _actor_id):
+        started.set()
+        assert release.wait(2)
+        return graph
+
+    monkeypatch.setattr(
+        VisualIdentityRepository, "get_active_actor_pack", delayed_graph
+    )
+    token = screen._character_editor_generation
+    task = asyncio.create_task(
+        screen._configure_character_visual_identity(editor, char_id, token)
+    )
+    assert await asyncio.to_thread(started.wait, 2)
+    screen._character_editor_generation += 1
+    editor.load_character({"id": char_id + 1, "name": "Newer"})
+    host = editor.query_one("#personas-char-editor-visual-identity-host")
+    assert not host.display
+    release.set()
+    await task
+    await asyncio.sleep(0.1)
+
+    assert not editor.query(PersonasVisualIdentityPackWidget)
 
 
 @pytest.mark.asyncio
@@ -149,20 +400,28 @@ async def test_clear_soft_deletes_expression_row(personas_editor_with_saved_char
 
 
 @pytest.mark.asyncio
-async def test_apply_expression_set_stages_idle_and_writes_three(personas_editor_with_saved_character):
+async def test_apply_expression_set_stages_idle_and_writes_three(
+    personas_editor_with_saved_character,
+):
     app, screen, db, char_id = personas_editor_with_saved_character
     import io as _io
     from PIL import Image as _Img
+
     def _png(c=(1, 2, 3)):
-        b = _io.BytesIO(); _Img.new("RGB", (8, 8), c).save(b, format="PNG"); return b.getvalue()
+        b = _io.BytesIO()
+        _Img.new("RGB", (8, 8), c).save(b, format="PNG")
+        return b.getvalue()
 
     result = await screen._apply_expression_set(
         char_id, {"idle": _png((9, 9, 9)), "speaking": _png(), "thinking": _png()}
     )
     # idle STAGED in the editor (not the table); three -> table
-    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import PersonasCharacterEditorWidget
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+        PersonasCharacterEditorWidget,
+    )
+
     editor = screen.query_one(PersonasCharacterEditorWidget)
-    assert editor.current_avatar_bytes() == _png((9, 9, 9))      # idle staged
+    assert editor.current_avatar_bytes() == _png((9, 9, 9))  # idle staged
     assert db.get_character_expression_image(char_id, "speaking") is not None
     assert db.get_character_expression_image(char_id, "idle") is None
     assert set(result.applied) >= {"idle", "speaking", "thinking"}
@@ -172,28 +431,44 @@ async def test_apply_expression_set_stages_idle_and_writes_three(personas_editor
 
 
 @pytest.mark.asyncio
-async def test_import_expression_set_from_zip_path(personas_editor_with_saved_character, tmp_path):
+async def test_import_expression_set_from_zip_path(
+    personas_editor_with_saved_character, tmp_path
+):
     app, screen, db, char_id = personas_editor_with_saved_character
     from tldw_chatbook.Character_Chat.expression_set_io import build_expression_set_zip
     import io as _io
     from PIL import Image as _Img
-    def _png(): b=_io.BytesIO(); _Img.new("RGB",(8,8)).save(b,format="PNG"); return b.getvalue()
+
+    def _png():
+        b = _io.BytesIO()
+        _Img.new("RGB", (8, 8)).save(b, format="PNG")
+        return b.getvalue()
+
     z = tmp_path / "set.zip"
     z.write_bytes(build_expression_set_zip("Ada", {"idle": _png(), "speaking": _png()}))
 
     await screen._import_expression_set_from_path(char_id, str(z))
 
     assert db.get_character_expression_image(char_id, "speaking") is not None
-    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import PersonasCharacterEditorWidget
-    assert screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes() is not None  # idle staged
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+        PersonasCharacterEditorWidget,
+    )
+
+    assert (
+        screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes()
+        is not None
+    )  # idle staged
 
 
 @pytest.mark.asyncio
 async def test_import_vpack_from_path(personas_editor_with_saved_character, tmp_path):
     app, screen, db, char_id = personas_editor_with_saved_character
     from Tests.Character_Chat.test_expression_set_io import simple_vpack, _png
+
     z = tmp_path / "pack.tldw-persona-vpack"
-    z.write_bytes(simple_vpack({"idle": _png(), "speaking": _png(), "thinking": _png()}))
+    z.write_bytes(
+        simple_vpack({"idle": _png(), "speaking": _png(), "thinking": _png()})
+    )
 
     await screen._import_expression_set_from_path(char_id, str(z))
 
@@ -202,7 +477,11 @@ async def test_import_vpack_from_path(personas_editor_with_saved_character, tmp_
     from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
         PersonasCharacterEditorWidget,
     )
-    assert screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes() is not None  # idle staged
+
+    assert (
+        screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes()
+        is not None
+    )  # idle staged
 
 
 @pytest.mark.asyncio
@@ -210,12 +489,18 @@ async def test_export_expression_set_writes_a_zip(personas_editor_with_saved_cha
     app, screen, db, char_id = personas_editor_with_saved_character
     import io as _io
     from PIL import Image as _Img
-    def _png(): b=_io.BytesIO(); _Img.new("RGB",(8,8)).save(b,format="PNG"); return b.getvalue()
+
+    def _png():
+        b = _io.BytesIO()
+        _Img.new("RGB", (8, 8)).save(b, format="PNG")
+        return b.getvalue()
+
     db.set_character_expression_image(char_id, "speaking", _png())
     target = await screen._export_expression_set(char_id, "Ada")
     assert target is not None
     from pathlib import Path
     import zipfile
+
     assert zipfile.is_zipfile(Path(target))
     assert "speaking.png" in zipfile.ZipFile(target).namelist()
 
@@ -285,8 +570,12 @@ async def test_import_export_buttons_disabled_for_unsaved_character():
         ed.load_character({"name": "A"})  # no "id" key -> unsaved
         await pilot.pause()
         assert ed.expression_character_id() is None
-        assert ed.query_one("#personas-char-editor-expr-import", Button).disabled is True
-        assert ed.query_one("#personas-char-editor-expr-export", Button).disabled is True
+        assert (
+            ed.query_one("#personas-char-editor-expr-import", Button).disabled is True
+        )
+        assert (
+            ed.query_one("#personas-char-editor-expr-export", Button).disabled is True
+        )
 
 
 # ===== Qodo review fix 1: _import_expression_set_from_path validates the
