@@ -9400,6 +9400,114 @@ async def test_library_conversation_locator_retry_reuses_failed_target():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "newer_scope_succeeds_first",
+    (True, False),
+    ids=("success-then-later-failure", "newer-filter-failure"),
+)
+async def test_library_conversation_new_scope_supersedes_locator_retry_intent(
+    newer_scope_succeeds_first: bool,
+):
+    app = _build_test_app()
+    conversations = _conversation_records(45)
+    conversations[0] = {
+        **conversations[0],
+        "title": "Newer latest Conversation",
+    }
+    target = conversations[24]
+
+    class RetryPrecedenceService(StaticLibraryConversationScopeService):
+        def __init__(self) -> None:
+            super().__init__(conversations)
+            self.locator_calls = 0
+            self.page_queries: list[str] = []
+
+        async def locate_conversation_page(self, conversation_id, **kwargs):
+            self.locator_calls += 1
+            return None
+
+        async def list_conversations(self, **kwargs):
+            query = str(kwargs.get("query") or "")
+            if "query" in kwargs:
+                self.page_queries.append(query)
+                query_attempt = self.page_queries.count(query)
+                should_fail = (
+                    query == "latest"
+                    and newer_scope_succeeds_first
+                    and query_attempt == 1
+                ) or (
+                    query == "newer"
+                    and not newer_scope_succeeds_first
+                    and query_attempt == 1
+                )
+                if should_fail:
+                    raise RuntimeError("offline")
+            return await super().list_conversations(**kwargs)
+
+    service = RetryPrecedenceService()
+    app.chat_conversation_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_conversation_freshness == "fresh"
+            and not screen._library_conversation_loading,
+            message="Initial Conversation page never settled.",
+        )
+
+        await screen._open_library_item_by_id(
+            "conversations", str(target["conversation_id"])
+        )
+        assert service.locator_calls == 1
+        assert screen._pending_library_source_open == (
+            "conversations",
+            target["conversation_id"],
+        )
+
+        async def submit_filter(query: str) -> None:
+            calls_before = service.page_queries.count(query)
+            screen.handle_library_conversations_filter_submitted(
+                SimpleNamespace(value=query, stop=lambda: None)
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: service.page_queries.count(query) > calls_before
+                and not screen._library_conversation_loading,
+                message=f"Conversation filter {query!r} did not settle.",
+            )
+
+        await submit_filter("newer")
+        assert screen._pending_library_source_open is None
+        if newer_scope_succeeds_first:
+            assert screen._library_conversation_query == "newer"
+            await submit_filter("latest")
+            retry_query = "latest"
+        else:
+            retry_query = "newer"
+
+        assert screen._library_conversation_error
+        screen.handle_library_conversations_retry(SimpleNamespace(stop=lambda: None))
+        await _wait_for_condition(
+            pilot,
+            lambda: service.locator_calls > 1
+            or service.page_queries.count(retry_query) == 2,
+            message="Conversation Retry did not dispatch.",
+        )
+
+        assert service.locator_calls == 1
+        assert service.page_queries.count(retry_query) == 2
+        assert screen._pending_library_source_open is None
+        await _wait_for_worker_group_to_drain(
+            host, pilot, screen, "library_conversation_page"
+        )
+        assert screen._library_conversation_query == retry_query
+
+
+@pytest.mark.asyncio
 async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigation():
     app = _build_test_app()
     conversations = _conversation_records(45)

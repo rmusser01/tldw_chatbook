@@ -6803,19 +6803,6 @@ class LibraryScreen(BaseAppScreen):
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
-        if (
-            self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and not self._library_conversation_page_loaded
-            and self._library_conversation_request_generation == 0
-            and (
-                self._library_conversation_requested_page != 1
-                or self._library_conversation_requested_query
-            )
-        ):
-            self._start_library_conversation_page_request(
-                self._library_conversation_requested_page,
-                self._library_conversation_requested_query,
-            )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
             # Task 5: this snapshot includes the skills entry the list view
             # reads (``_build_library_skills_state``) -- re-check the trust
@@ -9972,6 +9959,7 @@ class LibraryScreen(BaseAppScreen):
         focus_after_apply: str = "",
     ) -> None:
         """Start one generation-guarded conversation page request."""
+        self._pending_library_source_open = None
         requested_page = self._normalize_library_conversation_page(page)
         normalized_query, generation = self._prepare_library_conversation_page_request(
             query,
