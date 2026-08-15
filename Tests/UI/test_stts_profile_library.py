@@ -1064,6 +1064,16 @@ async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
 
     async with app.run_test(size=(120, 48)) as pilot:
         widget = app.query_one(AudioBookGenerationWidget)
+        # Let `_initialize_audiobook_defaults` (armed via `set_timer(0.1, ...)`
+        # on mount) settle first -- since task-15772 fixed the
+        # audiobook-provider-select tuple order, this now actually succeeds
+        # and cascades into `_update_voice_options("openai")`. Without this
+        # pause, that cascade could otherwise land *after* the kokoro setup
+        # below (depending on how much the subsequent `pilot.press` calls
+        # advance the clock) and wipe out this test's kokoro voice options --
+        # exactly the race a real user would never hit, since they can't
+        # interact with the widget before it finishes mounting.
+        await pilot.pause(0.15)
         widget._update_voice_options("kokoro")
         narrator = app.query_one("#narrator-voice-select", Select)
         option_values = tuple(value for _label, value in narrator._options)
