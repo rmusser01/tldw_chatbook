@@ -15,6 +15,10 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    canonical_connection_identity,
+)
+
 
 ContinuationProvider = Literal["moonshot", "zai", "deepseek"]
 ContinuationProtocol = Literal["chat_completions", "responses"]
@@ -699,17 +703,23 @@ def validate_continuation_restore(
         )
     ):
         raise ContinuationValidationError(_INVALID_MESSAGE) from None
+    checkpoint_endpoint = canonical_connection_identity(
+        canonical.provider, canonical.api_base_url
+    )
+    if checkpoint_endpoint is None:
+        raise ContinuationValidationError(_INVALID_MESSAGE) from None
     if (
         target.provider,
         target.protocol,
         target.model,
-        target.api_base_url,
     ) != (
         canonical.provider,
         canonical.protocol,
         canonical.model,
+    ) or target.api_base_url not in {
         canonical.api_base_url,
-    ):
+        checkpoint_endpoint[1],
+    }:
         raise ContinuationConflictError(
             "Continuation restore target mismatch."
         ) from None
