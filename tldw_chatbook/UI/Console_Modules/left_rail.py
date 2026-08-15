@@ -107,6 +107,9 @@ class ConsoleLeftRail(Vertical):
             self.opened = opened
             super().__init__()
 
+    class ReactionPickerRequested(Message):
+        """The Character section asked its owning screen to open reactions."""
+
     def __init__(
         self,
         *,
@@ -124,6 +127,7 @@ class ConsoleLeftRail(Vertical):
         show_character_section: bool,
         character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
+        manual_reaction_label: str | None = None,
         **kwargs,
     ) -> None:
         """Create the left rail from pre-computed display data.
@@ -179,6 +183,8 @@ class ConsoleLeftRail(Vertical):
                 from the CURRENT ``self._active_character_avatar`` instead.
             character_avatar_name: Character name label text, when
                 ``show_character_section`` is True.
+            manual_reaction_label: Active session-local manual reaction label,
+                or ``None`` while operational reactions remain automatic.
             kwargs: Forwarded to ``Vertical``.
         """
         super().__init__(
@@ -200,6 +206,7 @@ class ConsoleLeftRail(Vertical):
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
+        self._manual_reaction_label = str(manual_reaction_label or "").strip()
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.
@@ -621,6 +628,26 @@ class ConsoleLeftRail(Vertical):
                         id="console-character-name",
                         markup=False,
                     )
+                    reaction_state = Static(
+                        (
+                            f"Reaction: {self._manual_reaction_label} (manual)"
+                            if self._manual_reaction_label
+                            else "Reaction: Automatic"
+                        ),
+                        id="console-character-reaction-state",
+                        markup=False,
+                    )
+                    reaction_state.styles.text_wrap = "nowrap"
+                    reaction_state.styles.text_overflow = "ellipsis"
+                    yield reaction_state
+                    reaction_button = Button(
+                        "Reaction…",
+                        id="console-character-reaction-open",
+                        classes="console-workspace-action",
+                        compact=True,
+                    )
+                    reaction_button.tooltip = "Choose or clear a reaction"
+                    yield reaction_button
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
@@ -641,6 +668,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
+        if button_id == "console-character-reaction-open":
+            event.stop()
+            self.post_message(self.ReactionPickerRequested())
+            return
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return
         event.stop()
