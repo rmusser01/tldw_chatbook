@@ -49,6 +49,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProgress,
     TTSProviderCatalog,
     TTSProviderDescriptor,
+    TTSProviderReconfiguringError,
     TTSRegistryClosedError,
     TTSRequest,
     TTSStructuredVoiceAdapter,
@@ -1124,6 +1125,7 @@ class TTSService:
         self._settings_generation = 0
         self._settings_persisted_provider_generations: dict[str, int] = {}
         self._settings_persisted_provider_configs: dict[str, dict[str, Any]] = {}
+        self._settings_admission_fences: dict[str, int] = {}
         self._settings_publication_tasks: set[asyncio.Task[TTSSettingsPublication]] = (
             set()
         )
@@ -1165,6 +1167,7 @@ class TTSService:
         supervisor = self._audio_cpp_supervisor
         if provider_id != "audio_cpp" or supervisor is None:
             async with self._request_admission._gate.read():
+                self._raise_if_settings_admission_fenced(provider_id)
                 token = self._audio_cpp_preparation.set(None)
                 try:
                     yield None
@@ -1174,6 +1177,7 @@ class TTSService:
 
         if not deliberate:
             async with self._request_admission._gate.read():
+                self._raise_if_settings_admission_fenced(provider_id)
                 passive_preparation = _AudioCppPreparation(
                     require_existing=supervisor.admission_snapshot()
                 )
@@ -1225,6 +1229,7 @@ class TTSService:
                 continue
 
             async with self._request_admission._gate.read():
+                self._raise_if_settings_admission_fenced(provider_id)
                 configuration = await self.registry.provider_configuration_snapshot(
                     "audio_cpp"
                 )
@@ -3157,6 +3162,7 @@ class TTSService:
         provider_statuses: dict[str, TTSSettingsProviderStatus] = {}
         provider_revisions: dict[str, int] = {}
         staged_provider_ids: set[str] = set()
+        admission_fenced_provider_ids: set[str] = set()
         persistence_outcome = TTSSettingsPersistenceOutcome(
             file_replaced=False,
             caches_reloaded=False,
@@ -3227,6 +3233,7 @@ class TTSService:
                         provider_statuses[provider_id] = staged_status
                         if staged_status == "pending":
                             staged_provider_ids.add(provider_id)
+                            admission_fenced_provider_ids.add(provider_id)
                         continue
                     try:
                         ticket = await self.registry.begin_reconfigure_provider(
@@ -3235,6 +3242,8 @@ class TTSService:
                             generation=generation,
                         )
                         tickets[provider_id] = ticket
+                        if ticket.admission_fenced:
+                            admission_fenced_provider_ids.add(provider_id)
                     except BaseException:
                         transition_failed = True
                         break
@@ -3258,19 +3267,26 @@ class TTSService:
                         )
                     )
 
-                if publish_preferences and (
+                preferences_can_activate = publish_preferences and (
                     staging_failed_provider_id == preferences.provider_id
                     or self._preferences_can_activate(
                         preferences,
                         generation,
                         provider_configs,
                         provider_statuses,
+                        admission_fenced_provider_ids,
                     )
-                ):
-                    self._request_admission._publish_preferences(
-                        preferences,
-                        generation,
-                    )
+                )
+                if publish_preferences:
+                    if preferences_can_activate:
+                        self._request_admission._publish_preferences(
+                            preferences,
+                            generation,
+                        )
+                    elif provider_statuses.get(preferences.provider_id) == "pending":
+                        self._settings_admission_fences[preferences.provider_id] = (
+                            generation
+                        )
                 provider_revisions.update(
                     self._safe_provider_revisions(provider_configs)
                 )
@@ -3304,11 +3320,16 @@ class TTSService:
                     generation,
                     provider_configs,
                     final_statuses,
+                    admission_fenced_provider_ids,
                 ):
                     self._request_admission._publish_preferences(
                         preferences,
                         generation,
                     )
+                self._clear_settings_admission_fence(
+                    preferences.provider_id,
+                    generation,
+                )
         final_revisions = self._safe_provider_revisions(provider_configs)
         return self._settings_publication_result(
             generation=generation,
@@ -3326,6 +3347,7 @@ class TTSService:
         generation: int,
         provider_configs: Mapping[str, Mapping[str, Any]],
         provider_statuses: Mapping[str, TTSSettingsProviderStatus],
+        admission_fenced_provider_ids: Collection[str],
     ) -> bool:
         """Fence one default snapshot against its provider handoff."""
 
@@ -3334,10 +3356,27 @@ class TTSService:
             return True
         provider_status = provider_statuses.get(provider_id)
         if provider_status == "pending":
-            return True
+            return provider_id in admission_fenced_provider_ids or (
+                tts_configuration_is_active(self, provider_id, generation)
+            )
         if provider_status not in {"applied", "unchanged"}:
             return False
         return tts_configuration_is_active(self, provider_id, generation)
+
+    def _raise_if_settings_admission_fenced(self, provider_id: str) -> None:
+        if provider_id in self._settings_admission_fences:
+            raise TTSProviderReconfiguringError(
+                f"TTS provider is reconfiguring: {provider_id}"
+            )
+
+    def _clear_settings_admission_fence(
+        self,
+        provider_id: str,
+        generation: int,
+    ) -> None:
+        fenced_generation = self._settings_admission_fences.get(provider_id)
+        if fenced_generation == generation:
+            self._settings_admission_fences.pop(provider_id, None)
 
     async def commit_voice_setup_default(
         self,

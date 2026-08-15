@@ -3271,6 +3271,125 @@ async def test_settings_publication_times_out_without_cancelling_old_speech() ->
 
 
 @pytest.mark.asyncio
+async def test_pending_nonexclusive_publication_never_mixes_adapter_generations() -> (
+    None
+):
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    adapters: list[_CapturingAdapter] = []
+
+    class SlowCloseAdapter(_CapturingAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            if self.generation == "one":
+                close_started.set()
+                await allow_close.wait()
+
+    def factory(config: Mapping[str, Any]) -> _CapturingAdapter:
+        adapter = SlowCloseAdapter(
+            "audio_cpp",
+            generation=str(config["generation"]),
+        )
+        adapters.append(adapter)
+        return adapter
+
+    registry = _RecordingRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"generation": "one"},
+            ),
+        ),
+        aliases={},
+    )
+    service = _test_service(
+        registry,
+        preferences_snapshot=_snapshot(model_id="Model/One"),
+    )
+    outcome_type = generation_module.TTSSettingsPersistenceOutcome
+    generation_two: Any = None
+    generation_three: Any = None
+    response: TTSAudioResponse | None = None
+
+    try:
+        initial = await _wait_bounded(service.synthesize_default(text="Initial"))
+        await _wait_bounded(initial.aclose())
+        generation_two = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Two"),
+            {"audio_cpp": {"generation": "two"}},
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=0,
+        )
+        await _wait_bounded(close_started.wait())
+        assert (await _wait_bounded(generation_two.foreground)).provider_statuses == {
+            "audio_cpp": "pending"
+        }
+        response = await _wait_bounded(
+            service.synthesize_default(text="Generation two")
+        )
+        assert adapters[1].generation == "two"
+        assert adapters[1].requests[0].model_id == "Model/Two"
+        await _wait_bounded(response.aclose())
+        response = None
+
+        generation_three = service.begin_preferences_publication(
+            _snapshot(model_id="Model/Three"),
+            {"audio_cpp": {"generation": "three"}},
+            lambda: outcome_type(True, True, None),
+            foreground_timeout_seconds=0,
+        )
+        assert (await _wait_bounded(generation_three.foreground)).provider_statuses == {
+            "audio_cpp": "pending"
+        }
+
+        try:
+            response = await _wait_bounded(
+                service.synthesize_default(text="Overlapping publication")
+            )
+        except TTSProviderReconfiguringError:
+            pass
+        else:
+            await _wait_bounded(response.aclose())
+            response = None
+            pytest.fail("unsafe pending publication admitted a request")
+
+        allow_close.set()
+        await _wait_bounded(
+            asyncio.gather(
+                asyncio.shield(generation_two.completion),
+                asyncio.shield(generation_three.completion),
+            )
+        )
+        assert service.preferences_snapshot().model_id == "Model/Three"
+        assert registry.configuration_generation("audio_cpp") == (
+            generation_three.generation
+        )
+        response = await _wait_bounded(
+            service.synthesize_default(text="Generation three")
+        )
+        assert adapters[2].generation == "three"
+        assert adapters[2].requests[0].model_id == "Model/Three"
+    finally:
+        allow_close.set()
+        if response is not None:
+            await _wait_bounded(response.aclose())
+        pending = tuple(
+            publication.completion
+            for publication in (generation_two, generation_three)
+            if publication is not None
+        )
+        if pending:
+            await _wait_bounded(asyncio.gather(*pending, return_exceptions=True))
+        await _wait_bounded(service.close())
+        await _wait_bounded(service.wait_closed())
+
+
+@pytest.mark.asyncio
 async def test_pre_replacement_failure_changes_no_preferences_or_provider() -> None:
     adapter = _CapturingAdapter("audio_cpp", generation="one")
     old_snapshot = _snapshot(model_id="Model/One")
