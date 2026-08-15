@@ -916,6 +916,9 @@ def _assert_browser_search_delegate_contract(method: ast.AST) -> None:
     """Require the Textual handler to pass only plain search values."""
     assert isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
     assert len(method.args.args) == 2
+    expected_annotation = ast.parse("Changed", mode="eval").body
+    assert method.args.args[1].annotation is not None
+    assert ast.dump(method.args.args[1].annotation) == ast.dump(expected_annotation)
     event_name = method.args.args[1].arg
     assert len(method.body) == 4
 
@@ -1504,7 +1507,7 @@ def test_browser_search_delegate_oracle_is_non_vacuous() -> None:
     """Prove the bounded delegate oracle rejects event and writer leakage."""
     reference = """
 class Sample:
-    def handler(self, event):
+    def handler(self, event: Changed):
         event.stop()
         query = str(event.value or '')
         disabled = bool(getattr(getattr(event, 'input', None), 'disabled', False))

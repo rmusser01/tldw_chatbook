@@ -114,6 +114,10 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
         baseline = len(service.list_calls)
 
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_cache is not None:
+                break
+            await pilot.pause(0.05)
         after_first = len(service.list_calls)
         assert after_first > baseline, "first sync after invalidation must query the DB"
 
@@ -133,6 +137,10 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
         # Explicit invalidation forces exactly one more fresh query.
         console._workspace._invalidate_console_persisted_rows_cache()
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_cache is not None:
+                break
+            await pilot.pause(0.05)
         after_invalidate = len(service.list_calls)
         assert after_invalidate > after_third, (
             "explicit cache invalidation must force a fresh DB query"
@@ -145,6 +153,10 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
             CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS + 0.5
         )
         await console._sync_native_console_chat_ui()
+        for _ in range(40):
+            if console._workspace._console_persisted_rows_refresh_key is None:
+                break
+            await pilot.pause(0.05)
         after_ttl = len(service.list_calls)
         assert after_ttl > after_invalidate, (
             "a stale (TTL-expired) cache entry must force a fresh DB query"

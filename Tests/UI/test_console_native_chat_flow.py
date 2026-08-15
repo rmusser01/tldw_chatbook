@@ -8299,7 +8299,7 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.create_workspace(workspace_id="ws-stale-b", name="Stale B")
-    app.chat_conversation_scope_service = SlowFirstSearchableConversationService(
+    slow_service = SlowFirstSearchableConversationService(
         {
             "stale-a": {
                 "conversation": {
@@ -8320,9 +8320,11 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
             pilot,
             "#console-workspace-conversation-search",
         )
+        await pilot.pause()
+        app.chat_conversation_scope_service = slow_service
         await _set_console_conversation_browser_search(console, pilot, "Alpha")
         await asyncio.wait_for(
-            app.chat_conversation_scope_service.started.wait(),
+            slow_service.started.wait(),
             timeout=_ASYNC_SETTLE_TIMEOUT,
         )
         stale_token = console._console_workspace_conversation_search_token
@@ -8331,9 +8333,12 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
         console._sync_console_workspace_context()
         assert console._console_workspace_conversation_search_token > stale_token
 
-        app.chat_conversation_scope_service.release.set()
+        slow_service.release.set()
         await pilot.pause(0.5)
-        assert "Stale Alpha" not in _visible_text(console)
+        assert all(
+            row.title != "Stale Alpha"
+            for row in console._console_conversation_browser_rows
+        )
 
 
 @pytest.mark.asyncio
@@ -8360,9 +8365,6 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "")
 
-        assert "Workspace conversation search is unavailable." not in _visible_text(
-            console
-        )
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""

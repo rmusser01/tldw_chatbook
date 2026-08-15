@@ -531,6 +531,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 logger = logger.bind(module="ChatScreen")
+Changed = Input.Changed
 #: The Console's DEFAULT Library RAG source kinds, unchanged by RAG-44's
 #: editable toggles: this same tuple is the settings modal's default
 #: (`CONSOLE_RAG_DEFAULT_SOURCE_TYPES` -- one object, not a second copy),
@@ -603,7 +604,7 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
 # Console session/tab).
 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # TASK-251 (audit P1 B1): the persisted conversation-browser rows behind
-# `_sync_persisted_console_browser_rows` re-query the DB per scope (global +
+# `_refresh_console_persisted_rows_cache` queries the DB per scope (global +
 # every workspace) on every 0.2s poll tick -- measured 11-70ms/tick. Modeled
 # directly on the sub-agent badge-count TTL cache above (same staleness
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
@@ -1896,7 +1897,7 @@ class ChatScreen(BaseAppScreen):
         return
 
     @on(Input.Changed, "#console-workspace-conversation-search")
-    def on_console_workspace_conversation_search_changed(self, event) -> None:
+    def on_console_workspace_conversation_search_changed(self, event: Changed) -> None:
         event.stop()
         query = str(event.value or "")
         disabled = bool(getattr(getattr(event, "input", None), "disabled", False))
@@ -2899,7 +2900,9 @@ class ChatScreen(BaseAppScreen):
             *self._workspace._membership_console_browser_rows(),
         ]
         persisted_rows, _total, _error = (
-            self._workspace._sync_persisted_console_browser_rows()
+            self._workspace._sync_persisted_console_browser_rows(
+                current_conversation_id=self._current_console_conversation_id()
+            )
         )
         rows.extend(persisted_rows)
         self.app.push_screen(

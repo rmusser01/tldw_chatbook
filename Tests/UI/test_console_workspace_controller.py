@@ -21,6 +21,7 @@ test here needed to change for the state accesses, only the method calls.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -33,6 +34,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
 )
@@ -49,11 +51,16 @@ def _noop(*args, **kwargs):
 class _NoMountScreen:
     def __init__(self) -> None:
         self.after_refresh: list[object] = []
+        self.workers: list[tuple[object, dict[str, object]]] = []
         self._pending_console_launch_context = None
         self._console_agent_drilldown_run_id = None
 
     def call_after_refresh(self, callback) -> None:
         self.after_refresh.append(callback)
+
+    def run_worker(self, coroutine, **kwargs) -> None:
+        self.workers.append((coroutine, kwargs))
+        coroutine.close()
 
 
 class _FakeTimer:
@@ -176,6 +183,80 @@ def test_workspace_controller_initializes_canonical_browser_state_without_mount(
     assert controller._console_conversation_browser_rows == ()
     assert controller._console_conversation_browser_total is None
     assert controller._console_conversation_browser_error == ""
+
+
+def test_workspace_controller_constructor_documents_every_dependency():
+    docstring = inspect.getdoc(ConsoleWorkspaceController.__init__) or ""
+    parameters = inspect.signature(ConsoleWorkspaceController.__init__).parameters
+
+    assert "Args:" in docstring
+    for name in parameters.keys() - {"self"}:
+        assert f"{name}:" in docstring
+
+
+def test_workspace_state_build_never_lists_persisted_conversations_inline():
+    calls: list[dict[str, object]] = []
+
+    class LocalService:
+        db = SimpleNamespace(is_memory_db=True)
+
+        def list_conversations(self, **kwargs):
+            calls.append(kwargs)
+            return {"items": [], "pagination": {"total": 0}}
+
+    screen = _NoMountScreen()
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(
+            local_chat_conversation_service=LocalService(),
+            chat_conversation_scope_service=None,
+        ),
+    )
+
+    controller._with_console_conversation_browser_state(_workspace_state())
+    controller._with_console_conversation_browser_state(_workspace_state())
+
+    assert calls == []
+    assert len(screen.workers) == 1
+    assert screen.workers[0][1] == {
+        "group": "console-persisted-browser-cache",
+        "exclusive": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_persisted_cache_refresh_awaits_async_provider():
+    calls: list[dict[str, object]] = []
+
+    async def list_conversations(**kwargs):
+        calls.append(kwargs)
+        return {
+            "items": [
+                {
+                    "id": "persisted-1",
+                    "title": "Persisted chat",
+                    "scope_type": "global",
+                }
+            ],
+            "total": 1,
+        }
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations,
+                local_service=None,
+            )
+        )
+    )
+
+    rows, total, error = await controller._refresh_console_persisted_rows_cache()
+
+    assert [row.conversation_id for row in rows] == ["persisted-1"]
+    assert total == 1
+    assert error == ""
+    assert controller._console_persisted_rows_cache == (rows, total, error)
+    assert calls[0]["limit"] == CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
 
 
 def test_workspace_controller_projects_canonical_rows_to_legacy_rows():
@@ -478,6 +559,8 @@ def test_workspace_controller_workspace_change_resets_before_rich_browser_snapsh
     controller._console_conversation_browser_search_token = 3
     controller._console_conversation_browser_search_timer = timer
     controller._console_conversation_browser_rows = (_rich_row(),)
+    controller._console_persisted_rows_cache = ([], 0, "")
+    controller._console_persisted_rows_cache_token = 5
 
     state = controller._with_console_conversation_browser_state(_workspace_state())
 
@@ -486,6 +569,8 @@ def test_workspace_controller_workspace_change_resets_before_rich_browser_snapsh
     assert controller._console_conversation_browser_search_token == 4
     assert controller._console_conversation_browser_search_timer is None
     assert timer.stop_calls == 1
+    assert controller._console_persisted_rows_cache is None
+    assert controller._console_persisted_rows_cache_token == 6
     assert state.conversation_browser is not None
     assert state.conversation_browser.query == ""
     browser_rows = tuple(
