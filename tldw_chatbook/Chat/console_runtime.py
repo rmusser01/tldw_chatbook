@@ -671,14 +671,31 @@ class ConsoleRuntime:
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
-    """Write `runtime` (or `None`) onto the app's runtime attribute."""
+    """Write `runtime` (or `None`) onto the app's runtime attribute.
+
+    A failed or rewritten attach never raises -- read-only app doubles in
+    tests are an expected, tolerated case -- but it is recorded loudly:
+    a silently unattached runtime breaks the ownership invariant
+    ``ensure_console_runtime`` exists to guarantee (every later call would
+    miss the attribute and construct a duplicate runtime).
+    """
     if app is None:
         return
     try:
         setattr(app, CONSOLE_RUNTIME_ATTR, runtime)
     except Exception:  # noqa: BLE001 - a read-only app double is not an error
-        logger.debug(
-            "Console runtime: could not write the app's %s attribute.",
+        logger.opt(exception=True).warning(
+            "Console runtime: could not write the app's %s attribute; the "
+            "runtime stays detached and future Console visits will each "
+            "build their own.",
+            CONSOLE_RUNTIME_ATTR,
+        )
+        return
+    if getattr(app, CONSOLE_RUNTIME_ATTR, None) is not runtime:
+        logger.warning(
+            "Console runtime: the app's %s attribute is not the runtime "
+            "just attached (a property or validator rewrote it); future "
+            "Console visits will each build their own.",
             CONSOLE_RUNTIME_ATTR,
         )
 
