@@ -1,5 +1,5 @@
 ---
-id: TASK-16073
+id: TASK-16311
 title: Restore latest dev test-suite health
 status: In Progress
 assignee: []
@@ -27,8 +27,8 @@ Reproduce the complete test suite on a pinned latest-dev snapshot with durable f
 
 ## References
 
-- `Docs/superpowers/specs/2026-08-13-task-16073-dev-test-suite-health-design.md`
-- `Docs/superpowers/plans/2026-08-13-task-16073-dev-test-suite-health.md`
+- `Docs/superpowers/specs/2026-08-13-task-16311-dev-test-suite-health-design.md`
+- `Docs/superpowers/plans/2026-08-13-task-16311-dev-test-suite-health.md`
 - `backlog/decisions/066-checkpoint-harness-process-ownership.md`
 - Follow-up to TASK-2703 scoped verification; the new baseline is captured independently on latest `dev`.
 
