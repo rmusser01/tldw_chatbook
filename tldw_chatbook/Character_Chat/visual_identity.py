@@ -364,12 +364,72 @@ def resolve_visual_identity(
     rows = db.execute_query(
         """
         /* visual_identity_resolver */
-        SELECT c.id AS actor_row_id,
-               b.id AS binding_id,
-               p.id AS pack_id,
-               p.source_kind AS pack_source_kind,
-               v.id AS pack_version_id,
-               v.default_expression_key AS version_default_expression_key,
+        WITH active_graph AS MATERIALIZED (
+            SELECT c.id AS actor_row_id,
+                   b.id AS binding_id,
+                   p.id AS pack_id,
+                   p.source_kind AS pack_source_kind,
+                   v.id AS pack_version_id,
+                   v.default_expression_key AS version_default_expression_key
+              FROM character_cards c
+              LEFT JOIN visual_identity_bindings b
+                ON b.owner_user_id = 0
+               AND b.actor_kind = 'character'
+               AND b.actor_id = CAST(c.id AS TEXT)
+               AND b.status = 'active'
+              LEFT JOIN visual_identity_packs p
+                ON p.id = b.pack_id
+               AND p.owner_user_id = 0
+               AND p.status = 'active'
+               AND p.active_version_id = b.active_version_id
+              LEFT JOIN visual_identity_pack_versions v
+                ON v.id = b.active_version_id
+               AND v.pack_id = p.id
+               AND v.owner_user_id = 0
+             WHERE c.id = ? AND c.deleted = 0
+        ),
+        candidate_slots(expression_key, priority) AS MATERIALIZED (
+            SELECT column1, column2
+              FROM (VALUES (?, 0), (?, 1))
+             WHERE column1 IS NOT NULL
+            UNION ALL
+            SELECT version_default_expression_key, 2
+              FROM active_graph
+             WHERE pack_version_id IS NOT NULL
+               AND version_default_expression_key IS NOT NULL
+            UNION ALL
+            SELECT 'neutral', 3
+              FROM active_graph
+             WHERE pack_version_id IS NOT NULL
+        ),
+        deduplicated_slots AS MATERIALIZED (
+            SELECT expression_key, MIN(priority) AS priority
+              FROM candidate_slots
+             GROUP BY expression_key
+        ),
+        selected_slots AS MATERIALIZED (
+            SELECT slots.expression_key,
+                   slots.priority,
+                   (
+                       SELECT a2.id
+                         FROM visual_identity_assets a2
+                        WHERE a2.pack_id = graph.pack_id
+                          AND a2.pack_version_id = graph.pack_version_id
+                          AND a2.owner_user_id = 0
+                          AND a2.deleted = 0
+                          AND a2.expression_key = slots.expression_key
+                        ORDER BY a2.id
+                        LIMIT 1
+                   ) AS asset_id
+              FROM deduplicated_slots slots
+              CROSS JOIN active_graph graph
+        )
+        SELECT graph.actor_row_id,
+               graph.binding_id,
+               graph.pack_id,
+               graph.pack_source_kind,
+               graph.pack_version_id,
+               graph.version_default_expression_key,
                a.id AS asset_id,
                a.expression_key AS asset_expression_key,
                a.original_expression_key AS asset_original_expression_key,
@@ -383,50 +443,17 @@ def resolve_visual_identity(
                a.is_animated AS asset_is_animated,
                a.frame_count AS asset_frame_count,
                a.duration_ms AS asset_duration_ms
-          FROM character_cards c
-          LEFT JOIN visual_identity_bindings b
-            ON b.owner_user_id = 0
-           AND b.actor_kind = 'character'
-           AND b.actor_id = CAST(c.id AS TEXT)
-           AND b.status = 'active'
-          LEFT JOIN visual_identity_packs p
-            ON p.id = b.pack_id
-           AND p.owner_user_id = 0
-           AND p.status = 'active'
-           AND p.active_version_id = b.active_version_id
-          LEFT JOIN visual_identity_pack_versions v
-            ON v.id = b.active_version_id
-           AND v.pack_id = p.id
-           AND v.owner_user_id = 0
-          LEFT JOIN visual_identity_assets a
-            ON a.pack_id = p.id
-           AND a.pack_version_id = v.id
-           AND a.owner_user_id = 0
-           AND a.deleted = 0
-           AND a.expression_key IN (?, ?, v.default_expression_key, 'neutral')
-           AND a.id = (
-                 SELECT MIN(a2.id)
-                   FROM visual_identity_assets a2
-                  WHERE a2.pack_id = a.pack_id
-                    AND a2.pack_version_id = a.pack_version_id
-                    AND a2.owner_user_id = a.owner_user_id
-                    AND a2.deleted = 0
-                    AND a2.expression_key = a.expression_key
-               )
-         WHERE c.id = ? AND c.deleted = 0
+          FROM active_graph graph
+          LEFT JOIN selected_slots selected ON 1 = 1
+          LEFT JOIN visual_identity_assets a ON a.id = selected.asset_id
          ORDER BY CASE
-                    WHEN a.expression_key = ? THEN 0
-                    WHEN a.expression_key = ? THEN 1
-                    WHEN a.expression_key = v.default_expression_key THEN 2
-                    WHEN a.expression_key = 'neutral' THEN 3
+                    WHEN selected.priority IS NOT NULL THEN selected.priority
                     ELSE 4
                   END,
                   a.id
          LIMIT 4
         """,
         (
-            manual_key,
-            requested_key,
             actor_id,
             manual_key,
             requested_key,

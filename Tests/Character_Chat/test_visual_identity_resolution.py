@@ -527,6 +527,67 @@ def test_duplicate_manual_rows_do_not_hide_valid_operational_candidate(
     assert "idx_visual_identity_assets_pack_expression" in plan_text
 
 
+def test_duplicate_rows_have_a_bounded_sqlite_instruction_budget(
+    db: CharactersRAGDB,
+    user_data_dir: Path,
+) -> None:
+    character_id = _add_character(db)
+    activated = _activate(
+        db,
+        user_data_dir,
+        character_id,
+        ("custom:admiration", "thinking", "neutral"),
+    )
+    manual_asset_id = next(
+        int(asset["id"])
+        for asset in activated["assets"]
+        if asset["expression_key"] == "custom:admiration"
+    )
+    connection = db.get_connection()
+
+    def measure() -> int:
+        callbacks = 0
+
+        def count_instructions() -> int:
+            nonlocal callbacks
+            callbacks += 1
+            return int(callbacks > 100)
+
+        connection.set_progress_handler(count_instructions, 100)
+        try:
+            result = _resolve(db, user_data_dir, character_id, "thinking", "admiration")
+        finally:
+            connection.set_progress_handler(None, 0)
+        assert result.resolution_source == "pack_manual"
+        return callbacks
+
+    duplicate_sql = """
+        INSERT INTO visual_identity_assets(
+            owner_user_id, pack_id, pack_version_id, expression_key,
+            original_expression_key, display_label, source_filename,
+            storage_relpath, content_type, bytes, sha256, width, height,
+            source_context_json, is_animated, frame_count, duration_ms,
+            preview_relpath, deleted
+        )
+        SELECT owner_user_id, pack_id, pack_version_id, expression_key,
+               original_expression_key, display_label, source_filename,
+               storage_relpath, content_type, bytes, sha256, width, height,
+               source_context_json, is_animated, frame_count, duration_ms,
+               preview_relpath, deleted
+          FROM visual_identity_assets WHERE id = ?
+    """
+    samples = [measure()]
+    with db.transaction() as transaction:
+        transaction.executemany(duplicate_sql, [(manual_asset_id,)] * 1_000)
+    samples.append(measure())
+    with db.transaction() as transaction:
+        transaction.executemany(duplicate_sql, [(manual_asset_id,)] * 9_000)
+    samples.append(measure())
+
+    assert samples[2] <= 100
+    assert max(samples) - min(samples) <= 10
+
+
 @pytest.mark.parametrize(
     "invalid_legacy",
     [7, "text-image", b"", b"corrupt-image", pytest.param(_bmp_bytes(), id="bmp")],
