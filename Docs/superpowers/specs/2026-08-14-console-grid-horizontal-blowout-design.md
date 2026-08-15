@@ -1,7 +1,7 @@
 # Console grid horizontal blowout design
 
-**Task:** TASK-16220  
-**Date:** 2026-08-14  
+**Task:** TASK-16220
+**Date:** 2026-08-14
 **Status:** Approved for implementation planning
 
 ## Goal
@@ -156,8 +156,8 @@ The unrelated pre-existing recovery-copy failure in
 
 ## ADR decision
 
-**ADR required:** yes  
-**ADR path:** `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`  
+**ADR required:** yes
+**ADR path:** `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`
 **Reason:** the change defines a durable UX conflict rule between two persisted
 rail preferences in the compact-width band. ADR-043 already owns compact rail
 visibility and explicit-toggle behavior, so it will be refined rather than
