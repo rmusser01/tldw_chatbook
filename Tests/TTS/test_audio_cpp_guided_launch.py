@@ -1169,3 +1169,183 @@ async def test_validation_rejects_size_change_without_reading_enlarged_file(
 
     assert caught.value.code == "artifact_changed"
     artifact.cleanup()
+
+
+class _FakeWindowsArtifactHandle:
+    def __init__(self, path: Path, *, kind: str) -> None:
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsFileIdentity
+
+        self.path = path
+        self.kind = kind
+        info = path.stat()
+        self.identity = WindowsFileIdentity(
+            volume_serial_number=info.st_dev,
+            file_id=info.st_ino.to_bytes(16, "little", signed=False),
+            kind=kind,  # type: ignore[arg-type]
+            reparse_tag=0,
+        )
+        self._data = path.read_bytes() if kind == "file" else b""
+        self.closed = False
+        self.deleted = False
+        self.close_failures = 0
+
+    @property
+    def privacy_posture(self) -> str:
+        return "windows_account_protected"
+
+    def verify_private_acl(self) -> bool:
+        return True
+
+    def read(self, count: int, *, offset: int = 0) -> bytes:
+        return self._data[offset : offset + count]
+
+    def delete_exact(self) -> None:
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsArtifactError
+
+        if not self.path.exists():
+            self.deleted = True
+            return
+        info = self.path.stat()
+        current = info.st_ino.to_bytes(16, "little", signed=False)
+        if current != self.identity.file_id:
+            raise WindowsArtifactError("changed")
+        self.deleted = True
+
+    def close(self) -> None:
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsArtifactError
+
+        if self.closed:
+            return
+        if self.close_failures:
+            self.close_failures -= 1
+            raise WindowsArtifactError("cleanup_failed", cleanup_owner=self)  # type: ignore[arg-type]
+        if self.deleted and self.path.exists():
+            if self.kind == "directory":
+                self.path.rmdir()
+            else:
+                self.path.unlink()
+        self.closed = True
+
+
+class _FakeWindowsArtifactFilesystem:
+    def __init__(self) -> None:
+        self.handles: list[_FakeWindowsArtifactHandle] = []
+        self.fail_file_creation = False
+        self.directory_close_failures = 0
+
+    def _handle(self, path: Path, kind: str) -> _FakeWindowsArtifactHandle:
+        handle = _FakeWindowsArtifactHandle(path, kind=kind)
+        self.handles.append(handle)
+        return handle
+
+    def protect_private_directory(self, path: Path) -> _FakeWindowsArtifactHandle:
+        return self._handle(Path(path), "directory")
+
+    def create_private_directory(self, path: Path) -> _FakeWindowsArtifactHandle:
+        selected = Path(path)
+        selected.mkdir()
+        handle = self._handle(selected, "directory")
+        handle.close_failures = self.directory_close_failures
+        return handle
+
+    def create_private_file(
+        self,
+        path: Path,
+        data: bytes,
+        *,
+        read_only: bool = False,
+    ) -> _FakeWindowsArtifactHandle:
+        from tldw_chatbook.TTS.windows_artifact_fs import WindowsArtifactError
+
+        assert read_only
+        if self.fail_file_creation:
+            raise WindowsArtifactError("unavailable")
+        selected = Path(path)
+        selected.write_bytes(data)
+        return self._handle(selected, "file")
+
+    def open_file_no_reparse(
+        self, path: Path, *, writable: bool = False
+    ) -> _FakeWindowsArtifactHandle:
+        assert not writable
+        return self._handle(Path(path), "file")
+
+
+def test_windows_generated_artifact_is_verified_and_cleanup_is_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    filesystem = _FakeWindowsArtifactFilesystem()
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+
+    artifact = launch_module._create_artifact(
+        runtime,
+        {"host": "127.0.0.1", "models": []},
+    )
+
+    assert artifact is not None
+    assert artifact.privacy_posture == "windows_account_protected"
+    assert json.loads(artifact.server_json_path.read_text()) == {
+        "host": "127.0.0.1",
+        "models": [],
+    }
+    artifact.validate()
+    generated = artifact.server_json_path.parent
+    artifact.cleanup()
+    artifact.cleanup()
+    assert not generated.exists()
+    assert runtime.exists()
+
+
+def test_windows_generated_artifact_rejects_path_substitution_and_foreign_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    filesystem = _FakeWindowsArtifactFilesystem()
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+    artifact = launch_module._create_artifact(runtime, {"models": []})
+    assert artifact is not None
+    artifact.server_json_path.unlink()
+    artifact.server_json_path.write_text("foreign", encoding="utf-8")
+    (artifact.server_json_path.parent / "unexpected.txt").write_text("foreign")
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as validation:
+        artifact.validate()
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as cleanup:
+        artifact.cleanup()
+
+    assert validation.value.code == "artifact_changed"
+    assert cleanup.value.code == "artifact_cleanup_failed"
+    assert artifact.server_json_path.read_text() == "foreign"
+
+
+def test_windows_partial_creation_cleanup_failure_returns_retry_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS import audio_cpp_guided_launch as launch_module
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    filesystem = _FakeWindowsArtifactFilesystem()
+    filesystem.fail_file_creation = True
+    filesystem.directory_close_failures = 1
+    monkeypatch.setattr(launch_module, "_windows_artifact_filesystem", filesystem)
+
+    with pytest.raises(launch_module.AudioCppGuidedLaunchError) as raised:
+        launch_module._create_artifact(runtime, {"models": []})
+
+    assert raised.value.code == "artifact_cleanup_failed"
+    cleanup = raised.value.take_cleanup_owner()
+    assert cleanup is not None
+    assert raised.value.take_cleanup_owner() is None
+    cleanup.cleanup()
+    assert tuple(runtime.iterdir()) == ()

@@ -12,7 +12,7 @@ import stat
 from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactRef,
@@ -40,6 +40,12 @@ from .audio_cpp_recipes import (
     AUDIO_CPP_RECIPE_REGISTRY,
     AudioCppBackendEvidenceState,
     AudioCppPackageRecipe,
+)
+from .windows_artifact_fs import (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM,
+    WindowsArtifactError,
+    WindowsArtifactFilesystem,
+    windows_audio_cpp_platform_supported,
 )
 
 
@@ -77,6 +83,9 @@ _DIRECTORY_FLAGS = (
 )
 _FILE_READ_FLAGS = (
     os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+_windows_artifact_filesystem: WindowsArtifactFilesystem | None = (
+    OS_WINDOWS_ARTIFACT_FILESYSTEM if windows_audio_cpp_platform_supported() else None
 )
 
 
@@ -150,6 +159,12 @@ class AudioCppGeneratedLaunchArtifact:
         if self._cleaned:
             raise RuntimeError("generated artifact is already cleaned")
         self._managed_handles.append(handle)
+
+    @property
+    def privacy_posture(self) -> str:
+        """Project only the privacy posture verified by the artifact owner."""
+
+        return "posix_owner_only"
 
     @staticmethod
     def _identity(info: os.stat_result) -> tuple[int, int]:
@@ -265,6 +280,10 @@ class AudioCppGeneratedLaunchArtifact:
                 except OSError:
                     pass
 
+        self._cleanup_managed_handles()
+        self._cleaned = True
+
+    def _cleanup_managed_handles(self) -> None:
         remaining: list[LeasedArtifactHandle] = []
         control_flow: BaseException | None = None
         for handle in self._managed_handles:
@@ -279,6 +298,158 @@ class AudioCppGeneratedLaunchArtifact:
             raise control_flow
         if remaining:
             raise AudioCppGuidedLaunchError("artifact_cleanup_failed") from None
+
+
+class _WindowsGeneratedLaunchArtifact(AudioCppGeneratedLaunchArtifact):
+    """Exact Windows handle owner for one generated launch configuration."""
+
+    __slots__ = (
+        "_windows_directory",
+        "_windows_extras",
+        "_windows_file",
+        "_windows_parent",
+    )
+
+    def __init__(
+        self,
+        *,
+        parent: Any,
+        directory: Any | None,
+        file: Any | None,
+        server_json_path: Path,
+        digest: str,
+        size: int,
+        extras: tuple[Any, ...] = (),
+    ) -> None:
+        super().__init__(
+            parent_fd=-1,
+            directory_fd=-1,
+            directory_name=server_json_path.parent.name,
+            server_json_path=server_json_path,
+            directory_identity=(0, 0),
+            file_identity=(0, 0),
+            digest=digest,
+            size=size,
+        )
+        self._windows_parent = parent
+        self._windows_directory = directory
+        self._windows_file = file
+        self._windows_extras = list(extras)
+
+    @property
+    def privacy_posture(self) -> str:
+        """Report protected only while every published owner still verifies."""
+
+        parent = self._windows_parent
+        directory = self._windows_directory
+        file = self._windows_file
+        if self._cleaned or parent is None or directory is None or file is None:
+            return "unverified"
+        owners = (parent, directory, file)
+        return (
+            "windows_account_protected"
+            if all(
+                owner.privacy_posture == "windows_account_protected"
+                and owner.verify_private_acl()
+                for owner in owners
+            )
+            else "unverified"
+        )
+
+    def validate(self) -> None:
+        """Validate exact path identity, bounded bytes, contents, and DACL."""
+
+        filesystem = _windows_artifact_filesystem
+        failed = self.privacy_posture != "windows_account_protected"
+        observed: Any = None
+        try:
+            if failed or filesystem is None or self._windows_file is None:
+                failed = True
+            else:
+                names = tuple(
+                    entry.name for entry in os.scandir(self.server_json_path.parent)
+                )
+                if names != (_ARTIFACT_FILE,):
+                    failed = True
+                else:
+                    observed = filesystem.open_file_no_reparse(self.server_json_path)
+                    self._windows_extras.append(observed)
+                    if observed.identity != self._windows_file.identity:
+                        failed = True
+                    else:
+                        data = self._windows_file.read(self._size + 1)
+                        failed = (
+                            len(data) != self._size
+                            or sha256(data).hexdigest() != self._digest
+                        )
+        except (OSError, WindowsArtifactError):
+            failed = True
+        finally:
+            if observed is not None:
+                try:
+                    observed.close()
+                except WindowsArtifactError:
+                    failed = True
+                else:
+                    self._windows_extras.remove(observed)
+        if failed:
+            raise AudioCppGuidedLaunchError("artifact_changed") from None
+
+    @staticmethod
+    def _close_windows(owner: Any) -> bool:
+        try:
+            owner.close()
+        except WindowsArtifactError:
+            return False
+        return True
+
+    def cleanup(self) -> None:
+        """Remove exact Windows objects, close pins, then release leases."""
+
+        if self._cleaned:
+            return
+        failed = False
+        retained_extras: list[Any] = []
+        for owner in self._windows_extras:
+            if not self._close_windows(owner):
+                retained_extras.append(owner)
+        self._windows_extras = retained_extras
+        failed = bool(retained_extras)
+
+        if self._windows_file is not None:
+            try:
+                self._windows_file.delete_exact()
+            except WindowsArtifactError:
+                failed = True
+            else:
+                if self._close_windows(self._windows_file):
+                    self._windows_file = None
+                else:
+                    failed = True
+
+        directory_path = self.server_json_path.parent
+        if self._windows_directory is not None and self._windows_file is None:
+            try:
+                if directory_path.exists() and tuple(directory_path.iterdir()):
+                    failed = True
+                else:
+                    self._windows_directory.delete_exact()
+            except (OSError, WindowsArtifactError):
+                failed = True
+            else:
+                if self._close_windows(self._windows_directory):
+                    self._windows_directory = None
+                else:
+                    failed = True
+
+        if self._windows_directory is None and self._windows_parent is not None:
+            if self._close_windows(self._windows_parent):
+                self._windows_parent = None
+            else:
+                failed = True
+        if failed:
+            raise AudioCppGuidedLaunchError("artifact_cleanup_failed") from None
+        self._cleanup_managed_handles()
         self._cleaned = True
 
 
@@ -587,10 +758,101 @@ def _remove_partial_artifact(
         pass
 
 
+def _windows_artifact_bytes(document: dict[str, object]) -> bytes:
+    return (
+        json.dumps(
+            document,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def _create_windows_artifact(
+    root: Path,
+    document: dict[str, object],
+) -> AudioCppGeneratedLaunchArtifact | None:
+    filesystem = _windows_artifact_filesystem
+    if filesystem is None:
+        return None
+    parent: Any = None
+    directory: Any = None
+    file: Any = None
+    extras: list[Any] = []
+    directory_name = ""
+    raw = _windows_artifact_bytes(document)
+    server_path = root / "unpublished" / _ARTIFACT_FILE
+    primary_error: BaseException | None = None
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        parent = filesystem.protect_private_directory(root)  # type: ignore[attr-defined]
+        for _ in range(_ARTIFACT_ATTEMPTS):
+            candidate = f"generation-{secrets.token_hex(16)}"
+            try:
+                directory = filesystem.create_private_directory(root / candidate)
+            except WindowsArtifactError as error:
+                cleanup = error.take_cleanup_owner()
+                if cleanup is not None:
+                    extras.append(cleanup)
+                    raise
+                if (root / candidate).exists():
+                    continue
+                raise
+            directory_name = candidate
+            break
+        if directory is None or not directory_name:
+            raise WindowsArtifactError("unavailable")
+        server_path = root / directory_name / _ARTIFACT_FILE
+        file = filesystem.create_private_file(server_path, raw, read_only=True)
+        artifact = _WindowsGeneratedLaunchArtifact(
+            parent=parent,
+            directory=directory,
+            file=file,
+            server_json_path=server_path,
+            digest=sha256(raw).hexdigest(),
+            size=len(raw),
+            extras=tuple(extras),
+        )
+        artifact.validate()
+        return artifact
+    except BaseException as error:
+        primary_error = error
+
+    artifact = _WindowsGeneratedLaunchArtifact(
+        parent=parent,
+        directory=directory,
+        file=file,
+        server_json_path=server_path,
+        digest=sha256(raw).hexdigest(),
+        size=len(raw),
+        extras=tuple(extras),
+    )
+    try:
+        artifact.cleanup()
+    except BaseException as cleanup_error:
+        if not isinstance(primary_error, Exception):
+            setattr(primary_error, _CLEANUP_OWNER_ATTRIBUTE, artifact)
+            raise primary_error
+        if not isinstance(cleanup_error, Exception):
+            setattr(cleanup_error, _CLEANUP_OWNER_ATTRIBUTE, artifact)
+            raise cleanup_error
+        raise AudioCppGuidedLaunchError(
+            "artifact_cleanup_failed",
+            cleanup_owner=artifact,
+        ) from None
+    if primary_error is not None and not isinstance(primary_error, Exception):
+        raise primary_error
+    return None
+
+
 def _create_artifact(
     root: Path,
     document: dict[str, object],
 ) -> AudioCppGeneratedLaunchArtifact | None:
+    if _windows_artifact_filesystem is not None:
+        return _create_windows_artifact(root, document)
     try:
         secured_root = secure_private_directory(
             root,

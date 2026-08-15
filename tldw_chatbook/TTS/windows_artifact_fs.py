@@ -506,6 +506,10 @@ class WindowsArtifactFilesystem(Protocol):
         self, path: str | os.PathLike[str]
     ) -> WindowsPinnedHandle: ...
 
+    def protect_private_directory(
+        self, path: str | os.PathLike[str]
+    ) -> WindowsPinnedHandle: ...
+
     def create_private_file(
         self,
         path: str | os.PathLike[str],
@@ -556,6 +560,19 @@ class NativeWindowsArtifactFilesystem:
             path,
             kind="directory",
             create_new=True,
+            writable=True,
+        )
+        return self._make_private(owner, directory=True)
+
+    def protect_private_directory(
+        self, path: str | os.PathLike[str]
+    ) -> WindowsPinnedHandle:
+        """Protect and verify one existing ordinary directory."""
+
+        owner = self._open(
+            path,
+            kind="directory",
+            create_new=False,
             writable=True,
         )
         return self._make_private(owner, directory=True)
@@ -718,6 +735,12 @@ class UnavailableWindowsArtifactFilesystem:
         return self._unsupported()
 
     def create_private_directory(
+        self, path: str | os.PathLike[str]
+    ) -> WindowsPinnedHandle:
+        del path
+        return self._unsupported()
+
+    def protect_private_directory(
         self, path: str | os.PathLike[str]
     ) -> WindowsPinnedHandle:
         del path
@@ -985,7 +1008,7 @@ class _CtypesWindowsKernel:
                 access |= _GENERIC_READ
             if writable:
                 access |= _GENERIC_WRITE | _FILE_WRITE_ATTRIBUTES
-            if create_new:
+            if create_new or (kind == "directory" and writable):
                 access |= _DELETE | _WRITE_DAC
             disposition = (
                 _CREATE_NEW if create_new and kind == "file" else _OPEN_EXISTING

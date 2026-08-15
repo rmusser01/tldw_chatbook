@@ -283,6 +283,17 @@ def test_private_directory_installs_and_reverifies_protected_acl() -> None:
     assert owner.privacy_posture == "windows_account_protected"
 
 
+def test_existing_directory_can_be_protected_without_recreation() -> None:
+    kernel = FakeWindowsKernel()
+
+    owner = _filesystem(kernel).protect_private_directory(r"C:\private\runtime")
+
+    assert kernel.open_calls == [(r"\\?\C:\private\runtime", "directory", False, True)]
+    assert kernel.set_acl_calls == [(40, True)]
+    assert kernel.verify_acl_calls == [(40, True)]
+    assert owner.privacy_posture == "windows_account_protected"
+
+
 def test_private_file_is_flushed_hardened_and_verified_before_publication() -> None:
     kernel = FakeWindowsKernel()
 
