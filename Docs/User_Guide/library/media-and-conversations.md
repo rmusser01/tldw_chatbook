@@ -187,9 +187,25 @@ of type 'pdf'."
 
 ### Conversations
 
+Conversations use a fixed **20-item page**. The row list scrolls independently
+while its pager stays visible underneath it. The pager always states the exact
+range, total, and page: with 45 conversations it reads **"1-20 of 45 · Page 1
+of 3"**, then **"21-40 of 45 · Page 2 of 3"**, and finally **"41-45 of 45 ·
+Page 3 of 3"**. Previous and Next show a visible reason when unavailable, such
+as "Already on the first page." or "No more results."
+
+Filtering searches the **full conversation source before paging**, so a match
+on the oldest page is still found; clearing the filter returns to unfiltered
+page 1. Moving to another page or changing the filter leaves Select mode,
+clears its current-page checkboxes, and shows "Selection cleared." If a page
+cannot be refreshed safely, the last good rows remain visible but read-only,
+the pager explains that the list may be out of date, and **Retry** repeats the
+requested load.
+
 | Control | What it does |
 |---|---|
-| "Filter conversations… (Enter)" | Type and press Enter to filter by title substring (case-insensitive, over the loaded list). Status shows "2 matches for 'demo'". |
+| "Filter conversations… (Enter)" | Type and press Enter to search every conversation title (case-insensitive) before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
+| "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
 | "Open in Console" | Stages the conversation as **source context** in Console — see below. |
 | "Export…" / "Select" | The shared grammar; export packages conversations into a bundle. |
