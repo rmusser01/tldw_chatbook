@@ -1,4 +1,4 @@
-"""Console staged-evidence strip (between the status chips and the composer).
+"""Console staged-evidence strip (directly above the composer).
 
 RAG-40: before this widget, the only surface that listed staged Library-RAG
 evidence was the Inspector-rail tray, and Console's own "Run Library RAG"

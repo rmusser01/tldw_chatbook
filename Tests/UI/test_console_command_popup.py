@@ -229,14 +229,17 @@ class _StyledConsoleHarness(ConsoleHarness):
 
 @pytest.mark.asyncio
 async def test_popup_does_not_reclaim_workspace_grid_rows():
-    """Regression (Textual 8.x vertical layout): a ``position: absolute``
+    """Opening the popup must not shrink the workspace grid.
+
+    Regression (Textual 8.x vertical layout): a ``position: absolute``
     child still has its height deducted from the container's fr pool during
     box-model resolution, so opening the popup used to shrink the workspace
     grid by the popup's 8 rows — the transcript jumped up, a dead band
     opened under the status row, and on short terminals the anchor clamped
     to the shell top. The popup now places itself via ``overlay: screen``,
     which is exempt from that deduction: the grid must hold its height while
-    autocomplete is open, and the popup must still clear the composer."""
+    autocomplete is open, and the popup must still clear the composer.
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _StyledConsoleHarness(app)
