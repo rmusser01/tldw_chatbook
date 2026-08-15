@@ -80,6 +80,10 @@ def _prime_local_llm_url(llm_endpoint: str, base_url: str) -> None:
     # Local models are slow (big thinking models can take minutes for a full
     # report); the provider default timeout is tuned for quick chat turns.
     provider_table["api_timeout"] = 600
+    # Thinking models spend the budget on reasoning before content -- the
+    # 4096 default can be exhausted by reasoning alone, yielding an EMPTY
+    # completion (observed live: a 5-minute synthesis returning length=0).
+    provider_table["max_tokens"] = 16384
 
 
 def _build_search_params(

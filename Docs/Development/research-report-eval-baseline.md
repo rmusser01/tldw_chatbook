@@ -63,6 +63,27 @@ Observations worth keeping:
   that broke every string consumer; fixed at the `chat_api_call` seam
   during this live verification.
 
+## Post gate-hardening re-measurement (2026-08-15, task-16333)
+
+Same configuration, same command, after hardening the relevance gate
+(usefulness-based prompt, 0.1 judgment temperature, zero-relevant flagged
+fallback) and priming `max_tokens=16384` for the thinking model:
+
+| Metric | Before (n=2 of 3 scored) | After (n=3 of 3 scored) |
+|---|---|---|
+| `citation_accuracy` | 1.00 (20/20 markers) | **1.00 (49/49 markers)** |
+| `quote_grounding` | 0.00 (no quotes emitted) | **0.67** (quotes emitted in 2/3 runs; all verified) |
+| `claim_support_rate` | 1.00 | 1.00 |
+| `cited_sentence_ratio` | 0.68 | 0.63 |
+| `gate_pass_rate` | whole runs lost to the gate | **0.93** (question 3: 4/5 passed) |
+
+The measured weak link moved: before, the gate silently killed whole runs
+(1 of 3 questions produced nothing); after, all three questions produced
+verified reports. Remaining failure mode observed en route: a thinking
+model can exhaust the default 4096 `max_tokens` on reasoning alone and
+return an empty completion -- the baseline script now primes 16384 for
+local endpoints.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,
