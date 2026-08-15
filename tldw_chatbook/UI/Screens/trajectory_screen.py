@@ -57,6 +57,7 @@ import json
 import time
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 from rich.text import Text
@@ -71,6 +72,10 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
+)
+from tldw_chatbook.Chat.trajectory_import import (
+    TrajectoryImportError,
+    load_trajectory_snapshot,
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 
@@ -134,6 +139,7 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("e", "load_earlier", "Earlier"),
         Binding("/", "focus_search", "Search"),
         Binding("f", "resume_follow", "Follow"),
+        Binding("o", "open_trace", "Open trace"),
     ]
 
     #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-031; tested).
@@ -145,6 +151,7 @@ class TrajectoryScreen(ModalScreen[None]):
         ("/", "search"),
         ("e", "earlier"),
         ("f", "follow"),
+        ("o", "open"),
     )
 
     DEFAULT_CSS = """
@@ -731,6 +738,10 @@ class TrajectoryScreen(ModalScreen[None]):
                 lines.append(f"result {result}")  # full, untruncated
             if payload.get("truncated"):
                 lines.append("truncated yes (stored payload hit the 256 KiB cap)")
+            if payload.get("redacted"):
+                lines.append(
+                    "result redacted (shared trace keeps payload previews only)"
+                )
         if rec.variants:
             # Variant-set contents attach at TURN level to every assistant
             # record of that turn -- the label says so explicitly.
@@ -931,6 +942,53 @@ class TrajectoryScreen(ModalScreen[None]):
     def action_focus_search(self) -> None:
         """`/`: focus the search box."""
         self.query_one("#trajectory-search", Input).focus()
+
+    # -- import (task-16320: open shared traces read-only) ----------------------
+
+    async def action_open_trace(self) -> None:
+        """`o`: open a shared trajectory trace file as a read-only view.
+
+        The picked file is loaded through the pure import seam (never the
+        app DB) and pushed as a NEW ``TrajectoryScreen`` with no
+        ``conversation_id`` / live providers -- the imported view is itself
+        the trajectory surface, fully read-only (no revision polling).
+        Import failures surface as an error notification carrying the
+        actionable message from the shared validator.
+        """
+        path = await self._pick_trace_file()
+        if path is None:
+            return  # picker dismissed: no-op, stay on the current screen
+        try:
+            snapshot = load_trajectory_snapshot(path)
+        except TrajectoryImportError as exc:
+            self.app.notify(str(exc), title="Import failed", severity="error")
+            return
+        self.app.push_screen(
+            TrajectoryScreen(
+                snapshot,
+                screen_title=f"Imported trace — {path.stem} (read-only)",
+            )
+        )
+
+    async def _pick_trace_file(self) -> Path | None:
+        """Open the repo's file picker; ``None`` when dismissed.
+
+        Separate seam so tests can stub the picker (the fspicker modal is
+        not pilot-friendly) while the binding/load/push path stays real.
+        """
+        from tldw_chatbook.Third_Party.textual_fspicker import Filters
+        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+        picker = EnhancedFileOpen(
+            title="Open trajectory trace",
+            filters=Filters(
+                ("Trajectory traces", lambda p: p.name.lower().endswith(".json")),
+                ("All Files", lambda p: True),
+            ),
+            context="trajectory_import",
+        )
+        selected = await self.app.push_screen_wait(picker)
+        return None if selected is None else Path(str(selected))
 
     def action_inspect_cursor_row(self) -> None:
         """`enter`: open the inspector on the cursor row.
