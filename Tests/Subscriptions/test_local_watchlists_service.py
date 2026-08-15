@@ -249,9 +249,7 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_url_list_offloads_cpu_work_for_every_url_in_order(
-    tmp_path, monkeypatch
-):
+async def test_url_list_offloads_cpu_work_for_every_url_in_order(tmp_path, monkeypatch):
     urls = ["https://example.com/a", "https://example.com/b"]
     bodies = {
         "a:baseline": "<html><body><p>URL A baseline body.</p></body></html>",
@@ -390,8 +388,7 @@ async def test_url_list_offloads_cpu_work_for_every_url_in_order(
         (urls[1], "URL B changed body."),
     ]
     stored_items = db.conn.execute(
-        "SELECT url FROM subscription_items "
-        "WHERE subscription_id = ? ORDER BY id ASC",
+        "SELECT url FROM subscription_items WHERE subscription_id = ? ORDER BY id ASC",
         (source["source_id"],),
     ).fetchall()
     assert [row["url"] for row in stored_items] == urls
