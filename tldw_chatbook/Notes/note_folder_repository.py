@@ -490,11 +490,17 @@ class LocalNoteFolderRepository:
         )
 
     def attach_manual(
-        self, *, folder_id: str, note_id: str
+        self,
+        *,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int | None = None,
     ) -> NoteFolderMembership:
         """Attach one user-owned placement, reviving its latest history."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_folder_id(note_id, field="note_id")
+        if expected_note_version is not None:
+            _validate_expected_version(expected_note_version)
         try:
             with self.db.transaction() as cursor, _mutation_savepoint(cursor):
                 _require_active_membership_targets(
@@ -505,6 +511,7 @@ class LocalNoteFolderRepository:
                     folder_id=folder_id,
                     note_id=note_id,
                     now=_utc_timestamp(),
+                    expected_note_version=expected_note_version,
                 )
                 return _membership_from_row(row)
         except sqlite3.IntegrityError as exc:
@@ -1541,18 +1548,49 @@ def _insert_membership(
     ownership: str,
     owner_id: str,
     now: str,
+    expected_note_version: int | None = None,
 ) -> sqlite3.Row:
     membership_id = ""
     for attempt in range(_MEMBERSHIP_ID_INSERT_ATTEMPTS):
         membership_id = str(uuid.uuid4())
         try:
-            cursor.execute(
-                "INSERT INTO note_folder_memberships("
-                "id, folder_id, note_id, ownership, owner_id, owner_active, "
-                "version, deleted, created_at, modified_at"
-                ") VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?, ?)",
-                (membership_id, folder_id, note_id, ownership, owner_id, now, now),
-            )
+            if expected_note_version is None:
+                cursor.execute(
+                    "INSERT INTO note_folder_memberships("
+                    "id, folder_id, note_id, ownership, owner_id, owner_active, "
+                    "version, deleted, created_at, modified_at"
+                    ") VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?, ?)",
+                    (
+                        membership_id,
+                        folder_id,
+                        note_id,
+                        ownership,
+                        owner_id,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO note_folder_memberships("
+                    "id, folder_id, note_id, ownership, owner_id, owner_active, "
+                    "version, deleted, created_at, modified_at"
+                    ") SELECT ?, ?, ?, ?, ?, 1, 1, 0, ?, ? "
+                    "WHERE EXISTS (SELECT 1 FROM notes "
+                    "WHERE id = ? AND deleted = 0 AND version = ?)",
+                    (
+                        membership_id,
+                        folder_id,
+                        note_id,
+                        ownership,
+                        owner_id,
+                        now,
+                        now,
+                        note_id,
+                        expected_note_version,
+                    ),
+                )
+                _require_one_membership_update(cursor)
             break
         except sqlite3.IntegrityError as exc:
             if not _is_membership_id_collision(exc):
@@ -1571,7 +1609,12 @@ def _insert_membership(
 
 
 def _ensure_manual_membership(
-    cursor: sqlite3.Cursor, *, folder_id: str, note_id: str, now: str
+    cursor: sqlite3.Cursor,
+    *,
+    folder_id: str,
+    note_id: str,
+    now: str,
+    expected_note_version: int | None = None,
 ) -> sqlite3.Row:
     active = cursor.execute(
         f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships "
@@ -1580,6 +1623,15 @@ def _ensure_manual_membership(
         (folder_id, note_id),
     ).fetchone()
     if active is not None:
+        if expected_note_version is not None:
+            cursor.execute(
+                "UPDATE note_folder_memberships SET owner_active = owner_active "
+                "WHERE id = ? AND deleted = 0 AND ownership = 'manual' "
+                "AND owner_id = '' AND EXISTS (SELECT 1 FROM notes "
+                "WHERE id = ? AND deleted = 0 AND version = ?)",
+                (active["id"], note_id, expected_note_version),
+            )
+            _require_one_membership_update(cursor)
         return active
     deleted = cursor.execute(
         "SELECT id, version FROM note_folder_memberships "
@@ -1596,14 +1648,32 @@ def _ensure_manual_membership(
             ownership="manual",
             owner_id="",
             now=now,
+            expected_note_version=expected_note_version,
         )
-    cursor.execute(
-        "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
-        "version = version + 1, modified_at = ? "
-        "WHERE id = ? AND version = ? AND deleted = 1 "
-        "AND ownership = 'manual' AND owner_id = ''",
-        (now, deleted["id"], deleted["version"]),
-    )
+    if expected_note_version is None:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
+            "version = version + 1, modified_at = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1 "
+            "AND ownership = 'manual' AND owner_id = ''",
+            (now, deleted["id"], deleted["version"]),
+        )
+    else:
+        cursor.execute(
+            "UPDATE note_folder_memberships SET deleted = 0, owner_active = 1, "
+            "version = version + 1, modified_at = ? "
+            "WHERE id = ? AND version = ? AND deleted = 1 "
+            "AND ownership = 'manual' AND owner_id = '' "
+            "AND EXISTS (SELECT 1 FROM notes "
+            "WHERE id = ? AND deleted = 0 AND version = ?)",
+            (
+                now,
+                deleted["id"],
+                deleted["version"],
+                note_id,
+                expected_note_version,
+            ),
+        )
     _require_one_membership_update(cursor)
     row = cursor.execute(
         f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships WHERE id = ?",

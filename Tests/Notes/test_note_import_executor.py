@@ -2192,6 +2192,63 @@ def test_executor_retry_failed_rejects_changed_plan_digest_before_target_call(
     assert target_calls == 0
 
 
+@pytest.mark.parametrize(
+    ("original_payload", "substituted_payload"),
+    [
+        (_payload(title="Caf\u00e9"), _payload(title="Cafe\u0301")),
+        (_payload(content="Caf\u00e9"), _payload(content="Cafe\u0301")),
+        (
+            _payload(keywords=("Caf\u00e9",)),
+            _payload(keywords=("Cafe\u0301",)),
+        ),
+        (
+            replace(_payload(), template_name="Caf\u00e9"),
+            replace(_payload(), template_name="Cafe\u0301"),
+        ),
+    ],
+)
+def test_executor_rejects_canonically_equivalent_text_substitution_before_target_call(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+    original_payload: ParsedNotePayload,
+    substituted_payload: ParsedNotePayload,
+) -> None:
+    executor, target, receipts, _service, _folders, _db = real_executor
+    original_item = _execution_item(
+        item_id="unicode-authority",
+        payloads=(original_payload,),
+        action=ImportAction.CREATE_NEW,
+        memberships=(ProposedFolderMembership(0, ("Unicode Root",)),),
+        add_membership=True,
+    )
+    original = _approved_execution_plan(
+        original_item,
+        proposed_folder_paths=(("Unicode Root",),),
+    )
+    receipts.begin(original, batch_size=25)
+    substituted = _approved_execution_plan(
+        replace(original_item, payloads=(substituted_payload,)),
+        proposed_folder_paths=(("Unicode Root",),),
+    )
+    target_calls = 0
+
+    def forbidden_target(**_kwargs):
+        nonlocal target_calls
+        target_calls += 1
+        raise AssertionError("text substitution reached the target")
+
+    monkeypatch.setattr(target, "create_note", forbidden_target)
+
+    with pytest.raises(ImportReceiptConflictError, match="authority") as caught:
+        executor.execute(substituted)
+    assert target_calls == 0
+    assert target.read_note(note_id=_expected_note_id(original_item.item_id, 0)) is None
+    assert "Caf\u00e9" not in str(caught.value)
+    assert "Cafe\u0301" not in str(caught.value)
+    assert "Caf\u00e9" not in repr(substituted)
+    assert "Cafe\u0301" not in repr(substituted)
+
+
 def test_executor_retry_failed_resumes_cancelled_pending_work_in_same_session(
     real_executor,
 ) -> None:
@@ -2741,6 +2798,69 @@ def test_executor_membership_only_stale_version_durably_fails_membership_effect(
     assert durable.items[0].outcome is ImportItemOutcome.FAILED
 
 
+def test_executor_membership_attach_rechecks_note_version_atomically(
+    real_executor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor, target, receipts, _service, folders, db = real_executor
+    existing = target.create_note(note_id="membership-race", payload=_payload())
+    item = _execution_item(
+        item_id="membership-race",
+        payloads=(_payload(),),
+        action=ImportAction.UPDATE_EXISTING,
+        memberships=(ProposedFolderMembership(0, ("Race Root",)),),
+        match=ImportMatch(
+            kind=ImportMatchKind.EXACT,
+            note_id=existing.note_id,
+            note_version=existing.version,
+        ),
+        add_membership=True,
+    )
+    approved = _approved_execution_plan(
+        item,
+        proposed_folder_paths=(("Race Root",),),
+    )
+    original_attach = target.attach_membership
+    raced = False
+
+    def racing_attach(*, folder_id: str, note_id: str, **kwargs) -> None:
+        nonlocal raced
+        if not raced:
+            raced = True
+            db.get_connection().execute(
+                "UPDATE notes SET version = version + 1 WHERE id = ?",
+                (note_id,),
+            )
+            db.get_connection().commit()
+        original_attach(folder_id=folder_id, note_id=note_id, **kwargs)
+
+    monkeypatch.setattr(target, "attach_membership", racing_attach)
+
+    receipt = executor.execute(approved)
+
+    assert raced
+    assert (
+        receipt.state,
+        receipt.updated,
+        receipt.failed,
+        receipt.reason_code,
+    ) == (ImportSessionState.NEEDS_ATTENTION, 0, 1, "version_conflict")
+    folder = folders.get_folder_by_path(("Race Root",))
+    assert folder is not None
+    assert (
+        _active_membership_count(
+            db,
+            folder_id=folder.folder_id,
+            note_id=existing.note_id,
+        )
+        == 0
+    )
+    durable = receipts.load_session_snapshot(_EXECUTION_APPROVAL_ID)
+    assert durable.membership_effects[0].state is ImportEffectState.FAILED
+    assert durable.membership_effects[0].reason_code == "version_conflict"
+    assert durable.items[0].outcome is ImportItemOutcome.FAILED
+
+
 def test_executor_all_skip_including_unsupported_and_failed_mutates_nothing(
     real_executor,
 ) -> None:
@@ -3038,7 +3158,10 @@ def test_executor_persists_each_effect_before_advancing_and_aborts_fatal_faults(
         proposed_folder_paths=(("Imported Root",),),
     )
 
-    def fatal_membership(*, folder_id: str, note_id: str) -> None:
+    def fatal_membership(
+        *, folder_id: str, note_id: str, expected_note_version: int
+    ) -> None:
+        del folder_id, note_id, expected_note_version
         raise ImportTargetInternalError
 
     monkeypatch.setattr(target, "attach_membership", fatal_membership)
@@ -3071,8 +3194,10 @@ def test_executor_summarizes_retryability_across_all_membership_failures(
         add_membership=True,
     )
 
-    def mixed_failures(*, folder_id: str, note_id: str) -> None:
-        del note_id
+    def mixed_failures(
+        *, folder_id: str, note_id: str, expected_note_version: int
+    ) -> None:
+        del note_id, expected_note_version
         if folder_id == _expected_folder_id("/imported root/permanent"):
             raise ImportTargetPermanentError
         raise ImportTargetRetryableError
@@ -3187,8 +3312,16 @@ def test_target_membership_attach_is_idempotent_and_requires_active_targets(
     )
     target.create_note(note_id=_NOTE_ID, payload=_payload())
 
-    first = target.attach_membership(folder_id=folder.folder_id, note_id=_NOTE_ID)
-    retry = target.attach_membership(folder_id=folder.folder_id, note_id=_NOTE_ID)
+    first = target.attach_membership(
+        folder_id=folder.folder_id,
+        note_id=_NOTE_ID,
+        expected_note_version=1,
+    )
+    retry = target.attach_membership(
+        folder_id=folder.folder_id,
+        note_id=_NOTE_ID,
+        expected_note_version=1,
+    )
 
     assert retry == first
     assert (
@@ -3200,7 +3333,11 @@ def test_target_membership_attach_is_idempotent_and_requires_active_targets(
     )
     db.get_connection().commit()
     with pytest.raises(ImportTargetPermanentError):
-        target.attach_membership(folder_id=folder.folder_id, note_id=_NOTE_ID)
+        target.attach_membership(
+            folder_id=folder.folder_id,
+            note_id=_NOTE_ID,
+            expected_note_version=1,
+        )
 
     other = folders.create_folder(name="Other", parent_id=None)
     db.get_connection().execute(
@@ -3208,7 +3345,11 @@ def test_target_membership_attach_is_idempotent_and_requires_active_targets(
     )
     db.get_connection().commit()
     with pytest.raises(ImportTargetPermanentError):
-        target.attach_membership(folder_id=other.folder_id, note_id=_NOTE_ID)
+        target.attach_membership(
+            folder_id=other.folder_id,
+            note_id=_NOTE_ID,
+            expected_note_version=1,
+        )
 
 
 @pytest.mark.parametrize(
@@ -3867,6 +4008,7 @@ def test_target_construction_and_mutations_do_not_log_private_values(
         target.attach_membership(
             folder_id=folder.folder_id,
             note_id=private_note_id,
+            expected_note_version=1,
         )
         target.replace_note(
             note_id=private_note_id,

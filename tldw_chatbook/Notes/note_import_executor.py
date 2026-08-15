@@ -360,13 +360,24 @@ class LocalNoteImportTarget:
         if translated_error is not None:
             raise translated_error from None
 
-    def attach_membership(self, *, folder_id: str, note_id: str) -> None:
+    def attach_membership(
+        self,
+        *,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int,
+    ) -> None:
         """Idempotently attach one active note to one active manual folder."""
         translated_error: ImportTargetError | ImportTargetInternalError | None = None
         try:
             _validate_opaque_id(folder_id)
             _validate_opaque_id(note_id)
-            self._folders.attach_manual(folder_id=folder_id, note_id=note_id)
+            _validate_expected_version(expected_note_version)
+            self._folders.attach_manual(
+                folder_id=folder_id,
+                note_id=note_id,
+                expected_note_version=expected_note_version,
+            )
         except Exception as exc:  # noqa: BLE001 - translate target boundary failures
             translated_error = _translate_exception(exc)
         if translated_error is not None:
@@ -1353,6 +1364,7 @@ class NoteImportExecutor:
                 membership_failure = self._execute_memberships(
                     approved,
                     note_id=note.note_id,
+                    expected_note_version=note.version,
                     memberships=unit_memberships,
                     folder_bindings=folder_bindings,
                 )
@@ -1491,6 +1503,7 @@ class NoteImportExecutor:
                 membership_failure = self._execute_memberships(
                     approved,
                     note_id=note_id,
+                    expected_note_version=note.version,
                     memberships=tuple(executable_memberships),
                     folder_bindings=folder_bindings,
                 )
@@ -1573,6 +1586,7 @@ class NoteImportExecutor:
         approved: ApprovedNoteImportPlan,
         *,
         note_id: str,
+        expected_note_version: int,
         memberships: tuple[tuple[ProposedFolderMembership, ImportEffectRecord], ...],
         folder_bindings: dict[str, str],
     ) -> _ExecutionFailure | None:
@@ -1597,11 +1611,15 @@ class NoteImportExecutor:
                 failures.append(_failure_from_effect(effect))
                 continue
             try:
-                self._target.attach_membership(folder_id=folder_id, note_id=note_id)
+                self._target.attach_membership(
+                    folder_id=folder_id,
+                    note_id=note_id,
+                    expected_note_version=expected_note_version,
+                )
             except ImportTargetInternalError:
                 raise
             except ImportTargetError as error:
-                failure = _failure_for_target_error(error, folder=True)
+                failure = _failure_for_target_error(error, folder=False)
                 self._fail_effect(
                     approved.approval_id,
                     effect,

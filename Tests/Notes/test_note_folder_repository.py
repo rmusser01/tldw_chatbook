@@ -1628,6 +1628,61 @@ def test_attach_manual_is_idempotent_and_revives_only_latest_history(
     ]
 
 
+def test_attach_manual_expected_note_version_guards_new_active_and_revived_rows(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    folder = repository.create_folder(name="Guarded", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    assert note_id is not None
+    repository.db.get_connection().execute(
+        "UPDATE notes SET version = 2 WHERE id = ?",
+        (note_id,),
+    )
+    repository.db.get_connection().commit()
+
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == ()
+
+    created = repository.attach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_note_version=2,
+    )
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == (created,)
+
+    assert repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=created.version,
+    )
+    with pytest.raises(FolderConflictError):
+        repository.attach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_note_version=1,
+        )
+    assert repository.list_memberships(note_ids=(note_id,)) == ()
+
+    revived = repository.attach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_note_version=2,
+    )
+    assert revived.membership_id == created.membership_id
+    assert revived.version == created.version + 2
+
+
 def test_attach_manual_retries_a_generated_membership_id_collision(
     repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:

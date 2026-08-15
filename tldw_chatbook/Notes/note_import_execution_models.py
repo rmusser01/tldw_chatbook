@@ -14,7 +14,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import islice
-from unicodedata import normalize
 from uuid import UUID, uuid4
 
 from tldw_chatbook.Notes.note_import_plan_models import (
@@ -106,14 +105,10 @@ def _private_payload_fingerprint(payloads: tuple[ParsedNotePayload, ...]) -> str
         {
             "payloads": [
                 {
-                    "content": normalize("NFC", payload.content),
-                    "keywords": [normalize("NFC", value) for value in payload.keywords],
-                    "template_name": (
-                        normalize("NFC", payload.template_name)
-                        if payload.template_name is not None
-                        else None
-                    ),
-                    "title": normalize("NFC", payload.title),
+                    "content": payload.content,
+                    "keywords": list(payload.keywords),
+                    "template_name": payload.template_name,
+                    "title": payload.title,
                     "type": "parsed_note_payload",
                 }
                 for payload in payloads
