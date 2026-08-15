@@ -1,4 +1,8 @@
-"""The base dialog code for the other dialogs in the library."""
+"""The app-integrated base dialog code for the other picker dialogs.
+
+This vendored fork intentionally uses the application's safe-modal contract and
+therefore requires a small patch when syncing from or extracting to upstream.
+"""
 
 ##############################################################################
 # Backward compatibility.
@@ -8,20 +12,12 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Union
-
-try:
-    from typing import TypeAlias
-except ImportError:
-    from typing_extensions import TypeAlias
+from typing import Any, Callable, Dict, List, TypeAlias, Union
 
 ##############################################################################
-# Rich imports.
+# Third-party imports.
 from rich.console import RenderableType
 from rich.table import Table
-
-##############################################################################
-# Textual imports.
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding

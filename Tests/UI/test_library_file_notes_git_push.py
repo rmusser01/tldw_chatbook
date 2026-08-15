@@ -1441,6 +1441,76 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
 
 
 @pytest.mark.asyncio
+async def test_endpoint_details_close_rejects_stale_push_operation_focus(
+    tmp_path: Path,
+) -> None:
+    """Closing old details must not focus controls for a newer push operation."""
+    owner, _binding, replica, _service, workspace = _push_workspace_fixture(tmp_path)
+    projection = _push_panel_review_projection()
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, 40)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._push_review_projection = projection
+        workspace._push_view_phase = "review"
+        workspace._push_operation_id = 41
+        workspace._git_panel_widget.render_push_review(
+            projection,
+            operation_id=41,
+        )
+        await pilot.pause()
+
+        technical = workspace.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        )
+        technical.collapsed = False
+        await pilot.pause()
+        details = workspace.query_one(
+            "#file-notes-git-push-review-details",
+            Button,
+        )
+        details.focus()
+        details.press()
+        await _until(
+            pilot,
+            lambda: isinstance(
+                workspace.app.screen,
+                git_panel_module.PushEndpointDetailsDialog,
+            ),
+            "review endpoint details did not open",
+        )
+
+        workspace._git_panel_widget.render_push_review(
+            projection,
+            operation_id=42,
+        )
+        await pilot.pause()
+        workspace.query_one(
+            "#file-notes-git-push-review-technical",
+            Collapsible,
+        ).collapsed = False
+        await pilot.pause()
+        back = workspace.query_one("#file-notes-git-push-back", Button)
+        back.focus()
+        assert back.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert back.has_focus
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
 async def test_workspace_push_keyboard_happy_path_reaches_succeeded_result(
     tmp_path: Path,
 ) -> None:

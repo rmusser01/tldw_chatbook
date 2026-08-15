@@ -5172,7 +5172,25 @@ class LibraryFileNotesWorkspace(Vertical):
         ):
             return
         self.app.push_screen(
-            PushEndpointDetailsDialog(projection.review.destination)
+            PushEndpointDetailsDialog(
+                projection.review.destination,
+                restore_focus=False,
+            ),
+            callback=partial(
+                self._restore_push_review_details_focus,
+                operation_id,
+            ),
+        )
+
+    def _restore_push_review_details_focus(
+        self,
+        operation_id: int,
+        _result: None,
+    ) -> None:
+        self._git_panel_widget.restore_push_focus(
+            "review",
+            operation_id,
+            "#file-notes-git-push-review-details",
         )
 
     def _session_git_back_from_push_review(self, operation_id: int) -> None:

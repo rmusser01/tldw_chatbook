@@ -187,6 +187,7 @@ class SafeModalDismissMixin:
     """Provide one-shot cancellation and backdrop handling for a modal screen."""
 
     SAFE_MODAL_CONTENT: str | None = None
+    SAFE_MODAL_RESTORE_FOCUS = True
 
     _safe_cancel_pending = False
     _safe_cancel_effect_committed = False
@@ -276,13 +277,14 @@ class SafeModalDismissMixin:
         revealed_screen = app.screen
         if backdrop_event is not None:
             _shield_revealed_screen_from_click_chain(app, *backdrop_event)
-        revealed_screen.call_after_refresh(
-            _restore_focus_after_dismissal,
-            app,
-            revealed_screen,
-            opener_ref,
-            opener_id,
-        )
+        if self.SAFE_MODAL_RESTORE_FOCUS:
+            revealed_screen.call_after_refresh(
+                _restore_focus_after_dismissal,
+                app,
+                revealed_screen,
+                opener_ref,
+                opener_id,
+            )
         return True
 
     async def on_click(self, event: events.Click) -> None:

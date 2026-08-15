@@ -3668,9 +3668,15 @@ class PushEndpointDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
     }
     """
 
-    def __init__(self, destination: PushDestinationProjection) -> None:
+    def __init__(
+        self,
+        destination: PushDestinationProjection,
+        *,
+        restore_focus: bool = True,
+    ) -> None:
         super().__init__(id="file-notes-push-endpoint-details-screen")
         self.selectable_details = destination.selectable_details
+        self.SAFE_MODAL_RESTORE_FOCUS = restore_focus
 
     def compose(self) -> ComposeResult:
         with Vertical(id="file-notes-push-endpoint-details-dialog"):
