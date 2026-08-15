@@ -529,11 +529,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # Through Phase C, CONTENT held only a placeholder stub and started
     # collapsed to avoid spending screen space on it. Phase D wires a real
     # reader (`ContentPane`) into CONTENT, so it now starts expanded like
-    # every other region. `on_mount` overlays whatever is actually persisted
-    # (see `region_layout_store.load_region_layout`) on top of this default —
-    # including a one-time migration that drops any CONTENT collapse a user
-    # saved before this change, since that could only be a leftover of the
-    # old stub-era default, never a deliberate choice about the real reader.
+    # every other region.
+    #
+    # This class-level value is a Textual-required placeholder, not what a
+    # real screen actually starts with (TASK-15775): `__init__` immediately
+    # overwrites it via `set_reactive` with whatever
+    # `region_layout_store.load_region_layout()` returns — the persisted
+    # layout, or `_FIRST_RUN_DEFAULT` (RIGHT_RAIL collapsed) on a genuinely
+    # fresh install, including that function's one-time migration that drops
+    # any CONTENT collapse a user saved before Phase D, since that could
+    # only be a leftover of the old stub-era default, never a deliberate
+    # choice about the real reader. Seeding happens before `compose_content`
+    # ever runs, so the workbench is built with the SAME layout `on_mount`
+    # used to apply a moment later — see `__init__`'s own comment for why
+    # this class-level default used to disagree with that call's result,
+    # and the ordering guarantee against `_last_persisted_collapsed`.
     region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
@@ -912,7 +922,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # toggle, would otherwise trigger `save_setting_to_cli_config`'s
         # synchronous whole-file read-modify-write on the UI thread. See
         # `_schedule_layout_persist`/`_persist_layout_worker` below.
-        self._last_persisted_collapsed: frozenset[Region] | None = None
+        #
+        # TASK-15775: `region_layout`'s class-level reactive default
+        # (`RegionLayout()`, nothing collapsed) disagreed with what a cold
+        # open actually renders (`_FIRST_RUN_DEFAULT`, RIGHT_RAIL collapsed
+        # — `region_layout_store.py`). `compose_content` reads
+        # `self.region_layout` to build the initial `WatchlistsWorkbench`,
+        # and compose always runs before `on_mount`, so every cold open
+        # used to compose the full 13-widget Inspector pane and then, the
+        # instant `on_mount` fired `_apply_layout(load_region_layout())`,
+        # tear it straight back down for the one-line collapsed header a
+        # fresh config actually wants (task-15462's profiling: ~5-10ms,
+        # 1-2% of a ~450ms push, plus a `_swap_region_widget` call that
+        # regression tests now pin at zero for a normal visit).
+        #
+        # Seeding `region_layout` here, at construction, instead closes
+        # that gap: `_create_navigation_screen` builds a screen only to
+        # push/switch to it immediately after (never cached, never left
+        # un-mounted — see that method's own docstring), so there is no
+        # meaningful ordering difference from doing this at the top of
+        # `on_mount` as before. `set_reactive` (not assignment) matches
+        # `WatchlistsWorkbench.__init__`'s own seeding: it stores the value
+        # without running a watcher that has nothing mounted yet to act on.
+        #
+        # `_last_persisted_collapsed` is primed from this SAME call's
+        # result, on the very next line — closing the ordering risk
+        # task-15462 flagged when it chose not to make this exact move
+        # inside a profiling task: moving `load_region_layout()` earlier is
+        # only safe if this priming moves in lockstep with it. A
+        # construction-time load whose priming still happened later (e.g.
+        # still in `on_mount`, reading a SECOND call's result) would leave
+        # a window where `_schedule_layout_persist` could read
+        # `_last_persisted_collapsed` as stale against an already-applied
+        # layout, misfiring its `!=` no-op guard and scheduling a redundant
+        # persist worker for a value already on disk — or, worse, running
+        # `load_region_layout()`'s one-time migration branch a second time.
+        # There is exactly one call to `load_region_layout()` per screen
+        # lifecycle now; `on_mount` reuses `self.region_layout` rather than
+        # calling it again (see `on_mount`).
+        loaded_layout = load_region_layout()
+        self.set_reactive(WatchlistsCollectionsScreen.region_layout, loaded_layout)
+        self._last_persisted_collapsed: frozenset[Region] | None = (
+            loaded_layout.collapsed_for_persistence()
+        )
         self._pending_persist_layout: RegionLayout | None = None
         self._layout_persist_lock = threading.Lock()
         # Desired-status coalescing for the four item-status write paths
@@ -1014,20 +1066,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
-        # Push the persisted layout into the already-mounted workbench, not just
-        # this screen's own reactive: `compose_content` already ran by the time
+        # Push the layout into the already-mounted workbench, not just this
+        # screen's own reactive: `compose_content` already ran by the time
         # `on_mount` fires (compose always precedes the Mount event), so the
-        # WatchlistsWorkbench child was built with whatever `region_layout` held
-        # at THAT moment. Without also reaching into the mounted workbench via
-        # `_apply_layout`, a persisted collapse would silently not render until
-        # some unrelated later recompose happened to pick it up.
-        loaded_layout = load_region_layout()
-        # Prime the "last persisted" marker with what we just read (PR #926
-        # review, Bug 2) BEFORE calling `_apply_layout`: this value is by
-        # definition already on disk, so pushing it back into the workbench
-        # here must not itself trigger a redundant write.
-        self._last_persisted_collapsed = loaded_layout.collapsed_for_persistence()
-        self._apply_layout(loaded_layout)
+        # WatchlistsWorkbench child was built with whatever `region_layout`
+        # held at THAT moment. Without also reaching into the mounted
+        # workbench via `_apply_layout`, a persisted collapse would silently
+        # not render until some unrelated later recompose happened to pick
+        # it up.
+        #
+        # TASK-15775: `region_layout` (and `_last_persisted_collapsed`) were
+        # already seeded from `load_region_layout()` in `__init__` — reused
+        # here rather than calling it a second time, both to keep the
+        # one-time-migration read/write genuinely one-time per screen and to
+        # keep this call a true no-op: `self.region_layout` already equals
+        # what `_apply_layout` sets it to, and Textual's reactive skips
+        # `watch_region_layout` on an unchanged value, so this produces zero
+        # `_swap_region_widget` calls on a normal visit. Kept, rather than
+        # dropped outright, so a screen mounted a second way (a test that
+        # changes `region_layout` between construction and mount, or a
+        # future caller) still gets the reconciliation pass `_apply_layout`
+        # performs — `_sync_reader_expanded_state`, and the persistence
+        # no-op check for anything that genuinely did change.
+        self._apply_layout(self.region_layout)
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
