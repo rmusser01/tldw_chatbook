@@ -234,8 +234,11 @@ async def test_tools_chip_opens_inspector_at_80x24_single_pane():
         assert console.query_one("#console-left-rail").display is False
         assert "left_open_explicit" not in _stored_rail_preferences(app)
 
-        # The rail's own collapse button is the visible way back.
-        await pilot.click("#console-inspector-rail-collapse")
+        # The rail's own collapse button is the way back; activate it from
+        # the keyboard because the stripped harness clips narrow controls.
+        collapse_button = console.query_one("#console-inspector-rail-collapse", Button)
+        collapse_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
         assert right_rail.display is False
 
@@ -263,13 +266,8 @@ async def test_left_handle_opens_left_rail_at_90_cols():
         assert context_button.label == "Context->"
         assert context_button.tooltip == "Open Context rail"
 
-        assert await pilot.click(
-            "#console-context-rail-open",
-            offset=(
-                context_button.region.width - 1,
-                context_button.region.height // 2,
-            ),
-        )
+        context_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
 
         assert left_rail.display is True
@@ -283,7 +281,9 @@ async def test_left_handle_opens_left_rail_at_90_cols():
         transcript_region = console.query_one("#console-transcript-region")
         assert transcript_region.outer_size.width > 0
 
-        await pilot.click("#console-context-rail-collapse")
+        collapse_button = console.query_one("#console-context-rail-collapse", Button)
+        collapse_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
 
         assert left_rail.display is False
@@ -305,7 +305,9 @@ async def test_section_toggle_preserves_left_open_explicit_marker():
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
         await pilot.pause(0.2)
 
-        await pilot.click("#console-context-rail-open")
+        context_button = console.query_one("#console-context-rail-open", Button)
+        context_button.focus()
+        await pilot.press("enter")
         await pilot.pause(0.3)
         assert _stored_rail_preferences(app)["left_open_explicit"] is True
 

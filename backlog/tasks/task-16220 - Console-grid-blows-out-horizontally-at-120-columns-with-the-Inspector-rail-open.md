@@ -99,11 +99,12 @@ Verification was intentionally limited to related functionality:
 
 - Required geometry evidence: 10 `size2` cases passed; both session-row
   width-budget cases passed.
-- Exact related matrix: 117 passed and 3 failed. The three failures are legacy
-  80/90-column click cases in `test_console_inspector_compact_access.py`; the
-  identical three nodes were reproduced at pre-integration commit `21f61c236`.
-  The branch-focused priority/context/attach/resize/focus/collapse selector
-  passed 14 cases with 6 deselected.
+- Exact related matrix: 120 passed. Three stale 80/90-column cases originally
+  failed because the stripped Console harness clipped narrow controls outside
+  its hit-testable viewport; each failure reproduced at pre-integration commit
+  `21f61c236`. The tests now activate the real mounted buttons by keyboard, as
+  the same module already does for clipped controls, without changing product
+  behavior.
 - Production-CSS compositor pass at 120x30 painted Context handle `(x=2,w=13)`,
   Transcript `(x=17,w=65)`, and Inspector `(x=84,w=34)` within the 120-cell
   frame. Focus moved to the Context reveal control at 117→118 and the Inspector
