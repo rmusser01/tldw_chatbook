@@ -143,19 +143,21 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Unknown fts_match_construction; using conservative fallback": (),
     },
     "tldw_chatbook/UI/Screens/chat_screen.py": {
-        # TASK-15600: the per-operation video failure events were consolidated
-        # into one "Console video operation={} failed error_type={}" family
-        # whose first argument is shared across ~14 call sites, so they cannot
-        # be pinned individually by this registry's unique-label contract; the
-        # inventory manifest owns them.
         "Console fleet completion handoff will retry": (
             "claim.revision",
             "type(exc).__name__",
         ),
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
-        "stream resolution failed": ("type(exc).__name__",),
         "Pending sidebar-state write failed": ("type(error).__name__",),
+    },
+    "tldw_chatbook/UI/Console_Modules/video.py": {
+        # TASK-15600: the per-operation video failure events were consolidated
+        # into one "Console video operation={} failed error_type={}" family
+        # whose first argument is shared across ~14 call sites, so they cannot
+        # be pinned individually by this registry's unique-label contract; the
+        # inventory manifest owns them.
+        "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
         "canvas sync failed": ("kind",),

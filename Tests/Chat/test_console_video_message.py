@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore, parse_video_marker
@@ -45,6 +46,20 @@ def _video_meta(**overrides):
 def _ttl_config():
     return SimpleNamespace(
         retention="ttl", retention_ttl_hours=1, max_store_mb=2048
+    )
+
+
+def _video_controller(video_store: VideoStore) -> ConsoleVideoController:
+    return ConsoleVideoController(
+        app_instance=SimpleNamespace(generated_video_store=video_store),
+        sync_native_console_chat_ui=lambda: None,
+        ensure_console_chat_store=lambda: None,
+        wait_for_console_screen_result=lambda _screen: None,
+        open_video_with_os=lambda _path: None,
+        append_native_console_system_message=lambda *_args, **_kwargs: None,
+        default_console_session_settings=lambda: None,
+        console_composer_or_none=lambda: None,
+        clear_console_composer_draft=lambda: None,
     )
 
 
@@ -225,8 +240,8 @@ def test_webm_video_card_survives_real_screen_state_round_trip(tmp_path):
     assert restored is not None
 
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_video_store = video_store
-    spec = screen._build_video_card_specs([restored])[restored.id]
+    screen._video = _video_controller(video_store)
+    spec = screen._video._build_video_card_specs([restored])[restored.id]
 
     assert restored.video_metadata == metadata
     assert spec.status == "ready"
@@ -240,7 +255,7 @@ def test_console_video_store_prefers_explicit_test_override(tmp_path):
     screen.app_instance.generated_video_store = app_store
     screen._console_video_store = override
 
-    assert screen._ensure_console_video_store() is override
+    assert screen._video._ensure_console_video_store() is override
 
 
 def test_console_video_store_borrows_app_owner_without_cleanup(
@@ -256,8 +271,8 @@ def test_console_video_store_borrows_app_owner_without_cleanup(
         lambda: pytest.fail("screen must not run retention"),
     )
 
-    assert screen._ensure_console_video_store() is store
-    assert screen._ensure_console_video_store() is store
+    assert screen._video._ensure_console_video_store() is store
+    assert screen._video._ensure_console_video_store() is store
 
 
 def test_console_video_store_fails_loudly_without_app_owner():
@@ -266,7 +281,7 @@ def test_console_video_store_fails_loudly_without_app_owner():
     screen = ChatScreen(app)
 
     with pytest.raises(RuntimeError, match="app-owned generated video store"):
-        screen._ensure_console_video_store()
+        screen._video._ensure_console_video_store()
 
 
 def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
@@ -284,9 +299,9 @@ def test_video_card_uses_persisted_id_for_storage_resolution(tmp_path):
         video_metadata=_video_meta(),
     )
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_video_store = video_store
+    screen._video = _video_controller(video_store)
 
-    specs = screen._build_video_card_specs([message])
+    specs = screen._video._build_video_card_specs([message])
 
     assert set(specs) == {message.id}
     assert specs[message.id].message_id == message.id
@@ -305,9 +320,9 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
     assert message.persisted_message_id is None
     stored_path = video_store.save(message.id, _video_meta().name, b"video-bytes", extension="mp4")
     screen = ChatScreen.__new__(ChatScreen)
-    screen._console_video_store = video_store
+    screen._video = _video_controller(video_store)
 
-    specs = screen._build_video_card_specs([message])
+    specs = screen._video._build_video_card_specs([message])
 
     assert set(specs) == {message.id}
     assert specs[message.id].message_id == message.id
@@ -355,7 +370,7 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         )
         assert retention.removed_files == 0
         screen._console_video_store = fresh_video_store
-        specs = screen._build_video_card_specs(reloaded)
+        specs = screen._video._build_video_card_specs(reloaded)
         assert specs[video_msg.id].status == "ready"
         assert specs[video_msg.id].file_path == str(stored_path)
 
@@ -419,7 +434,7 @@ def test_historical_video_message_without_container_reloads_as_mp4(tmp_path):
         video_msg = next(message for message in reloaded if message.video_metadata)
         fresh_video_store = VideoStore(root=video_root, config=_ttl_config())
         screen._console_video_store = fresh_video_store
-        spec = screen._build_video_card_specs(reloaded)[video_msg.id]
+        spec = screen._video._build_video_card_specs(reloaded)[video_msg.id]
 
         assert video_msg.video_metadata.container == "mp4"
         assert spec.status == "ready"

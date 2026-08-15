@@ -226,6 +226,7 @@ class ConsoleMessageController:
         invalidate_console_persisted_rows_cache: Callable[[], None],
         play_console_video: Callable[[str], Any] | None = None,
         save_console_video_copy: Callable[[str], Any] | None = None,
+        regenerate_console_video_message: Callable[[str], Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -366,6 +367,7 @@ class ConsoleMessageController:
         )
         self._play_console_video_fn = play_console_video
         self._save_console_video_copy_fn = save_console_video_copy
+        self._regenerate_console_video_message_fn = regenerate_console_video_message
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -494,6 +496,12 @@ class ConsoleMessageController:
         if self._save_console_video_copy_fn is None:
             raise RuntimeError("Console video save action is not wired")
         return self._save_console_video_copy_fn
+
+    @property
+    def _regenerate_console_video_message(self) -> Any:
+        if self._regenerate_console_video_message_fn is None:
+            raise RuntimeError("Console video regenerate action is not wired")
+        return self._regenerate_console_video_message_fn
 
     # -- Moved cluster methods (byte-for-byte except as documented above) --
 

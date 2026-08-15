@@ -15,8 +15,11 @@ _SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py"
 IMPLEMENTATION_BASE = "bed39af6b004e4db86218fad01d2ea515b332135"
 BASELINE_LINES = 22_338
 BASELINE_METHODS = 705
-LINE_OVERAGE = 4_611
-METHOD_OVERAGE = 112
+POST_IMAGE_IMPLEMENTATION_BASE = "8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0"
+POST_IMAGE_BASELINE_LINES = 22_172
+POST_IMAGE_BASELINE_METHODS = 712
+LINE_OVERAGE = 4_445
+METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
 
 
@@ -37,6 +40,7 @@ class Wave6Group:
     deleted: frozenset[str] = frozenset()
     raw_lines: int = 0
     residue_lines: int = 0
+    source_revision: str = IMPLEMENTATION_BASE
 
     @property
     def raw_names(self) -> frozenset[str]:
@@ -167,11 +171,13 @@ WAVE6_GROUPS = {
                 "_refresh_console_conversation_browser_search",
                 "_refresh_console_conversation_browser_after_selection",
                 "_with_console_conversation_browser_state",
+                "_console_browser_unseen_marker",
             }
         ),
         delegates=frozenset({"on_console_workspace_conversation_search_changed"}),
-        raw_lines=912,
+        raw_lines=959,
         residue_lines=5,
+        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
     "retrieval": Wave6Group(
         target_path="tldw_chatbook/UI/Console_Modules/retrieval.py",
@@ -274,6 +280,73 @@ WAVE6_GROUPS = {
             }
         ),
         raw_lines=281,
+    ),
+    "fleet": Wave6Group(
+        target_path="tldw_chatbook/UI/Console_Modules/fleet.py",
+        target_class="ConsoleFleetLifecycleController",
+        owner_name="_fleet",
+        moved=frozenset(
+            {
+                "consume_pending_console_fleet_completion",
+                "_claim_console_fleet_wake_marks",
+                "_console_wake_user_priority",
+                "_console_wake_probe_composer",
+                "_console_screen_displayed",
+                "_console_wake_conversation_in_view",
+                "_poke_console_wake_retry",
+                "_on_console_wake_delivery_started",
+                "_console_wake_turn_active",
+                "_record_console_fleet_teardown",
+                "_console_fleet_unseen_ids",
+                "_console_run_marker_with_unseen",
+                "_console_fleet_survivors_live",
+                "_maybe_start_console_fleet_survivor_tick",
+                "_stop_console_fleet_survivor_tick",
+                "_console_fleet_survivor_tick",
+            }
+        ),
+        raw_lines=401,
+        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
+    ),
+    "first_chat": Wave6Group(
+        target_path="tldw_chatbook/UI/Console_Modules/session.py",
+        target_class="ConsoleSessionController",
+        owner_name="_session",
+        moved=frozenset(
+            {
+                "_first_chat_defaults_match",
+                "_current_first_chat_defaults",
+                "eligible_console_first_chat_session_id",
+                "_release_first_chat_claim",
+                "_log_first_chat_handoff_exception",
+                "_resync_console_after_first_chat_rollback",
+                "_resync_mounted_console_after_first_chat_rollback",
+                "consume_pending_console_first_chat_intent",
+            }
+        ),
+        raw_lines=328,
+        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
+    ),
+    "auto_speak": Wave6Group(
+        target_path="tldw_chatbook/UI/Console_Modules/hands_free.py",
+        target_class="ConsoleHandsFreeController",
+        owner_name="_hands_free",
+        moved=frozenset(
+            {
+                "_resolve_console_auto_speak_destination",
+                "_sync_console_auto_speak_controls",
+            }
+        ),
+        delegates=frozenset(
+            {
+                "on_console_auto_speak_changed",
+                "on_console_auto_speak_resume_requested",
+                "on_console_auto_speak_retry_requested",
+            }
+        ),
+        raw_lines=48,
+        residue_lines=15,
+        source_revision=POST_IMAGE_IMPLEMENTATION_BASE,
     ),
 }
 
@@ -378,6 +451,9 @@ DELEGATE_BINDINGS = {
     "_console_command_skills": "_dispatch_console_command",
     "handle_console_skill_install_decided": "@on",
     "handle_console_skill_script_decided": "@on",
+    "on_console_auto_speak_changed": "@on",
+    "on_console_auto_speak_resume_requested": "@on",
+    "on_console_auto_speak_retry_requested": "@on",
 }
 
 
@@ -792,13 +868,30 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
     base_source = _source_at_revision(IMPLEMENTATION_BASE, _SCREEN_PATH)
     base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
     base_methods = _methods_from_class(base_class)
+    post_image_source = _source_at_revision(
+        POST_IMAGE_IMPLEMENTATION_BASE, _SCREEN_PATH
+    )
+    post_image_class = _class_node_from_source(
+        post_image_source, "ChatScreen", _SCREEN_PATH
+    )
+    post_image_methods = _methods_from_class(post_image_class)
+    reviewed_methods = {
+        IMPLEMENTATION_BASE: base_methods,
+        POST_IMAGE_IMPLEMENTATION_BASE: post_image_methods,
+    }
     screen_source, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
     screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
 
     assert len(base_source.splitlines()) == BASELINE_LINES
     assert _method_count(base_class) == BASELINE_METHODS
-    assert len(screen_source.splitlines()) <= BASELINE_LINES, IMPLEMENTATION_BASE
-    assert _method_count(screen_class) <= BASELINE_METHODS, IMPLEMENTATION_BASE
+    assert len(post_image_source.splitlines()) == POST_IMAGE_BASELINE_LINES
+    assert _method_count(post_image_class) == POST_IMAGE_BASELINE_METHODS
+    assert len(screen_source.splitlines()) <= POST_IMAGE_BASELINE_LINES, (
+        POST_IMAGE_IMPLEMENTATION_BASE
+    )
+    assert _method_count(screen_class) <= POST_IMAGE_BASELINE_METHODS, (
+        POST_IMAGE_IMPLEMENTATION_BASE
+    )
     assert set(WAVE6_GROUPS) == {
         "image",
         "video",
@@ -806,6 +899,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         "retrieval",
         "skill",
         "character",
+        "fleet",
+        "first_chat",
+        "auto_speak",
     }
     assert set(DELEGATE_BINDINGS) == set().union(
         *(group.delegates for group in WAVE6_GROUPS.values())
@@ -836,8 +932,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         assert group.stays <= screen_methods.keys()
         assert not (group.deleted & target_owners.keys())
 
-        assert group.raw_names <= base_methods.keys()
-        assert sum(_span(base_methods[item]) for item in group.raw_names) == (
+        source_methods = reviewed_methods[group.source_revision]
+        assert group.raw_names <= source_methods.keys()
+        assert sum(_span(source_methods[item]) for item in group.raw_names) == (
             group.raw_lines
         )
 
@@ -870,20 +967,23 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
 
 @pytest.mark.unit
 def test_wave6_projection_clears_both_ratchet_overages() -> None:
-    """Require the reviewed projection to clear both ratchet overages.
+    """Require the remaining post-image projection to clear both overages.
 
     The conservative line and method estimates must retain implementation
     margin after all documented residue is included.
     """
-    raw_lines = sum(group.raw_lines for group in WAVE6_GROUPS.values())
-    residue_lines = sum(group.residue_lines for group in WAVE6_GROUPS.values())
-    removed_methods = sum(group.removed_methods for group in WAVE6_GROUPS.values())
+    remaining = {
+        name: group for name, group in WAVE6_GROUPS.items() if name != "image"
+    }
+    raw_lines = sum(group.raw_lines for group in remaining.values())
+    residue_lines = sum(group.residue_lines for group in remaining.values())
+    removed_methods = sum(group.removed_methods for group in remaining.values())
 
-    assert raw_lines == 5_151
-    assert residue_lines + DESCRIPTOR_LINE_BUDGET == 183
-    assert raw_lines - residue_lines - DESCRIPTOR_LINE_BUDGET == 4_968
-    assert removed_methods == 129
-    assert 4_968 > LINE_OVERAGE
+    assert raw_lines == 4_640
+    assert residue_lines + DESCRIPTOR_LINE_BUDGET == 119
+    assert raw_lines - residue_lines - DESCRIPTOR_LINE_BUDGET == 4_521
+    assert removed_methods == 131
+    assert 4_521 > LINE_OVERAGE
     assert removed_methods > METHOD_OVERAGE
 
 

@@ -28,6 +28,7 @@ from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
 from tldw_chatbook.Chat.console_generate_video import PendingVideoArtifact
+from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import (
@@ -348,7 +349,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         assert isinstance(screen, TrackingChatScreen)
         screen.app_instance = host
         worker = screen.run_worker(
-            screen._resolve_generated_video_outcome(
+            screen._video._resolve_generated_video_outcome(
                 artifact,
                 session_id="session",
                 message_id=artifact.message_id,
@@ -376,7 +377,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         await pilot.pause()
 
         assert isinstance(host.screen, CancelConfirmationDialog)
-        assert screen._owns_pending_console_video(artifact)
+        assert screen._video._owns_pending_console_video(artifact)
         assert not artifact.stream.closed
 
         await capacity_modal.request_safe_cancel(source="escape")
@@ -397,7 +398,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         assert host.screen is capacity_modal
         assert capacity_modal.focused is not None
         assert capacity_modal.focused.id == expected_focus
-        assert screen._owns_pending_console_video(artifact)
+        assert screen._video._owns_pending_console_video(artifact)
         assert not artifact.stream.closed
 
         await capacity_modal.request_safe_cancel(source="escape")
@@ -408,7 +409,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
         await pilot.pause()
 
         assert host.screen is capacity_modal
-        assert screen._owns_pending_console_video(artifact)
+        assert screen._video._owns_pending_console_video(artifact)
         assert not artifact.stream.closed
 
         await capacity_modal.request_safe_cancel(source="backdrop")
@@ -420,7 +421,7 @@ async def test_generic_capacity_dismissal_guards_real_staged_artifact(
 
         assert host.screen is screen
         assert screen.capacity_results == ["discard"]
-        assert screen._pending_console_video_artifacts() == {}
+        assert screen._video._pending_console_video_artifacts() == {}
         assert artifact.stream.closed
         assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
@@ -462,44 +463,44 @@ class _OutcomeHarness:
         self.opened.append(path)
 
     async def _resolve_generated_video_outcome(self, *args, **kwargs):
-        return await ChatScreen._resolve_generated_video_outcome(self, *args, **kwargs)
+        return await ConsoleVideoController._resolve_generated_video_outcome(self, *args, **kwargs)
 
     def _pending_console_video_artifacts(self):
-        return ChatScreen._pending_console_video_artifacts(self)
+        return ConsoleVideoController._pending_console_video_artifacts(self)
 
     def _owns_pending_console_video(self, artifact):
-        return ChatScreen._owns_pending_console_video(self, artifact)
+        return ConsoleVideoController._owns_pending_console_video(self, artifact)
 
     def _drain_pending_console_videos(self):
-        return ChatScreen._drain_pending_console_videos(self)
+        return ConsoleVideoController._drain_pending_console_videos(self)
 
     def _retry_pending_console_video(self, artifact, **kwargs):
-        return ChatScreen._retry_pending_console_video(self, artifact, **kwargs)
+        return ConsoleVideoController._retry_pending_console_video(self, artifact, **kwargs)
 
     async def _save_pending_console_video_external(self, artifact):
-        return await ChatScreen._save_pending_console_video_external(self, artifact)
+        return await ConsoleVideoController._save_pending_console_video_external(self, artifact)
 
     def _begin_pending_console_video_operation(self, artifact):
-        return ChatScreen._begin_pending_console_video_operation(self, artifact)
+        return ConsoleVideoController._begin_pending_console_video_operation(self, artifact)
 
     def _end_pending_console_video_operation(self, artifact):
-        return ChatScreen._end_pending_console_video_operation(self, artifact)
+        return ConsoleVideoController._end_pending_console_video_operation(self, artifact)
 
     async def _run_pending_console_video_operation(
         self, artifact, function, *args, **kwargs
     ):
-        return await ChatScreen._run_pending_console_video_operation(
+        return await ConsoleVideoController._run_pending_console_video_operation(
             self, artifact, function, *args, **kwargs
         )
 
     def _close_pending_console_video(self, artifact):
-        return ChatScreen._close_pending_console_video(artifact)
+        return ConsoleVideoController._close_pending_console_video(artifact)
 
     _external_video_target_identity = staticmethod(
-        ChatScreen._external_video_target_identity
+        ConsoleVideoController._external_video_target_identity
     )
     _copy_pending_video_external = staticmethod(
-        ChatScreen._copy_pending_video_external
+        ConsoleVideoController._copy_pending_video_external
     )
 
 
@@ -571,7 +572,7 @@ async def test_pending_discard_registers_then_closes_without_card() -> None:
 async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
 
     artifact = _artifact()
@@ -580,9 +581,7 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
         active_workspace_id="workspace"
     )
     harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(id="session")
-    harness._session = SimpleNamespace(
-        _default_console_session_settings=lambda: object()
-    )
+    harness._default_console_session_settings = lambda: object()
     harness._append_native_console_system_message = (
         lambda *_args, **_kwargs: _completed_async()
     )
@@ -603,7 +602,7 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
         return artifact
 
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui", confirm_cost_estimate=False
@@ -612,7 +611,7 @@ async def test_initial_dispatch_resolves_pending_discard_and_clears_bookkeeping(
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
-    await ChatScreen._console_command_generate_video(
+    await ConsoleVideoController._console_command_generate_video(
         harness, SimpleNamespace(args="a generated video")
     )
 
@@ -658,9 +657,9 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     ]
     spec_owner = SimpleNamespace(
         _ensure_console_video_store=lambda: store,
-        _video_storage_message_id=ChatScreen._video_storage_message_id,
+        _video_storage_message_id=ConsoleVideoController._video_storage_message_id,
     )
-    before_specs = ChatScreen._build_video_card_specs(spec_owner, old_messages)
+    before_specs = ConsoleVideoController._build_video_card_specs(spec_owner, old_messages)
     assert {spec.status for spec in before_specs.values()} == {"ready"}
     payload = b"n" * (1024 * 1024 + 17)
     artifact = _artifact(payload, extension="webm")
@@ -677,7 +676,7 @@ async def test_over_capacity_keep_adopts_real_store_as_sole_file_and_then_append
     assert stored[0].path.suffix == ".webm"
     assert not old.exists()
     assert not second_old.exists()
-    after_specs = ChatScreen._build_video_card_specs(spec_owner, old_messages)
+    after_specs = ConsoleVideoController._build_video_card_specs(spec_owner, old_messages)
     assert {spec.status for spec in after_specs.values()} == {"expired"}
     assert len(harness.appended) == 1
     assert harness.sync_count == 1
@@ -871,7 +870,7 @@ def test_external_new_target_commit_never_clobbers_concurrent_creator(
         set(os.supports_follow_symlinks) | {racing_link},
     )
 
-    result = ChatScreen._copy_pending_video_external(artifact, target, None)
+    result = ConsoleVideoController._copy_pending_video_external(artifact, target, None)
 
     assert result == "confirm"
     assert target.read_bytes() == b"concurrent payload"
@@ -885,9 +884,9 @@ def test_external_confirmed_replacement_writes_exact_bytes(tmp_path: Path) -> No
     artifact = _artifact(b"exact replacement")
     target = tmp_path / "chosen.mp4"
     target.write_bytes(b"old")
-    identity = ChatScreen._external_video_target_identity(target)
+    identity = ConsoleVideoController._external_video_target_identity(target)
 
-    result = ChatScreen._copy_pending_video_external(artifact, target, identity)
+    result = ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
 
     assert result == "saved"
     assert target.read_bytes() == b"exact replacement"
@@ -901,10 +900,10 @@ def test_external_changed_confirmed_identity_requires_fresh_confirmation(
     artifact = _artifact(b"new")
     target = tmp_path / "chosen.mp4"
     target.write_bytes(b"first")
-    identity = ChatScreen._external_video_target_identity(target)
+    identity = ConsoleVideoController._external_video_target_identity(target)
     target.write_bytes(b"changed after confirmation")
 
-    result = ChatScreen._copy_pending_video_external(artifact, target, identity)
+    result = ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
 
     assert result == "confirm"
     assert target.read_bytes() == b"changed after confirmation"
@@ -917,7 +916,7 @@ def test_external_commit_error_keeps_existing_destination_and_cleans_sibling(
     artifact = _artifact(b"new")
     target = tmp_path / "chosen.mp4"
     target.write_bytes(b"old")
-    identity = ChatScreen._external_video_target_identity(target)
+    identity = ConsoleVideoController._external_video_target_identity(target)
 
     def fail_replace(
         _source, _target, *, src_dir_fd=None, dst_dir_fd=None
@@ -927,7 +926,7 @@ def test_external_commit_error_keeps_existing_destination_and_cleans_sibling(
     monkeypatch.setattr(os, "replace", fail_replace)
 
     with pytest.raises(OSError):
-        ChatScreen._copy_pending_video_external(artifact, target, identity)
+        ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
 
     assert target.read_bytes() == b"old"
     artifact.rewind()
@@ -942,7 +941,7 @@ def test_external_copy_error_keeps_existing_destination_and_cleans_sibling(
     artifact = _artifact(b"new")
     target = tmp_path / "chosen.mp4"
     target.write_bytes(b"old")
-    identity = ChatScreen._external_video_target_identity(target)
+    identity = ConsoleVideoController._external_video_target_identity(target)
 
     def fail_copy(*_args, **_kwargs):
         raise OSError("copy failed")
@@ -950,7 +949,7 @@ def test_external_copy_error_keeps_existing_destination_and_cleans_sibling(
     monkeypatch.setattr(shutil, "copyfileobj", fail_copy)
 
     with pytest.raises(OSError):
-        ChatScreen._copy_pending_video_external(artifact, target, identity)
+        ConsoleVideoController._copy_pending_video_external(artifact, target, identity)
 
     assert target.read_bytes() == b"old"
     artifact.rewind()
@@ -969,7 +968,7 @@ def test_external_parent_swap_fails_closed_and_cleans_pinned_sibling(
     attacker_parent.mkdir()
     target = intended_parent / "chosen.mp4"
     artifact = _artifact(b"safe bytes")
-    original_check = ChatScreen._external_video_precommit_check
+    original_check = ConsoleVideoController._external_video_precommit_check
     swapped = False
 
     def swap_parent_then_check(*args, **kwargs):
@@ -984,13 +983,13 @@ def test_external_parent_swap_fails_closed_and_cleans_pinned_sibling(
         return original_check(*args, **kwargs)
 
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_external_video_precommit_check",
         staticmethod(swap_parent_then_check),
     )
 
     with pytest.raises(OSError):
-        ChatScreen._copy_pending_video_external(artifact, target, None)
+        ConsoleVideoController._copy_pending_video_external(artifact, target, None)
 
     assert swapped
     assert not (attacker_parent / "chosen.mp4").exists()
@@ -1064,7 +1063,7 @@ def test_external_fdopen_failure_closes_stage_fd_and_cleans_sibling(
 
     try:
         with pytest.raises(OSError):
-            ChatScreen._copy_pending_video_external(artifact, target, None)
+            ConsoleVideoController._copy_pending_video_external(artifact, target, None)
         assert staged_fds
         for fd in staged_fds:
             with pytest.raises(OSError):
@@ -1092,7 +1091,7 @@ def test_external_first_stage_fstat_failure_closes_raw_fd_and_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ChatScreen._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
     real_open = os.open
     real_close = os.close
     real_fstat = os.fstat
@@ -1129,7 +1128,7 @@ def test_external_first_stage_fstat_failure_closes_raw_fd_and_owned_sibling(
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
         with pytest.raises(OSError, match="PRIVATE-FIRST-STAGE-FSTAT"):
-            ChatScreen._copy_pending_video_external(
+            ConsoleVideoController._copy_pending_video_external(
                 artifact, target, confirmed_identity
             )
     finally:
@@ -1163,7 +1162,7 @@ def test_external_partial_copy_failure_removes_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ChatScreen._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
     logged: list[str] = []
 
     def fail_after_partial_copy(_source, destination, *_args, **_kwargs):
@@ -1175,7 +1174,7 @@ def test_external_partial_copy_failure_removes_owned_sibling(
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
         with pytest.raises(OSError, match="PRIVATE-PARTIAL-COPY"):
-            ChatScreen._copy_pending_video_external(
+            ConsoleVideoController._copy_pending_video_external(
                 artifact, target, confirmed_identity
             )
     finally:
@@ -1204,7 +1203,7 @@ def test_external_post_write_fstat_failure_removes_owned_sibling(
     confirmed_identity = None
     if existing_destination:
         target.write_bytes(original_destination)
-        confirmed_identity = ChatScreen._external_video_target_identity(target)
+        confirmed_identity = ConsoleVideoController._external_video_target_identity(target)
     real_open = os.open
     real_fstat = os.fstat
     staged_fds: list[int] = []
@@ -1233,7 +1232,7 @@ def test_external_post_write_fstat_failure_removes_owned_sibling(
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
         with pytest.raises(OSError, match="PRIVATE-POST-WRITE-FSTAT"):
-            ChatScreen._copy_pending_video_external(
+            ConsoleVideoController._copy_pending_video_external(
                 artifact, target, confirmed_identity
             )
     finally:
@@ -1279,7 +1278,7 @@ def test_external_parent_fd_close_failure_does_not_mask_saved_outcome(
     monkeypatch.setattr(os, "close", close_then_fail)
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        result = ChatScreen._copy_pending_video_external(artifact, target, None)
+        result = ConsoleVideoController._copy_pending_video_external(artifact, target, None)
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -1303,14 +1302,14 @@ async def test_unmount_immediately_before_external_commit_creates_no_path_or_car
     harness = _OutcomeHarness(
         actions=["save_external", target], video_store=object()
     )
-    original_check = ChatScreen._external_video_precommit_check
+    original_check = ConsoleVideoController._external_video_precommit_check
 
     def drain_then_check(*args, **kwargs):
         harness._drain_pending_console_videos()
         return original_check(*args, **kwargs)
 
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_external_video_precommit_check",
         staticmethod(drain_then_check),
     )
@@ -1402,12 +1401,12 @@ def test_external_copy_rejects_mismatched_suffix_before_any_filesystem_action(
     actions: list[str] = []
 
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_require_external_video_pinned_capabilities",
         staticmethod(lambda: actions.append("capability")),
     )
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_external_video_parent_identity",
         staticmethod(lambda _parent: actions.append("target-inspection")),
     )
@@ -1427,7 +1426,7 @@ def test_external_copy_rejects_mismatched_suffix_before_any_filesystem_action(
     monkeypatch.setattr(os, "open", tracking_open)
     try:
         with pytest.raises(ValueError, match="extension"):
-            ChatScreen._copy_pending_video_external(artifact, target, None)
+            ConsoleVideoController._copy_pending_video_external(artifact, target, None)
     finally:
         artifact.close()
 
@@ -1444,12 +1443,12 @@ def test_external_copy_rejects_dangerous_path_before_any_filesystem_action(
     actions: list[str] = []
 
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_require_external_video_pinned_capabilities",
         staticmethod(lambda: actions.append("capability")),
     )
     monkeypatch.setattr(
-        ChatScreen,
+        ConsoleVideoController,
         "_external_video_parent_identity",
         staticmethod(lambda _parent: actions.append("target-inspection")),
     )
@@ -1462,7 +1461,7 @@ def test_external_copy_rejects_dangerous_path_before_any_filesystem_action(
     monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
     try:
         with pytest.raises(ValueError, match="dangerous pattern"):
-            ChatScreen._copy_pending_video_external(artifact, target, None)
+            ConsoleVideoController._copy_pending_video_external(artifact, target, None)
     finally:
         artifact.close()
 
@@ -1646,7 +1645,7 @@ async def test_managed_save_copy_failure_logs_and_notifies_without_private_detai
     monkeypatch.setattr(asyncio, "to_thread", fail_copy_thread)
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        await ChatScreen._save_console_video_copy(Harness(), "managed-message")
+        await ConsoleVideoController._save_console_video_copy(Harness(), "managed-message")
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -1933,7 +1932,7 @@ async def test_mounted_chat_screen_exit_drains_modal_and_picker_waiters(
         chat_store.append_video_message = recording_append
         screen._sync_native_console_chat_ui = _completed_async
         screen.run_worker(
-            screen._resolve_generated_video_outcome(
+            screen._video._resolve_generated_video_outcome(
                 artifact,
                 session_id="session",
                 message_id=artifact.message_id,
@@ -1989,12 +1988,12 @@ def test_unmount_drain_atomically_closes_every_pending_stream_once() -> None:
     )
     fake._pending_console_video_artifacts = lambda: fake._pending_video_artifacts
 
-    ChatScreen._drain_pending_console_videos(fake)
-    ChatScreen._drain_pending_console_videos(fake)
+    ConsoleVideoController._drain_pending_console_videos(fake)
+    ConsoleVideoController._drain_pending_console_videos(fake)
 
     assert fake._pending_video_artifacts == {}
-    assert not ChatScreen._owns_pending_console_video(fake, first)
-    assert not ChatScreen._owns_pending_console_video(fake, second)
+    assert not ConsoleVideoController._owns_pending_console_video(fake, first)
+    assert not ConsoleVideoController._owns_pending_console_video(fake, second)
     assert cast(_TrackingStream, first.stream).close_calls == 1
     assert cast(_TrackingStream, second.stream).close_calls == 1
 
@@ -2023,7 +2022,7 @@ def test_pending_drain_sets_outstanding_generation_cancellation_signals() -> Non
         _console_videogen_cancels={"session": cancel},
     )
 
-    ChatScreen._drain_pending_console_videos(fake)
+    ConsoleVideoController._drain_pending_console_videos(fake)
 
     assert cancel.is_set()
 
@@ -2283,7 +2282,7 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
 
     generated_meta = VideoGenerationMetadata(
@@ -2314,9 +2313,7 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
         harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
             id="session"
         )
-        harness._session = SimpleNamespace(
-            _default_console_session_settings=lambda: object()
-        )
+        harness._default_console_session_settings = lambda: object()
         harness._console_composer_or_none = lambda: None
         harness._clear_console_composer_draft = lambda: None
     else:
@@ -2342,7 +2339,7 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
         return generated_meta, managed_path
 
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui", confirm_cost_estimate=False
@@ -2350,18 +2347,18 @@ async def test_generation_cancellation_after_commit_persists_before_child_finish
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
-        chat_screen_module, "run_video_generation", commit_then_block_generation
+        video_controller_module, "run_video_generation", commit_then_block_generation
     )
 
     if caller == "initial":
         operation = asyncio.create_task(
-            ChatScreen._console_command_generate_video(
+            ConsoleVideoController._console_command_generate_video(
                 harness, SimpleNamespace(args="generate me")
             )
         )
     else:
         operation = asyncio.create_task(
-            ChatScreen._regenerate_console_video_message(harness, "old-message")
+            ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
         )
     while not commit_finished.is_set():
         await asyncio.sleep(0)
@@ -2395,7 +2392,7 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
 
     generated_meta = VideoGenerationMetadata(
@@ -2432,9 +2429,7 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
         harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
             id="session"
         )
-        harness._session = SimpleNamespace(
-            _default_console_session_settings=lambda: object()
-        )
+        harness._default_console_session_settings = lambda: object()
         harness._console_composer_or_none = lambda: None
         harness._clear_console_composer_draft = lambda: None
     else:
@@ -2456,7 +2451,7 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
         return generated_meta, managed_path
 
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui", confirm_cost_estimate=False
@@ -2464,18 +2459,18 @@ async def test_generation_cancellation_during_sync_does_not_wait_for_stale_ui(
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
-        chat_screen_module, "run_video_generation", commit_generation
+        video_controller_module, "run_video_generation", commit_generation
     )
 
     if caller == "initial":
         operation = asyncio.create_task(
-            ChatScreen._console_command_generate_video(
+            ConsoleVideoController._console_command_generate_video(
                 harness, SimpleNamespace(args="generate me")
             )
         )
     else:
         operation = asyncio.create_task(
-            ChatScreen._regenerate_console_video_message(harness, "old-message")
+            ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
         )
     await sync_started.wait()
 
@@ -2521,7 +2516,7 @@ async def test_generation_drain_during_durable_append_skips_outer_sync(
 
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
-    await ChatScreen._run_console_video_generation_operation(
+    await ConsoleVideoController._run_console_video_generation_operation(
         harness,
         session_id="session",
         message_id="durable-before-drain",
@@ -2538,7 +2533,7 @@ async def test_generation_drain_during_durable_append_skips_outer_sync(
 async def test_initial_generation_cancellation_closes_late_pending_without_modal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
 
     worker_started = threading.Event()
@@ -2560,9 +2555,7 @@ async def test_initial_generation_cancellation_closes_late_pending_without_modal
     harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
         id="session"
     )
-    harness._session = SimpleNamespace(
-        _default_console_session_settings=lambda: object()
-    )
+    harness._default_console_session_settings = lambda: object()
     harness._console_composer_or_none = lambda: None
     harness._clear_console_composer_draft = lambda: None
 
@@ -2584,7 +2577,7 @@ async def test_initial_generation_cancellation_closes_late_pending_without_modal
             worker_finished.set()
 
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui", confirm_cost_estimate=False
@@ -2592,11 +2585,11 @@ async def test_initial_generation_cancellation_closes_late_pending_without_modal
     )
     monkeypatch.setattr(adapter_registry, "get_registry", lambda: Registry())
     monkeypatch.setattr(
-        chat_screen_module, "run_video_generation", return_pending_after_cancel
+        video_controller_module, "run_video_generation", return_pending_after_cancel
     )
 
     operation = asyncio.create_task(
-        ChatScreen._console_command_generate_video(
+        ConsoleVideoController._console_command_generate_video(
             harness, SimpleNamespace(args="generate me")
         )
     )
@@ -2756,7 +2749,7 @@ def test_pending_drain_contains_close_failure_and_closes_remaining_artifacts() -
     )
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        ChatScreen._drain_pending_console_videos(fake)
+        ConsoleVideoController._drain_pending_console_videos(fake)
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -2793,7 +2786,7 @@ def test_pending_drain_contains_each_cancel_failure_and_finishes_cleanup() -> No
     )
     sink_id = __import__("loguru").logger.add(logged.append, format="{message}")
     try:
-        ChatScreen._drain_pending_console_videos(fake)
+        ConsoleVideoController._drain_pending_console_videos(fake)
     finally:
         __import__("loguru").logger.remove(sink_id)
 
@@ -2813,7 +2806,7 @@ def test_pending_drain_contains_each_cancel_failure_and_finishes_cleanup() -> No
 def test_real_unmount_path_invokes_pending_artifact_drain() -> None:
     source = inspect.getsource(ChatScreen.on_unmount)
 
-    assert "self._drain_pending_console_videos()" in source
+    assert "self._video._drain_pending_console_videos()" in source
 
 
 @pytest.mark.asyncio
@@ -2848,7 +2841,7 @@ async def test_regenerate_normal_result_persists_then_syncs_through_shared_opera
     )
     harness.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
 
-    await ChatScreen._regenerate_console_video_message(harness, "old-message")
+    await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
 
     assert len(harness.appended) == 1
     assert harness.appended[0][1]["video_metadata"] is generated_meta
@@ -2884,7 +2877,7 @@ async def test_regenerate_pending_discard_closes_stage_and_clears_bookkeeping(
 
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
-    await ChatScreen._regenerate_console_video_message(harness, "old-message")
+    await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
 
     assert harness.appended == []
     assert artifact.stream.closed
@@ -2903,7 +2896,7 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    from tldw_chatbook.UI.Console_Modules import video as video_controller_module
     from tldw_chatbook.Video_Generation import adapter_registry
 
     generated_meta = VideoGenerationMetadata(
@@ -2932,9 +2925,7 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
         harness.chat_store.ensure_session = lambda **_kwargs: SimpleNamespace(
             id="session"
         )
-        harness._session = SimpleNamespace(
-            _default_console_session_settings=lambda: object()
-        )
+        harness._default_console_session_settings = lambda: object()
         harness._console_composer_or_none = lambda: None
         harness._clear_console_composer_draft = lambda: None
     else:
@@ -2970,7 +2961,7 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
         return generated_meta, managed_path
 
     monkeypatch.setattr(
-        chat_screen_module,
+        video_controller_module,
         "get_video_generation_config",
         lambda: SimpleNamespace(
             default_backend="comfyui", confirm_cost_estimate=False
@@ -2980,11 +2971,11 @@ async def test_generation_publication_gate_linearizes_teardown_for_both_callers(
     monkeypatch.setattr("asyncio.to_thread", fake_to_thread)
 
     if caller == "initial":
-        await ChatScreen._console_command_generate_video(
+        await ConsoleVideoController._console_command_generate_video(
             harness, SimpleNamespace(args="generate me")
         )
     else:
-        await ChatScreen._regenerate_console_video_message(harness, "old-message")
+        await ConsoleVideoController._regenerate_console_video_message(harness, "old-message")
 
     assert len(captured_gates) == 1
     assert inflight == set()
