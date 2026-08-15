@@ -28,7 +28,7 @@
 - Modify: `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md`
 - Modify: `backlog/tasks/task-16220 - Console-grid-blows-out-horizontally-at-120-columns-with-the-Inspector-rail-open.md`
 
-- [ ] **Step 1: Amend ADR-043 before production changes**
+- [x] **Step 1: Amend ADR-043 before production changes**
 
 Add TASK-16220 as a related task and record:
 
@@ -42,7 +42,7 @@ focus from a hidden rail to its visible reveal handle.
 
 Replace the obsolete consequence that automatic opens always retain false compact-override flags. Preserve the existing below-100 explicit-toggle and 150-plus behavior.
 
-- [ ] **Step 2: Add this reviewed plan to the Backlog task**
+- [x] **Step 2: Add this reviewed plan to the Backlog task**
 
 Run:
 
@@ -52,7 +52,7 @@ backlog task edit 16220 --plan "1. Refine ADR-043 for Inspector-first compact pr
 
 Expected: `backlog task 16220 --plain` shows status `In Progress`, the four unchanged acceptance criteria, this implementation plan, and ADR-043.
 
-- [ ] **Step 3: Verify documentation diff hygiene**
+- [x] **Step 3: Verify documentation diff hygiene**
 
 Run:
 
@@ -62,7 +62,7 @@ git diff --check -- Docs/superpowers/specs/2026-08-14-console-grid-horizontal-bl
 
 Expected: exit 0 with no output.
 
-- [ ] **Step 4: Commit the reviewed contract and plan**
+- [x] **Step 4: Commit the reviewed contract and plan**
 
 ```bash
 git add Docs/superpowers/specs/2026-08-14-console-grid-horizontal-blowout-design.md Docs/superpowers/plans/2026-08-14-console-grid-horizontal-blowout.md backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md "backlog/tasks/task-16220 - Console-grid-blows-out-horizontally-at-120-columns-with-the-Inspector-rail-open.md"
@@ -75,7 +75,7 @@ git commit -m "docs(console): refine compact rail priority"
 - Modify: `Tests/Chat/test_console_rail_state.py`
 - Modify: `tldw_chatbook/Chat/console_rail_state.py`
 
-- [ ] **Step 1: Write failing pure-state tests**
+- [x] **Step 1: Write failing pure-state tests**
 
 Add a parameterized priority test with the exact boundary cases:
 
@@ -109,7 +109,7 @@ def test_console_rail_priority_resolves_two_open_rails(...):
 
 Pin `console_context_reveal_preferences()` to return `{"left_open": True, "right_open": False}` only when Inspector is effectively open in the 100-149 band, and otherwise `{"left_open": True}`. Extend `test_console_rail_width_band_buckets` across `83/84/99/100/117/118/128/129/149/150` so resize recomputation cannot skip an auto-open or restoration edge.
 
-- [ ] **Step 2: Run the tests to verify RED**
+- [x] **Step 2: Run the tests to verify RED**
 
 Run:
 
@@ -119,7 +119,7 @@ Run:
 
 Expected: FAIL because the two pure helpers do not exist and the current width-band function merges all widths at or above 100.
 
-- [ ] **Step 3: Implement the smallest pure helpers**
+- [x] **Step 3: Implement the smallest pure helpers**
 
 In `console_rail_state.py`, import `replace` from `dataclasses`, reuse the existing 100/150 constants, and add no new state field:
 
@@ -163,7 +163,7 @@ def console_context_reveal_preferences(
 
 Split the width buckets into stable names for `<84`, `84-99`, `100-117`, `118-128`, `129-149`, and `>=150`/unknown. Do not introduce a new enum or configuration layer; the strings are only resize deduplication keys.
 
-- [ ] **Step 4: Run pure-state GREEN and adjacent contracts**
+- [x] **Step 4: Run pure-state GREEN and adjacent contracts**
 
 Run:
 
@@ -173,7 +173,7 @@ Run:
 
 Expected: PASS, including the existing below-100 explicit-toggle and 150-plus contracts.
 
-- [ ] **Step 5: Commit pure behavior**
+- [x] **Step 5: Commit pure behavior**
 
 ```bash
 git add tldw_chatbook/Chat/console_rail_state.py Tests/Chat/test_console_rail_state.py
@@ -187,7 +187,7 @@ git commit -m "fix(console): resolve compact rail priority"
 - Modify: `Tests/UI/test_console_inspector_compact_access.py`
 - Modify: `Tests/UI/test_console_resize_reflow.py`
 
-- [ ] **Step 1: Write failing mounted behavior tests**
+- [x] **Step 1: Write failing mounted behavior tests**
 
 Using `ConsoleHarness` and real `pilot.resize_terminal`, add tests that prove:
 
@@ -200,7 +200,7 @@ Using `ConsoleHarness` and real `pilot.resize_terminal`, add tests that prove:
 
 Keep the existing `test_clicking_the_collapse_button_clears_focus` manual-collapse characterization unchanged.
 
-- [ ] **Step 2: Run mounted tests to verify RED**
+- [x] **Step 2: Run mounted tests to verify RED**
 
 Run:
 
@@ -210,7 +210,7 @@ Run:
 
 Expected: FAIL because auto-open does not receive compact authority, Context reveal requests two open rails, resize misses 118/129 edges, and hidden-rail focus clears to `None`.
 
-- [ ] **Step 3: Thread one resolved width through existing paths**
+- [x] **Step 3: Thread one resolved width through existing paths**
 
 In existing `ChatScreen` methods only:
 
@@ -222,11 +222,11 @@ In existing `ChatScreen` methods only:
 
 Do not add a `ChatScreen` method. Do not move layout policy into CSS.
 
-- [ ] **Step 4: Add responsive focus handoff inside the existing resize handler**
+- [x] **Step 4: Add responsive focus handoff inside the existing resize handler**
 
 Before applying the new state, capture whether current focus is within the left or right rail using the existing `_is_descendant_or_self`. After `_sync_console_rail_visibility_if_changed`, if that focused rail became hidden and its reveal button is displayed, focus `#console-context-rail-open` or `#console-inspector-rail-open` immediately. Do nothing when the rail remains open, the handle is hidden, or the transition is a manual collapse.
 
-- [ ] **Step 5: Run mounted GREEN and manual-collapse regression**
+- [x] **Step 5: Run mounted GREEN and manual-collapse regression**
 
 Run:
 
@@ -236,7 +236,7 @@ Run:
 
 Expected: PASS. In particular, responsive replacements land on their reveal handles and explicit Inspector collapse still lands on `None`.
 
-- [ ] **Step 6: Record the screen ratchet baseline without weakening it**
+- [x] **Step 6: Record the screen ratchet baseline without weakening it**
 
 Run before and after the screen edit:
 
@@ -262,7 +262,7 @@ PY
 
 Expected: method count is unchanged from the pre-task value. Do not raise or edit `Tests/Architecture/test_screen_size_ratchet.py`; document its current development-baseline line/method ceiling failure separately if it remains red.
 
-- [ ] **Step 7: Commit the mounted integration**
+- [x] **Step 7: Commit the mounted integration**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py Tests/UI/test_console_inspector_compact_access.py Tests/UI/test_console_resize_reflow.py
@@ -275,7 +275,7 @@ git commit -m "fix(console): preserve compact rail focus"
 - Modify: `Tests/UI/test_console_shell_regions.py`
 - Modify: `Tests/UI/test_console_rail_width_budget.py`
 
-- [ ] **Step 1: Strengthen the 120-column production-hierarchy oracle**
+- [x] **Step 1: Strengthen the 120-column production-hierarchy oracle**
 
 Update the module narrative and the existing `_REGIONS` table to describe the approved policy rather than the broken baseline. At 120x30, change only these expected states:
 
@@ -298,7 +298,7 @@ for child in grid.children:
 
 Keep the real `ConsolidatedCSSApp`/production hierarchy; do not replace it with a simplified three-widget harness.
 
-- [ ] **Step 2: Run the known geometry regressions**
+- [x] **Step 2: Run the known geometry regressions**
 
 Run:
 
@@ -308,7 +308,7 @@ Run:
 
 Expected before integration: the four known 120-column rows fail with 354/1534/472 geometry. Expected after integration: all `size2` cases pass and the new containment loop is green.
 
-- [ ] **Step 3: Refresh only the stale label-width oracle**
+- [x] **Step 3: Refresh only the stale label-width oracle**
 
 In `test_session_rows_fit_inside_the_rail`, change the comment and exact assertion from 12 to the production `ConsoleWorkspaceStatusPair` contract of 13 cells (12-cell label plus one-cell gutter):
 
@@ -318,7 +318,7 @@ assert label.region.width == 13
 
 Do not modify the unrelated recovery-copy test in the same module.
 
-- [ ] **Step 4: Run the two required width-budget rows**
+- [x] **Step 4: Run the two required width-budget rows**
 
 Run:
 
@@ -328,7 +328,7 @@ Run:
 
 Expected: 2 passed.
 
-- [ ] **Step 5: Mutation-check the load-bearing branch**
+- [x] **Step 5: Mutation-check the load-bearing branch**
 
 Temporarily replace `resolve_console_rail_priority()` with `return rail_state`, run:
 
@@ -338,7 +338,7 @@ Temporarily replace `resolve_console_rail_priority()` with `return rail_state`, 
 
 Expected: the 120-column geometry regression returns. Restore the implementation, rerun the same command, and require GREEN. The mounted 120-column state assertion from Task 3 separately pins compact-override authority; do not add a synthetic mutation for a production state that cannot occur.
 
-- [ ] **Step 6: Commit geometry evidence**
+- [x] **Step 6: Commit geometry evidence**
 
 ```bash
 git add Tests/UI/test_console_shell_regions.py Tests/UI/test_console_rail_width_budget.py
@@ -351,7 +351,7 @@ git commit -m "test(console): pin compact grid containment"
 - Modify: `backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md` if implementation details require clarification
 - Modify: `backlog/tasks/task-16220 - Console-grid-blows-out-horizontally-at-120-columns-with-the-Inspector-rail-open.md`
 
-- [ ] **Step 1: Run the exact related test matrix only**
+- [x] **Step 1: Run the exact related test matrix only**
 
 Run:
 
@@ -367,7 +367,7 @@ Run:
 
 Expected: PASS. Do not run the full repository or broad test directories.
 
-- [ ] **Step 2: Run touched-file static checks**
+- [x] **Step 2: Run touched-file static checks**
 
 Run:
 
@@ -398,15 +398,15 @@ git diff --check
 
 Expected: changed-line checks pass. If a whole legacy file reports baseline debt, compare the exact diagnostic against commit `31d0dab15` and document rather than reformatting unrelated code.
 
-- [ ] **Step 3: Perform one bounded visual verification pass**
+- [x] **Step 3: Perform one bounded visual verification pass**
 
 Run the Console with the production stylesheet at 120x30 and capture the compositor or exported screenshot after Inspector auto-open. Verify Context handle, Transcript, and Inspector are all painted within the viewport; then resize 117→118 and 128→129 and verify the focused reveal handle. One confirmation pass after any fixes; no open-ended polishing loop.
 
-- [ ] **Step 4: Self-review and independent code review**
+- [x] **Step 4: Self-review and independent code review**
 
 Review the cumulative diff for state/persistence separation, stale-width reads, rapid-resize focus races, unrelated file-picker changes, screen-method growth, and hidden layout overflow. Request a correctness/spec review before closeout and address only verified findings.
 
-- [ ] **Step 5: Complete Backlog evidence**
+- [x] **Step 5: Complete Backlog evidence**
 
 Check all four acceptance criteria, add concise Implementation Notes covering the pure finalizer, shared Context reveal decision, focus handoff, production-hierarchy geometry evidence, ADR-043 refinement, exact test/static results, baseline-only deviations, and modified files. Add a lessons entry only if implementation uncovers a genuinely new recurring trap with incident evidence.
 
@@ -419,7 +419,7 @@ backlog task 16220 --plain
 
 Expected: status `Done`, every AC checked, Implementation Plan retained, Implementation Notes present, and ADR-043 linked.
 
-- [ ] **Step 6: Commit closeout**
+- [x] **Step 6: Commit closeout**
 
 ```bash
 git add backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md "backlog/tasks/task-16220 - Console-grid-blows-out-horizontally-at-120-columns-with-the-Inspector-rail-open.md"
