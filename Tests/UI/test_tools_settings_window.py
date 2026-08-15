@@ -1515,6 +1515,51 @@ def test_backup_then_restore_round_trips_at_the_resolved_path(
     assert value == "original"
 
 
+def test_export_characters_worker_survives_image_bearing_cards(monkeypatch, tmp_path):
+    """task-15769: the JSON character backup must succeed when a card has an
+    avatar image BLOB (and for the datetime columns every row carries) --
+    both previously crashed json.dumps -- and must carry the image as plain
+    base64 under image_base64, never the raw bytes."""
+    import base64
+    import json
+
+    import tldw_chatbook.UI.Tools_Settings_Window as tools_settings_module
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    data_dir = tmp_path / "data"
+    db_path = tmp_path / "live" / "chachanotes.db"
+    monkeypatch.setattr(tools_settings_module, "get_user_data_dir", lambda: data_dir)
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    image_bytes = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+    setup_db = CharactersRAGDB(str(db_path), "test_setup")
+    setup_db.add_character_card({"name": "Image Bearer", "image": image_bytes})
+    setup_db.close_connection()
+
+    notify = MagicMock()
+    window = SimpleNamespace(
+        config_data={"database": {}},
+        app=SimpleNamespace(call_from_thread=lambda cb, *a, **kw: cb(*a, **kw)),
+        app_instance=SimpleNamespace(notify=notify),
+    )
+    window._get_database_path = lambda _name, _config: db_path
+
+    ToolsSettingsWindow._export_characters_worker(window)
+
+    assert _notify_calls_with_severity(notify, "success"), (
+        f"characters export did not report success: {notify.call_args_list}"
+    )
+    assert not _notify_calls_with_severity(notify, "error"), notify.call_args_list
+
+    export_files = list((data_dir / "exports").glob("characters_*.json"))
+    assert len(export_files) == 1, export_files
+    cards = json.loads(export_files[0].read_text(encoding="utf-8"))
+    by_name = {card["name"]: card for card in cards}
+    exported = by_name["Image Bearer"]
+    assert "image" not in exported
+    assert base64.b64decode(exported["image_base64"]) == image_bytes
+
+
 @pytest.mark.asyncio
 async def test_restore_refuses_live_evals_database_without_partial_replacement(
     monkeypatch, temp_config_path

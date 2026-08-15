@@ -827,6 +827,15 @@ class MediaWindow(Container):
                 f"Reading highlights unavailable for record {record.get('id')}: {exc}"
             )
             return []
+        except (AttributeError, TypeError) as exc:
+            # task-15768: a naming/signature mismatch between this bridge and
+            # the backend service is a programming error, not runtime noise --
+            # log the traceback so it cannot masquerade as "no highlights".
+            logger.opt(exception=True).error(
+                f"Reading-highlights scope/service contract drift for record "
+                f"{record.get('id')}: {exc}"
+            )
+            return []
         except Exception as exc:
             logger.error(
                 f"Failed to load reading highlights for record {record.get('id')}: {exc}"
@@ -927,10 +936,15 @@ class MediaWindow(Container):
             return
         try:
             updated = await self._maybe_await(
+                # task-15768: `quote` is deliberately not forwarded -- it is
+                # not an updatable field on either backend (server
+                # ReadingHighlightUpdateRequest and local update_highlight
+                # both accept only color/note/state), and forwarding it made
+                # every quote-carrying update TypeError against the real
+                # services.
                 self._scope_service().update_reading_highlight(
                     mode=self._record_backend(record),
                     highlight_id=event.highlight_id,
-                    quote=event.quote,
                     color=event.color,
                     note=event.note,
                     state=event.state,
@@ -1223,11 +1237,21 @@ class MediaWindow(Container):
                 if isinstance(scoped_detail, dict):
                     detail = scoped_detail
             except Exception as exc:
-                logger.warning(
-                    "Media detail load failed (backend={}, category={}).",
-                    request.mode,
-                    type(exc).__name__,
-                )
+                if isinstance(exc, (AttributeError, TypeError)):
+                    # task-15768: contract drift between this window and the
+                    # scope/backend services must be loudly diagnosable, not
+                    # reduced to a category name.
+                    logger.opt(exception=True).error(
+                        "Media detail load hit a scope/service contract drift "
+                        "(backend={}).",
+                        request.mode,
+                    )
+                else:
+                    logger.warning(
+                        "Media detail load failed (backend={}, category={}).",
+                        request.mode,
+                        type(exc).__name__,
+                    )
                 if self._detail_presentation_is_current(request):
                     self.app_instance.notify(
                         "Media details could not be loaded; showing available summary.",

@@ -168,6 +168,12 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
 
         class _Bridge:
             run_reply = staticmethod(_fake_run_reply)
+            # task-15791: the conversation browser's poll now batch-reads
+            # sub-agent counts through the bridge (perf finding A); the
+            # double predates it -- the stale-double class.
+            subagent_counts = staticmethod(
+                lambda conversation_ids: {}
+            )
 
         bridge = _Bridge()
         screen._ensure_console_agent_bridge = lambda: bridge

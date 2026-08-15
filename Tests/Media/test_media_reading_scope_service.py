@@ -403,56 +403,12 @@ class FakeLocalMediaService:
         self.calls.append(("delete_reading_progress", media_id))
         return True
 
-    def create_reading_highlight(self, item_id, **kwargs):
-        self.calls.append(("create_reading_highlight", item_id, kwargs))
-        return {
-            "id": 5,
-            "item_id": item_id,
-            "quote": kwargs["quote"],
-            "start_offset": kwargs.get("start_offset"),
-            "end_offset": kwargs.get("end_offset"),
-            "color": kwargs.get("color"),
-            "note": kwargs.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": kwargs.get("anchor_strategy", "fuzzy_quote"),
-            "state": "active",
-        }
-
-    def list_reading_highlights(self, item_id):
-        self.calls.append(("list_reading_highlights", item_id))
-        return [
-            {
-                "id": 5,
-                "item_id": item_id,
-                "quote": "Important sentence",
-                "start_offset": 10,
-                "end_offset": 28,
-                "color": "yellow",
-                "note": "Check this",
-                "created_at": "2026-04-22T12:00:00Z",
-                "anchor_strategy": "fuzzy_quote",
-                "state": "active",
-            }
-        ]
-
-    def update_reading_highlight(self, highlight_id, **changes):
-        self.calls.append(("update_reading_highlight", highlight_id, changes))
-        return {
-            "id": highlight_id,
-            "item_id": 12,
-            "quote": "Important sentence",
-            "start_offset": 10,
-            "end_offset": 28,
-            "color": changes.get("color"),
-            "note": changes.get("note"),
-            "created_at": "2026-04-22T12:00:00Z",
-            "anchor_strategy": "fuzzy_quote",
-            "state": changes.get("state", "active"),
-        }
-
-    def delete_reading_highlight(self, highlight_id):
-        self.calls.append(("delete_reading_highlight", highlight_id))
-        return True
+    # task-15768: this fake deliberately implements ONLY the unprefixed
+    # highlight methods (create_highlight/list_highlights/update_highlight/
+    # delete_highlight, further down) -- the real LocalMediaReadingService has
+    # no reading_-prefixed highlight methods, and a fake that grows them hides
+    # exactly the AttributeError that broke every local-mode Media hub
+    # highlight operation.
 
     def create_reading_saved_search(self, **kwargs):
         self.calls.append(("create_reading_saved_search", kwargs))
@@ -3821,11 +3777,14 @@ async def test_scope_service_routes_reading_highlights_and_enforces_actions():
     ]
     assert created["id"] == "server:reading_highlight:5"
     assert created["item_id"] == "41"
-    assert listed[0]["quote"] == "Important sentence"
+    assert listed[0]["quote"] == "important"
     assert updated["color"] == "blue"
     assert deleted == {"success": True}
+    # task-15768: the scope service dispatches the unprefixed leaf contract
+    # (the server service's primary methods; its reading_-prefixed names are
+    # back-compat aliases the local service never had).
     assert (
-        "create_reading_highlight",
+        "create_highlight",
         41,
         {
             "quote": "Important sentence",
@@ -5437,6 +5396,82 @@ async def test_scope_service_routes_local_highlights_with_media_reading_actions(
         ("update_highlight", 5, {"color": None, "note": "recheck", "state": None}),
         ("delete_highlight", 5),
     ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_reading_highlight_crud_reaches_real_local_service():
+    """task-15768: the Media hub bridge must reach the REAL local leaf methods.
+
+    ``MediaWindow_v2`` drives highlights through the scope service's
+    ``*_reading_highlight*`` methods. Those must dispatch the leaf names the
+    real ``LocalMediaReadingService`` actually implements
+    (``create_highlight``/``list_highlights``/``update_highlight``/
+    ``delete_highlight``) -- the fakes in this file previously implemented the
+    ``reading_``-prefixed names the real local service never had, hiding an
+    ``AttributeError`` that every local-mode Media hub highlight operation hit
+    in production.
+    """
+    db = Database(db_path=":memory:", client_id="scope_hub_highlights")
+    try:
+        media_id, _, _ = db.add_media_with_keywords(
+            title="Hub Highlighted",
+            content="Important local content for the media hub.",
+            media_type="article",
+            keywords=[],
+        )
+        local_service = LocalMediaReadingService(db)
+        seeded = local_service.create_highlight(
+            media_id, quote="Important", start_offset=0, end_offset=9
+        )
+        scope_service = MediaReadingScopeService(
+            local_service=local_service,
+            server_service=None,
+        )
+        record = {
+            "id": f"local:media:{media_id}",
+            "backend": "local",
+            "source_id": str(media_id),
+            "backing_media_id": media_id,
+        }
+
+        listed = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in listed] == [str(seeded["id"])]
+        assert listed[0]["quote"] == "Important"
+        assert listed[0]["backend"] == "local"
+
+        created = await scope_service.create_reading_highlight(
+            mode="local",
+            record=record,
+            quote="local content",
+            color="yellow",
+            note="revisit",
+        )
+        assert created["quote"] == "local content"
+        assert created["color"] == "yellow"
+        assert len(local_service.list_highlights(media_id)) == 2
+
+        updated = await scope_service.update_reading_highlight(
+            mode="local",
+            highlight_id=created["source_id"],
+            color="blue",
+            note="done",
+            state="stale",
+        )
+        assert updated["color"] == "blue"
+        assert updated["note"] == "done"
+        assert updated["state"] == "stale"
+
+        await scope_service.delete_reading_highlight(
+            mode="local", highlight_id=created["source_id"]
+        )
+        remaining = await scope_service.list_reading_highlights(
+            mode="local", record=record
+        )
+        assert [h["source_id"] for h in remaining] == [str(seeded["id"])]
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
