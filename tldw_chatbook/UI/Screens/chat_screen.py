@@ -9969,6 +9969,18 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         await self._open_console_retrieval_scope_picker()
 
+    def _current_console_conversation_id(self) -> Optional[str]:
+        """Return the active native Console session's persisted conversation id.
+
+        One-line delegation to the session controller (task-16792): the
+        browser consolidation (520b1ec12) and the ``/research`` delivery
+        (e1f3a4424) both call this name on the screen, but the method only
+        existed on ``ConsoleSessionController`` -- every Ctrl+K switcher
+        open and ``/research <question>`` dispatch raised ``AttributeError``
+        until this seam existed.
+        """
+        return self._session._current_console_conversation_id()
+
     def _current_console_rail_conversation_id(self) -> Optional[str]:
         """Return the conversation scope used only for Console rail persistence."""
         native_session = self._session._active_native_console_session()
