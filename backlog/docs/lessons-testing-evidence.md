@@ -4408,3 +4408,28 @@ and the classification burden recorded — a Done task documenting the mechanism
 does not stop the next file from shipping the same crash. Evidence here: the
 mechanism was fully documented on the board for three weeks while the
 user-reachable crash sat live in another file.
+## A dodged flake can be the only visible symptom of a deterministic bug (task-15773, 2026-08-15)
+
+Task-15478 hit a once-in-a-full-file-run flake in `ChapterEditorWidget`/`Select`'s
+mount sequence when the chapter table populated ~999 rows in one reactive update,
+and (honestly, documented as a dodge) reduced the test's chapter density until it
+went 0/4. Task-15773 owned the flake and started, per the reproduce-first brief, by
+stress-running the interleave -- 34 un-gated iterations across three shapes, zero
+trips. What found it was a five-minute CHARACTERIZATION probe of what the code
+deterministically does: `chapters = reactive([], recompose=True)` on a widget whose
+`compose()` is static meant `watch_chapters` populated the current DataTable and the
+scheduled recompose then threw that subtree away -- the settled table had **0 rows
+after every single update**, in the minimal host and in the real STTS host alike
+(`detected=13 table_rows=0` at HEAD). The "rare flake" was just the narrow-window
+crash variant of a 100%-reproducible data-loss defect: the remount re-ran the
+Select's Compose->Mount on every data arrival, and any teardown landing between the
+fresh Select's registration and its Compose dispatch made its child-mount a silent
+no-op (`_pruning`) while `Mount` still fired -- `NoMatches: No nodes match
+'SelectOverlay'`. Once the mechanism was named, a gated `_on_compose` interleave
+reproduced the exact exception on the first run, every run, and the fix (drop the
+recompose; populate the persistent children in place) closed both the flake and the
+always-empty table. Two halves to keep: (1) before stress-running a flake, spend one
+probe characterizing what the code does deterministically under the flake's stimulus
+-- the flake may be the tail of a bug whose body is fully reproducible; (2) a
+repetition budget that finds nothing (34/34 clean here) is not evidence the race is
+gone -- the gated one-run interleave was both stronger and cheaper.

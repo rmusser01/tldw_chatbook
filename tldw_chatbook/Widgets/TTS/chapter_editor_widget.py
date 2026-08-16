@@ -126,7 +126,23 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
     """
 
     # Reactive properties
-    chapters = reactive(list, recompose=True)
+    #
+    # `chapters` deliberately does NOT use `recompose=True` (task-15773).
+    # `compose()` is entirely static -- no child reads `self.chapters` -- so a
+    # recompose never rebuilt anything data-dependent. What it DID do, on
+    # every assignment, was tear down and remount the whole subtree AFTER
+    # `watch_chapters` had already populated the (old, doomed) DataTable:
+    # the freshly added rows were discarded with the old tree and the new
+    # table mounted empty. Worse, the remount re-ran `Select`'s
+    # Compose->Mount sequence on every data arrival; a teardown (app
+    # shutdown, view transition) landing between the fresh Select's
+    # registration and its Compose dispatch marks it `_pruning`, which makes
+    # its child mount a silent no-op while the Mount event still fires --
+    # `Select._on_mount` then dies with `NoMatches: No nodes match
+    # 'SelectOverlay'` (reproduced deterministically; the task-15478 flake).
+    # Populating the persistent, already-mounted widgets in place closes
+    # both: data never lands on a doomed tree, and no mount window reopens.
+    chapters = reactive(list)
     selected_chapter_index = reactive(-1)
     preview_content = reactive("")
 
@@ -221,8 +237,16 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
                     yield Label("", id="duration-estimate", classes="duration-estimate")
 
     def on_mount(self) -> None:
-        """Initialize the chapter table when mounted"""
+        """Replay any data that arrived before the widget was ready.
+
+        `watch_chapters`/`watch_selected_chapter_index` are gated on
+        `is_mounted`, so chapters set before mount (e.g. a detection result
+        marshalled in while this widget was still composing) are queued in
+        the reactives and applied here, once the children actually exist.
+        """
         self._refresh_chapter_table()
+        if self.selected_chapter_index >= 0:
+            self._update_preview()
 
     def watch_chapters(self) -> None:
         """React to chapter list changes"""
