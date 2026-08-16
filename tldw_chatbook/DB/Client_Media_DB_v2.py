@@ -1798,6 +1798,8 @@ class MediaDatabase:
         include_trash: bool = False,
         include_deleted: bool = False,
         fts_match_query: Optional[str] = None,
+        offset: Optional[int] = None,
+        library_summary: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Searches media items based on a variety of criteria, supporting text search,
@@ -1855,6 +1857,10 @@ class MediaDatabase:
             fts_match_query (Optional[str]): Optional preformatted SQLite FTS
                 expression. When supplied, MATCH owns title/content filtering;
                 any author/type LIKE predicates continue to use ``search_query``.
+            offset (Optional[int]): Exact zero-based row offset. When omitted,
+                the legacy ``page`` coordinate determines the offset.
+            library_summary (bool): Select only the four fields required by the
+                Library browse surface. Generic callers retain the broad row.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing:
@@ -1873,10 +1879,32 @@ class MediaDatabase:
             DatabaseError: If the FTS table is missing, or for other general
                            database query errors.
         """
-        if page < 1:
+        sqlite_integer_max = 2**63 - 1
+        if (
+            not isinstance(page, int)
+            or isinstance(page, bool)
+            or page < 1
+            or page > sqlite_integer_max
+        ):
             raise ValueError("Page number must be 1 or greater")
-        if results_per_page < 1:
+        if (
+            not isinstance(results_per_page, int)
+            or isinstance(results_per_page, bool)
+            or results_per_page < 1
+            or results_per_page > sqlite_integer_max
+        ):
             raise ValueError("Results per page must be 1 or greater")
+        if offset is not None and (
+            not isinstance(offset, int)
+            or isinstance(offset, bool)
+            or offset < 0
+            or offset > sqlite_integer_max
+        ):
+            raise ValueError("Offset must be a non-negative integer")
+
+        resolved_offset = (page - 1) * results_per_page if offset is None else offset
+        if resolved_offset > sqlite_integer_max:
+            raise ValueError("Pagination offset exceeds SQLite's integer range")
 
         if search_query and not search_fields:
             search_fields = ["title", "content"]  # Default fields for search_query
@@ -1888,9 +1916,8 @@ class MediaDatabase:
             f for f in search_fields if f in valid_text_search_fields
         ]
 
-        offset = (page - 1) * results_per_page
         # Define base SELECT, FROM clauses
-        base_select_parts = [
+        broad_select_parts = [
             "m.id",
             "m.uuid",
             "m.url",
@@ -1910,6 +1937,11 @@ class MediaDatabase:
             "m.client_id",
             "m.deleted",
         ]
+        base_select_parts = (
+            ["m.id", "m.title", "m.type", "m.last_modified"]
+            if library_summary
+            else broad_select_parts
+        )
         count_select = "COUNT(DISTINCT m.id)"
         base_from = "FROM Media m"
         joins = []
@@ -2072,18 +2104,6 @@ class MediaDatabase:
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
-                # Lazy (task-15474 sweep): route through loguru's opt(lazy=True)
-                # + preview_params, matching this module's execute_query
-                # precedent (~:823-826), so the query-part list is never
-                # stringified unless a sink admits the level.
-                logger.opt(lazy=True).debug(
-                    "Combined FTS query: '{}'", lambda: combined_fts_query
-                )
-                logger.opt(lazy=True).info(
-                    "Search using FTS with query parts: {}",
-                    lambda: preview_params(fts_query_parts),
-                )
-
                 # Add a single MATCH condition
                 conditions.append("fts.media_fts MATCH ?")
                 params.append(combined_fts_query)
@@ -2142,10 +2162,6 @@ class MediaDatabase:
 
             # Add LIKE conditions to the main conditions list
             if like_conditions:
-                logger.opt(lazy=True).info(
-                    "Search using LIKE with patterns: {}",
-                    lambda: preview_params(like_params),
-                )
                 conditions.append(f"({' OR '.join(like_conditions)})")
                 params.extend(like_params)
 
@@ -2157,32 +2173,40 @@ class MediaDatabase:
         # Order By Clause
         order_by_clause_str = ""
         default_order_by = "ORDER BY m.last_modified DESC, m.id DESC"
+        resolved_sort_by = "last_modified_desc"
 
         if fts_search_active and (sort_by == "relevance" or not sort_by):
             # FTS results are naturally sorted by relevance by SQLite.
             # We can add secondary sort criteria.
             # To explicitly use rank, it must be selected.
-            if "fts.rank AS relevance_score" not in " ".join(base_select_parts):
+            if not library_summary and "fts.rank AS relevance_score" not in " ".join(
+                base_select_parts
+            ):
                 base_select_parts.append("fts.rank AS relevance_score")
-            order_by_clause_str = (
-                "ORDER BY relevance_score DESC, m.last_modified DESC, m.id DESC"
-            )
+            relevance_column = "fts.rank" if library_summary else "relevance_score"
+            order_by_clause_str = f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
+            resolved_sort_by = "relevance"
         else:
             if sort_by == "date_desc":
                 order_by_clause_str = (
                     "ORDER BY m.ingestion_date DESC, m.last_modified DESC, m.id DESC"
                 )
+                resolved_sort_by = "date_desc"
             elif sort_by == "date_asc":
                 order_by_clause_str = (
                     "ORDER BY m.ingestion_date ASC, m.last_modified ASC, m.id ASC"
                 )
+                resolved_sort_by = "date_asc"
             elif sort_by == "title_asc":
                 # Using LOWER(m.title) for case-insensitive sort if COLLATE NOCASE is not behaving as expected with an index
-                order_by_clause_str = "ORDER BY m.title ASC COLLATE NOCASE, m.id ASC"
+                order_by_clause_str = "ORDER BY m.title COLLATE NOCASE ASC, m.id ASC"
+                resolved_sort_by = "title_asc"
             elif sort_by == "title_desc":
-                order_by_clause_str = "ORDER BY m.title DESC COLLATE NOCASE, m.id DESC"
+                order_by_clause_str = "ORDER BY m.title COLLATE NOCASE DESC, m.id DESC"
+                resolved_sort_by = "title_desc"
             elif sort_by == "last_modified_asc":
                 order_by_clause_str = "ORDER BY m.last_modified ASC, m.id ASC"
+                resolved_sort_by = "last_modified_asc"
             elif sort_by == "last_modified_desc":  # Also default
                 order_by_clause_str = default_order_by
             else:  # Unrecognized sort_by or default
@@ -2195,154 +2219,45 @@ class MediaDatabase:
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins
         where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
+        count_sql = f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
+        results_sql = (
+            f"{final_select_stmt} {base_from} {join_clause} {where_clause} "
+            f"{order_by_clause_str} LIMIT ? OFFSET ?"
+        )
+        connection = self.get_connection()
+        owns_transaction = not connection.in_transaction
         try:
-            # Count Query
-            count_sql = (
-                f"SELECT {count_select} {base_from} {join_clause} {where_clause}"
-            )
-            # Lazy (task-15474): count/results params are not BLOB-carrying
-            # today, but route through the same opt(lazy=True) +
-            # preview_params guard as this module's execute_query (~:823-826)
-            # so a future caller can't silently reintroduce an eager repr.
-            logger.opt(lazy=True).debug(
-                "Search Count SQL ({}): {}", lambda: self.db_path_str, lambda: count_sql
-            )
-            logger.opt(lazy=True).debug(
-                "Search Count Params: {}", lambda: preview_params(params)
-            )
-
-            try:
-                count_cursor = self.execute_query(count_sql, tuple(params))
-                total_matches_row = count_cursor.fetchone()
-                total_matches = total_matches_row[0] if total_matches_row else 0
-                logging.info(
-                    f"Search query '{search_query}' found {total_matches} total matches"
-                )
-            except sqlite3.OperationalError as e:
-                # Handle specific FTS MATCH errors
-                if "unable to use function MATCH in the requested context" in str(e):
-                    logging.warning(
-                        f"FTS MATCH error, falling back to LIKE-only search: {e}"
-                    )
-                    # Remove FTS conditions and keep only LIKE conditions
-                    new_conditions = []
-                    for i, condition in enumerate(conditions):
-                        if "fts.media_fts MATCH" not in condition:
-                            new_conditions.append(condition)
-                            # Add corresponding parameters
-                            # This is a simplification - in a real implementation, you'd need to track which params go with which conditions
-                            # For now, we'll just use LIKE conditions which should be at the end of the params list
-
-                    # If we have LIKE conditions, use them
-                    if new_conditions:
-                        where_clause = (
-                            "WHERE " + " AND ".join(new_conditions)
-                            if new_conditions
-                            else ""
-                        )
-                        count_sql = f"SELECT {count_select} FROM Media m WHERE m.deleted = 0 AND m.is_trash = 0"
-                        if search_query:
-                            # Add a simple LIKE condition on title and content
-                            count_sql += " AND (m.title LIKE ? OR m.content LIKE ?)"
-                            count_params = (f"%{search_query}%", f"%{search_query}%")
-                        else:
-                            count_params = ()
-
-                        count_cursor = self.execute_query(count_sql, count_params)
-                        total_matches_row = count_cursor.fetchone()
-                        total_matches = total_matches_row[0] if total_matches_row else 0
-                        logging.info(
-                            f"Fallback search query '{search_query}' found {total_matches} total matches"
-                        )
-                    else:
-                        # If no conditions left, return empty results
-                        logging.warning(
-                            "No valid search conditions after removing FTS MATCH, returning empty results"
-                        )
-                        return [], 0
-                else:
-                    # Re-raise other SQLite errors
-                    raise
-
+            if owns_transaction:
+                connection.execute("BEGIN")
+            count_row = connection.execute(count_sql, tuple(params)).fetchone()
+            total_matches = count_row[0] if count_row else 0
             results_list = []
-            if total_matches > 0 and offset < total_matches:
-                # Results Query
-                results_sql = f"{final_select_stmt} {base_from} {join_clause} {where_clause} {order_by_clause_str} LIMIT ? OFFSET ?"
-                paginated_params = tuple(params + [results_per_page, offset])
-                logger.opt(lazy=True).debug(
-                    "Search Results SQL ({}): {}",
-                    lambda: self.db_path_str,
-                    lambda: results_sql,
-                )
-                logger.opt(lazy=True).debug(
-                    "Search Results Params: {}",
-                    lambda: preview_params(paginated_params),
-                )
-
-                try:
-                    results_cursor = self.execute_query(results_sql, paginated_params)
-                    results_list = [dict(row) for row in results_cursor.fetchall()]
-                except sqlite3.OperationalError as e:
-                    # Handle specific FTS MATCH errors in results query
-                    if "unable to use function MATCH in the requested context" in str(
-                        e
-                    ):
-                        logging.warning(
-                            f"FTS MATCH error in results query, falling back to LIKE-only search: {e}"
-                        )
-                        # Simplified fallback query
-                        fallback_sql = f"SELECT DISTINCT {', '.join(base_select_parts)} FROM Media m WHERE m.deleted = 0 AND m.is_trash = 0"
-                        if search_query:
-                            fallback_sql += " AND (m.title LIKE ? OR m.content LIKE ?)"
-                            fallback_params = (
-                                f"%{search_query}%",
-                                f"%{search_query}%",
-                                results_per_page,
-                                offset,
-                            )
-                        else:
-                            fallback_params = (results_per_page, offset)
-
-                        fallback_sql += f" {order_by_clause_str} LIMIT ? OFFSET ?"
-                        results_cursor = self.execute_query(
-                            fallback_sql, fallback_params
-                        )
-                        results_list = [dict(row) for row in results_cursor.fetchall()]
-                    else:
-                        # Re-raise other SQLite errors
-                        raise
-
-                # Log the titles of the found items for debugging
-                titles = [row.get("title", "Untitled") for row in results_list]
-                logging.info(
-                    f"Search results for '{search_query}' (page {page}): {titles}"
-                )
-
-            return results_list, total_matches
-
-        except sqlite3.Error as e:
-            if "no such table: media_fts" in str(e).lower():
-                logging.error(
-                    f"FTS table 'media_fts' missing in database '{self.db_path_str}'. Search will fail."
-                )
-                raise DatabaseError(
-                    f"FTS table 'media_fts' not found in {self.db_path_str}."
-                ) from e
-            logging.error(
-                f"Database error during media search in '{self.db_path_str}': {e}",
-                exc_info=True,
+            if total_matches > 0 and resolved_offset < total_matches:
+                page_params = tuple(params + [results_per_page, resolved_offset])
+                results_list = [
+                    dict(row)
+                    for row in connection.execute(results_sql, page_params).fetchall()
+                ]
+            if owns_transaction:
+                connection.commit()
+        except Exception as error:
+            if owns_transaction:
+                connection.rollback()
+            logger.error(
+                "Media search failed (error_type={}).", type(error).__name__
             )
-            raise DatabaseError(
-                f"Failed to search media in {self.db_path_str}: {e}"
-            ) from e
-        except Exception as e:
-            logging.error(
-                f"Unexpected error during media search in '{self.db_path_str}': {e}",
-                exc_info=True,
-            )
-            raise DatabaseError(
-                f"An unexpected error occurred during media search: {e}"
-            ) from e
+            raise DatabaseError("Media search failed.") from None
+
+        logger.info(
+            "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
+            "fts" if fts_search_active else "browse",
+            results_per_page,
+            resolved_offset,
+            len(results_list),
+            total_matches,
+            resolved_sort_by,
+        )
+        return results_list, total_matches
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
     def add_keyword(self, keyword: str) -> Tuple[Optional[int], Optional[str]]:
@@ -6736,9 +6651,6 @@ class MediaDatabase:
         Raises:
             DatabaseError: If a database query error occurs.
         """
-        logger.debug(
-            f"Fetching distinct media types from DB: {self.db_path_str} (deleted={include_deleted}, trash={include_trash})"
-        )
         conditions = ["type IS NOT NULL AND type != ''"]
         if not include_deleted:
             conditions.append("deleted = 0")
@@ -6751,22 +6663,20 @@ class MediaDatabase:
             f"SELECT DISTINCT type FROM Media WHERE {where_clause} ORDER BY type ASC"
         )
         try:
-            cursor = self.execute_query(query)
+            cursor = self.get_connection().execute(query)
             results = [row["type"] for row in cursor.fetchall() if row["type"]]
-            logger.info(f"Found {len(results)} distinct media types: {results}")
+            logger.info(
+                "Distinct media types loaded (result_count={}, include_deleted={}, include_trash={}).",
+                len(results),
+                include_deleted,
+                include_trash,
+            )
             return results
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"Error fetching distinct media types from DB {self.db_path_str}: {e}"
+        except Exception as error:
+            logger.error(
+                "Distinct media types failed (error_type={}).", type(error).__name__
             )
-            raise DatabaseError(f"Failed to fetch distinct media types: {e}") from e
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error fetching distinct media types from DB {self.db_path_str}: {e}"
-            )
-            raise DatabaseError(
-                f"An unexpected error occurred while fetching distinct media types: {e}"
-            ) from e
+            raise DatabaseError("Failed to fetch distinct media types.") from None
 
     def add_media_chunk(
         self,
