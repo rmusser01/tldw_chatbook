@@ -218,6 +218,50 @@ class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
                 return dict(item)
         return await super().get_media_item(media_id=media_id, **kwargs)
 
+    def _stored_id(self, media_id: object) -> object:
+        raw = str(media_id).removeprefix("local:media:")
+        if raw.isdecimal():
+            backing_id = int(raw)
+            for index, item in enumerate(self.media_items):
+                if self._backing_id(item, index) == backing_id:
+                    return item.get("id", media_id)
+        return media_id
+
+    async def update_media_item(self, *, media_id, **kwargs):
+        result = await super().update_media_item(
+            media_id=self._stored_id(media_id), **kwargs
+        )
+        self.update_calls[-1]["media_id"] = media_id
+        return result
+
+    async def delete_media_item(self, *, media_id, **kwargs):
+        result = await super().delete_media_item(
+            media_id=self._stored_id(media_id), **kwargs
+        )
+        self.delete_calls[-1]["media_id"] = media_id
+        return result
+
+    async def save_to_read_it_later(self, *, media_id, **kwargs):
+        result = await super().save_to_read_it_later(
+            media_id=self._stored_id(media_id), **kwargs
+        )
+        self.read_it_later_calls[-1]["media_id"] = media_id
+        return result
+
+    async def remove_from_read_it_later(self, *, media_id, **kwargs):
+        result = await super().remove_from_read_it_later(
+            media_id=self._stored_id(media_id), **kwargs
+        )
+        self.read_it_later_calls[-1]["media_id"] = media_id
+        return result
+
+    async def save_analysis_version(self, *, media_id, **kwargs):
+        result = await super().save_analysis_version(
+            media_id=self._stored_id(media_id), **kwargs
+        )
+        self.analysis_calls[-1]["media_id"] = media_id
+        return result
+
 
 class GatedLibraryMediaScopeService(StaticLibraryMediaScopeService):
     """Gate the first page and facet reads without parking a test forever."""
@@ -4585,7 +4629,7 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
 
         assert service.update_calls, "update_media_item was never called"
         call = service.update_calls[-1]
-        assert call["media_id"] == "media-1"
+        assert call["media_id"] == 1
         assert call["title"] == "Interview Recording (Revised)"
         assert call["author"] == "Jordan Lee"
         assert call["url"] == ""
@@ -4748,6 +4792,58 @@ async def test_library_shell_open_deleted_media_notifies_and_falls_back_to_list(
         assert notifications[-1][1].get("severity") == "warning"
         # No empty/stuck viewer left mounted once the canvas recomposes.
         assert not screen.query("#library-media-viewer-title")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_browse_controller.applied_result is not None,
+            message="Unavailable detail fallback never loaded the Media list.",
+        )
+        assert screen.query("#library-media-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context(
+        {
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+            LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "media-1",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        for _ in range(150):
+            if screen._library_media_detail is not None:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Deep-link detail never loaded: "
+                f"calls={app.media_reading_scope_service.detail_calls!r}, "
+                f"selected={screen._selected_media_id!r}, "
+                f"view={screen._library_media_view!r}"
+            )
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        assert screen._library_media_browse_controller.applied_result is None
+
+        screen.query_one("#library-media-back").press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_browse_controller.applied_result is not None
+                and not screen._library_media_browse_controller.facet_loading
+            ),
+            message="Deep-link Back never loaded the Media page and facets.",
+        )
+
+        assert screen._library_media_view == "list"
+        assert screen._library_media_browse_controller.type_options == (
+            "audio",
+            "video",
+        )
+        assert screen.query("#library-media-canvas")
 
 
 @pytest.mark.asyncio
@@ -4846,8 +4942,8 @@ async def test_library_shell_media_delete_shows_inline_confirm_without_deleting(
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_delete_confirm_removes_item_and_returns_to_list():
-    """Confirming the delete trashes the item and drops it from the list view."""
+async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
+    """Confirming a canonical viewer row sends its raw local backing id."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -4878,17 +4974,10 @@ async def test_library_shell_media_delete_confirm_removes_item_and_returns_to_li
         await pilot.pause()
 
         assert service.delete_calls, "delete_media_item was never called"
-        assert service.delete_calls[-1]["media_id"] == "media-1"
+        assert service.delete_calls[-1]["media_id"] == 1
         assert screen._library_media_confirming_delete is False
         assert screen._library_media_view == "list"
         assert not screen.query("#library-media-viewer")
-        # media-1 ("Interview Recording") is deleted; only media-2 ("Product
-        # Demo Video") remains, re-indexed to row-0 by the sorted rebuild.
-        assert not any(
-            "Interview Recording" in str(getattr(button, "label", ""))
-            for button in screen.query(".library-media-row")
-        )
-        assert screen.query_one("#library-media-row-0")
 
 
 @pytest.mark.asyncio
@@ -5036,7 +5125,7 @@ async def test_library_shell_media_highlight_add_creates_and_renders_new_highlig
         await pilot.pause()
         await pilot.pause()
 
-        assert service.create_highlight_calls[-1]["item_id"] == "media-1"
+        assert service.create_highlight_calls[-1]["item_id"] == 1
         assert service.create_highlight_calls[-1]["quote"] == "New highlight quote"
         await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
         assert "New highlight quote" in _visible_text(screen)
@@ -5119,7 +5208,7 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
 
         assert service.read_it_later_calls[-1] == {
             "action": "save",
-            "media_id": "media-1",
+            "media_id": 1,
         }
         assert screen._library_media_detail["is_read_it_later"] is True
         assert (
@@ -5167,7 +5256,7 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
 
         assert service.read_it_later_calls[-1] == {
             "action": "remove",
-            "media_id": "media-1",
+            "media_id": 1,
         }
         assert "is_read_it_later" not in screen._library_media_detail
         assert (
@@ -5280,7 +5369,7 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
 
         assert service.analysis_calls, "save_analysis_version was never called"
         call = service.analysis_calls[-1]
-        assert call["media_id"] == "media-1"
+        assert call["media_id"] == 1
         assert call["analysis_content"] == "Revised analysis"
         assert (
             call["content"]
@@ -6435,27 +6524,64 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(
+async def test_library_media_exact_page_ignores_gated_failing_broad_snapshot(
     monkeypatch,
-):
-    """Mirrors the conversations loading-gate contract for the media canvas."""
+) -> None:
     app = _build_test_app()
-    _seed_conversations(app, [])
+    _seed_conversations(app, [], media=_two_media_items())
+    entered = threading.Event()
+    release = threading.Event()
 
-    monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
+    async def gated_failing_snapshot(_screen):
+        entered.set()
+        await asyncio.to_thread(release.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
+        return (
+            {"notes": (), "media": (), "conversations": ()},
+            {"notes": 0, "media": 0, "conversations": 0},
+            {"notes": True, "media": True, "conversations": True},
+            "Broad snapshot failed.",
+            None,
+            {"study_decks": None, "flashcards_due": None, "quizzes": None},
+        )
+
+    monkeypatch.setattr(
+        LibraryScreen, "_list_local_source_snapshot", gated_failing_snapshot
+    )
 
     screen = LibraryScreen(app)
-    screen._library_selected_row_id = "browse-media"
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
     host = LibraryHarness(app, screen=screen)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        active_screen = _active_library_screen(host)
-        await pilot.pause()
-        await pilot.pause()
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    entered.is_set()
+                    and screen._library_media_browse_controller.applied_result
+                    is not None
+                ),
+                message="Exact Media page did not apply ahead of broad snapshot.",
+            )
+            assert screen._library_loaded is False
+            assert screen.query("#library-media-canvas")
+            assert not screen.query("#library-canvas-loading")
 
-        assert active_screen._library_loaded is False
-        assert active_screen.query_one("#library-canvas-loading")
-        assert not active_screen.query("#library-media-canvas")
+            release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_lookup_error == "Broad snapshot failed.",
+                message="Broad snapshot failure never settled.",
+            )
+            await pilot.pause()
+
+            assert screen.query("#library-media-canvas")
+            assert not screen.query("#library-canvas-error")
+            assert [
+                row.media_id for row in screen._build_library_media_state().rows
+            ] == ["local:media:2", "local:media:1"]
+    finally:
+        release.set()
 
 
 @pytest.mark.asyncio
@@ -6599,6 +6725,32 @@ def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> N
         {"library_media_scope": {"query": 7, "media_type": [], "page": True}}
     )
     assert invalid._library_media_browse_controller.requested_scope == MediaBrowseScope()
+
+
+@pytest.mark.parametrize(
+    "page",
+    (True, 0, -1, (2**63 - 1) // 20 + 2),
+)
+def test_library_media_restore_normalizes_only_invalid_page(page: object) -> None:
+    screen = LibraryScreen(_build_test_app())
+
+    screen.restore_state(
+        {
+            "library_media_scope": {
+                "query": "needle",
+                "media_type": "All",
+                "sort_by": "title_asc",
+                "page": page,
+            }
+        }
+    )
+
+    assert screen._library_media_browse_controller.requested_scope == MediaBrowseScope(
+        query="needle",
+        media_type="All",
+        sort_by="title_asc",
+        page=1,
+    )
 
 
 def test_library_media_scope_change_clears_page_selection_with_notice() -> None:

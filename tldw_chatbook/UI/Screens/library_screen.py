@@ -6770,7 +6770,7 @@ class LibraryScreen(BaseAppScreen):
                 if self._pending_library_source_open == pending:
                     self._pending_library_source_open = None
                 return result
-            if not self._pending_library_conversation_open_is_current(pending):
+            if not self._pending_library_source_open_is_current(pending):
                 if self._pending_library_source_open == pending:
                     self._pending_library_source_open = None
                 return result
@@ -6779,12 +6779,18 @@ class LibraryScreen(BaseAppScreen):
             await asyncio.sleep(0)
         return LibraryEntryReconcileResult.SUPERSEDED
 
-    def _pending_library_conversation_open_is_current(
+    def _pending_library_source_open_is_current(
         self, pending: tuple[str, str]
     ) -> bool:
         """Return whether a generation-only retry still owns its deep link."""
 
         source_type, record_id = pending
+        if source_type == "media":
+            return (
+                self._pending_library_source_open == pending
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._selected_media_id == record_id
+            )
         return (
             source_type == "conversations"
             and self._pending_library_source_open == pending
@@ -7601,17 +7607,6 @@ class LibraryScreen(BaseAppScreen):
                 replacement = LibraryConversationsCanvas(
                     conversations_state,
                     id="library-conversations-canvas",
-                )
-        elif shell.canvas_kind == "media" and self._library_media_view == "list":
-            local_list_surface = True
-            expected_selector = "#library-media-canvas"
-            if self._library_lookup_error is None:
-                media_state = self._build_library_media_state()
-                self._selected_media_id = media_state.selected_id
-                sync_kind = "media"
-                replacement = LibraryMediaCanvas(
-                    media_state,
-                    id="library-media-canvas",
                 )
         elif (
             shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
@@ -9414,9 +9409,9 @@ class LibraryScreen(BaseAppScreen):
                 not single_notes_stage or self._library_notes_stage == "notes"
             )
             with canvas_host:
-                # Only the conversations, media, and notes canvases read the
+                # Only the conversations and database-notes canvases read the
                 # local source snapshot directly, so only they can show a
-                # false "no conversations"/"no media"/"no notes" empty state
+                # false "no conversations"/"no notes" empty state
                 # while that snapshot is still loading. "mode" canvases
                 # (Collections, Flashcards, Search/RAG, ...) and the
                 # landing/empty canvas are unaffected and must not be
@@ -9425,10 +9420,7 @@ class LibraryScreen(BaseAppScreen):
                 # ``_library_loaded``/``_library_lookup_error``, so it is
                 # excluded here too, or a Files-mode entry made ahead of the
                 # DB snapshot would flash the DB "Loading…" copy over it.
-                is_local_snapshot_canvas = shell.canvas_kind in (
-                    "conversations",
-                    "media",
-                ) or (
+                is_local_snapshot_canvas = shell.canvas_kind == "conversations" or (
                     shell.canvas_kind == LIBRARY_CANVAS_KIND_NOTES
                     and self._library_notes_source != LIBRARY_NOTES_SOURCE_FILES
                 )
@@ -10302,8 +10294,13 @@ class LibraryScreen(BaseAppScreen):
             media_type = None
         if type(sort_by) is not str:
             sort_by = "last_modified_desc"
-        if type(page) is not int:
+        if type(page) is not int or page < 1:
             page = 1
+        else:
+            try:
+                MediaBrowseScope(page=page)
+            except ValueError:
+                page = 1
         try:
             return MediaBrowseScope(
                 query=query,
@@ -10359,6 +10356,17 @@ class LibraryScreen(BaseAppScreen):
         return self._library_media_browse_controller.request_facets(
             fingerprint=self._library_media_browse_controller.requested_scope.fingerprint
         )
+
+    def _load_library_media_list_if_needed(self) -> None:
+        """Load the exact list after a direct viewer had no applied page."""
+        controller = self._library_media_browse_controller
+        if controller.applied_result is not None:
+            return
+        self._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity="#library-media-row-0",
+        )
+        self._request_library_media_facets()
 
     def _clear_library_media_selection_for_scope_change(self) -> None:
         """End page-local selection before changing the exact Media scope."""
@@ -11631,26 +11639,20 @@ class LibraryScreen(BaseAppScreen):
             media_id: The Library media item id to fetch full detail for.
         """
         entry_route_key = self._library_entry_route_key() if entry_origin else None
-        entry_generation = (
-            self._library_snapshot_state_generation if entry_origin else None
-        )
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
             self._library_media_detail = None
             self._library_media_composed_detail = None
             self._library_media_highlights = []
+            self._library_media_view = "list"
+            self._load_library_media_list_if_needed()
             if self.is_mounted:
                 if entry_origin:
-                    if not self._library_entry_reconcile_is_current(
-                        entry_generation, entry_route_key
-                    ):
+                    if entry_route_key != self._library_entry_route_key():
                         return LibraryEntryReconcileResult.SUPERSEDED
-                    return await self._replace_library_canvas_child(
-                        self._build_library_media_active_child(),
-                        generation=entry_generation,
-                        route_key=entry_route_key,
-                    )
+                    self.refresh(recompose=True)
+                    return LibraryEntryReconcileResult.APPLIED
                 self.refresh(recompose=True)
             return None
         resolved_service_media_id = self._library_media_backing_id(media_id)
@@ -11685,9 +11687,7 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        highlights = await self._fetch_library_media_highlights(
-            str(resolved_service_media_id)
-        )
+        highlights = await self._fetch_library_media_highlights(media_id)
         if (
             media_id != self._selected_media_id
             or self._library_media_view != "viewer"
@@ -11726,30 +11726,13 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Media item is unavailable.", severity="warning")
             self._library_media_view = "list"
+            self._load_library_media_list_if_needed()
         if self.is_mounted:
             if entry_origin:
-                if entry_generation != self._library_snapshot_state_generation:
-                    current_pending = (
-                        self._library_snapshot_state_generation,
-                        self._library_entry_route_key(),
-                    )
-                    if (
-                        entry_route_key == current_pending[1]
-                        and (
-                            self._library_entry_reconcile_pending == current_pending
-                            or self._library_entry_reconcile_dirty
-                            or self._library_snapshot_rendered_generation
-                            == current_pending[0]
-                        )
-                    ):
-                        self._schedule_library_entry_canvas_repair()
+                if entry_route_key != self._library_entry_route_key():
                     return LibraryEntryReconcileResult.SUPERSEDED
-                route_key = self._library_entry_route_key()
-                return await self._replace_library_canvas_child(
-                    self._build_library_media_active_child(),
-                    generation=entry_generation,
-                    route_key=route_key,
-                )
+                self.refresh(recompose=True)
+                return LibraryEntryReconcileResult.APPLIED
             # task-15458: deliberately defer the legacy non-entry refresh.
             # The open-time compose may already be rendering this exact detail;
             # the identity guard below avoids a duplicate large-document parse.
@@ -11789,11 +11772,12 @@ class LibraryScreen(BaseAppScreen):
         list_highlights = getattr(service, "list_highlights", None)
         if not callable(list_highlights):
             return []
+        service_media_id = self._library_media_backing_id(media_id)
         try:
             highlights = await self._run_library_service_call(
                 list_highlights,
                 mode="local",
-                item_id=media_id,
+                item_id=service_media_id,
                 isolate_in_worker=True,
             )
         except Exception:
@@ -28558,6 +28542,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
         self._library_media_content_mode = "raw"
+        self._load_library_media_list_if_needed()
         self.refresh(recompose=True)
         # task-2856 AC1: every "back to list" exit re-focuses the list's
         # first row so Up/Down/Enter work immediately.
@@ -28706,21 +28691,21 @@ class LibraryScreen(BaseAppScreen):
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_media_item = getattr(service, "update_media_item", None)
+        service_media_id = self._library_media_backing_id(media_id)
         if callable(update_media_item):
             try:
                 await self._run_library_service_call(
                     update_media_item,
                     mode="local",
-                    media_id=media_id,
+                    media_id=service_media_id,
                     title=title,
                     author=author,
                     url=url,
                     keywords=keywords,
                     isolate_in_worker=True,
                 )
-                # Keep the media list's local snapshot in step with the write
-                # so navigating back shows the new title/author/url/keywords
-                # immediately, not the pre-edit values until a full refetch.
+                # Keep the broad landing/rail cache in step; the exact Media
+                # page remains controller-owned.
                 self._patch_local_media_record(
                     media_id, title=title, author=author, url=url, keywords=keywords
                 )
@@ -28894,13 +28879,14 @@ class LibraryScreen(BaseAppScreen):
                 self.app_instance, "media_reading_scope_service", None
             )
             delete_media_item = getattr(service, "delete_media_item", None)
+            service_media_id = self._library_media_backing_id(media_id)
             deleted = False
             if callable(delete_media_item):
                 try:
                     await self._run_library_service_call(
                         delete_media_item,
                         mode="local",
-                        media_id=media_id,
+                        media_id=service_media_id,
                         isolate_in_worker=True,
                     )
                     deleted = True
@@ -29029,12 +29015,13 @@ class LibraryScreen(BaseAppScreen):
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         create_highlight = getattr(service, "create_highlight", None)
+        service_media_id = self._library_media_backing_id(media_id)
         if callable(create_highlight):
             try:
                 await self._run_library_service_call(
                     create_highlight,
                     mode="local",
-                    item_id=media_id,
+                    item_id=service_media_id,
                     quote=quote,
                     note=note,
                     color=color,
@@ -29405,12 +29392,13 @@ class LibraryScreen(BaseAppScreen):
             "remove_from_read_it_later" if currently_saved else "save_to_read_it_later"
         )
         method = getattr(service, method_name, None)
+        service_media_id = self._library_media_backing_id(media_id)
         if callable(method):
             try:
                 await self._run_library_service_call(
                     method,
                     mode="local",
-                    media_id=media_id,
+                    media_id=service_media_id,
                     isolate_in_worker=True,
                 )
             except Exception:
@@ -29528,12 +29516,13 @@ class LibraryScreen(BaseAppScreen):
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         save_analysis_version = getattr(service, "save_analysis_version", None)
+        service_media_id = self._library_media_backing_id(media_id)
         if callable(save_analysis_version):
             try:
                 await self._run_library_service_call(
                     save_analysis_version,
                     mode="local",
-                    media_id=media_id,
+                    media_id=service_media_id,
                     content=content,
                     analysis_content=analysis_content,
                     isolate_in_worker=True,
