@@ -2346,7 +2346,15 @@ async def test_console_native_missing_key_blocks_before_clearing_generic_draft()
         composer.load_draft("preserve this")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "missing API key")
+        # task-16474: this used to wait for "missing API key", a string that
+        # only existed inside the COLLAPSED inspector rail's row Statics --
+        # rows the rail-collapse cascade stamps display=False on, so their
+        # scrape-visibility depended on whether an ambient post-mount sync
+        # happened to restore them (the compact-bar mount burst used to
+        # provide that extra cycle). The composer's own blocked copy is the
+        # deterministic, user-facing statement of the same missing-key
+        # block, so that is what the contract pins now.
+        await _wait_for_text(console, pilot, "add an API key to continue")
 
         assert composer.draft_text() == "preserve this"
 

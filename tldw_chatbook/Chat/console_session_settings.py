@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
@@ -987,6 +988,122 @@ def _endpoint_differs_for_provider(
         )
         return selected != configured
     return generic_endpoint_differs(base_url, provider_settings)
+
+
+def _console_endpoint_restart_fallback(
+    provider_key: str,
+    provider_settings: Mapping[str, object],
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None,
+) -> str | None:
+    """Return the endpoint the next boot would derive for this provider.
+
+    Mirrors the selection fallback chain in
+    ``ChatScreen._build_console_provider_selection_uncached``: llama.cpp
+    resolves env override -> ``[console] llama_cpp_base_url_override`` -> the
+    provider's configured endpoint -> the built-in default; other URL-based
+    providers resolve only their configured endpoint.
+
+    Args:
+        provider_key: Normalized provider readiness key.
+        provider_settings: The provider's persisted ``api_settings`` section.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        The restart fallback endpoint, or ``None`` for URL-based providers
+        with nothing configured.
+    """
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        env = environ if environ is not None else os.environ
+        console_config = _mapping_value(app_config, "console")
+        fallback = (
+            env.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
+            or _string_value(console_config.get("llama_cpp_base_url_override"))
+            or first_configured_endpoint(provider_settings)
+            or DEFAULT_LLAMACPP_BASE_URL
+        )
+        return normalize_llamacpp_base_url(fallback)
+    return first_configured_endpoint(provider_settings)
+
+
+def console_session_endpoint_survives_restart(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether the session endpoint is backed for the next boot.
+
+    ``True`` when the provider uses no endpoint, the session carries no
+    endpoint, or the session endpoint equals the restart fallback chain's
+    value (so re-deriving defaults next boot reproduces it). ``False`` means
+    the endpoint lives only in this session and is silently lost on restart
+    -- the task-16473 persistence trap.
+
+    Args:
+        settings: Console session settings carrying the endpoint to check.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        Whether re-deriving defaults on the next boot would reproduce the
+        session's endpoint.
+    """
+    provider_key = provider_config_key(settings.provider)
+    provider_settings = _provider_settings(app_config, provider_key)
+    base_url = _string_value(settings.base_url)
+    if not base_url or not _is_url_based_provider(provider_key, provider_settings):
+        return True
+    fallback = _console_endpoint_restart_fallback(
+        provider_key, provider_settings, app_config, environ
+    )
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        selected = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(base_url)
+        )
+        resolved = normalize_generic_endpoint_for_compare(
+            normalize_llamacpp_base_url(fallback or DEFAULT_LLAMACPP_BASE_URL)
+        )
+        return selected == resolved
+    if not fallback:
+        return False
+    return normalize_generic_endpoint_for_compare(
+        base_url
+    ) == normalize_generic_endpoint_for_compare(fallback)
+
+
+def unsaved_console_endpoint_warning(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Build the session-only endpoint warning copy, or ``None`` when backed.
+
+    task-16473: llama.cpp readiness reports "Ready" for session-scoped
+    endpoints (the direct llama path skips the endpoint-saved check), so
+    nothing else tells the user their endpoint evaporates on restart. This is
+    the warning that apply surfaces.
+
+    Args:
+        settings: Console session settings carrying the endpoint to describe.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        User-facing warning copy, or ``None`` when the endpoint is backed for
+        the next boot.
+    """
+    if console_session_endpoint_survives_restart(
+        settings, app_config=app_config, environ=environ
+    ):
+        return None
+    display = safe_endpoint_display(settings.base_url) or "the current endpoint"
+    return (
+        f"Endpoint {display} is saved for this session only and will not "
+        "survive a restart. Use Save as default (or Settings) to keep it."
+    )
 
 
 def _valid_base_url(provider_key: str, base_url: str) -> bool:
