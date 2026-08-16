@@ -14600,6 +14600,15 @@ class ChatScreen(BaseAppScreen):
         attempt releases the byte references, even when the stash turned out
         malformed or nothing could be adopted (self-healing; the bytes must
         never outlive their one restore opportunity).
+
+        task-15860 (Task 3): the store now SURVIVES the navigation, so the
+        session this re-stages into still holds the very pendings the stash
+        was copied from. Each adopted session is therefore cleared first —
+        without it every navigation would DOUBLE the staged attachments
+        (up to the cap) instead of restoring them. The stash stays
+        authoritative for exactly one thing the store cannot know: an H3
+        image edit that completed while Console was away has already been
+        filtered out of it.
         """
         app = getattr(self, "app_instance", None)
         if app is None:
@@ -14619,6 +14628,7 @@ class ChatScreen(BaseAppScreen):
                 continue
             if not isinstance(pendings, (list, tuple)):
                 continue
+            store.clear_pending_attachments(session_id)
             for pending in pendings:
                 if getattr(
                     pending, "attachment_id", None
@@ -14629,7 +14639,33 @@ class ChatScreen(BaseAppScreen):
         self._image._reconcile_h3_image_edit_completions(store)
 
     def _serialize_native_console_state(self) -> dict[str, Any] | None:
-        """Return the native Console in-session state for screen restoration."""
+        """Return the native Console VIEW state for screen restoration.
+
+        task-15860 (Task 3): message state no longer travels here. The
+        app-owned `ConsoleRuntime`'s store outlives every `ChatScreen`, so
+        `sessions`, `messages_by_session` and `active_session_id` are read
+        straight off the surviving store by the next visit -- carrying
+        copies in a `ScreenStateStore` snapshot made the snapshot a SECOND
+        source of truth that silently won at the next mount. Task 0's P3b
+        executed the cost: a wake turn that ran, spent money and stamped
+        the ledger while Console was unmounted persisted four rows, and
+        the user returning saw the two that predated the snapshot.
+
+        What stays is genuinely SCREEN-instance state, which dies with the
+        screen and has nowhere else to live: the image view-mode overrides,
+        the task-resume projection, the Library RAG source scope, the
+        staged live-work launch and the "evidence sent" memory.
+
+        The composer flush below stays too, and is now load-bearing rather
+        than incidental: it is the one place the VIEW's uncommitted draft
+        is written back into the store that will outlive it.
+
+        The pending-attachment stash also stays. It never travelled in this
+        payload (bytes are forbidden here; it lives on the APP object), so
+        it is not a second source of truth for message state -- and it is
+        what `_adopt_console_pending_attachments` re-stages the H3-filtered
+        set from.
+        """
         store = self._console_chat_store
         if store is None or not store.sessions():
             return None
@@ -14656,19 +14692,7 @@ class ChatScreen(BaseAppScreen):
 
         return {
             "version": NATIVE_CONSOLE_STATE_VERSION,
-            "active_session_id": store.active_session_id,
             "task_resume_state": self._task_resume_state.to_dict(),
-            "sessions": [
-                self._session._console_session_to_state(session)
-                for session in store.sessions()
-            ],
-            "messages_by_session": {
-                session.id: [
-                    self._serialize_console_message(message)
-                    for message in store.messages_for_session(session.id)
-                ]
-                for session in store.sessions()
-            },
             "image_view_modes": image_state.serialize(),
             # RAG-44: an edited Library RAG source selection is Console-local,
             # but it must survive a tab switch like the sessions around it --
@@ -14699,68 +14723,33 @@ class ChatScreen(BaseAppScreen):
         }
 
     def _restore_native_console_state(self, payload: Any) -> None:
-        """Restore native Console in-session state saved by ``save_state``."""
+        """Restore native Console VIEW state saved by ``save_state``.
+
+        task-15860 (Task 3): this method no longer rebuilds the store. The
+        sessions, their transcripts and the active session are already
+        there -- the app-owned `ConsoleRuntime` holds the same
+        `ConsoleChatStore` across every navigation, and `store.restore_state`
+        would REPLACE its contents with a snapshot taken before the last
+        turn (Task 0's P3b: four persisted rows, two shown). Dropping the
+        replacement also stops five losses the snapshot round trip caused
+        by construction, because none of them had a slot in the payload:
+        the message TREE (branch/variant history was flattened to a linear
+        chain), the local active-leaf cursor, the `/rewind` context summary,
+        per-session speech preferences and the one-shot prefill.
+
+        `_ensure_console_chat_store` is still called first, and that is
+        load-bearing rather than incidental: `_complete_screen_navigation`
+        restores the INCOMING screen before `switch_screen` unmounts the
+        outgoing one, so this call is what claims the runtime for the
+        incoming view (`ensure_console_runtime(app, view=self)` ->
+        `attach_view`) in time for the outgoing screen's later `detach_view`
+        to find a different claimant and do nothing.
+        """
         if not isinstance(payload, dict):
-            return
-        raw_sessions = payload.get("sessions")
-        if not isinstance(raw_sessions, list) or not raw_sessions:
             return
 
         store = self._ensure_console_chat_store()
-        raw_messages_by_session = payload.get("messages_by_session")
-        messages_by_session = (
-            raw_messages_by_session if isinstance(raw_messages_by_session, dict) else {}
-        )
-        restored_sessions: list[ConsoleChatSession] = []
-        restored_messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
-        for raw_session in raw_sessions:
-            if not isinstance(raw_session, dict):
-                continue
-            session = self._session._console_session_from_state(raw_session)
-            restored_sessions.append(session)
-            restored_messages_by_session[session.id] = []
-            raw_messages = messages_by_session.get(session.id, [])
-            if not isinstance(raw_messages, list):
-                continue
-            for raw_message in raw_messages:
-                message = self._restore_console_message(raw_message)
-                if message is None:
-                    continue
-                self._rehydrate_console_message_image(message)
-                restored_messages_by_session[session.id].append(message)
-
-        # One batched `get_attachments_for_messages` call covers every
-        # restored message across every session in this pass, instead of a
-        # per-message round trip.
-        self._rehydrate_console_message_attachments(
-            [
-                message
-                for messages in restored_messages_by_session.values()
-                for message in messages
-            ]
-        )
-
-        active_session_id = payload.get("active_session_id")
-        active_session_id = (
-            str(active_session_id) if active_session_id is not None else ""
-        )
         self._message.invalidate_console_speech_context()
-        store.restore_state(
-            sessions=restored_sessions,
-            messages_by_session=restored_messages_by_session,
-            active_session_id=active_session_id,
-        )
-        # task-558: `restore_state` (unlike `restore_persisted_session`, the
-        # DB-resume path) does not itself hydrate `generation_metadata` --
-        # `_serialize_console_message` never serialized it into screen state
-        # (matching the no-bytes-in-screen-state policy for the sidecar
-        # row's provenance), so a tab-switch-restored generation message
-        # would otherwise lose its card. Must run AFTER `restore_state`,
-        # which is what populates the store's tree nodes
-        # `hydrate_generation_metadata` looks up by session id.
-        self._rehydrate_console_message_generation_metadata(
-            store, restored_messages_by_session
-        )
         self._adopt_console_pending_attachments(store)
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
