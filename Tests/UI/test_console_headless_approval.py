@@ -300,11 +300,19 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
 
         # (1) the toast reaches the user on the screen they are ACTUALLY on.
         assert await _settle(
-            lambda: "approval" in _toast_text(app).lower(), seconds=5.0
+            lambda: "needs approval" in _toast_text(app).lower(), seconds=5.0
         ), (
             "a risk-tagged tool armed an approval round with no Console mounted "
             "and nothing surfaced app-wide; the user is on "
             f"{type(app.screen).__name__} and sees: {_toast_text(app)!r}"
+        )
+        assert type(app.screen).__name__ == "LibraryScreen", (
+            "the toast must have been read while the user was on ANOTHER screen"
+        )
+        # ...and the badge half, which needed no new machinery:
+        # `add_pending_round` already ran unconditionally.
+        assert controller.has_pending_approval_round(session_id), (
+            "the session carries no NEEDS_APPROVAL badge for the armed round"
         )
 
         # (2) it did not self-deny at the first poll.
