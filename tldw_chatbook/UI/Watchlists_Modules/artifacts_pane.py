@@ -1546,10 +1546,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
     def watch_selected_briefing(self, briefing: dict[str, Any] | None) -> None:
         if not self.is_mounted:
-            # Pre-mount seeding (`WatchlistsCollectionsScreen.
-            # _build_detail_pane` sets `selected_briefing` and then the
-            # script/citation state, in that order). Clearing here would wipe
-            # the seeding that follows, and there is no screen to tell.
+            # Defense in depth for pre-mount seeding. Since task-15778
+            # `WatchlistsCollectionsScreen._build_detail_pane` seeds every
+            # reactive with `set_reactive`, so this watcher no longer fires
+            # there at all — but a future plain assignment on an unmounted
+            # pane must still not wipe the script/citation seeding that
+            # follows it, and there is no screen to tell either way.
             return
         self._clear_selection_derived_state()
         self.post_message(BriefingSelected(briefing))
