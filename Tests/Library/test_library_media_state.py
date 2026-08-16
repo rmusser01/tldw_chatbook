@@ -62,7 +62,19 @@ def test_media_browse_scope_rejects_invalid_or_overflowing_pages(page: object) -
 def test_empty_query_relevance_cannot_misdescribe_database_order() -> None:
     assert MediaBrowseScope(sort_by="relevance").sort_by == "last_modified_desc"
     assert MediaBrowseScope(query="find", sort_by="relevance").sort_by == "relevance"
-    assert MediaBrowseScope(media_type=" all ").media_type == "All"
+
+
+@pytest.mark.parametrize("media_type", ["All", "all", "ALL"])
+def test_media_browse_scope_preserves_literal_all_type_values(media_type: str) -> None:
+    assert MediaBrowseScope(media_type=media_type).media_type == media_type
+    assert MediaBrowseScope(media_type=f" {media_type} ").media_type == media_type
+
+
+@pytest.mark.parametrize("media_type", [None, "", "   "])
+def test_media_browse_scope_uses_none_for_unfiltered_type(
+    media_type: str | None,
+) -> None:
+    assert MediaBrowseScope(media_type=media_type).media_type is None
 
 
 def test_media_browse_result_preserves_exact_order_and_detaches_items() -> None:
@@ -171,9 +183,25 @@ def test_authoritative_media_page_projection_preserves_order_and_complete_facets
     )
 
     assert [row.media_id for row in state.rows] == ["local:media:1", "local:media:2"]
-    assert state.type_options == ("All", "audio", "document", "video")
+    assert state.type_options == (None, "audio", "document", "video")
     assert state.active_type == "video"
     assert state.count == 2
+
+
+def test_authoritative_projection_distinguishes_unfiltered_from_literal_all_types() -> (
+    None
+):
+    scope = MediaBrowseScope()
+    result = build_media_browse_result(scope, _page(scope, total=1))
+
+    state = build_library_media_browse_state(
+        result,
+        type_options=("ALL", "All", "all"),
+        now=NOW,
+    )
+
+    assert state.active_type is None
+    assert state.type_options == (None, "ALL", "All", "all")
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():

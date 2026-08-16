@@ -69,13 +69,19 @@ async def _call(fn: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
     return await fn(**kwargs)
 
 
-def _controller(screen: _Screen, service: _Service) -> LibraryMediaBrowseController:
+def _controller(
+    screen: _Screen,
+    service: _Service,
+    *,
+    sync: Callable[..., None] = lambda *_args: None,
+    active: Callable[[], bool] = lambda: True,
+) -> LibraryMediaBrowseController:
     return LibraryMediaBrowseController(
         screen=screen,
         run_service_call=lambda: _call,
         media_service=lambda: service,
-        sync_view=lambda: lambda *_args: None,
-        request_is_active=lambda: True,
+        sync_view=lambda: sync,
+        request_is_active=active,
     )
 
 
@@ -105,6 +111,31 @@ async def test_controller_sends_exact_summary_coordinates_and_full_scope() -> No
     assert controller.applied_scope == scope
     assert controller.mutation_refresh_scope == scope
     assert controller.scope_for_page(1) == scope.with_page(1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["All", "all", "ALL"])
+async def test_controller_filters_literal_all_type_values(media_type: str) -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1))
+    controller = _controller(screen, service)
+
+    controller.request(MediaBrowseScope(media_type=media_type), focus_identity=None)
+    await screen.pending.pop()
+
+    assert service.search_calls[0]["media_types"] == [media_type]
+
+
+@pytest.mark.asyncio
+async def test_controller_omits_type_filter_for_unfiltered_scope() -> None:
+    screen = _Screen()
+    service = _Service(_page(1, 1))
+    controller = _controller(screen, service)
+
+    controller.request(MediaBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    assert "media_types" not in service.search_calls[0]
 
 
 @pytest.mark.asyncio
@@ -203,7 +234,9 @@ async def test_late_page_generation_cannot_replace_current_request() -> None:
 @pytest.mark.asyncio
 async def test_facets_are_complete_sorted_unique_and_independently_fenced() -> None:
     screen = _Screen()
-    service = _Service(_page(1, 1), types=("video", "audio", "video"))
+    service = _Service(
+        _page(1, 1), types=("video", "All", "all", "ALL", "audio", "video")
+    )
     controller = _controller(screen, service)
     controller.request_facets(fingerprint="old")
     late = screen.pending.pop()
@@ -213,8 +246,67 @@ async def test_facets_are_complete_sorted_unique_and_independently_fenced() -> N
 
     controller.request_facets(fingerprint="new")
     await screen.pending.pop()
-    assert controller.type_options == ("audio", "video")
+    assert controller.type_options == ("ALL", "All", "all", "audio", "video")
     assert controller.facet_fingerprint == "new"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [("video",), RuntimeError("private")])
+async def test_accepted_facet_transitions_publish_loading_and_outcome(
+    outcome: object,
+) -> None:
+    screen = _Screen()
+    synced: list[str] = []
+    controller = _controller(
+        screen,
+        _Service(types=outcome),
+        sync=lambda _focus: synced.append(
+            "loading" if controller.facet_loading else "settled"
+        ),
+    )
+
+    controller.request_facets(fingerprint="current")
+    assert synced == ["loading"]
+    await screen.pending.pop()
+
+    assert synced == ["loading", "settled"]
+    if isinstance(outcome, Exception):
+        assert controller.facet_error_copy
+    else:
+        assert controller.type_options == ("video",)
+
+
+@pytest.mark.asyncio
+async def test_stale_facet_outcome_does_not_publish() -> None:
+    screen = _Screen()
+    synced: list[str] = []
+    controller = _controller(
+        screen,
+        _Service(types=("video",)),
+        sync=lambda _focus: synced.append("sync"),
+    )
+
+    controller.request_facets(fingerprint="old")
+    stale = screen.pending.pop()
+    controller.invalidate_facets(fingerprint="new")
+    await stale
+
+    assert synced == ["sync"]
+
+
+def test_inactive_facet_request_does_not_publish() -> None:
+    screen = _Screen()
+    synced: list[str] = []
+    controller = _controller(
+        screen,
+        _Service(types=("video",)),
+        sync=lambda _focus: synced.append("sync"),
+        active=lambda: False,
+    )
+
+    assert controller.request_facets(fingerprint="inactive") is None
+    assert synced == []
+    assert screen.pending == []
 
 
 @pytest.mark.asyncio

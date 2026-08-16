@@ -63,15 +63,15 @@ class MediaBrowseScope:
     """One immutable exact page request for the local Library Media source."""
 
     query: str = ""
-    media_type: str = "All"
+    media_type: str | None = None
     sort_by: str = "last_modified_desc"
     page: int = 1
 
     def __post_init__(self) -> None:
         if not isinstance(self.query, str):
             raise TypeError("query must be a string.")
-        if not isinstance(self.media_type, str):
-            raise TypeError("media_type must be a string.")
+        if self.media_type is not None and not isinstance(self.media_type, str):
+            raise TypeError("media_type must be a string or None.")
         if not isinstance(self.sort_by, str):
             raise TypeError("sort_by must be a string.")
         if type(self.page) is not int or self.page < 1:
@@ -80,9 +80,9 @@ class MediaBrowseScope:
             raise ValueError("page offset exceeds SQLite's integer range.")
 
         query = self.query.strip()
-        media_type = self.media_type.strip() or "All"
-        if media_type.lower() == "all":
-            media_type = "All"
+        media_type = self.media_type.strip() if self.media_type is not None else None
+        if not media_type:
+            media_type = None
         sort_by = self.sort_by.strip().lower()
         if sort_by not in _MEDIA_BROWSE_SORTS:
             raise ValueError("sort_by is not supported for Media browsing.")
@@ -249,8 +249,8 @@ class LibraryMediaCanvasState:
     """Pure display state for the Library Browse ▸ Media canvas."""
 
     rows: tuple[LibraryMediaRow, ...]
-    type_options: tuple[str, ...]
-    active_type: str
+    type_options: tuple[str | None, ...]
+    active_type: str | None
     status_copy: str
     empty_copy: str
     selected_id: str
@@ -444,8 +444,8 @@ def build_library_media_browse_state(
     ):
         raise ValueError("type_options must be an exact tuple of non-empty strings.")
     normalized_types = tuple(sorted({value.strip() for value in type_options}))
-    if len(normalized_types) != len(type_options) or "All" in normalized_types:
-        raise ValueError("type_options must be unique source values excluding All.")
+    if len(normalized_types) != len(type_options):
+        raise ValueError("type_options must contain unique source values.")
     items = (
         result.items
         if retained_items is None
@@ -490,13 +490,13 @@ def build_library_media_browse_state(
     if not rows:
         if result.scope.query:
             empty_copy = "No media matched this search."
-        elif result.scope.media_type != "All":
+        elif result.scope.media_type is not None:
             empty_copy = f"No media of type '{result.scope.media_type}'."
         else:
             empty_copy = LIBRARY_MEDIA_EMPTY_COPY
     return LibraryMediaCanvasState(
         rows=rows,
-        type_options=("All", *normalized_types),
+        type_options=(None, *normalized_types),
         active_type=result.scope.media_type,
         status_copy="",
         empty_copy=empty_copy,

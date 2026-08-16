@@ -136,7 +136,7 @@ class LibraryMediaBrowseController:
         if not callable(search_media):
             raise RuntimeError("Media service unavailable")
         filters: dict[str, Any] = {"sort_by": scope.sort_by}
-        if scope.media_type != "All":
+        if scope.media_type is not None:
             filters["media_types"] = [scope.media_type]
         payload = await self._run_service_call()(
             search_media,
@@ -265,6 +265,7 @@ class LibraryMediaBrowseController:
         self.facet_error_copy = ""
         if not self._request_is_active():
             return None
+        self._sync(None)
         return self._run_worker(
             self._load_facets(generation=generation, fingerprint=fingerprint),
             exclusive=True,
@@ -296,6 +297,7 @@ class LibraryMediaBrowseController:
             )
             self.facet_loading = False
             self.facet_error_copy = _FACET_ERROR
+            self._sync(None)
             return
         if (
             generation != self._facet_generation
@@ -306,6 +308,7 @@ class LibraryMediaBrowseController:
         self.type_options = normalized
         self.facet_loading = False
         self.facet_error_copy = ""
+        self._sync(None)
 
     def invalidate_facets(self, *, fingerprint: str = "") -> int:
         self._facet_generation += 1
