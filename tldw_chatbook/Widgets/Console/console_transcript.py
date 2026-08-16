@@ -3043,13 +3043,15 @@ class ConsoleTranscript(VerticalScroll):
             transcript. Deliberately does NOT refresh: callers already own a
             refresh, and the restore path needs to sequence its own.
 
-        TASK-15777: a FAR reveal — one whose resulting window would exceed
-        the low watermark in estimated lines — re-centers the window on the
-        target instead of extending the boundary, mounting an
-        initial-window-sized slice from the target's turn (the same shape a
-        session load produces) with everything past it in the hidden tail.
-        Near reveals keep the plain boundary extension, so small-session
-        behavior is unchanged. Only meaningful under ``_two_sided_active``.
+        TASK-15777: a FAR reveal — one where the newly revealed stretch
+        between the target and the current window would exceed the low
+        watermark in estimated lines — re-centers the window on the target
+        instead of extending the boundary, mounting an initial-window-sized
+        slice from the target's turn (the same shape a session load produces)
+        with everything past it in the hidden tail. Near reveals (a j/k step
+        over the boundary, a nearby restore) keep the plain boundary
+        extension, so small-session behavior is unchanged. Only meaningful
+        under ``_two_sided_active``.
         """
         for index, message in enumerate(self._messages):
             if message.id != message_id:
@@ -3060,9 +3062,9 @@ class ConsoleTranscript(VerticalScroll):
                 return False
             if index < first_visible:
                 revealed_start = self._turn_aligned_start(self._messages, index)
-                revealed_end = tail_start
+                revealed_end = first_visible
             else:
-                revealed_start = first_visible
+                revealed_start = tail_start
                 revealed_end = index + 1
             if self._two_sided_active() and self._estimated_window_lines(
                 revealed_start, revealed_end
