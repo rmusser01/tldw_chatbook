@@ -122,19 +122,24 @@ not:
   `Paragraphs`): how source text is split before embedding.
 - **Vector store** — distance metric ⚠ (`Cosine` / `Euclidean (L2)` / `Inner
   product`): how embeddings are compared.
-- **Reranking** — **Enable reranking**, **Reranker model**, **Rerank results**;
-  "Enabling reranking creates the profile's reranker config; disabling it
-  removes that config entirely." With it off the two fields dim and gain
-  " (enable reranking to edit)". **Rerank results** above **Default results**
-  warns without blocking the save: "Rerank results (`n`) exceeds default
-  results (`m`); reranking will not see all requested results." **Cost:**
-  the default reranking strategy scores every candidate individually, so
-  enabling it means one extra LLM provider call per result (up to
-  **Rerank results** many) on every search this profile runs — a profile
-  with **Rerank results** at 15 can issue up to 15 provider calls per
-  query. If the reranker can't run (missing model or dependency), search
-  results still come back — reranking is skipped, disclosed, and never
-  fails the search outright.
+- **Reranking** — **Enable reranking**, **Reranker provider**, **Reranker
+  model**, **Rerank results**; "Enabling reranking creates the profile's
+  reranker config; disabling it removes that config entirely." With it off
+  the three fields dim and gain " (enable reranking to edit)". **Rerank
+  results** above **Default results** warns without blocking the save:
+  "Rerank results (`n`) exceeds default results (`m`); reranking will not
+  see all requested results." **Cost:** stated on the fold itself, directly
+  under the toggle and readable before you turn anything on — "Reranking
+  scores each result with a separate `<provider>` call — up to `<n>` calls
+  per search, billed at that provider's rates." — and it tracks the
+  provider and **Rerank results** you have staged, so the number you read
+  is the ceiling you would actually buy. **Reranker provider** lists every
+  provider this build can dispatch a chat call to, with the default shown
+  explicitly as "openai (default)"; **Reranker model** blank means the
+  reranker's own default model. If the reranker can't run, search results
+  still come back — reranking is skipped, disclosed on the results screen
+  ([Library Search/RAG](../library/search-and-rag.md#evidence-rows)), and
+  never fails the search outright.
 
 ### The four dialogs
 
@@ -183,10 +188,12 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
    the starter panel, or **Backfill** (`b`); watch the status line flip off
    "Semantic index not built — …".
 5. **Turn on reranking.** With your own profile active, expand **Reranking**,
-   tick **Enable reranking**, optionally name a **Reranker model** (blank uses
-   the reranker's default), keep **Rerank results** at or below **Default
-   results**, and **Save (s)** — no backfill needed. Every search this profile
-   runs will now spend one extra provider call per candidate result.
+   read the cost line under the toggle, tick **Enable reranking**, pick a
+   **Reranker provider** (or leave "openai (default)"), optionally name a
+   **Reranker model** (blank uses the reranker's default), keep **Rerank
+   results** at or below **Default results**, and **Save (s)** — no backfill
+   needed. Every search this profile runs will now spend one extra provider
+   call per candidate result, billed to the provider you picked.
 6. **Delete a profile you no longer want.** With a profile *of your own* active
    (see Quirks), pick the one to remove, press **Delete**, confirm — delete the
    active one and the pointer falls back to a built-in.
@@ -264,6 +271,15 @@ profile with a different embedding model immediately reads "Index: absent —
 will be created on next backfill" plus "Semantic index not built — Hybrid
 search is keyword-only until you Backfill" — which is exactly what the
 subsequent search then disclosed.*
+
+*Verified against `feat/rag-3502-reranker-followups` — 2026-08-16
+(TASK-3502 AC#1/AC#2, the **Reranking** fold's new **Reranker provider**
+Select and its cost line). Verified by mounted-widget tests over the real
+`SettingsScreen`, not a live TUI walkthrough: the Select's options are
+asserted equal to `chat_api_call`'s own dispatch table, the cost line's
+exact sentence is asserted with reranking still OFF, and it is re-asserted
+after staging a different provider and rerank top-k
+(`Tests/UI/test_settings_rag_profile_region.py`).*
 
 *Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
 2026-08-11 (TASK-15020 final review wave, doc-only: correcting the

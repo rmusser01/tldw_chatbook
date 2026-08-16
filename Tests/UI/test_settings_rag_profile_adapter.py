@@ -1219,3 +1219,120 @@ def test_is_first_run_state_false_when_index_is_not_absent():
 
     for state in ("built", "empty", "unknown"):
         assert is_first_run_state(_info(read_only=True), _grouped(user=[]), state) is False, state
+
+
+# --- TASK-3502 AC#1: reranker PROVIDER selection. Enabling reranking used to
+# create a bare `RerankingConfig()` whose `model_provider` ("openai") no
+# Settings control could see or change -- the fold exposed the model name and
+# the top-k but never the provider the per-candidate calls are billed to. ---
+
+
+def test_load_reads_the_profiles_reranker_provider(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.reranking_config = RerankingConfig(model_provider="anthropic")
+    p.rag_config.search.enable_reranking = True
+    mgr.save_profile(p)
+
+    d = load_rag_defaults_from_active_profile()
+
+    assert d.reranker_provider == "anthropic"
+
+
+def test_load_reports_blank_reranker_provider_when_reranking_config_is_none(wired):
+    """Same blank-means-default shape `reranker_model` already has: no
+    reranking_config -> no provider to report, and the Select renders the
+    default explicitly rather than inventing a stored value."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    assert p.reranking_config is None
+
+    d = load_rag_defaults_from_active_profile()
+
+    assert d.reranker_provider == ""
+
+
+def test_save_with_a_reranker_provider_writes_model_provider(wired):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, enable_reranking=True, reranker_provider="anthropic")
+    ok, reason = save_rag_defaults_to_active_profile(d)
+    assert ok and reason == ""
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    reloaded = mgr2.get_profile(p.id)
+    assert reloaded.reranking_config.model_provider == "anthropic"
+
+
+def test_save_with_reranking_enabled_and_blank_provider_leaves_the_default(wired):
+    """A blank ``reranker_provider`` means "use the reranker's own default"
+    -- exactly `reranker_model`'s rule -- and must never stomp
+    ``RerankingConfig``'s ``model_provider`` with an empty string (which
+    would send the per-candidate calls to a provider that dispatches
+    nowhere)."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile,
+        save_rag_defaults_to_active_profile,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+
+    d = load_rag_defaults_from_active_profile()
+    assert d.reranker_provider == ""
+    d = dataclasses.replace(d, enable_reranking=True)
+    ok, reason = save_rag_defaults_to_active_profile(d)
+    assert ok and reason == ""
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    reloaded = mgr2.get_profile(p.id)
+    assert reloaded.reranking_config.model_provider == RerankingConfig().model_provider
+
+
+def test_save_preserves_an_existing_provider_when_the_field_is_blank(wired):
+    """Blank means "leave it alone", not "reset to openai": a profile whose
+    provider was already set to anthropic keeps it across a save that never
+    touched the provider control."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        save_rag_defaults_to_active_profile,
+    )
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        SettingsLibraryRagDefaults,
+    )
+    mgr, state = wired
+    p = _user_profile(mgr, state)
+    p.reranking_config = RerankingConfig(model_provider="anthropic")
+    p.rag_config.search.enable_reranking = True
+    mgr.save_profile(p)
+
+    d = dataclasses.replace(
+        SettingsLibraryRagDefaults(), enable_reranking=True, reranker_provider=""
+    )
+    ok, reason = save_rag_defaults_to_active_profile(d)
+    assert ok and reason == ""
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    assert mgr2.get_profile(p.id).reranking_config.model_provider == "anthropic"
+
+
+def test_reranker_provider_default_constant_matches_rerankingconfig_default():
+    """The Settings module hardcodes the default provider name rather than
+    importing `RerankingConfig` (whose import chain drags in
+    Chat_Functions/Internal_Prompts) -- exactly the trade `reranker_top_k`
+    already makes. This is the pin that keeps the hardcode honest."""
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        DEFAULT_RERANKER_PROVIDER,
+    )
+
+    assert DEFAULT_RERANKER_PROVIDER == RerankingConfig().model_provider

@@ -285,3 +285,58 @@ def test_rag_defaults_load_overlays_live_console_setting(monkeypatch):
 
     _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
     assert ad.load_rag_defaults_from_active_profile().direct_library_tools is True
+
+
+# --- TASK-3502 AC#1: the reranker-provider Select's option list is
+# ENUMERATED from the dispatch table `chat_api_call` actually resolves the
+# reranker's `model_provider` against -- never hand-listed, so a provider
+# this build cannot dispatch can never be offered, and a newly registered
+# one cannot go missing. ---
+
+
+def test_reranker_provider_options_are_enumerated_from_the_dispatch_table():
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        DEFAULT_RERANKER_PROVIDER,
+        library_rag_reranker_provider_options,
+    )
+
+    options = library_rag_reranker_provider_options()
+
+    # The default row is labelled explicitly and carries that provider's own
+    # NAME -- picking it must really write openai back over a profile
+    # currently set to another provider (a blank sentinel there would leave
+    # the old provider in place: blank means "leave the default alone").
+    assert options[0] == (f"{DEFAULT_RERANKER_PROVIDER} (default)", DEFAULT_RERANKER_PROVIDER)
+    assert {value for _label, value in options[1:]} == (
+        set(API_CALL_HANDLERS) - {DEFAULT_RERANKER_PROVIDER}
+    )
+    assert [value for _label, value in options[1:]] == sorted(
+        set(API_CALL_HANDLERS) - {DEFAULT_RERANKER_PROVIDER}
+    )
+    assert all(label == value for label, value in options[1:])
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Blank resolves to the provider a blank field really bills at run
+        # time, so the control names it instead of showing nothing.
+        ("", "openai"),
+        ("   ", "openai"),
+        ("openai", "openai"),
+        ("anthropic", "anthropic"),
+        (" anthropic ", "anthropic"),
+        # A hand-edited profile naming a provider this build cannot dispatch
+        # must not reach Select(value=...) -- that raises
+        # InvalidSelectValueError out of compose().
+        ("not-a-real-provider", "openai"),
+        (None, "openai"),
+    ],
+)
+def test_normalise_reranker_provider_falls_back_to_the_default_row(raw, expected):
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        normalise_library_rag_reranker_provider,
+    )
+
+    assert normalise_library_rag_reranker_provider(raw) == expected

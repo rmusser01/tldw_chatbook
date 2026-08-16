@@ -2344,9 +2344,10 @@ def test_every_library_rag_editable_field_id_has_a_guidance_group(
     monkeypatch, tmp_path
 ):
     """Coverage: every widget id `_library_rag_field_selector` resolves
-    (the 19 validated/staged fields) plus the two Checkbox ids Task 1
-    introduced must each map to a guidance group -- so no RAG control is
-    ever focusable without the inspector explaining it."""
+    (the 20 validated/staged fields -- 19 before TASK-3502 AC#1's reranker
+    provider) plus the two Checkbox ids Task 1 introduced must each map to
+    a guidance group -- so no RAG control is ever focusable without the
+    inspector explaining it."""
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -2369,6 +2370,7 @@ def test_every_library_rag_editable_field_id_has_a_guidance_group(
         "chunk_overlap",
         "chunking_method",
         "distance_metric",
+        "reranker_provider",
         "reranker_model",
         "reranker_top_k",
     ]
@@ -3909,3 +3911,230 @@ async def test_builtin_profile_delete_is_annotated_and_disabled():
         delete = screen.query_one("#settings-library-rag-profile-delete", Button)
         assert delete.disabled is True
         assert "built-in" in str(delete.label)
+
+
+# --- TASK-3502 AC#1/AC#2: the Reranking fold gains a PROVIDER control (the
+# per-candidate calls are billed to a provider Settings previously could not
+# see or change) and a cost disclosure visible BEFORE the toggle is ever
+# flipped. ---
+
+
+@pytest.mark.asyncio
+async def test_reranker_provider_select_enumerates_the_dispatch_table(
+    monkeypatch, tmp_path
+):
+    """The provider options come from `chat_api_call`'s own dispatch table
+    (never a hand-list), and the default provider's row is labelled
+    explicitly -- "the default made visible rather than implicit"."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        DEFAULT_RERANKER_PROVIDER,
+    )
+
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        provider_select = screen.query_one(
+            "#settings-library-rag-reranker-provider", Select
+        )
+        options = [(str(prompt), value) for prompt, value in provider_select._options]
+        assert options[0] == (
+            f"{DEFAULT_RERANKER_PROVIDER} (default)",
+            DEFAULT_RERANKER_PROVIDER,
+        )
+        assert {value for _prompt, value in options} == set(API_CALL_HANDLERS)
+        # Reranking is off on a fresh clone (no stored provider) -> the
+        # control names the provider a blank field really resolves to, and
+        # follows the same dimming rule as the model/top-k Inputs beside it.
+        assert provider_select.value == DEFAULT_RERANKER_PROVIDER
+        assert provider_select.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_reranker_provider_select_shows_the_profiles_stored_provider(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.reranking_config = RerankingConfig(model_provider="anthropic")
+    profile.rag_config.search.enable_reranking = True
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        provider_select = screen.query_one(
+            "#settings-library-rag-reranker-provider", Select
+        )
+        assert provider_select.value == "anthropic"
+        assert provider_select.disabled is False
+
+        # And a change stages onto the active profile's draft.
+        screen.handle_library_rag_reranker_provider_changed(
+            Select.Changed(provider_select, "groq")
+        )
+        assert screen._library_rag_setting_values()["reranker_provider"] == "groq"
+
+        # Picking the "(default)" row on a profile stored as anthropic must
+        # stage the default provider's NAME, not a blank: blank is the
+        # profile write's "leave it alone", which would silently keep
+        # anthropic and make the control unable to go back.
+        screen.handle_library_rag_reranker_provider_changed(
+            Select.Changed(provider_select, "openai")
+        )
+        assert screen._library_rag_setting_values()["reranker_provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
+    monkeypatch, tmp_path
+):
+    """AC#2: the per-candidate spend is stated adjacent to the toggle and
+    readable BEFORE committing to it -- a fresh clone has reranking OFF, and
+    the line must still be on screen, naming the configured rerank top-k as
+    the call ceiling."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert (
+            screen.query_one(
+                "#settings-library-rag-enable-reranking", Checkbox
+            ).value
+            is False
+        )
+        disclosure = screen.query_one(
+            "#settings-library-rag-reranker-cost-disclosure", Static
+        )
+        text = str(disclosure.renderable)
+        assert text == (
+            "Reranking scores each result with a separate openai call — up "
+            "to 20 calls per search, billed at that provider's rates."
+        )
+        assert "20" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_reranker_cost_disclosure_tracks_the_staged_top_k_and_provider(
+    monkeypatch, tmp_path
+):
+    """A disclosure naming a stale ceiling is worse than none: typing a new
+    rerank top-k (or picking another provider) must move the line."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        screen.handle_library_rag_reranker_top_k_changed(
+            Input.Changed(top_k_input, "50")
+        )
+        provider_select = screen.query_one(
+            "#settings-library-rag-reranker-provider", Select
+        )
+        screen.handle_library_rag_reranker_provider_changed(
+            Select.Changed(provider_select, "anthropic")
+        )
+        await pilot.pause()
+
+        disclosure = screen.query_one(
+            "#settings-library-rag-reranker-cost-disclosure", Static
+        )
+        assert str(disclosure.renderable) == (
+            "Reranking scores each result with a separate anthropic call — "
+            "up to 50 calls per search, billed at that provider's rates."
+        )
+
+
+@pytest.mark.asyncio
+async def test_opening_the_category_does_not_dirty_the_draft_via_the_provider_select(
+    monkeypatch, tmp_path
+):
+    """The Select renders a profile's explicit `openai` as its blank
+    "(default)" row -- so if mounting posted a `Select.Changed`, the screen
+    would stage `""` over a loaded `"openai"` and the category would be
+    DIRTY before the user touched anything (the task-15740 family: the
+    app's own rewrites staged as user edits)."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.reranking_config = RerankingConfig()
+    profile.rag_config.search.enable_reranking = True
+    mgr.save_profile(profile)
+    assert profile.reranking_config.model_provider == "openai"
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.pause()
+
+        assert (
+            screen.query_one("#settings-library-rag-reranker-provider", Select).value
+            == "openai"
+        )
+        assert screen._library_rag_draft() is None
+        assert (
+            screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG)
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_previewing_a_profile_discloses_that_profiles_reranking_cost(
+    monkeypatch, tmp_path
+):
+    """A profile-picker PREVIEW puts the browsed profile's numbers in the
+    boxes -- the cost line has to name THOSE, not the active profile's, or
+    it disclaims a spend nobody is looking at."""
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, other, host = _wire_library_rag_with_other_profile(
+        monkeypatch, tmp_path
+    )
+    other.reranking_config = RerankingConfig(
+        model_provider="anthropic", top_k_to_rerank=42
+    )
+    other.rag_config.search.enable_reranking = True
+    mgr.save_profile(other)
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        disclosure = screen.query_one(
+            "#settings-library-rag-reranker-cost-disclosure", Static
+        )
+        assert "openai" in str(disclosure.renderable)
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert screen._rag_preview_profile_id == other.id
+        assert str(disclosure.renderable) == (
+            "Reranking scores each result with a separate anthropic call — "
+            "up to 42 calls per search, billed at that provider's rates."
+        )
+        # ...and browsing back restores the active profile's own line.
+        select.value = profile.id
+        await pilot.pause()
+        assert "openai" in str(disclosure.renderable)

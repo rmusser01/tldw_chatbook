@@ -264,11 +264,14 @@ from .settings_appearance_defaults import (
 )
 from .settings_library_rag_defaults import (
     CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
+    DEFAULT_RERANKER_PROVIDER,
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
+    library_rag_reranker_provider_options,
     normalise_library_rag_chunking_method,
     normalise_library_rag_citation_style,
     normalise_library_rag_distance_metric,
+    normalise_library_rag_reranker_provider,
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
@@ -1130,6 +1133,7 @@ _RAG_FIELD_GROUP_BY_ID: dict[str, str] = {
     "settings-library-rag-chunking-method": "chunking",
     "settings-library-rag-distance-metric": "vector_store",
     "settings-library-rag-enable-reranking": "reranking",
+    "settings-library-rag-reranker-provider": "reranking",
     "settings-library-rag-reranker-model": "reranking",
     "settings-library-rag-reranker-top-k": "reranking",
     "settings-library-rag-profile-select": "profile",
@@ -1390,7 +1394,7 @@ _RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "reranking": (
         ("Focused group", "Reranking"),
-        ("Fields", "enable, reranker model, rerank results"),
+        ("Fields", "enable, reranker provider, reranker model, rerank results"),
         ("Purpose", "optional post-retrieval reordering of results"),
         ("Impact", "no index rebuild -- toggling adds/removes config"),
         ("Saved as", "the profile's reranking settings"),
@@ -6518,6 +6522,11 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(
                     "#settings-library-rag-enable-reranking", Checkbox
                 ).value = bool(values["enable_reranking"])
+                self.query_one(
+                    "#settings-library-rag-reranker-provider", Select
+                ).value = normalise_library_rag_reranker_provider(
+                    values["reranker_provider"]
+                )
                 for selector, key in (
                     ("#settings-library-rag-embedding-model", "embedding_model"),
                     ("#settings-library-rag-embedding-device", "embedding_device"),
@@ -6562,6 +6571,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_library_rag_preview()
         self._update_library_rag_validation_classes()
         self._update_library_rag_soft_warning()
+        self._update_library_rag_rerank_disclosure(values)
 
     def _library_rag_invalid_field_key(self) -> str | None:
         validation = self._library_rag_validation_result()
@@ -6641,6 +6651,7 @@ class SettingsScreen(BaseAppScreen):
             "chunk_overlap": "#settings-library-rag-chunk-overlap",
             "chunking_method": "#settings-library-rag-chunking-method",
             "distance_metric": "#settings-library-rag-distance-metric",
+            "reranker_provider": "#settings-library-rag-reranker-provider",
             "reranker_model": "#settings-library-rag-reranker-model",
             "reranker_top_k": "#settings-library-rag-reranker-top-k",
         }.get(key)
@@ -6675,6 +6686,7 @@ class SettingsScreen(BaseAppScreen):
             "chunk_overlap",
             "chunking_method",
             "distance_metric",
+            "reranker_provider",
             "reranker_model",
             "reranker_top_k",
         ):
@@ -12891,15 +12903,26 @@ class SettingsScreen(BaseAppScreen):
     def _apply_library_rag_rerank_field_state(
         self, *, rerank_enabled: bool, field_disabled: bool
     ) -> None:
-        """Post-mount refresh of the rerank model/results Inputs' disabled
-        state and label suffix -- called after the checkbox is toggled and
-        from ``_sync_library_rag_widgets``/``_sync_library_rag_profile_widgets``
+        """Post-mount refresh of the rerank provider/model/results controls'
+        disabled state and label suffix -- called after the checkbox is
+        toggled and from
+        ``_sync_library_rag_widgets``/``_sync_library_rag_profile_widgets``
         so a profile switch or revert can never leave a stale suffix/disabled
-        combination behind."""
+        combination behind.
+
+        The widgets are queried untyped (not `, Input`): TASK-3502 AC#1's
+        provider control is a `Select`, and it follows the exact same
+        reranking-off dimming rule as the two Inputs beside it.
+        """
         disabled, suffix = self._library_rag_rerank_field_state(
             rerank_enabled=rerank_enabled, field_disabled=field_disabled
         )
         for input_selector, label_selector, base_label in (
+            (
+                "#settings-library-rag-reranker-provider",
+                "#settings-library-rag-reranker-provider-label",
+                "Reranker provider",
+            ),
             (
                 "#settings-library-rag-reranker-model",
                 "#settings-library-rag-reranker-model-label",
@@ -12912,10 +12935,64 @@ class SettingsScreen(BaseAppScreen):
             ),
         ):
             try:
-                self.query_one(input_selector, Input).disabled = disabled
+                self.query_one(input_selector).disabled = disabled
             except QueryError:
                 pass
             self._set_static_text(label_selector, f"{base_label}{suffix}")
+
+    @staticmethod
+    def _library_rag_rerank_cost_disclosure(values: Mapping[str, object]) -> str:
+        """The Reranking fold's cost disclosure (TASK-3502 AC#2).
+
+        Pointwise reranking -- the shipped strategy -- issues ONE provider
+        call per candidate, so enabling it silently multiplies a search's
+        spend by the rerank top-k. That was stated nowhere before the user
+        committed to the toggle. Static honest text, deliberately NOT a
+        live price estimate: this repo owns no per-provider pricing table
+        for the reranker's models, and a wrong number would be worse than
+        an honest ceiling.
+
+        Args:
+            values: The category's current (draft-aware) field values.
+
+        Returns:
+            One sentence naming the provider the calls are billed to and
+            the configured per-search call ceiling.
+        """
+        provider = (
+            str(values.get("reranker_provider") or "").strip()
+            or DEFAULT_RERANKER_PROVIDER
+        )
+        top_k = values.get("reranker_top_k")
+        return (
+            f"Reranking scores each result with a separate {provider} call "
+            f"— up to {top_k} calls per search, billed at that provider's "
+            "rates."
+        )
+
+    def _update_library_rag_rerank_disclosure(
+        self, values: Mapping[str, object] | None = None
+    ) -> None:
+        """Refresh the cost disclosure from the values now on screen.
+
+        A disclosure naming a stale ceiling ("up to 20 calls") while the
+        rerank top-k box already says 50 is a worse lie than saying
+        nothing, so every staging path that can move either input calls
+        this.
+
+        Args:
+            values: The field values being rendered. Defaults to the
+                active profile's draft-aware values; ``_sync_library_rag_
+                widgets`` passes its own, so a profile-picker PREVIEW
+                discloses the cost of the profile whose numbers are in the
+                boxes rather than the active profile's.
+        """
+        self._set_static_text(
+            "#settings-library-rag-reranker-cost-disclosure",
+            self._library_rag_rerank_cost_disclosure(
+                self._library_rag_setting_values() if values is None else values
+            ),
+        )
 
     @staticmethod
     def _library_rag_profile_select_options(grouped: dict) -> list[tuple[str, str]]:
@@ -14040,6 +14117,31 @@ class SettingsScreen(BaseAppScreen):
                 tooltip="Toggle LLM-based reranking of retrieved results for this profile.",
                 disabled=field_disabled,
             )
+            # TASK-3502 AC#2: the per-candidate spend, stated adjacent to
+            # the toggle and readable BEFORE it is flipped -- never gated
+            # behind enabling it, and never a tooltip.
+            yield Static(
+                self._library_rag_rerank_cost_disclosure(values),
+                id="settings-library-rag-reranker-cost-disclosure",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static(
+                    f"Reranker provider{rerank_suffix}",
+                    id="settings-library-rag-reranker-provider-label",
+                    classes="settings-input-label",
+                )
+                yield Select(
+                    library_rag_reranker_provider_options(),
+                    value=normalise_library_rag_reranker_provider(
+                        values["reranker_provider"]
+                    ),
+                    id="settings-library-rag-reranker-provider",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=rerank_field_disabled,
+                )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
                     f"Reranker model{rerank_suffix}",
@@ -18652,6 +18754,40 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_library_rag_settings_staged()
 
+    @on(Select.Changed, "#settings-library-rag-reranker-provider")
+    def handle_library_rag_reranker_provider_changed(
+        self, event: Select.Changed
+    ) -> None:
+        """Stage a reranker-provider change and refresh the cost disclosure.
+
+        TASK-3502 AC#1. Every row -- including the "(default)" one --
+        carries a real provider name, so picking the default on a profile
+        currently set to another provider really writes it back; staging
+        blank there would be read as "leave the reranker's own default
+        alone" and silently keep the old provider.
+
+        Args:
+            event: The Select change; ``event.value`` is the provider name.
+        """
+        event.stop()
+        if self._library_rag_edits_suppressed():
+            return
+        chosen = str(event.value or "").strip()
+        loaded = str(self._library_rag_loaded_values().get("reranker_provider") or "")
+        # Compare the EFFECTIVE provider, not the raw strings: a blank field
+        # and an explicit "openai" are the same provider at run time, and
+        # they share one row in this Select. Without this, MOUNTING the
+        # category posts a `Select.Changed` carrying the resolved name over
+        # a blank loaded value and stages a draft nobody edited -- the
+        # task-15740 family (the app's own rewrites staged as user edits).
+        if normalise_library_rag_reranker_provider(
+            loaded
+        ) == normalise_library_rag_reranker_provider(chosen):
+            chosen = loaded
+        self._stage_library_rag_value("reranker_provider", chosen)
+        self._update_library_rag_rerank_disclosure()
+        self._mark_library_rag_settings_staged()
+
     @on(Input.Changed, "#settings-library-rag-reranker-model")
     def handle_library_rag_reranker_model_changed(self, event: Input.Changed) -> None:
         if self._library_rag_edits_suppressed():
@@ -18667,6 +18803,9 @@ class SettingsScreen(BaseAppScreen):
             "reranker_top_k",
             self._normalise_library_rag_int(event.value),
         )
+        # The disclosure names this exact number as the per-search call
+        # ceiling -- it moves with the box (AC#2).
+        self._update_library_rag_rerank_disclosure()
         self._mark_library_rag_settings_staged()
 
     @on(Select.Changed, "#settings-library-rag-profile-select")
