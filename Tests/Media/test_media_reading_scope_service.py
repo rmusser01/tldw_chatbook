@@ -2699,8 +2699,9 @@ class FakeSyncScopeService:
 
 @pytest.mark.asyncio
 async def test_scope_service_normalizes_local_media_search_results():
+    local = FakeLocalMediaService()
     scope_service = MediaReadingScopeService(
-        local_service=FakeLocalMediaService(),
+        local_service=local,
         server_service=FakeServerMediaService(),
     )
 
@@ -2715,6 +2716,169 @@ async def test_scope_service_normalizes_local_media_search_results():
     assert result["items"][0]["id"] == "local:media:12"
     assert result["items"][0]["backing_media_id"] == 12
     assert result["items"][0]["reading_progress"] is None
+    assert local.calls == [("search_media", "pdf", 5, 0, {})]
+
+
+class LibrarySummaryLocalService:
+    def __init__(self, payload=None):
+        self.calls = []
+        self.payload = payload or {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "Summary title",
+                    "type": "article",
+                    "last_modified": "2026-08-16T12:00:00Z",
+                    "content": "PRIVATE_BODY",
+                    "path": "/private/media/path",
+                }
+            ],
+            "total": 45,
+            "offset": 40,
+            "limit": 20,
+            "private_envelope": "PRIVATE_ENVELOPE_VALUE",
+        }
+
+    def search_media(self, *, query=None, limit=20, offset=0, **kwargs):
+        self.calls.append(("search_media", query, limit, offset, kwargs))
+        return self.payload
+
+    def list_library_media_types(self):
+        self.calls.append(("list_library_media_types",))
+        return [f"type-{index:02}" for index in range(61)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_envelope_and_five_keys():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.search_media(
+        mode="local",
+        query="summary query",
+        limit=20,
+        offset=40,
+        id_allowlist=[41],
+        library_summary=True,
+    )
+
+    assert local.calls == [
+        (
+            "search_media",
+            "summary query",
+            20,
+            40,
+            {"media_ids_filter": [41], "library_summary": True},
+        )
+    ]
+    assert result == {
+        "items": [
+            {
+                "id": "local:media:41",
+                "backing_media_id": 41,
+                "title": "Summary title",
+                "media_type": "article",
+                "updated_at": "2026-08-16T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_key", ["items", "total", "offset", "limit"])
+async def test_scope_service_library_media_summary_does_not_fill_missing_envelope_keys(
+    missing_key,
+):
+    payload = {
+        "items": [],
+        "total": 45,
+        "offset": 40,
+        "limit": 20,
+    }
+    payload.pop(missing_key)
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert missing_key not in result
+
+
+@pytest.mark.asyncio
+async def test_scope_service_library_media_summary_preserves_malformed_envelope_values():
+    payload = {"items": None, "total": "45", "offset": 39, "limit": 21}
+    scope_service = MediaReadingScopeService(
+        local_service=LibrarySummaryLocalService(payload),
+        server_service=None,
+    )
+
+    result = await scope_service.search_media(
+        mode="local", limit=20, offset=40, library_summary=True
+    )
+
+    assert result == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "offset"),
+    [
+        (True, 0),
+        (0, 0),
+        (2**63, 0),
+        (20, True),
+        (20, -1),
+        (20, 2**63),
+    ],
+)
+async def test_scope_service_library_media_summary_rejects_invalid_coordinates(
+    limit, offset
+):
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    with pytest.raises(ValueError):
+        await scope_service.search_media(
+            mode="local",
+            limit=limit,
+            offset=offset,
+            library_summary=True,
+        )
+
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_library_media_summary_for_server():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.search_media(mode="server", library_summary=True)
+
+    assert server.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_service_lists_complete_local_library_media_types():
+    local = LibrarySummaryLocalService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    media_types = await scope_service.list_library_media_types(mode="local")
+
+    assert len(media_types) == 61
+    assert media_types[-1] == "type-60"
+    assert local.calls == [("list_library_media_types",)]
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.list_library_media_types(mode="server")
 
 
 @pytest.mark.asyncio

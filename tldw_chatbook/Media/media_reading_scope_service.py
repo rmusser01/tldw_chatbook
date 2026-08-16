@@ -495,6 +495,17 @@ class MediaReadingScopeService:
             return normalize_local_media_row(record, reading_progress=reading_progress)
         return normalize_server_reading_item(record, reading_progress=reading_progress)
 
+    @staticmethod
+    def _normalize_local_library_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+        backing_media_id = record.get("id")
+        return {
+            "id": f"local:media:{backing_media_id}",
+            "backing_media_id": backing_media_id,
+            "title": record.get("title"),
+            "media_type": record.get("type"),
+            "updated_at": record.get("last_modified"),
+        }
+
     def _resolve_backing_media_id(
         self,
         *,
@@ -688,6 +699,7 @@ class MediaReadingScopeService:
         limit: int = 20,
         offset: int = 0,
         id_allowlist: Optional[Sequence[Any]] = None,
+        library_summary: bool = False,
         **filters: Any,
     ) -> dict[str, Any]:
         """Search media, optionally restricted to a caller-provided id allowlist.
@@ -700,11 +712,32 @@ class MediaReadingScopeService:
                 the exact legacy call shape.
         """
         normalized_mode = self._normalize_mode(mode)
+        if library_summary:
+            if normalized_mode != MediaReadingBackend.LOCAL:
+                raise ValueError("Library Media summaries require local mode.")
+            sqlite_integer_max = 2**63 - 1
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit < 1
+                or limit > sqlite_integer_max
+            ):
+                raise ValueError("Limit must be a positive SQLite integer.")
+            if (
+                not isinstance(offset, int)
+                or isinstance(offset, bool)
+                or offset < 0
+                or offset > sqlite_integer_max
+            ):
+                raise ValueError("Offset must be a non-negative SQLite integer.")
         self._enforce_policy(self._reading_action_id(normalized_mode, "list"))
         service = self._service_for_mode(normalized_mode)
         if id_allowlist is not None:
             filters = dict(filters)
             filters["media_ids_filter"] = list(id_allowlist)
+        if library_summary:
+            filters = dict(filters)
+            filters["library_summary"] = True
         payload = await self._call_local_leaf(
             normalized_mode,
             service,
@@ -714,6 +747,23 @@ class MediaReadingScopeService:
             offset=offset,
             **filters,
         )
+        if library_summary:
+            if not isinstance(payload, Mapping):
+                return payload
+            result = {
+                key: payload[key]
+                for key in ("items", "total", "offset", "limit")
+                if key in payload
+            }
+            raw_items = result.get("items")
+            if isinstance(raw_items, list):
+                result["items"] = [
+                    self._normalize_local_library_summary(item)
+                    if isinstance(item, Mapping)
+                    else item
+                    for item in raw_items
+                ]
+            return result
         raw_items = (
             list(payload.get("items", []))
             if isinstance(payload, Mapping)
@@ -734,6 +784,23 @@ class MediaReadingScopeService:
             if isinstance(payload, Mapping)
             else limit,
         }
+
+    async def list_library_media_types(
+        self,
+        *,
+        mode: MediaReadingBackend | str | None = None,
+    ) -> list[str]:
+        """Return the complete active local Media type facet."""
+        normalized_mode = self._normalize_mode(mode)
+        if normalized_mode != MediaReadingBackend.LOCAL:
+            raise ValueError("Library Media types require local mode.")
+        self._enforce_policy(self._reading_action_id(normalized_mode, "list"))
+        service = self._service_for_mode(normalized_mode)
+        return list(
+            await self._call_local_leaf(
+                normalized_mode, service, "list_library_media_types"
+            )
+        )
 
     async def get_media_detail(
         self,
