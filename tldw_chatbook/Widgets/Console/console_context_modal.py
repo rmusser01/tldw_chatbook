@@ -59,8 +59,15 @@ class ConsoleContextModal(SafeModalDismissMixin, ModalScreen[None]):
     ]
     SAFE_MODAL_CONTENT = "#console-context-modal"
 
+    # task-16843: a bare instance default (`reactive(ConsoleContextSnapshot(...))`)
+    # installs the SAME snapshot object on every modal instance until
+    # `_load_snapshot` reassigns it -- `frozen=True` on the dataclass only
+    # blocks reassigning its `current_messages`/`next_send_payload` fields, not
+    # mutating the list/dict those fields point to in place. A callable
+    # default gives each instance its own snapshot (and its own empty
+    # list/dict) instead.
     snapshot = reactive(
-        ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+        lambda: ConsoleContextSnapshot(current_messages=[], next_send_payload={})
     )
     raw_json = reactive(False)
     in_progress = reactive(False)

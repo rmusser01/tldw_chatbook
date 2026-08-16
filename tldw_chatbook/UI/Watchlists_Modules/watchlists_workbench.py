@@ -95,6 +95,14 @@ class WatchlistsWorkbench(Horizontal):
             replacement must still be a brand new widget.
     """
 
+    # task-16843: a shared *instance* default (`reactive(RegionLayout())`
+    # installs the SAME `RegionLayout` object on every workbench instance
+    # until `__init__`'s `set_reactive` calls below overwrite it) -- but
+    # harmless: `RegionLayout` is `frozen=True` and every field is itself
+    # immutable (`frozenset`, `Region | None`), so there is no mutable
+    # container underneath to mutate in place. Allowlisted in
+    # `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST` rather than rewritten into a factory.
     region_layout: reactive[RegionLayout] = reactive(RegionLayout())
 
     def __init__(

@@ -37,6 +37,14 @@ RETIRED_MODULES = [
     # present in sys.modules at startup, called by nothing.
     "tldw_chatbook.Subscriptions.content_processor",
     "tldw_chatbook.Internal_Prompts.subscriptions_prompts",
+    # TASK-16846: the ADR-020 visual scraper builder, retired as a facade over a
+    # half-built feature. Nav-unreachable since creation (task-15991 proved it had
+    # never once composed), its Save wrote a Downloads JSON nothing reads, its Load
+    # button and four of its five key bindings had no handlers/actions, and the
+    # pipeline stack its exported code targets (web_scraping_pipelines +
+    # Subscriptions/scrapers) has no production consumer. Per-site extraction config
+    # lives in SiteConfigSettings/SiteConfigManager (site_configs table) instead.
+    "tldw_chatbook.UI.ScraperBuilderWindow",
 ]
 
 RETIRED_SYMBOLS = [

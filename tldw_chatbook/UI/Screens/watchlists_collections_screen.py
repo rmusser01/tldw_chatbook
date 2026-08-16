@@ -544,6 +544,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # used to apply a moment later — see `__init__`'s own comment for why
     # this class-level default used to disagree with that call's result,
     # and the ordering guarantee against `_last_persisted_collapsed`.
+    #
+    # task-16843: this is a shared *instance* default (`reactive(RegionLayout())`
+    # installs the SAME `RegionLayout` object on every screen instance until
+    # `set_reactive` overwrites it above) -- but it is harmless: `RegionLayout`
+    # is `frozen=True` and every field is itself immutable (`frozenset`,
+    # `Region | None`), so there is no mutable container underneath to mutate
+    # in place. Allowlisted in
+    # `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST` rather than rewritten into a factory.
     region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
@@ -579,6 +588,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # changed", but a toggled region is still rebuilt). Pane-local state does
     # not survive that (see `selected_run` and the create-form draft above
     # for the same reasoning already applied elsewhere on this screen).
+    #
+    # task-16843: both are shared *instance* defaults, same shape as
+    # `region_layout` above (each reactive's own `TreeScope("all")` object is
+    # shared across every screen instance that has not reassigned it -- the
+    # two reactives get their own separate default instances, not each
+    # other's) -- and equally harmless: `TreeScope` is `frozen=True` with
+    # only immutable field types (`Literal` str, `int | None`). Allowlisted
+    # in `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST`.
     selected_scope = reactive(TreeScope(kind="all"))
     tree_scope = reactive(TreeScope(kind="all"))
 
@@ -5099,6 +5117,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RerunRunRequested)
     def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
         event.stop()
+        # A coroutine worker, never thread=True — this launches a check, so
+        # the in-flight guard's single-loop invariant applies (see
+        # `handle_check_now_requested`'s launch site).
         self.run_worker(self._rerun_run(event.source_id), exclusive=True)
 
     async def _rerun_run(self, source_id: Any) -> None:
@@ -5239,6 +5260,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._notify_watchlists(
             f"Checking {name}...", severity="information", markup=False
         )
+        # A COROUTINE worker, never thread=True: the watchlists in-flight
+        # guard (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is a
+        # lock-free set whose safety rests on every check entrant running on
+        # the app's one event loop. Moving this off-loop needs a lock there.
         self.run_worker(
             self._check_now_source(entity, source_key, name), group="wc_check_now"
         )
@@ -5273,6 +5298,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not error_msg and isinstance(stats, Mapping):
             error_msg = stats.get("error_msg")
         return str(error_msg or "the source reported a failed run")
+
+    @staticmethod
+    def _check_was_entirely_skipped(result: Any) -> bool:
+        """Whether a completed check checked NOTHING because another was running.
+
+        task-16838. The per-(subscription, url) in-flight guard
+        (`LocalWatchlistsService._check_url_guarded`) makes a Check Now that
+        lands while a scheduled check of the same source is mid-flight skip
+        rather than double-check -- the run completes with a `skipped`
+        disposition count and nothing else. Without this, that run's toast
+        read "Check complete: X — 0 found, 0 new.", which tells the user
+        their page was checked and unchanged when it was not checked at all.
+
+        Only an ENTIRELY skipped run qualifies: a `url_list` run that checked
+        most URLs and skipped one did real work, and its ordinary completion
+        toast stays honest for it (the Runs pane detail carries the per-URL
+        skip count).
+
+        Args:
+            result: Whatever `check_now` returned.
+
+        Returns:
+            True when the run's dispositions show at least one skip and
+            zero of everything else.
+        """
+        if not isinstance(result, Mapping):
+            return False
+        stats = result.get("stats")
+        if not isinstance(stats, Mapping):
+            return False
+        dispositions = stats.get("dispositions")
+        if not isinstance(dispositions, Mapping):
+            return False
+        try:
+            skipped = int(dispositions.get("skipped", 0) or 0)
+            others = sum(
+                int(value or 0)
+                for counter, value in dispositions.items()
+                if counter != "skipped"
+            )
+        except (TypeError, ValueError):
+            return False
+        return skipped > 0 and others == 0
 
     async def _check_now_source(
         self,
@@ -5374,7 +5442,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     status = str((result or {}).get("status") or "").lower()
                     reached_terminal = status in self._TERMINAL_RUN_STATUSES
                     if callable(notify):
-                        if reached_terminal:
+                        if reached_terminal and self._check_was_entirely_skipped(
+                            result
+                        ):
+                            # task-16838: the in-flight guard skipped every
+                            # URL -- say so rather than "0 found, 0 new",
+                            # which would claim the page was checked and
+                            # unchanged when it was not checked at all.
+                            notify(
+                                f"Check skipped: {name} — a check of this "
+                                f"source is already running.",
+                                severity="warning",
+                                markup=False,
+                            )
+                        elif reached_terminal:
                             # The run's own counters (TASK-2309), when the
                             # result actually carries them -- the local
                             # backend's `execute_run` always returns a

@@ -2336,13 +2336,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "e409e601317c772b9182",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/ScraperBuilderWindow.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 8,
       "diagnostic_digest": "b527247e67c2560ea0ac",
       "owner": "TASK-494",
@@ -3672,9 +3665,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 499,
+    "owner_files": 498,
     "persistent_sink_files": 6,
     "task_492_calls": 1207,
-    "task_494_calls": 6952
+    "task_494_calls": 6949
   }
 }
