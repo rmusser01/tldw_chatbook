@@ -2211,9 +2211,11 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 
 class TestReasoningEffortHints:
     def test_dotted_qwen_generations_are_effort_capable(self):
+        # "none" is included: it is consumed via our enable_thinking=false
+        # mapping on dotted Qwens (live-verified).
         for model in ("Qwen3.8-27B", "qwen3.5-397b-gguf:q4"):
             assert reasoning_effort_hint_for_model(model) == frozenset(
-                {"low", "medium", "xhigh"}
+                {"low", "medium", "xhigh", "none"}
             )
 
     def test_original_qwen3_is_toggle_only(self):
@@ -2260,6 +2262,19 @@ class TestConsoleSettingsWarnings:
         warnings = console_settings_warnings(settings)
         assert any("--jinja" in w for w in warnings)
 
+    def test_local_llm_thinking_note_included(self):
+        # local-llm sends compose llama.cpp-family wire fields, so its users
+        # need the --jinja/b9982 requirements note too.
+        settings = self._settings(provider="local_llm", reasoning_effort="low")
+        warnings = console_settings_warnings(settings)
+        assert any("--jinja" in w for w in warnings)
+
     def test_llama_family_note_requires_a_thinking_value(self):
         settings = self._settings()
+        assert console_settings_warnings(settings) == []
+
+    def test_none_effort_on_dotted_qwen_does_not_warn(self):
+        # "none" is consumed by dotted Qwens via our enable_thinking=false
+        # mapping, so it must not warn as unconsumed.
+        settings = self._settings(provider="openai", reasoning_effort="none")
         assert console_settings_warnings(settings) == []

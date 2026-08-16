@@ -118,9 +118,14 @@ _REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("gpt-oss", frozenset({"low", "medium", "high"})),
     ("qwen3", frozenset({"none"})),
 )
-_QWEN_DOTTED_EFFORT_VALUES = frozenset({"low", "medium", "xhigh"})
+# "none" is live-verified on dotted Qwens: it is consumed via our
+# enable_thinking=false mapping, so it must not warn as unconsumed.
+_QWEN_DOTTED_EFFORT_VALUES = frozenset({"low", "medium", "xhigh", "none"})
+# local-llm sends compose llama.cpp-family wire fields (chat_template_kwargs
+# reasoning/enable_thinking + reasoning_budget_tokens), so its users need the
+# --jinja/b9982 requirements note too.
 _LLAMA_CPP_FAMILY_PROVIDERS = frozenset(
-    {"llama_cpp", "local_llamacpp", "local_llamafile"}
+    {"llama_cpp", "local_llamacpp", "local_llamafile", "local_llm"}
 )
 _LLAMACPP_THINKING_REQUIREMENTS_NOTE = (
     "Thinking controls on llama.cpp need llama-server started with --jinja; "

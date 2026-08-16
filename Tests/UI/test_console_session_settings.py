@@ -68,9 +68,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_CONTROL_HEIGHT,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
+    PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
+    _is_local_thinking_provider,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
@@ -2511,6 +2513,94 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         assert identity.placeholder == "Default Name"
         assert "Chat identity" in _visible_text(app)
         assert "Leave blank to use the global default." in _visible_text(app)
+
+
+def test_local_thinking_provider_detection_covers_execution_key_aliases() -> None:
+    assert _is_local_thinking_provider("llama_cpp") is True
+    assert _is_local_thinking_provider("local_llamacpp") is True
+    assert _is_local_thinking_provider("local_llamafile") is True
+    assert _is_local_thinking_provider("local_llm") is True
+    assert _is_local_thinking_provider("vllm") is True
+    assert _is_local_thinking_provider("local_vllm") is True
+    assert _is_local_thinking_provider("local_mlx_lm") is True
+    # Readiness aliases resolve to their custom-openai execution keys.
+    assert _is_local_thinking_provider("custom") is True
+    assert _is_local_thinking_provider("custom_2") is True
+    assert _is_local_thinking_provider("anthropic") is False
+    assert _is_local_thinking_provider("openai") is False
+    assert _is_local_thinking_provider(None) is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_local_provider_marks_no_effect_choices() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
+        verbosity = app.screen.query_one("#console-settings-verbosity", Input)
+        effort = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        # Local providers consume only the reasoning-effort level; the other
+        # provider-specific choice inputs say so right in the placeholder.
+        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert summary.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert verbosity.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in effort.placeholder
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_remote_provider_keeps_thinking_hint_plain() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="anthropic", model="claude-3-5-sonnet-latest"
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_select.value = "llama_cpp"
+        await pilot.pause()
+
+        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
 
 
 @pytest.mark.asyncio
@@ -7062,11 +7152,20 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
             _basic_modal(settings, app), callback=app.capture_saved_settings
         )
         await pilot.pause()
+        # llama.cpp is a local thinking provider: only the reasoning-effort
+        # level is consumed, so the other choice inputs carry the no-effect
+        # suffix.
         placeholders = {
             "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
-            "console-settings-reasoning-summary": "auto, concise, detailed, none",
-            "console-settings-verbosity": "low, medium, high",
-            "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
+            "console-settings-reasoning-summary": (
+                "auto, concise, detailed, none" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
+            "console-settings-verbosity": (
+                "low, medium, high" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
+            "console-settings-thinking-effort": (
+                "off, low, medium, high, xhigh, max" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
         }
         for input_id, expected in placeholders.items():
             assert app.screen.query_one(f"#{input_id}", Input).placeholder == expected
