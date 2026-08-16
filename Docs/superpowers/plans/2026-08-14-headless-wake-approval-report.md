@@ -348,9 +348,14 @@ reported a perfectly healthy "282 passed". Reading the count is not
 enough; the count has to be *checked against what you meant to run*.
 Never pass a directory and a file inside it in the same invocation.
 
-| Run | Baseline (untouched branch) | Final |
+| Run | Baseline (untouched branch, `e112798f1` + the probe file only) | Final (branch) |
 |---|---|---|
-| probe + `test_console_mcp_approval` + `test_console_headless_wake_fires` + `test_console_sync_outlives_screen` + `test_console_store_continuity` + `test_console_viewless_hooks` + `test_console_runtime_lifetime` + `test_console_runtime_ownership` + `test_screen_residency` + `Tests/Agents/` + the 12 wake suites + the 5 skill-confirm suites (**1,733 collected**) | **1732 passed, 1 skipped** | *(see below)* |
+| provenance probe + `test_console_mcp_approval` + `test_console_headless_wake_fires` + `test_console_sync_outlives_screen` + `test_console_store_continuity` + `test_console_viewless_hooks` + `test_console_runtime_lifetime` + `test_console_runtime_ownership` + `test_screen_residency` + `Tests/Agents/` (1,458) + the 12 wake suites + the 5 skill-confirm suites | **1732 passed, 1 skipped** (267.1s) | **1747 passed, 1 skipped** (352.4s) |
+
+**Zero failures on either side.** The +15 is exactly accounted for: the
+14 tests of the new file plus the step-1 probe (the final run adds both;
+the skip is `test_probe_p4_headless_approval_cost`, which needs
+`--run-slow` and by design burns a full deadline).
 
 ### 9.2 The whole Console population, one process
 
