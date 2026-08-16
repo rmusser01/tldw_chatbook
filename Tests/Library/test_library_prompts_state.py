@@ -1146,6 +1146,72 @@ def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
     assert result.items[0]["last_modified"] == "2020-01-01T00:00:00+00:00"
 
 
+def test_browse_prompt_list_state_projects_separately_retained_validated_items():
+    scope = prompts_state_module.PromptBrowseScope(page_size=2)
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:prompt:one",
+                    "local_id": 1,
+                    "name": "One",
+                    "version": 1,
+                },
+                {
+                    "id": "local:prompt:two",
+                    "local_id": 2,
+                    "name": "Two",
+                    "version": 1,
+                },
+            ],
+            "total_items": 2,
+            "total_pages": 1,
+            "current_page": 1,
+            "page": 1,
+            "per_page": 2,
+        },
+    )
+
+    state = prompts_state_module.build_prompt_browse_list_state(
+        result,
+        now=NOW,
+        retained_items=result.items[:1],
+    )
+
+    assert [row.prompt_id for row in state.rows] == [1]
+    assert state.count == 1
+
+
+def test_browse_prompt_list_state_rejects_unvalidated_retained_items():
+    scope = prompts_state_module.PromptBrowseScope(page_size=2)
+    result = prompts_state_module.build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": "local:prompt:one",
+                    "local_id": 1,
+                    "name": "One",
+                    "version": 1,
+                }
+            ],
+            "total_items": 1,
+            "total_pages": 1,
+            "current_page": 1,
+            "page": 1,
+            "per_page": 2,
+        },
+    )
+
+    with pytest.raises(ValueError, match="unique"):
+        prompts_state_module.build_prompt_browse_list_state(
+            result,
+            now=NOW,
+            retained_items=(result.items[0], result.items[0]),
+        )
+
+
 @pytest.mark.parametrize(
     ("kwargs", "field"),
     [

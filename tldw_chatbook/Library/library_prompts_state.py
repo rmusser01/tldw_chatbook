@@ -167,6 +167,34 @@ def _freeze_prompt_browse_value(value: Any) -> Any:
     raise TypeError("Prompt browse values must be JSON-like immutable data.")
 
 
+def validate_prompt_browse_items(
+    items: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], ...]:
+    """Validate and detach stable Prompt page records for retained display."""
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
+        raise TypeError("Prompt browse result items must be a sequence.")
+    if any(not isinstance(item, Mapping) for item in items):
+        raise TypeError("Prompt browse result items must be mappings.")
+    stable_ids: set[str] = set()
+    local_ids: set[int] = set()
+    for item in items:
+        stable_id = item.get("id")
+        if type(stable_id) is not str or not stable_id.strip():
+            raise ValueError("Prompt browse item id must be a non-blank string.")
+        local_id = item.get("local_id")
+        if type(local_id) is not int or local_id <= 0:
+            raise ValueError("Prompt browse item local_id must be a positive integer.")
+        if stable_id in stable_ids:
+            raise ValueError("Prompt browse item id values must be unique.")
+        if local_id in local_ids:
+            raise ValueError("Prompt browse item local_id values must be unique.")
+        stable_ids.add(stable_id)
+        local_ids.add(local_id)
+    return tuple(
+        cast(Mapping[str, Any], _freeze_prompt_browse_value(item)) for item in items
+    )
+
+
 def _prompt_browse_settled_status(
     scope: PromptBrowseScope, *, has_items: bool
 ) -> PromptBrowseStatus:
@@ -221,31 +249,7 @@ class PromptBrowseResult:
             raise TypeError("error must be a string.")
         normalized_error = self.error.strip()
 
-        if not isinstance(self.items, Sequence) or isinstance(self.items, (str, bytes)):
-            raise TypeError("Prompt browse result items must be a sequence.")
-        if any(not isinstance(item, Mapping) for item in self.items):
-            raise TypeError("Prompt browse result items must be mappings.")
-        stable_ids: set[str] = set()
-        local_ids: set[int] = set()
-        for item in self.items:
-            stable_id = item.get("id")
-            if type(stable_id) is not str or not stable_id.strip():
-                raise ValueError("Prompt browse item id must be a non-blank string.")
-            local_id = item.get("local_id")
-            if type(local_id) is not int or local_id <= 0:
-                raise ValueError(
-                    "Prompt browse item local_id must be a positive integer."
-                )
-            if stable_id in stable_ids:
-                raise ValueError("Prompt browse item id values must be unique.")
-            if local_id in local_ids:
-                raise ValueError("Prompt browse item local_id values must be unique.")
-            stable_ids.add(stable_id)
-            local_ids.add(local_id)
-        frozen_items = tuple(
-            cast(Mapping[str, Any], _freeze_prompt_browse_value(item))
-            for item in self.items
-        )
+        frozen_items = validate_prompt_browse_items(self.items)
         object.__setattr__(self, "items", frozen_items)
         object.__setattr__(self, "error", normalized_error)
         object.__setattr__(self, "requested_page", requested_page)
@@ -2176,6 +2180,7 @@ def build_prompt_browse_list_state(
     result: PromptBrowseResult,
     *,
     now: datetime,
+    retained_items: tuple[Mapping[str, Any], ...] | None = None,
     selection: PromptSelectionBasket | None = None,
     select_mode: bool = False,
 ) -> PromptsListState:
@@ -2184,6 +2189,8 @@ def build_prompt_browse_list_state(
     Args:
         result: Immutable browse result whose page order is authoritative.
         now: Reference time used for row-relative timestamps.
+        retained_items: Validated last-good records to project when they differ
+            from the exact result after a committed mutation.
         selection: Immutable cross-page selection to project into page rows.
         select_mode: Whether the list should expose selection-mode controls.
 
@@ -2202,9 +2209,16 @@ def build_prompt_browse_list_state(
         raise TypeError("selection must be a PromptSelectionBasket or None.")
     if type(select_mode) is not bool:
         raise TypeError("select_mode must be a bool.")
+    if retained_items is not None and type(retained_items) is not tuple:
+        raise TypeError("retained_items must be an exact tuple or None.")
+    records = (
+        result.items
+        if retained_items is None
+        else validate_prompt_browse_items(retained_items)
+    )
     selected_ids = frozenset(entry.local_id for entry in selected_entries)
     rows_list: list[PromptListRow] = []
-    for record in result.items:
+    for record in records:
         row = _row(
             record,
             now=now,
