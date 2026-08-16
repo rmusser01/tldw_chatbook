@@ -1,5 +1,36 @@
 # Chunking Implementation - Complete Summary
 
+> ## ⚠️ Correction (2026-08-15, TASK-16174): parent-document inclusion was never wired
+>
+> This document claims a **parent document inclusion** feature was
+> implemented. It was not. The three `SearchConfig` knobs it names —
+> `include_parent_docs`, `parent_size_threshold`,
+> `parent_inclusion_strategy` — existed as dataclass fields and were
+> written by three shipped RAG profiles, but a grep of the whole
+> repository found **zero reads**: nothing in the retrieval path ever
+> consulted them, so switching them on changed nothing. The
+> `ContextAssembler` class and the
+> `tldw_chatbook/RAG_Search/late_chunking_integration.py` module named
+> below **do not exist in this repository**.
+>
+> TASK-16174 Phase K **retired all three fields** from `SearchConfig` and
+> deleted the nine profile writes. `RAGConfig.from_dict` now filters
+> unknown `[search]` keys with a logged notice, so a saved config that
+> still carries them loads instead of raising `TypeError` — but the
+> `SearchConfig(...)` call shown below now raises `TypeError` if copied.
+>
+> The capability those knobs promised — following a hit into its document
+> — shipped instead as the gated `expand_document` agent tool
+> (`tldw_chatbook/Tools/document_expansion_tool.py`, `[tools]
+> expand_document_enabled`, OFF by default). It is pull-based and
+> per-hit rather than engine-side inclusion during retrieval. Its
+> answer-level measurement is
+> `Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/report.md`.
+>
+> Everything else in this document is left as written and is **not**
+> re-verified by that task.
+
+
 ## Overview
 
 This document summarizes the complete implementation of the template-based chunking system with per-document configuration and late chunking capabilities for the tldw_chatbook RAG pipeline.
@@ -148,6 +179,9 @@ for doc in relevant_docs:
 ```
 
 ### 3. Parent Document Inclusion
+
+> **⚠️ Retired (TASK-16174):** `include_parent_docs` / `parent_size_threshold` / `parent_inclusion_strategy` were never read by any code path and have been deleted from `SearchConfig`; the snippet below no longer runs. See the correction at the top of this file.
+
 
 ```python
 # Configure parent inclusion
