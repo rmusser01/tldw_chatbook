@@ -55,21 +55,54 @@ def compose_expression_prompt(
     if state not in EXPRESSION_PROMPT_STATES:
         raise ValueError(f"unknown state: {state}")
 
-    # Build base text: name (if non-blank) + description + personality + state modifier
-    parts = []
-    if name.strip():
-        parts.append(name.strip())
-    parts.append(description.strip())
-    if personality.strip():
-        parts.append(personality.strip())
-    parts.append(STATE_MODIFIERS[state])
+    return _compose_identity_prompt(
+        name=name,
+        description=description,
+        personality=personality,
+        direction=STATE_MODIFIERS[state],
+        style_template=style_template,
+    )
 
+
+def compose_visual_identity_prompt(
+    *,
+    name: str,
+    description: str,
+    label: str,
+    visual_direction: str,
+    personality: str = "",
+    style_template: Any = None,
+) -> tuple[str, str, dict[str, Any]]:
+    """Compose one pack-reaction prompt without expanding legacy states."""
+
+    if not label.strip() or not visual_direction.strip():
+        raise ValueError("label and visual_direction must be non-empty")
+    return _compose_identity_prompt(
+        name=name,
+        description=description,
+        personality=personality,
+        direction=f"{label.strip()} expression: {visual_direction.strip()}",
+        style_template=style_template,
+    )
+
+
+def _compose_identity_prompt(
+    *,
+    name: str,
+    description: str,
+    personality: str,
+    direction: str,
+    style_template: Any,
+) -> tuple[str, str, dict[str, Any]]:
+    """Apply the shared character identity prefix and optional style."""
+
+    if not description.strip():
+        raise ValueError("description must be non-empty")
+    parts = [part.strip() for part in (name, description, personality) if part.strip()]
+    parts.append(direction)
     base_text = ", ".join(parts)
-
-    # Apply style template if provided
     if style_template is not None:
         from tldw_chatbook.Chat.console_generate_image import compose_styled_request
 
         return compose_styled_request(base_text, style_template)
-
     return base_text, "", {}

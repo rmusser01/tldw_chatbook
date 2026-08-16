@@ -108,6 +108,12 @@ def _browser_host(pack=None):
         def on_visual_identity_pack_save_requested(self, message):
             self.captured.append(message)
 
+        def on_visual_identity_pack_generate_all_requested(self, message):
+            self.captured.append(message)
+
+        def on_visual_identity_pack_cancel_requested(self, message):
+            self.captured.append(message)
+
     return BrowserHost()
 
 
@@ -305,6 +311,26 @@ async def test_builtin_notice_dirty_summary_and_typed_action_messages():
         assert isinstance(app.captured[-1], messages.VisualIdentityPackSaveRequested)
         assert app.captured[-1].pack_id == 10
         assert app.captured[-1].pack_version_id == 20
+
+
+@pytest.mark.asyncio
+async def test_pack_generate_all_and_cancel_are_explicit_typed_actions():
+    module = _browser_module()
+    app = _browser_host(_samira_pack())
+    async with app.run_test(size=(120, 40)) as pilot:
+        browser = app.query_one(_browser_class())
+        browser.query_one("#personas-visual-identity-generate-all", Button).press()
+        await pilot.pause()
+        assert isinstance(
+            app.captured[-1], module.VisualIdentityPackGenerateAllRequested
+        )
+
+        browser.set_generating(True)
+        assert browser.query_one("#personas-visual-identity-cancel", Button).display
+        assert browser.query_one("#personas-visual-identity-save", Button).disabled
+        browser.query_one("#personas-visual-identity-cancel", Button).press()
+        await pilot.pause()
+        assert isinstance(app.captured[-1], module.VisualIdentityPackCancelRequested)
 
 
 @pytest.mark.asyncio

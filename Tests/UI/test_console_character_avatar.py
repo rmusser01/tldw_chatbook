@@ -17,6 +17,9 @@ a full pilot-driven screen.
 import asyncio
 import threading
 from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -33,7 +36,10 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Character_Chat.visual_identity import VisualIdentityResolution
+from tldw_chatbook.Character_Chat.visual_identity import (
+    VisualIdentityPublicationResult,
+    VisualIdentityResolution,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
@@ -42,6 +48,7 @@ from tldw_chatbook.UI.Console_Modules.session import (
     ConsoleSessionController,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -843,6 +850,29 @@ async def test_visual_identity_cache_uses_the_complete_resolution_identity(
     assert first_identity not in screen._console_expression_spec_cache
     assert second_identity in screen._console_expression_spec_cache
     assert len(calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_personas_publication_targets_mounted_console_cache_before_return(
+    console_screen_with_db, monkeypatch
+):
+    _app, console, _db = console_screen_with_db
+    invalidate = AsyncMock()
+    monkeypatch.setattr(console._session, "invalidate_visual_identity_actor", invalidate)
+    owner = SimpleNamespace(app=SimpleNamespace(screen_stack=(console,)))
+    result = VisualIdentityPublicationResult(
+        actor_kind="character",
+        actor_id="42",
+        old_pack_id=1,
+        old_version_id=1,
+        new_pack_id=2,
+        new_version_id=2,
+        version_directory=Path("unused"),
+    )
+
+    await PersonasScreen._invalidate_visual_identity_publication(owner, result)
+
+    invalidate.assert_awaited_once_with("character", "42")
 
 
 @pytest.mark.parametrize(

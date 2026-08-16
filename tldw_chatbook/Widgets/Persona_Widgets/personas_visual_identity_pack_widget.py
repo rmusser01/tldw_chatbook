@@ -7,6 +7,7 @@ from typing import Any, Literal
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -20,6 +21,14 @@ from .personas_pane_messages import (
     VisualIdentityPackReplaceRequested,
     VisualIdentityPackSaveRequested,
 )
+
+
+class VisualIdentityPackGenerateAllRequested(Message):
+    """Ask the screen to stage all expressions through image generation."""
+
+
+class VisualIdentityPackCancelRequested(Message):
+    """Ask the screen to cancel and discard the unpublished candidate."""
 
 
 class PersonasVisualIdentityPackWidget(Vertical):
@@ -84,6 +93,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
     PersonasVisualIdentityPackWidget #personas-visual-identity-actions {
         width: 100%;
         height: 3;
+        overflow-x: auto;
     }
 
     PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button {
@@ -139,6 +149,11 @@ class PersonasVisualIdentityPackWidget(Vertical):
                 classes="console-action-secondary",
             )
             yield Button(
+                "Generate All",
+                id="personas-visual-identity-generate-all",
+                classes="console-action-secondary",
+            )
+            yield Button(
                 "Clear",
                 id="personas-visual-identity-clear",
                 classes="console-action-subdued",
@@ -149,11 +164,17 @@ class PersonasVisualIdentityPackWidget(Vertical):
                 classes="console-action-primary",
                 disabled=True,
             )
+            yield Button(
+                "Cancel",
+                id="personas-visual-identity-cancel",
+                classes="console-action-subdued",
+            )
 
     def on_mount(self) -> None:
         self._sync_pack_copy()
         self.apply_filter("")
         self._sync_narrow()
+        self.query_one("#personas-visual-identity-cancel", Button).display = False
 
     def on_resize(self, event: events.Resize) -> None:
         self._sync_narrow(event.size.width)
@@ -275,6 +296,31 @@ class PersonasVisualIdentityPackWidget(Vertical):
         )
         self.query_one("#personas-visual-identity-save", Button).disabled = False
 
+    def set_generating(self, generating: bool) -> None:
+        """Expose one honest generation/cancellation state."""
+
+        for action in ("replace", "generate", "generate-all", "clear", "save"):
+            self.query_one(
+                f"#personas-visual-identity-{action}", Button
+            ).disabled = generating
+        self.query_one("#personas-visual-identity-cancel", Button).display = generating
+        self.query_one("#personas-visual-identity-dirty", Static).update(
+            "Generating reactions…" if generating else self._dirty_copy()
+        )
+
+    def reset_staged(self) -> None:
+        """Discard only unpublished widget state."""
+
+        self._staged.clear()
+        self.set_generating(False)
+        self.query_one("#personas-visual-identity-save", Button).disabled = True
+
+    def _dirty_copy(self) -> str:
+        count = len(self._staged)
+        if not count:
+            return "No staged changes"
+        return f"{count} staged {'change' if count == 1 else 'changes'}"
+
     @on(Input.Changed, "#personas-visual-identity-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
         self.apply_filter(event.value)
@@ -298,6 +344,12 @@ class PersonasVisualIdentityPackWidget(Vertical):
         event.stop()
         self._post_selected(VisualIdentityPackGenerateRequested)
 
+    @on(Button.Pressed, "#personas-visual-identity-generate-all")
+    def _generate_all_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self.pack is not None:
+            self.post_message(VisualIdentityPackGenerateAllRequested())
+
     @on(Button.Pressed, "#personas-visual-identity-clear")
     def _clear_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -313,5 +365,14 @@ class PersonasVisualIdentityPackWidget(Vertical):
                 )
             )
 
+    @on(Button.Pressed, "#personas-visual-identity-cancel")
+    def _cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(VisualIdentityPackCancelRequested())
 
-__all__ = ["PersonasVisualIdentityPackWidget"]
+
+__all__ = [
+    "PersonasVisualIdentityPackWidget",
+    "VisualIdentityPackCancelRequested",
+    "VisualIdentityPackGenerateAllRequested",
+]
