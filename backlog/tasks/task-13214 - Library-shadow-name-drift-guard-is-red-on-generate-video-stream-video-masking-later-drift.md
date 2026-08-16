@@ -3,7 +3,7 @@ id: TASK-13214
 title: >-
   Library shadow-name drift guard is red on generate-video/stream-video, masking
   later drift
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-10 00:29'
 updated_date: '2026-08-16 10:05'
@@ -20,9 +20,9 @@ Tests/Library/test_library_skills_state.py::test_shadow_name_set_stays_in_sync_w
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 generate-video and stream-video are covered by _SHADOWED_BUILTIN_NAMES (or deliberately exempted with a documented reason)
-- [ ] #2 The guard passes on a clean dev checkout
-- [ ] #3 The assertion reports ALL uncovered names across the three sources in one failure rather than short-circuiting on the first subset, so one gap cannot mask another
+- [x] #1 generate-video and stream-video are covered by _SHADOWED_BUILTIN_NAMES (or deliberately exempted with a documented reason)
+- [x] #2 The guard passes on a clean dev checkout
+- [x] #3 The assertion reports ALL uncovered names across the three sources in one failure rather than short-circuiting on the first subset, so one gap cannot mask another
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -40,3 +40,19 @@ builtin is listed there precisely because this drift guard cannot see
 gated tools — a skill could shadow it undetected. Same family as the
 `research` gap above; whoever repairs the guard should add it in the same
 pass.
+
+**CLOSED 2026-08-16 (fix/task-13214-shadow-guard).** AC#1 was already
+satisfied on dev (generate-video/stream-video covered by the video arc);
+what remained was the masked tail. AC#3 shipped as the structural fix:
+the guard now collects FOUR sources (RUNTIME_TOOL_NAMES, the live
+catalog, **the gate table via `gateable_builtin_tools()` — so gated-OFF
+tools are no longer invisible (F6)**, and the Console command registry)
+and asserts ONCE, reporting every gap across every source. The RED run
+proved the design: it surfaced BOTH remaining gaps simultaneously —
+`research` (masked) and `expand_document` (invisible to the old guard by
+construction). Both added to `_SHADOWED_BUILTIN_NAMES` with reasons.
+AC#2: `Tests/Library/` 1995 passed / 2 skipped / **0 failed** — the
+standing dev red is gone. Behaviour note: skills named `research` or
+`expand_document` are now correctly flagged as shadowing builtins (the
+set's consumer at `library_skills_state.py:287` is the shadow-warning
+path — that is the feature working).
