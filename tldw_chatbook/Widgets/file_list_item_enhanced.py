@@ -120,11 +120,14 @@ class FileListItemEnhanced(ListItem):
                 icon = self._get_file_icon()
                 with Horizontal(classes="file-name-row"):
                     yield Static(icon, classes="file-icon")
-                    yield Static(
+                    # Static.__init__ (Textual 8.x) has no `tooltip` kwarg --
+                    # set it as a post-construction attribute instead (task-16844).
+                    name_static = Static(
                         self._metadata["name"],
                         classes="file-name",
-                        tooltip=str(self.file_path),
                     )
+                    name_static.tooltip = str(self.file_path)
+                    yield name_static
 
                 # Metadata row
                 metadata_parts = []
