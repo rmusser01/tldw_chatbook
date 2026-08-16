@@ -225,6 +225,23 @@ class PromptBrowseResult:
             raise TypeError("Prompt browse result items must be a sequence.")
         if any(not isinstance(item, Mapping) for item in self.items):
             raise TypeError("Prompt browse result items must be mappings.")
+        stable_ids: set[str] = set()
+        local_ids: set[int] = set()
+        for item in self.items:
+            stable_id = item.get("id")
+            if type(stable_id) is not str or not stable_id.strip():
+                raise ValueError("Prompt browse item id must be a non-blank string.")
+            local_id = item.get("local_id")
+            if type(local_id) is not int or local_id <= 0:
+                raise ValueError(
+                    "Prompt browse item local_id must be a positive integer."
+                )
+            if stable_id in stable_ids:
+                raise ValueError("Prompt browse item id values must be unique.")
+            if local_id in local_ids:
+                raise ValueError("Prompt browse item local_id values must be unique.")
+            stable_ids.add(stable_id)
+            local_ids.add(local_id)
         frozen_items = tuple(
             cast(Mapping[str, Any], _freeze_prompt_browse_value(item))
             for item in self.items
@@ -330,7 +347,10 @@ def build_prompt_browse_result(
     total_items = _prompt_browse_int(record, "total_items", minimum=0)
     total_pages = _prompt_browse_int(record, "total_pages", minimum=0)
     current_page = _prompt_browse_int(record, "current_page", minimum=1)
+    page_alias = _prompt_browse_int(record, "page", minimum=1)
     per_page = _prompt_browse_int(record, "per_page", minimum=1)
+    if page_alias != current_page:
+        raise ValueError("page must match current_page.")
     if per_page != scope.page_size:
         raise ValueError("per_page must match the requested page_size.")
     resolved_scope = replace(scope, page=current_page)
@@ -2172,6 +2192,7 @@ def build_prompt_browse_list_state(
 
     Raises:
         TypeError: If ``selection`` or ``select_mode`` has the wrong type.
+        ValueError: If a validated source item cannot form a selection row.
     """
     if selection is None:
         selected_entries: tuple[PromptSelectionEntry, ...] = ()
@@ -2183,7 +2204,6 @@ def build_prompt_browse_list_state(
         raise TypeError("select_mode must be a bool.")
     selected_ids = frozenset(entry.local_id for entry in selected_entries)
     rows_list: list[PromptListRow] = []
-    seen_ids: set[int] = set()
     for record in result.items:
         row = _row(
             record,
@@ -2191,10 +2211,9 @@ def build_prompt_browse_list_state(
             checked_ids=selected_ids,
             strict_selection=True,
         )
-        if row is None or row.prompt_id in seen_ids:
-            continue
+        if row is None:
+            raise ValueError("Validated Prompt browse item could not be projected.")
         rows_list.append(row)
-        seen_ids.add(row.prompt_id)
     rows = tuple(rows_list)
     return PromptsListState(
         rows=rows,

@@ -265,6 +265,7 @@ def _browse_result(
             "total_items": total,
             "total_pages": total_pages,
             "current_page": page if total else 1,
+            "page": page if total else 1,
             "per_page": page_size,
         },
         request_token=request_token,
@@ -2767,7 +2768,7 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
                 "sort_by": "last_modified",
                 "sort_order": "desc",
                 "page": 1,
-                "page_size": 50,
+                "page_size": 20,
             }
         ]
         assert prompt_service.browse_threads
@@ -2848,7 +2849,7 @@ async def test_library_prompts_restored_create_row_list_dispatches_browse_once()
                 "sort_by": "last_modified",
                 "sort_order": "desc",
                 "page": 1,
-                "page_size": 50,
+                "page_size": 20,
             }
         ]
 

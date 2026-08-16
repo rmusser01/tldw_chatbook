@@ -44,6 +44,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 )
 from tldw_chatbook.Prompt_Management.prompt_normalizers import (
     normalize_prompt_history_page,
+    normalize_prompt_list,
 )
 from tldw_chatbook.Prompt_Management.prompt_restore_errors import (
     PromptRestoreError,
@@ -98,6 +99,16 @@ PROMPT_C = {
     "last_modified": "2026-07-07T11:00:00+00:00",
     "version": 1,
 }
+
+
+def _browse_prompt(record):
+    local_id = record["id"]
+    return {**record, "id": f"local:prompt:{local_id}", "local_id": local_id}
+
+
+BROWSE_PROMPT_A = _browse_prompt(PROMPT_A)
+BROWSE_PROMPT_B = _browse_prompt(PROMPT_B)
+BROWSE_PROMPT_C = _browse_prompt(PROMPT_C)
 
 
 def test_browse_prompt_scope_defaults_to_library_twenty_row_pages():
@@ -479,10 +490,11 @@ def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
     result = prompts_state_module.build_prompt_browse_result(
         scope,
         {
-            "items": [PROMPT_C],
+            "items": [BROWSE_PROMPT_C],
             "total_items": 5,
             "total_pages": 3,
             "current_page": 3,
+            "page": 3,
             "per_page": 2,
         },
     )
@@ -490,7 +502,7 @@ def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
     assert isinstance(result, prompts_state_module.PromptBrowseResult)
     assert result.scope.page == 3
     assert result.scope_fingerprint == replace(scope, page=3).fingerprint
-    assert result.items[0]["id"] == PROMPT_C["id"]
+    assert result.items[0]["id"] == BROWSE_PROMPT_C["id"]
     assert result.items[0]["keywords"] == tuple(PROMPT_C["keywords"])
     assert result.total_items == 5
     assert result.total_pages == 3
@@ -498,19 +510,71 @@ def test_browse_prompt_result_preserves_exact_total_pages_and_clamped_page():
     assert result.status == "ready"
 
 
+def test_browse_prompt_result_rejects_divergent_page_alias():
+    scope = prompts_state_module.PromptBrowseScope(page=2, page_size=2)
+
+    with pytest.raises(ValueError, match="page.*current_page"):
+        prompts_state_module.build_prompt_browse_result(
+            scope,
+            {
+                "items": [BROWSE_PROMPT_A, BROWSE_PROMPT_B],
+                "total_items": 5,
+                "total_pages": 3,
+                "current_page": 2,
+                "page": 1,
+                "per_page": 2,
+            },
+        )
+
+
+@pytest.mark.parametrize("field", ["current_page", "page", "per_page"])
+@pytest.mark.parametrize("value", [0, True, 1.5])
+def test_browse_prompt_product_path_rejects_malformed_page_metadata(field, value):
+    scope = prompts_state_module.PromptBrowseScope(page=2)
+    payload = {
+        "items": [
+            {
+                "id": 7,
+                "uuid": "prompt-7",
+                "name": "Seven",
+                "version": 1,
+            }
+        ],
+        "total_items": 21,
+        "total_pages": 2,
+        "current_page": 2,
+        "page": 2,
+        "per_page": 20,
+    }
+    payload[field] = value
+
+    if type(value) is int:
+        normalized = normalize_prompt_list(
+            payload, backend="local", page=scope.page, per_page=scope.page_size
+        )
+        assert normalized[field] == 0
+        with pytest.raises(ValueError, match=field):
+            prompts_state_module.build_prompt_browse_result(scope, normalized)
+    else:
+        with pytest.raises(TypeError, match=field):
+            normalize_prompt_list(
+                payload, backend="local", page=scope.page, per_page=scope.page_size
+            )
+
+
 @pytest.mark.parametrize(
     ("scope", "items", "total_items", "total_pages", "current_page"),
     [
         (
             prompts_state_module.PromptBrowseScope(page=2, page_size=2),
-            [PROMPT_A, PROMPT_B],
+            [BROWSE_PROMPT_A, BROWSE_PROMPT_B],
             5,
             3,
             2,
         ),
         (
             prompts_state_module.PromptBrowseScope(page=3, page_size=2),
-            [PROMPT_C],
+            [BROWSE_PROMPT_C],
             5,
             3,
             3,
@@ -534,6 +598,7 @@ def test_browse_prompt_result_requires_exact_page_cardinality(
             "total_items": total_items,
             "total_pages": total_pages,
             "current_page": current_page,
+            "page": current_page,
             "per_page": scope.page_size,
         },
     )
@@ -548,10 +613,11 @@ def test_browse_prompt_result_rejects_overfull_partial_last_page():
         prompts_state_module.build_prompt_browse_result(
             scope,
             {
-                "items": [PROMPT_A, PROMPT_B],
+                "items": [BROWSE_PROMPT_A, BROWSE_PROMPT_B],
                 "total_items": 5,
                 "total_pages": 3,
                 "current_page": 3,
+                "page": 3,
                 "per_page": 2,
             },
         )
@@ -562,7 +628,7 @@ def test_browse_prompt_result_rejects_overfull_partial_last_page():
     [
         (
             prompts_state_module.PromptBrowseScope(page=2, page_size=2),
-            [PROMPT_A],
+            [BROWSE_PROMPT_A],
             5,
             3,
             2,
@@ -587,6 +653,7 @@ def test_browse_prompt_result_rejects_underfilled_pages(
                 "total_items": total_items,
                 "total_pages": total_pages,
                 "current_page": current_page,
+                "page": current_page,
                 "per_page": scope.page_size,
             },
         )
@@ -594,7 +661,8 @@ def test_browse_prompt_result_rejects_underfilled_pages(
 
 def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
     source = {
-        "id": 7,
+        "id": "local:prompt:7",
+        "local_id": 7,
         "name": "Original",
         "keywords": ["first"],
         "metadata": {"labels": ["stable"]},
@@ -606,6 +674,7 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
             "total_items": 1,
             "total_pages": 1,
             "current_page": 1,
+            "page": 1,
             "per_page": 20,
         },
     )
@@ -618,7 +687,7 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
     assert isinstance(row, Mapping)
     assert row.get("name") == "Original"
     assert dict(row)["name"] == "Original"
-    assert tuple(row) == ("id", "name", "keywords", "metadata")
+    assert tuple(row) == ("id", "local_id", "name", "keywords", "metadata")
     assert row["name"] == "Original"
     assert row["keywords"] == ("first",)
     assert row["metadata"]["labels"] == ("stable",)
@@ -634,7 +703,11 @@ def _direct_prompt_browse_result(items=None, **overrides):
     scope = overrides.pop("scope", prompts_state_module.PromptBrowseScope())
     values = {
         "scope": scope,
-        "items": [{"id": 8}] if items is None else items,
+        "items": (
+            [{"id": "local:prompt:8", "local_id": 8}]
+            if items is None
+            else items
+        ),
         "total_items": 1,
         "total_pages": 1,
         "page": 1,
@@ -652,7 +725,8 @@ def _direct_prompt_browse_result(items=None, **overrides):
 
 def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
     source = {
-        "id": 8,
+        "id": "local:prompt:8",
+        "local_id": 8,
         "values": [None, "text", True, 3, 4.5],
         "metadata": {
             "labels": ["stable"],
@@ -677,13 +751,55 @@ def test_browse_prompt_result_constructor_deeply_freezes_and_detaches_items():
 
 def test_browse_prompt_result_constructor_rejects_non_mapping_items():
     with pytest.raises(TypeError, match="items must be mappings"):
-        _direct_prompt_browse_result([{"id": 8}, "not a mapping"])
+        _direct_prompt_browse_result(
+            [{"id": "local:prompt:8", "local_id": 8}, "not a mapping"]
+        )
 
 
 @pytest.mark.parametrize("unsupported", [{"set value"}, object()])
 def test_browse_prompt_result_rejects_unsupported_nested_leaves(unsupported):
     with pytest.raises(TypeError, match="JSON-like"):
-        _direct_prompt_browse_result([{"id": 8, "unsupported": unsupported}])
+        _direct_prompt_browse_result(
+            [
+                {
+                    "id": "local:prompt:8",
+                    "local_id": 8,
+                    "unsupported": unsupported,
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("items", "message"),
+    [
+        ([{"local_id": 8}], "id"),
+        ([{"id": 8, "local_id": 8}], "id"),
+        ([{"id": "  ", "local_id": 8}], "id"),
+        ([{"id": "local:prompt:8"}], "local_id"),
+        ([{"id": "local:prompt:8", "local_id": True}], "local_id"),
+        ([{"id": "local:prompt:8", "local_id": 0}], "local_id"),
+        (
+            [
+                {"id": "local:prompt:8", "local_id": 8},
+                {"id": "local:prompt:8", "local_id": 9},
+            ],
+            "id",
+        ),
+        (
+            [
+                {"id": "local:prompt:8", "local_id": 8},
+                {"id": "local:prompt:9", "local_id": 8},
+            ],
+            "local_id",
+        ),
+    ],
+)
+def test_browse_prompt_result_constructor_rejects_malformed_or_duplicate_identities(
+    items, message
+):
+    with pytest.raises((TypeError, ValueError), match=message):
+        _direct_prompt_browse_result(items, total_items=len(items))
 
 
 @pytest.mark.parametrize(
@@ -748,9 +864,21 @@ def test_browse_prompt_result_constructor_enforces_status_error_consistency(
 @pytest.mark.parametrize(
     ("items", "overrides", "message"),
     [
-        ([{"id": 8}], {"total_items": 2}, "item count"),
-        ([{"id": 8}], {"total_pages": 2}, "total_pages"),
-        ([{"id": 8}], {"page": 2}, "page"),
+        (
+            [{"id": "local:prompt:8", "local_id": 8}],
+            {"total_items": 2},
+            "item count",
+        ),
+        (
+            [{"id": "local:prompt:8", "local_id": 8}],
+            {"total_pages": 2},
+            "total_pages",
+        ),
+        (
+            [{"id": "local:prompt:8", "local_id": 8}],
+            {"page": 2},
+            "page",
+        ),
     ],
 )
 def test_browse_prompt_result_constructor_enforces_page_totals_and_cardinality(
@@ -807,6 +935,7 @@ def test_browse_prompt_reducer_rejects_forged_stale_scope_with_copied_guards():
             "total_items": 0,
             "total_pages": 0,
             "current_page": 1,
+            "page": 1,
             "per_page": 20,
         },
         request_token=current.request_token,
@@ -836,6 +965,7 @@ def test_browse_prompt_result_distinguishes_truthful_empty_states(
             "total_items": 0,
             "total_pages": 0,
             "current_page": 1,
+            "page": 1,
             "per_page": scope.page_size,
         },
     )
@@ -857,6 +987,7 @@ def test_browse_prompt_loading_error_and_stale_fingerprint_are_distinct():
             "total_items": 0,
             "total_pages": 0,
             "current_page": 1,
+            "page": 1,
             "per_page": 20,
         },
     )
@@ -872,10 +1003,11 @@ def test_browse_prompt_result_rejects_late_same_scope_request_token():
     scope = prompts_state_module.PromptBrowseScope(query="same scope")
     loading = prompts_state_module.begin_prompt_browse(scope, request_token=2)
     payload = {
-        "items": [PROMPT_A],
+        "items": [BROWSE_PROMPT_A],
         "total_items": 1,
         "total_pages": 1,
         "current_page": 1,
+        "page": 1,
         "per_page": scope.page_size,
     }
     stale = prompts_state_module.build_prompt_browse_result(
@@ -894,10 +1026,11 @@ def test_browse_prompt_result_rejects_late_same_scope_request_token():
 def test_browse_prompt_reducer_rejects_settled_state_and_loading_result():
     scope = prompts_state_module.PromptBrowseScope()
     payload = {
-        "items": [PROMPT_A],
+        "items": [BROWSE_PROMPT_A],
         "total_items": 1,
         "total_pages": 1,
         "current_page": 1,
+        "page": 1,
         "per_page": scope.page_size,
     }
     settled = prompts_state_module.build_prompt_browse_result(scope, payload)
@@ -918,10 +1051,11 @@ def test_browse_prompt_reducer_rejects_settled_state_and_loading_result():
 def test_browse_prompt_result_rejects_bool_response_integers(field):
     scope = prompts_state_module.PromptBrowseScope()
     payload = {
-        "items": [PROMPT_A],
+        "items": [BROWSE_PROMPT_A],
         "total_items": 1,
         "total_pages": 1,
         "current_page": 1,
+        "page": 1,
         "per_page": scope.page_size,
     }
     payload[field] = True
@@ -932,7 +1066,9 @@ def test_browse_prompt_result_rejects_bool_response_integers(field):
 
 def test_browse_prompt_request_token_rejects_bool():
     scope = prompts_state_module.PromptBrowseScope()
-    result = _direct_prompt_browse_result([{"id": 8}])
+    result = _direct_prompt_browse_result(
+        [{"id": "local:prompt:8", "local_id": 8}]
+    )
 
     with pytest.raises(ValueError, match="request_token"):
         prompts_state_module.begin_prompt_browse(scope, request_token=True)
@@ -994,6 +1130,7 @@ def test_browse_prompt_list_state_preserves_service_order_and_local_identity():
             "total_items": 2,
             "total_pages": 1,
             "current_page": 1,
+            "page": 1,
             "per_page": 2,
         },
     )
@@ -1206,6 +1343,7 @@ def test_selection_browse_projection_exposes_checked_versions_and_page_counts():
             "total_items": 2,
             "total_pages": 1,
             "current_page": 1,
+            "page": 1,
             "per_page": 2,
         },
     )
@@ -1234,41 +1372,30 @@ def test_selection_browse_projection_exposes_checked_versions_and_page_counts():
     assert selection.generation == 2
 
 
-@pytest.mark.parametrize(
-    "selection",
-    [
-        None,
-        PromptSelectionBasket(
-            entries=(PromptSelectionEntry(7, 3, "Captured", "prompt"),),
-            generation=1,
-        ),
-    ],
-)
-def test_selection_browse_projection_deduplicates_valid_page_ids_first_seen(
-    selection,
-):
-    result = _direct_prompt_browse_result(
-        [
-            {"local_id": 7, "name": "First", "version": 3},
-            {"local_id": 7, "name": "Duplicate", "version": 4},
-        ],
-        total_items=2,
-    )
-
-    state = prompts_state_module.build_prompt_browse_list_state(
-        result, now=NOW, selection=selection, select_mode=selection is not None
-    )
-
-    assert [(row.prompt_id, row.name, row.version) for row in state.rows] == [
-        (7, "First", 3)
-    ]
-    assert state.selected_on_page == (1 if selection is not None else 0)
+def test_selection_browse_projection_rejects_duplicate_page_ids_before_projection():
+    with pytest.raises(ValueError, match="local_id"):
+        _direct_prompt_browse_result(
+            [
+                {
+                    "id": "local:prompt:first",
+                    "local_id": 7,
+                    "name": "First",
+                    "version": 3,
+                },
+                {
+                    "id": "local:prompt:duplicate",
+                    "local_id": 7,
+                    "name": "Duplicate",
+                    "version": 4,
+                },
+            ],
+            total_items=2,
+        )
 
 
 @pytest.mark.parametrize(
     "malformed",
     [
-        {"local_id": True, "name": "Bad id", "version": 1},
         {"local_id": 2, "name": "Missing version"},
         {"local_id": 3, "name": "Bad version", "version": 0},
         {"local_id": 4, "name": "", "version": 1},
@@ -1280,17 +1407,28 @@ def test_selection_browse_projection_deduplicates_valid_page_ids_first_seen(
         },
     ],
 )
-def test_selection_browse_projection_drops_malformed_page_rows(malformed):
+def test_selection_browse_projection_rejects_malformed_page_rows(malformed):
+    malformed = {
+        "id": f"local:prompt:{malformed.get('local_id', 'malformed')}",
+        **malformed,
+    }
     result = _direct_prompt_browse_result(
-        [{"local_id": 1, "name": "Valid", "version": 2}, malformed],
+        [
+            {
+                "id": "local:prompt:1",
+                "local_id": 1,
+                "name": "Valid",
+                "version": 2,
+            },
+            malformed,
+        ],
         total_items=2,
     )
 
-    state = prompts_state_module.build_prompt_browse_list_state(
-        result, now=NOW, selection=PromptSelectionBasket(), select_mode=True
-    )
-
-    assert [(row.prompt_id, row.version) for row in state.rows] == [(1, 2)]
+    with pytest.raises(ValueError, match="project"):
+        prompts_state_module.build_prompt_browse_list_state(
+            result, now=NOW, selection=PromptSelectionBasket(), select_mode=True
+        )
 
 
 @pytest.mark.parametrize(
