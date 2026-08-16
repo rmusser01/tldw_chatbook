@@ -1404,3 +1404,18 @@ FirstRunSetupWizard .setup-key-hints {
     height: 1;
     min-height: 1;
 }
+
+/* WizardProgress active-step states (TASK-16811): moved here from the
+   widget's DEFAULT_CSS so the real $ds-focus-* tokens apply (the local
+   fallbacks that used to sit beside them shadowed the bundle's values). */
+WizardProgress .step-number.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
+}
+
+WizardProgress .step-title.active {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}

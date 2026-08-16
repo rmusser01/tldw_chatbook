@@ -24,3 +24,23 @@
     background: $background;
     color: $background;
 }
+
+/* NavigationButton active/focus states (TASK-16811): moved here from the
+   widget's DEFAULT_CSS -- these need the real $ds-focus-* tokens, and the
+   widget-local `$var:` "fallbacks" that used to sit beside them shadowed
+   the bundle's values for that whole source (active nav rendered $surface
+   instead of the focus colour). */
+NavigationButton.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border: none;
+}
+
+NavigationButton:focus,
+NavigationButton.active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}

@@ -16,6 +16,7 @@ LISTS = ROOT / "tldw_chatbook/css/components/_lists.tcss"
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BASE_COMPONENTS = ROOT / "tldw_chatbook/Widgets/base_components.py"
 WIDGETS = ROOT / "tldw_chatbook/css/components/_widgets.tcss"
+NAVIGATION = ROOT / "tldw_chatbook/css/components/_navigation.tcss"
 MESSAGES = ROOT / "tldw_chatbook/css/components/_messages.tcss"
 CHAT = ROOT / "tldw_chatbook/css/features/_chat.tcss"
 CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
@@ -1023,10 +1024,17 @@ def test_top_navigation_inline_focus_uses_hybrid_contract():
 def test_shared_navigation_button_uses_non_obscuring_active_and_focus_states():
     text = BASE_COMPONENTS.read_text(encoding="utf-8")
     hover = css_block(text, "NavigationButton:hover")
-    focus = css_block(text, "NavigationButton:focus")
-    active = css_block(text, "NavigationButton.active")
-    active_focus = css_block(text, "NavigationButton.active:focus")
     assert_native_row_hover_state_contract(hover)
+    # TASK-16811: the token-dependent .active/:focus states moved into
+    # css/components/_navigation.tcss -- inside the widget's DEFAULT_CSS the
+    # local `$ds-*:` "fallbacks" they required silently shadowed the bundle's
+    # real focus tokens (unfocused .active rendered $surface, not #51677e).
+    # The widget source must stay free of local $ds declarations.
+    assert "$ds-focus-bg:" not in text and "$ds-focus-fg:" not in text
+    nav_text = NAVIGATION.read_text(encoding="utf-8")
+    focus = css_block(nav_text, "NavigationButton:focus")
+    active = css_block(nav_text, "NavigationButton.active")
+    active_focus = css_block(nav_text, "NavigationButton.active:focus")
     assert_non_obscuring_focus(focus)
     assert "$ds-focus-bg" in focus or "$ds-surface-raised" in focus
     assert_readable_selected_state_contract(active)
@@ -1217,8 +1225,14 @@ def test_bundled_wizard_progress_active_states_match_source_contracts():
 def test_wizard_progress_default_css_matches_active_state_contract():
     from tldw_chatbook.UI.Wizards.BaseWizard import WizardProgress
 
+    # TASK-16811: the .active states moved into css/features/_wizards.tcss
+    # (widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
+    # DEFAULT_CSS must stay free of local $ds declarations.
+    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace(
+        "$ds-focus-* tokens", ""
+    )
     assert_wizard_progress_active_contracts(
-        WizardProgress.DEFAULT_CSS, scope="WizardProgress"
+        WIZARDS.read_text(encoding="utf-8"), scope="WizardProgress"
     )
 
 
@@ -1625,7 +1639,14 @@ def test_repo_tree_widget_states_match_code_repo_contract():
     source_hover = css_block(
         CODE_REPO.read_text(encoding="utf-8"), ".tree-expand-btn:hover"
     )
-    selected = css_block(TreeNode.DEFAULT_CSS, ".tree-node-selected")
+    # TASK-16811: the widget's own .tree-node-selected copy was dead weight
+    # the bundle always beat, and its local `$ds-*:` fallbacks shadowed the
+    # tokens; _code_repo.tcss is the single owner now.
+    assert "$ds-focus-bg:" not in TreeNode.DEFAULT_CSS
+    assert ".tree-node-selected {" not in TreeNode.DEFAULT_CSS
+    selected = css_block(
+        CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected"
+    )
     assert_native_row_hover_state_contract(hover)
     assert_native_row_hover_state_contract(source_hover)
     assert_readable_selected_state_contract(selected)
@@ -1650,9 +1671,17 @@ def test_chatbooks_search_input_focus_uses_stable_thin_contracts():
 
     inline_text = CHATBOOKS_WINDOW_IMPROVED.read_text(encoding="utf-8")
     inline_base = css_block(inline_text, ".search-input")
-    inline_focus = css_block(inline_text, ".search-input:focus")
-    assert_stable_solid_border_geometry(inline_base, inline_focus)
-    assert_thin_inline_input_focus(inline_focus)
+    # TASK-16811: the :focus rule moved into css/components/_widgets.tcss,
+    # scoped to the window (its local `$ds-input-focus-*:` fallbacks here
+    # shadowed the bundle tokens); the window source must stay free of
+    # local $ds declarations.
+    assert "$ds-input-focus-bg:" not in inline_text
+    bundle_focus = css_block(
+        WIDGETS.read_text(encoding="utf-8"),
+        "ChatbooksWindowImproved .search-input:focus",
+    )
+    assert_stable_solid_border_geometry(inline_base, bundle_focus)
+    assert_thin_inline_input_focus(bundle_focus)
 
 
 def test_library_rag_query_input_uses_stable_thin_contracts():
@@ -1695,22 +1724,30 @@ def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
 
     text = BaseTamagotchi.DEFAULT_CSS
     base = css_block(text, "BaseTamagotchi")
-    focus = css_block(text, "BaseTamagotchi:focus")
     assert "border: round" in base
     assert "background: $panel;" in base
     assert "border: round $surface-lighten-1;" in base
+    # TASK-16811: the :focus state moved into css/components/_widgets.tcss
+    # (the widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
+    # DEFAULT_CSS must stay free of local $ds declarations.
+    assert "$ds-focus-bg:" not in text
+    focus = css_block(
+        WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus"
+    )
     assert_custom_widget_focus_contract(focus)
-
-    assert text.index("BaseTamagotchi.dead") < text.index("BaseTamagotchi:focus")
-    assert text.index("BaseTamagotchi:focus") < text.index("BaseTamagotchi.compact")
 
 
 def test_compact_custom_buttons_use_readable_focus_cues():
-    for path, selector in (
+    # TASK-16811: both rules moved into css/components/_widgets.tcss (the
+    # widget-local `$ds-*:` fallbacks beside them shadowed the bundle
+    # tokens); the widget sources must stay free of local $ds declarations.
+    widgets_text = WIDGETS.read_text(encoding="utf-8")
+    for source, selector in (
         (EMOJI_PICKER, "EmojiButton.emoji_button:focus"),
         (ENHANCED_FILE_PICKER, "PathBreadcrumbs .breadcrumb-button:focus"),
     ):
-        block = css_block(path.read_text(encoding="utf-8"), selector)
+        assert "$ds-focus-bg:" not in source.read_text(encoding="utf-8")
+        block = css_block(widgets_text, selector)
         assert_non_obscuring_focus(block)
         assert "$primary" not in block
         assert "$accent" not in block

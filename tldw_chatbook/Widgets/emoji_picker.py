@@ -800,9 +800,6 @@ class EmojiPickerScreen(ModalScreen[str]):
         Binding("ctrl+right", "next_category", "Next Category", show=False),
     ]
     BUNDLED_SCREEN_CSS = """
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     EmojiPickerScreen { align: center middle; }
     #dialog { 
@@ -854,11 +851,8 @@ class EmojiPickerScreen(ModalScreen[str]):
     EmojiButton.emoji_button:hover { 
         background: $primary-background; 
     }
-    EmojiButton.emoji_button:focus { 
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
     .no_emojis_message { 
         width: 100%; 
         content-align: center middle; 

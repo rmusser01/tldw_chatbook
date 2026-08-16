@@ -128,9 +128,6 @@
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    
-    
 
     EmojiPickerScreen { align: center middle; }
 
@@ -142,7 +139,8 @@
 
 
 
-
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
 
 
