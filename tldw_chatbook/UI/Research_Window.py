@@ -21,6 +21,11 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
+from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
+    default_artifact_for_bundle,
+    render_artifact,
+    render_bundle_summary,
+)
 
 
 def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
@@ -370,15 +375,16 @@ class ResearchWindow(Vertical):
         bundle = await self.controller.get_bundle(self.current_source, run_id)
         self.current_bundle = dict(bundle or {})
         self._render_bundle_detail()
-        if self.current_bundle and self.is_mounted:
-            first_artifact_name = next(iter(self.current_bundle.keys()), "")
-            if first_artifact_name:
+        # task-16483: open the most useful artifact right away (the report
+        # when present -- never the local shape's run record).
+        default_name = default_artifact_for_bundle(self.current_bundle)
+        if default_name:
+            if self.is_mounted:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = str(
-                        first_artifact_name
-                    )
+                    self.query_one("#research-artifact-name", Input).value = default_name
                 except Exception:
                     pass
+            await self.load_selected_run_artifact(default_name)
         self._set_status(f"Loaded research bundle for {run_id}.")
         return self.current_bundle
 
@@ -562,11 +568,7 @@ class ResearchWindow(Vertical):
     def _render_bundle_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No bundle loaded."
-        if self.current_bundle is not None:
-            renderable = json.dumps(
-                self.current_bundle, indent=2, sort_keys=True, default=str
-            )
+        renderable = render_bundle_summary(self.current_bundle)
         try:
             self.query_one("#research-bundle-detail", Static).update(renderable)
         except Exception:
@@ -575,15 +577,7 @@ class ResearchWindow(Vertical):
     def _render_artifact_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No artifact loaded."
-        if self.current_artifact is not None:
-            artifact = self.current_artifact
-            renderable = (
-                f"Artifact: {self._record_get(artifact, 'artifact_name', '')}\n"
-                f"Type: {self._record_get(artifact, 'content_type', '')}\n"
-                f"Version: {self._record_get(artifact, 'artifact_version', 1)}\n"
-                f"Content:\n{self._render_value(self._record_get(artifact, 'content'))}"
-            )
+        renderable = render_artifact(self.current_artifact)
         try:
             self.query_one("#research-artifact-detail", Static).update(renderable)
         except Exception:

@@ -615,3 +615,42 @@ async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monke
     assert updated["status"] == "approved"
     assert local_service.latest_pending_checkpoint(run["id"]) is None
     assert restarted == [run["id"]]
+
+
+# --- readable bundle inspection (task-16483) --------------------------------------
+
+@pytest.mark.asyncio
+async def test_load_bundle_auto_loads_the_report(monkeypatch):
+    service = FakeResearchScopeService()
+
+    async def get_bundle(run_id, *, mode):
+        return {
+            "run": {"id": run_id, "status": "completed", "phase": "completed",
+                    "query": "What is RAG?"},
+            "artifacts": [
+                {"artifact_name": "plan.json", "content_type": "application/json",
+                 "content": {"query": "What is RAG?"}},
+                {"artifact_name": "report_v1.md", "content_type": "text/markdown",
+                 "content": "# Report\nAnswer[1]."},
+            ],
+        }
+
+    async def get_artifact(run_id, artifact_name, *, mode):
+        return {"artifact_name": artifact_name, "content_type": "text/markdown",
+                "artifact_version": 1, "content": "# Report\nAnswer[1]."}
+
+    service.get_bundle = get_bundle
+    service.get_artifact = get_artifact
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+
+    bundle = await window.load_selected_run_bundle()
+
+    assert bundle is not None
+    # The run record is NOT selected as the artifact; the report is.
+    assert window.current_artifact is not None
+    assert window.current_artifact["artifact_name"] == "report_v1.md"
+    assert "Answer[1]." in window.current_artifact["content"]
