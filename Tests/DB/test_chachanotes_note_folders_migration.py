@@ -7,6 +7,7 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 EXPECTED_FOLDER_TABLES = {"note_folders", "note_folder_memberships"}
 MANAGED_OWNER_INDEX = "idx_note_folder_memberships_managed_owner"
@@ -28,13 +29,13 @@ def _table_names(db: CharactersRAGDB) -> set[str]:
     return {str(row["name"]) for row in rows}
 
 
-def _seed_v35(path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    with monkeypatch.context() as v35:
-        v35.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 35)
-        db = CharactersRAGDB(path, client_id="v35-seed")
+def _seed_v35(path: Path) -> str:
+    # This file's patched-version bootstrap idiom became the shared primitive
+    # in task-16840 (Tests/ChaChaNotesDB/historical_bootstrap.py); seed
+    # through it so there is exactly one implementation.
+    with chachanotes_db_at_version(path, 35, client_id="v35-seed") as db:
         note_id = db.add_note("Existing", "Body")
         assert _schema_version(db) == 35
-        db.close_connection()
     return str(note_id)
 
 
@@ -87,10 +88,10 @@ def test_managed_owner_operations_use_the_owner_lookup_index(tmp_path: Path) -> 
 
 
 def test_v35_database_migrates_without_assigning_existing_notes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     path = tmp_path / "v35.db"
-    note_id = _seed_v35(path, monkeypatch)
+    note_id = _seed_v35(path)
 
     migrated = CharactersRAGDB(path, client_id="v36-open")
     try:
@@ -238,7 +239,7 @@ def test_v35_to_v36_failure_rolls_back_schema_and_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "rollback.db"
-    _seed_v35(path, monkeypatch)
+    _seed_v35(path)
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook"

@@ -7,7 +7,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.ChaChaNotesDB.schema_rollback import rollback_chachanotes_schema
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 
 def _db(tmp_path):
@@ -64,36 +64,39 @@ def test_local_marks_table_exists_on_fresh_schema_with_expected_shape(tmp_path):
 
 def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     db_path = tmp_path / "chacha.sqlite"
-    db = CharactersRAGDB(str(db_path), client_id="test-client")
-    conn = db.get_connection()
-    # A fresh DB bootstraps at the current schema version; the shared
-    # registry removes the post-V16 artifacts that would collide on replay
-    # and rewinds the recorded version. The result is NOT a faithful V16
-    # snapshot (replay-tolerant migrations' tables/columns survive) — it is
-    # exactly sufficient for replaying the migrations under test.
-    rollback_chachanotes_schema(conn, 16)
-    conn.commit()
+    # Build a genuinely V16-shaped DB: the production migration chain itself,
+    # run under a patched _CURRENT_SCHEMA_VERSION, stops and stamps at 16
+    # (task-16840; replaces the retired shared rollback registry). One caveat:
+    # the v4 base schema ships the marks table baked in (the V16->V17
+    # migration replays IF NOT EXISTS over it on the fresh path), so drop the
+    # migration-under-test's own two artifacts to prove the V16->V17 step
+    # genuinely creates them on replay. That is knowledge about the single
+    # migration this test pins — no future schema bump can invalidate it.
+    with chachanotes_db_at_version(db_path, 16, client_id="test-client") as db:
+        conn = db.get_connection()
+        conn.execute("DROP INDEX IF EXISTS idx_conversation_local_marks_type")
+        conn.execute("DROP TABLE IF EXISTS conversation_local_marks")
+        conn.commit()
 
-    # Guard the replay preconditions before reopening: the marks table the
-    # V16->V17 migration must (re)create is genuinely absent, as are the
-    # post-V16 tables whose baked presence broke this fixture before
-    # (task-16197: note_folders "already exists" at the V35->V36 replay
-    # step). These pin the fixture's own bake-guards, not a full V16 shape.
-    table_names = {
-        row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    }
-    assert "conversation_local_marks" not in table_names
-    assert "note_folders" not in table_names
-    assert "note_folder_memberships" not in table_names
-    version_before = conn.execute(
-        "SELECT version FROM db_schema_version WHERE schema_name = ?",
-        (db._SCHEMA_NAME,),
-    ).fetchone()
-    assert version_before["version"] == 16
-    db.close_connection()
+        # Guard the replay preconditions before reopening: the marks table
+        # the V16->V17 migration must create is absent, and — genuine-shape
+        # facts a rolled-back fixture could never assert — so is every
+        # later migration's table (note_folders was the artifact that broke
+        # the registry-era fixture in task-16197).
+        table_names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert "conversation_local_marks" not in table_names
+        assert "note_folders" not in table_names
+        assert "note_folder_memberships" not in table_names
+        version_before = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_before["version"] == 16
 
     migrated = CharactersRAGDB(str(db_path), client_id="test-client")
 
