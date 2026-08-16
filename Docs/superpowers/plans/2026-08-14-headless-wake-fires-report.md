@@ -364,6 +364,12 @@ collects **109** tests across **16** files here — the same figure the
 lifetime landing's report recorded, and not the 177 quoted earlier in the
 arc.
 
+**Stability.** The two new files drive real navigation, real threads and
+real timers, so they were re-run for flakiness *while both full
+`Tests/Chat/` runs were saturating the machine*: the e2e 3× (`1 passed`
+each, 6.6s/7.5s/7.0s) and the invariants suite 3× **with random ordering
+left ON** (`13 passed` each) — which also rules out order dependence.
+
 ---
 
 ## 9. Deliberately not done (and still true)
