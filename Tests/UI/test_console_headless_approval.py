@@ -594,6 +594,44 @@ async def test_leaving_console_denies_a_round_armed_while_detached_too():
 
 
 @pytest.mark.asyncio
+async def test_a_second_headless_round_after_a_leave_is_not_born_denied():
+    """The deferred Event must not be REUSED once it has fired.
+
+    Written because mutation M8 (stop dropping `_headless_visit_cancel`
+    after setting it) SURVIVED the rest of this file. Investigating it
+    showed the drop is redundant with `_bind_visit_cancel_signal`'s own
+    `event.is_set()` guard -- two independent defences of one property,
+    so neither line is individually killable. This test pins the
+    PROPERTY, which is what actually matters: if both defences went, a
+    headless round armed after any previous leave would inherit a
+    pre-set Event and self-deny in ~1s, silently restoring the exact
+    behaviour this task removed, and nothing else here would notice.
+    """
+    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=60.0)
+    await _leave(runtime)
+
+    first, box_first = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id), "round 1 never armed"
+    runtime.attach_view(_View())
+    await _leave(runtime)
+    first.join(timeout=10)
+    assert box_first["decisions"] == {"write_file": "deny"}, box_first["decisions"]
+
+    second, box_second = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id), "round 2 never armed"
+    assert await _quiet(lambda: "decisions" in box_second, seconds=2.0), (
+        "the SECOND headless round was denied on arrival -- it inherited the "
+        f"first round's already-fired Event: {box_second.get('decisions')}"
+    )
+
+    controller.resolve_pending_approval(
+        {"write_file": "deny"},
+        round_id=_armed_round_ids(controller, session.id)[0],
+    )
+    second.join(timeout=5)
+
+
+@pytest.mark.asyncio
 async def test_app_exit_denies_a_round_armed_while_detached():
     """`_disposed` is the signal a headless round DOES answer to."""
     runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=60.0)
