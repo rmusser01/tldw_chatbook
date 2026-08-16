@@ -2884,6 +2884,20 @@ class ChatScreen(BaseAppScreen):
             "#console-prompt-queue",
             "#console-native-composer",
         ]
+        # Every DIRECT screen child: a live session showed 9 rows vanishing
+        # between #screen-content's 1fr box and the docked footer, which the
+        # fixed chain above cannot attribute -- an extra runtime-mounted
+        # child would.
+        children_desc = []
+        for child in self.children:
+            region = child.region or Region(0, 0, 0, 0)
+            children_desc.append(
+                f"CHILD {type(child).__name__}#{child.id} "
+                f"region=({region.x},{region.y},{region.width},{region.height}) "
+                f"display={child.display!s} dock={child.styles.dock!r} "
+                f"h={child.styles.height!r} "
+                f"offset={child.styles.offset!r}"
+            )
         driver_size = None
         try:
             driver = self.app._driver
@@ -2894,6 +2908,8 @@ class ChatScreen(BaseAppScreen):
             f"console_layout_dump screen_size={self.size} "
             f"driver_size={driver_size} | "
             + " | ".join(_desc(w) for w in chain)
+            + " || "
+            + " || ".join(children_desc)
         )
         logger.info(dump_line)
         # The persistent log sink only admits metadata-tagged diagnostics
