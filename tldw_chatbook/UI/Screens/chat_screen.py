@@ -14743,13 +14743,20 @@ class ChatScreen(BaseAppScreen):
         chain), the local active-leaf cursor, the `/rewind` context summary,
         per-session speech preferences and the one-shot prefill.
 
-        `_ensure_console_chat_store` is still called first, and that is
-        load-bearing rather than incidental: `_complete_screen_navigation`
-        restores the INCOMING screen before `switch_screen` unmounts the
-        outgoing one, so this call is what claims the runtime for the
-        incoming view (`ensure_console_runtime(app, view=self)` ->
-        `attach_view`) in time for the outgoing screen's later `detach_view`
-        to find a different claimant and do nothing.
+        Reaching the runtime here is still load-bearing:
+        `_complete_screen_navigation` restores the INCOMING screen before
+        `switch_screen` unmounts the outgoing one, so this is where the
+        incoming view CLAIMS the runtime (`ensure_console_runtime(app,
+        view=self)` -> `attach_view`), in time for the outgoing screen's
+        later `detach_view` to find a different claimant and do nothing.
+
+        Measured, not assumed: a mutation that removed no-runtime-touch
+        from this method went red on the headless-wake continuity test.
+        A weaker mutation -- swapping `_ensure_console_chat_store()` for a
+        bare `self._console_chat_store` read -- stayed GREEN, because that
+        attribute is itself a runtime-backed property and claims just the
+        same. So it is the runtime CONTACT that matters here, not this
+        particular spelling of it.
         """
         if not isinstance(payload, dict):
             return

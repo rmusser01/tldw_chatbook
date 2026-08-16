@@ -51,6 +51,7 @@ from textual.widgets import Button
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -197,18 +198,24 @@ def _transcript_text(store, session_id: str) -> str:
 
 
 def _rendered_text(screen) -> str:
-    """Everything the mounted widget tree is actually presenting."""
+    """Text from the transcript's MOUNTED row widgets.
+
+    Deliberately NOT `ConsoleTranscript._messages`: that is the widget's
+    model, assigned by `set_messages` before a single row is built, so an
+    assertion against it proves the data arrived -- not that anything
+    repainted. Measured, not assumed: with `_messages` in this helper, a
+    mutation that removed `await transcript.refresh_messages()` outright
+    left all four tests in this file GREEN. `_row_widgets` is what
+    `_reconcile_rows` actually mounts, so it is what a "the user can see
+    it" assertion has to read.
+    """
     chunks: list[str] = []
-    for node in screen.query("*"):
-        renderable = getattr(node, "renderable", None)
-        if renderable is not None:
-            chunks.append(str(renderable))
-        messages = getattr(node, "_messages", None)
-        if isinstance(messages, (list, tuple)):
-            for message in messages:
-                content = getattr(message, "content", None)
-                if isinstance(content, str):
-                    chunks.append(content)
+    for transcript in screen.query(ConsoleTranscript):
+        for row in transcript._row_widgets.values():
+            for node in row.walk_children(with_self=True):
+                renderable = getattr(node, "renderable", None)
+                if renderable is not None:
+                    chunks.append(str(renderable))
     return "\n".join(chunks)
 
 
