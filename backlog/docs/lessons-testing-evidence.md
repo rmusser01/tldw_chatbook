@@ -4342,3 +4342,30 @@ around the whole operation, not around the listed calls. If the numbers do not d
 when the listed sites move, the list was wrong, and the AC's own wording ("the
 difflib work") almost always licenses fixing the omission in the same change --
 record the addition explicitly rather than silently widening scope.
+
+## A version-stamp rollback fixture is a promise every future migration must keep — centralize it or it breaks serially (task-15765/task-16197, 2026-08-15)
+
+Three "historical" ChaChaNotes fixtures were built top-down: bootstrap a fresh
+DB (which lands at `_CURRENT_SCHEMA_VERSION`), hand-drop the newer artifacts,
+stamp `db_schema_version` back, reopen, and let the migration chain replay.
+Each fixture carried its own private drop list — and every migration that
+shipped a non-idempotent artifact broke them serially: `88f5f535a` (V33→V34
+unguarded `ADD COLUMN compaction_representation`) broke them and task-15730
+repaired them one by one; two days later `9174975b0` (V35→V36 bare
+`CREATE TABLE note_folders`, task-15705) broke them AGAIN — and, decisively,
+its author fixed the ONE fixture they knew about
+(`test_dictionary_attachment_index.py`) and missed the other two, producing
+task-15765 and task-16197 with the identical "table note_folders already
+exists" error, each then repaired in a separate task (16201, 16207). Four
+repair tasks for two migrations is the signature of state duplicated where no
+gate forces it to stay in sync. The fix is structural, not another patch: one
+shared per-version removal registry (`Tests/ChaChaNotesDB/schema_rollback.py`)
+consumed by every rollback fixture, a completeness ratchet that fails BY NAME
+with instructions the moment `_CURRENT_SCHEMA_VERSION` outruns the registry,
+and a rollback-replay sweep over every historical target that compares the
+replayed schema's object inventory against a fresh bootstrap. The sweep paid
+for itself on its first run: a defensively-copied trigger drop in the V28
+entry left DBs rolled back to V20..V27 silently missing ALL conversations
+sync triggers after replay — a corruption no per-test fixture would ever
+notice, caught only because the sweep asserts parity with a fresh DB rather
+than "the test I care about passes".

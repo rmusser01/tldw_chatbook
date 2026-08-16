@@ -89,7 +89,7 @@ class StudyScreen(BaseAppScreen):
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
     current_study_session: reactive[Optional[Dict[str, Any]]] = reactive(None)
-    study_materials: reactive[List[str]] = reactive([])
+    study_materials: reactive[List[str]] = reactive(list)
     is_studying: reactive[bool] = reactive(False)
     current_topic: reactive[str] = reactive("")
     scope_state: reactive[StudyScopeState] = reactive(StudyScopeState)

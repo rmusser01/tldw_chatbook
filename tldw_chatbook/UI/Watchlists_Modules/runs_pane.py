@@ -67,7 +67,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: `SourcesPane._SELECTED_ROW_STYLE` -- see that attribute's docstring.
     _SELECTED_ROW_STYLE = "reverse bold"
 
-    runs = reactive[list[dict[str, Any]]]([], recompose=True)
+    runs = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_run = reactive[dict[str, Any] | None](None)
     #: task-2306. Deliberately NOT `recompose=True`, unlike `runs`: both are
     #: rewritten on every run selection, and a pane recompose rebuilds
@@ -76,7 +76,7 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
     #: would then read as a non-user highlight. They are pushed into the live
     #: detail widgets instead, the same in-place discipline
     #: `_update_selection_highlight` already uses for the table itself.
-    run_items = reactive[list[dict[str, Any]]]([])
+    run_items = reactive[list[dict[str, Any]]](list)
     run_logs = reactive("")
     #: Why the Items table looks the way it does, whenever the rows alone
     #: would mislead (review wave, Important 1 / Minor 2). An empty items

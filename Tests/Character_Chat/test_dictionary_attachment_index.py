@@ -31,6 +31,7 @@ from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
     ChatDictionaryScopeService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.schema_rollback import rollback_chachanotes_schema
 
 
 @pytest.fixture
@@ -721,19 +722,10 @@ class TestMigrationBackfill:
         db.close_connection()
 
         raw = sqlite3.connect(db_path)
-        raw.executescript(
-            """
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_ai;
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_au;
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_ad;
-            DROP TABLE IF EXISTS conversation_dictionary_attachments;
-            DROP TABLE IF EXISTS conversation_dictionary_unresolved;
-            DROP TABLE IF EXISTS note_folder_memberships;
-            DROP TABLE IF EXISTS note_folders;
-            UPDATE db_schema_version SET version = 34
-             WHERE schema_name = 'rag_char_chat_schema';
-            """
-        )
+        # The shared registry removes everything the post-V34 migrations
+        # added (derived dictionary tables/triggers, note folders, ...) and
+        # rolls the recorded version back to 34.
+        rollback_chachanotes_schema(raw, 34)
         raw.commit()
         raw.close()
 

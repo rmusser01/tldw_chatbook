@@ -1752,8 +1752,10 @@ class ChatScreen(BaseAppScreen):
     # controls during a ~5s toast dismisses the toast instead of pressing the
     # button. Dock the Console screen's toast rack to the TOP-right so feedback
     # never obscures, or swallows clicks aimed at, the composer's controls.
-    # Kept in DEFAULT_CSS (not the bundle) so it applies in both the real app
-    # and test harnesses, which load widget DEFAULT_CSS but not the built bundle.
+    # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
+    # real app and ConsolidatedCSSApp-based test harnesses, which load the
+    # generated widget-defaults sheet but not necessarily the full CSS_PATH
+    # bundle.
     BUNDLED_CSS = """
     ChatScreen ToastRack {
         dock: top;
@@ -3323,7 +3325,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     # Reactive property for sidebar state persistence
-    sidebar_state = reactive({}, layout=False)
+    sidebar_state = reactive(dict, layout=False)
 
     #: task-15475: one-shot "the mount already did this visit's refreshes"
     #: token. Textual posts ``ScreenResume`` when a screen is PUSHED, so

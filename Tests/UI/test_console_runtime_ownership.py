@@ -20,6 +20,7 @@ dead view.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -41,26 +42,39 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
 #: preview controller builds its own, unrelated to the Console runtime
 #: (`UI/Persona_Modules/personas_preview_controller.py`).
-_RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore(", "ConsoleChatController(")
+_RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore", "ConsoleChatController")
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 
-def _construction_sites(token: str) -> list[str]:
-    """Every `<path>:<line>` in the shipped package containing `token`."""
+def _construction_sites(class_name: str) -> list[str]:
+    """Every `<path>:<line>` in the shipped package CALLING `class_name(...)`.
+
+    AST-based on purpose (PR #1648 follow-up): a raw substring scan counts
+    innocuous mentions in comments, docstrings, and string literals as
+    construction sites and false-fails the pin. Only actual call nodes
+    count here.
+    """
     sites: list[str] = []
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
         try:
             source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
-        if token not in source:
+            tree = ast.parse(source)
+        except (OSError, UnicodeDecodeError, SyntaxError):  # pragma: no cover
             continue
         rel = path.relative_to(_PACKAGE_ROOT.parent).as_posix()
-        for lineno, line in enumerate(source.splitlines(), start=1):
-            if token in line:
-                sites.append(f"{rel}:{lineno}: {line.strip()}")
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = (
+                func.id if isinstance(func, ast.Name) else func.attr
+                if isinstance(func, ast.Attribute) else None
+            )
+            if called == class_name:
+                line = source.splitlines()[node.lineno - 1].strip()
+                sites.append(f"{rel}:{node.lineno}: {line}")
     return sites
 
 

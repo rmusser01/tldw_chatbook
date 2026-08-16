@@ -54,6 +54,7 @@ from tldw_chatbook.Notes.file_notes_session_owner import (
     SessionGitStatus,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 _CHANGE_VERBS = {
     "created": "CREATED",
@@ -3626,10 +3627,11 @@ class SessionGitTrustDialog(ConfirmationDialog):
         self.query_one("#cancel-button", Button).focus()
 
 
-class PushEndpointDetailsDialog(ModalScreen[None]):
+class PushEndpointDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Show every sanitized endpoint field in a selectable read-only surface."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Close", show=False)]
+    SAFE_MODAL_CONTENT = "#file-notes-push-endpoint-details-dialog"
 
     DEFAULT_CSS = """
     PushEndpointDetailsDialog {
@@ -3666,9 +3668,15 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
     }
     """
 
-    def __init__(self, destination: PushDestinationProjection) -> None:
+    def __init__(
+        self,
+        destination: PushDestinationProjection,
+        *,
+        restore_focus: bool = True,
+    ) -> None:
         super().__init__(id="file-notes-push-endpoint-details-screen")
         self.selectable_details = destination.selectable_details
+        self.SAFE_MODAL_RESTORE_FOCUS = restore_focus
 
     def compose(self) -> ComposeResult:
         with Vertical(id="file-notes-push-endpoint-details-dialog"):
@@ -3700,7 +3708,7 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
         ).focus()
 
     def action_close(self) -> None:
-        self.dismiss(None)
+        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#file-notes-push-endpoint-details-close")
     def _close_pressed(self, event: Button.Pressed) -> None:
@@ -3708,10 +3716,11 @@ class PushEndpointDetailsDialog(ModalScreen[None]):
         self.action_close()
 
 
-class PushDestinationAuthorizationDialog(ModalScreen[bool]):
+class PushDestinationAuthorizationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     """Authorize first contact with one configured sanitized destination."""
 
-    BINDINGS = [Binding("escape", "decline", "Cancel", show=False)]
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    SAFE_MODAL_CONTENT = "#file-notes-push-auth-dialog"
 
     DEFAULT_CSS = """
     PushDestinationAuthorizationDialog {
@@ -3869,8 +3878,13 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
         """Treat any close path without an affirmative result as decline."""
         return super().dismiss(False if result is None else result)
 
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Return the explicit non-authorizing result for generic cancellation."""
+        del source
+        self.dismiss_safe_once(False)
+
     def action_decline(self) -> None:
-        self.dismiss(False)
+        self.dismiss_safe_once(False)
 
     @on(Button.Pressed, "#file-notes-push-auth-cancel")
     def _cancel_pressed(self, event: Button.Pressed) -> None:
@@ -3885,11 +3899,4 @@ class PushDestinationAuthorizationDialog(ModalScreen[bool]):
     @on(Button.Pressed, "#file-notes-push-auth-details")
     def _details_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.app.push_screen(
-            PushEndpointDetailsDialog(self._authorization.destination),
-            callback=self._restore_details_focus,
-        )
-
-    def _restore_details_focus(self, _result: None) -> None:
-        if self.is_mounted:
-            self.query_one("#file-notes-push-auth-details", Button).focus()
+        self.app.push_screen(PushEndpointDetailsDialog(self._authorization.destination))

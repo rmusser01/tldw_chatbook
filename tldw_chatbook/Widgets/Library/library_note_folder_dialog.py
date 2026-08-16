@@ -11,11 +11,14 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
+from ..modal_dismissal import SafeModalDismissMixin
 
-class LibraryNoteFolderNameDialog(ModalScreen[str | None]):
+
+class LibraryNoteFolderNameDialog(SafeModalDismissMixin, ModalScreen[str | None]):
     """Collect a validated-by-service folder name without transforming it."""
 
-    BINDINGS = (Binding("escape", "cancel", "Cancel", show=False),)
+    BINDINGS = (Binding("escape", "request_safe_cancel", "Cancel", show=False),)
+    SAFE_MODAL_CONTENT = "#library-note-folder-name-dialog"
     AUTO_FOCUS = "#library-note-folder-name"
 
     DEFAULT_CSS = """
@@ -33,7 +36,7 @@ class LibraryNoteFolderNameDialog(ModalScreen[str | None]):
         self._initial_name = initial_name
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(id="library-note-folder-name-dialog"):
             yield Static(
                 self._title,
                 id="library-note-folder-dialog-title",
@@ -50,18 +53,15 @@ class LibraryNoteFolderNameDialog(ModalScreen[str | None]):
                     "Save", id="library-note-folder-dialog-confirm", variant="primary"
                 )
 
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
     def _submit(self) -> None:
         value = self.query_one("#library-note-folder-name", Input).value.strip()
         if value:
             self.dismiss(value)
 
     @on(Button.Pressed, "#library-note-folder-dialog-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, "#library-note-folder-dialog-confirm")
     def _confirm(self, event: Button.Pressed) -> None:
@@ -74,10 +74,11 @@ class LibraryNoteFolderNameDialog(ModalScreen[str | None]):
         self._submit()
 
 
-class LibraryNoteFolderTargetDialog(ModalScreen[str | None]):
+class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | None]):
     """Choose one bounded, already-loaded folder destination."""
 
-    BINDINGS = (Binding("escape", "cancel", "Cancel", show=False),)
+    BINDINGS = (Binding("escape", "request_safe_cancel", "Cancel", show=False),)
+    SAFE_MODAL_CONTENT = "#library-note-folder-target-dialog"
     AUTO_FOCUS = "#library-note-folder-target"
 
     DEFAULT_CSS = """
@@ -105,7 +106,7 @@ class LibraryNoteFolderTargetDialog(ModalScreen[str | None]):
         options = list(self._folders)
         if self._include_root:
             options.insert(0, ("Top level", ""))
-        with Vertical():
+        with Vertical(id="library-note-folder-target-dialog"):
             yield Static(
                 self._title,
                 id="library-note-folder-target-title",
@@ -123,18 +124,15 @@ class LibraryNoteFolderTargetDialog(ModalScreen[str | None]):
                     "Choose", id="library-note-folder-target-confirm", variant="primary"
                 )
 
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
     def _submit(self) -> None:
         value = self.query_one("#library-note-folder-target", Select).value
         if value is not Select.BLANK:
             self.dismiss(str(value))
 
     @on(Button.Pressed, "#library-note-folder-target-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     @on(Button.Pressed, "#library-note-folder-target-confirm")
     def _confirm(self, event: Button.Pressed) -> None:

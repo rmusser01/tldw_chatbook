@@ -23,7 +23,11 @@ from textual.widgets import Input, Static
 
 from tldw_chatbook.config import _get_effective_config_path
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
+from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import (
+    FileSystemPickerScreen,
+)
 from tldw_chatbook.Widgets.enhanced_file_picker import (
+    EnhancedFileDialog,
     EnhancedFileOpen,
     EnhancedFileSave,
     MultiSelectDirectoryEntry,
@@ -1370,10 +1374,14 @@ async def test_file_dialog_terminal_cancel_sources_use_safe_dismiss_once(
 
         if source == "terminal-escape":
             await pilot.press("escape")
-        elif source == "backdrop":
-            await pilot.click(offset=(0, 0))
         else:
-            await pilot.click("#cancel")
+            await pilot.press("ctrl+l")
+            await pilot.press("ctrl+f")
+            await pilot.pause()
+            if source == "backdrop":
+                await pilot.click(offset=(0, 0))
+            else:
+                await pilot.click("#cancel")
         await pilot.pause()
 
     assert app._result_seen
@@ -1409,14 +1417,13 @@ async def test_file_dialog_sub_surfaces_peel_on_escape_and_clicks_stay_inside(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        if open_surface == "path":
-            dialog.action_focus_path_input()
-        elif open_surface == "search":
-            dialog.action_focus_search()
-        elif open_surface == "recent":
-            dialog.action_toggle_recent()
-        else:
-            dialog.action_toggle_bookmarks()
+        key = {
+            "path": "ctrl+l",
+            "search": "ctrl+f",
+            "recent": "ctrl+r",
+            "bookmarks": "ctrl+b",
+        }[open_surface]
+        await pilot.press(key)
         await pilot.pause()
 
         await pilot.click(surface_selector)
@@ -1434,6 +1441,13 @@ async def test_file_dialog_sub_surfaces_peel_on_escape_and_clicks_stay_inside(
 
     assert app._result_seen
     assert app._result is None
+
+
+def test_application_import_keeps_enhanced_file_dialog_mro_consistent() -> None:
+    """The application and public enhanced base import without an MRO conflict."""
+    import tldw_chatbook.app  # noqa: F401
+
+    assert issubclass(EnhancedFileDialog, FileSystemPickerScreen)
 
 
 def test_file_list_highlight_is_visible():

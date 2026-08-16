@@ -57,7 +57,7 @@ class PersonaProfileEditorWidget(Container):
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonaProfileEditorWidget .is-invalid {
         border: round red;

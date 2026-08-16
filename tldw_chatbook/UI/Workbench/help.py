@@ -94,7 +94,7 @@ class WorkbenchHelpPanel(SafeModalDismissMixin, ModalScreen[None]):
     # DEFAULT_CSS is a structural SUBSET using only built-in Textual theme
     # variables ($primary/$surface), so the panel is correctly bounded and
     # scrollable even in a stylesheet-less test harness that never loads the
-    # app's CSS bundle (mirrors AppFooterStatus.DEFAULT_CSS's own rationale
+    # app's CSS bundle (mirrors AppFooterStatus.BUNDLED_CSS's own rationale
     # -- WorkbenchHelpPanel is shared infra invoked from many screens'
     # lightweight test harnesses, not just Console's). The bundle's richer
     # `$ds-*`-token rule wins by origin in production for color/border

@@ -222,7 +222,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
 
     selected_entity = reactive[dict[str, Any] | None](None, recompose=True)
     scope = reactive[TreeScope | None](None, recompose=True)
-    breadcrumb_labels = reactive[list[str]]([], recompose=True)
+    breadcrumb_labels = reactive[list[str]](list, recompose=True)
     #: TASK-998, widened by TASK-1020. What the profile behind this Inspector
     #: reports: `loading`, `empty` or `populated` (`OverviewPane.LOADING` and
     #: friends). Screen-seeded like the three reactives above, for the same

@@ -126,7 +126,7 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
     """
 
     # Reactive properties
-    chapters = reactive([], recompose=True)
+    chapters = reactive(list, recompose=True)
     selected_chapter_index = reactive(-1)
     preview_content = reactive("")
 
@@ -193,8 +193,8 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
                             yield Label("Voice Override:")
                             yield Select(
                                 options=[
-                                    ("narrator", "Use Narrator Voice"),
-                                    ("custom", "Custom Voice"),
+                                    ("Use Narrator Voice", "narrator"),
+                                    ("Custom Voice", "custom"),
                                 ],
                                 id="chapter-voice-select",
                             )

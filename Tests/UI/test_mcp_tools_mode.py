@@ -848,7 +848,7 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
             "filter-server Select collapsed to zero width under the real "
             "bundled stylesheet (Defect 1, QA round mcp-hub-phase3-2026-07) "
             "-- _conversations.tcss's global `Select { width: 100%; }` rule "
-            "is clobbering MCPToolsMode's own DEFAULT_CSS override again."
+            "is clobbering MCPToolsMode's own BUNDLED_CSS override again."
         )
         assert select.size.height > 0, "filter-server Select collapsed to zero height"
 

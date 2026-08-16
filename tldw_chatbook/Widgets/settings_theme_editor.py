@@ -12,7 +12,6 @@ from textual.app import ComposeResult
 from textual.color import Color
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
-from textual.events import Click, DescendantFocus
 from textual.events import Click, DescendantFocus, Key
 from textual.message import Message
 from textual.reactive import reactive
@@ -35,7 +34,7 @@ class SettingsThemeEditor(Vertical):
             super().__init__()
 
     current_theme_name = reactive("textual-dark")
-    current_theme_data: reactive[dict[str, str]] = reactive({}, layout=False)
+    current_theme_data: reactive[dict[str, str]] = reactive(dict, layout=False)
     is_dark_theme = reactive(True)
     # init=False: the init-time watch call would post ThemeModifiedStatus(False)
     # on every mount, and SettingsScreen recomposes on that reactive -- paired

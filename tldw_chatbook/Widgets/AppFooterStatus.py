@@ -111,7 +111,7 @@ class AppFooterStatus(Widget):
     # KEEP IN SYNC with the live bundle source
     # css/components/_widgets.tcss ("Window Footer Widget" block, built
     # into tldw_cli_modular.tcss -- NOT Constants.py's css_content, which
-    # has no consumers): DEFAULT_CSS covers stylesheet-less harnesses; the
+    # has no consumers): BUNDLED_CSS covers stylesheet-less harnesses; the
     # app bundle wins by origin in production. A bundle-only edit would
     # silently diverge harness geometry from production (task-264 review).
     BUNDLED_CSS = """

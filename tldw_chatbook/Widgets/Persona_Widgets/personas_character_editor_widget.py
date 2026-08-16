@@ -77,7 +77,7 @@ class PersonasCharacterEditorWidget(Container):
     """ds-field-row character form with an Advanced section and avatar status."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
     BUNDLED_CSS = """
     PersonasCharacterEditorWidget {
         width: 100%;
@@ -326,7 +326,7 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonasCharacterEditorWidget .is-invalid {
         border: round red;

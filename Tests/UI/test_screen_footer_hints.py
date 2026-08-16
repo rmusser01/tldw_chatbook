@@ -506,19 +506,19 @@ def _footer_section_blocks(css_path: Path) -> dict[str, dict[str, str]]:
     text = css_path.read_text(encoding="utf-8")
     assert _FOOTER_SECTION_START in text and _FOOTER_SECTION_END in text, (
         f"{css_path.name} lost its '{_FOOTER_SECTION_START}' section markers -- "
-        "the DEFAULT_CSS drift guard needs them to find the footer block."
+        "the BUNDLED_CSS drift guard needs them to find the footer block."
     )
     section = text.split(_FOOTER_SECTION_START, 1)[1].split(_FOOTER_SECTION_END, 1)[0]
     return _parse_css_blocks(section)
 
 
 def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[str]:
-    """Every DEFAULT_CSS declaration missing/different in the bundle blocks.
+    """Every BUNDLED_CSS declaration missing/different in the bundle blocks.
 
-    DEFAULT_CSS scopes child selectors as ``AppFooterStatus #id``; the bundle
+    BUNDLED_CSS scopes child selectors as ``AppFooterStatus #id``; the bundle
     declares the same ids unscoped, so the scope prefix is stripped before
-    matching. DEFAULT_CSS is allowed to be a SUBSET (the bundle carries
-    extras); a declaration present in DEFAULT_CSS but absent or different in
+    matching. BUNDLED_CSS is allowed to be a SUBSET (the bundle carries
+    extras); a declaration present in BUNDLED_CSS but absent or different in
     the bundle is drift.
     """
     divergences = []
@@ -566,7 +566,7 @@ def test_built_bundle_carries_the_footer_rules():
     )
     assert divergences == [], (
         "The built bundle's footer block diverged from AppFooterStatus."
-        f"DEFAULT_CSS: {divergences}. If _widgets.tcss is already correct, "
+        f"BUNDLED_CSS: {divergences}. If _widgets.tcss is already correct, "
         "the bundle is stale -- rerun python3 tldw_chatbook/css/build_css.py."
     )
 

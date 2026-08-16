@@ -1,4 +1,8 @@
-"""The base dialog code for the other dialogs in the library."""
+"""The app-integrated base dialog code for the other picker dialogs.
+
+This vendored fork intentionally uses the application's safe-modal contract and
+therefore requires a small patch when syncing from or extracting to upstream.
+"""
 
 ##############################################################################
 # Backward compatibility.
@@ -8,20 +12,12 @@ from __future__ import annotations
 # Python imports.
 import sys
 from pathlib import Path
-from typing import Callable, List, Dict, Any, Union
-
-try:
-    from typing import TypeAlias
-except ImportError:
-    from typing_extensions import TypeAlias
+from typing import Any, Callable, Dict, List, TypeAlias, Union
 
 ##############################################################################
-# Rich imports.
+# Third-party imports.
 from rich.console import RenderableType
 from rich.table import Table
-
-##############################################################################
-# Textual imports.
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -32,6 +28,7 @@ from textual.widgets import Button, Label, Input, ListView, ListItem, Static
 
 ##############################################################################
 # Local imports.
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from .parts import DirectoryNavigation, DriveNavigation
 
 
@@ -76,8 +73,10 @@ ButtonLabel: TypeAlias = Union[str, Callable[[str], str]]
 
 
 ##############################################################################
-class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
+class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
     """Base screen for the dialogs in this library."""
+
+    SAFE_MODAL_CONTENT = "#file-system-picker-dialog"
 
     DEFAULT_CSS = """
     FileSystemPickerScreen {
@@ -216,7 +215,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         Binding("ctrl+d", "bookmark_current", "Bookmark directory"),
         Binding("ctrl+r", "show_recent", "Show recent locations"),
         Binding("ctrl+f", "focus_search", "Search in directory"),
-        Binding("escape", "dismiss(None)", "Cancel"),
+        Binding("escape", "request_safe_cancel", "Cancel"),
         Binding("ctrl+s", "select_current_folder", "Select this folder"),
     ]
     """The bindings for the dialog."""
@@ -279,7 +278,7 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         Returns:
             The widgets to compose.
         """
-        with Dialog() as dialog:
+        with Dialog(id="file-system-picker-dialog") as dialog:
             dialog.border_title = self._title
 
             # Recent locations panel (hidden by default)
@@ -393,7 +392,6 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         # Add to recent locations
         self._add_to_recent(event.control.location, "directory")
 
-    @on(DirectoryNavigation.Changed)
     def _clear_error(self) -> None:
         """Clear any error that might be showing."""
         self._set_error()
@@ -445,15 +443,40 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
         event.stop()
         self.dismiss(self.query_one(DirectoryNavigation).location)
 
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Peel transient surfaces for Escape, otherwise cancel immediately."""
+        if source != "escape":
+            self.dismiss_safe_once(None)
+            return
+
+        path_container = self.query_one("#path-input-container")
+        if not path_container.has_class("hidden"):
+            self._on_cancel_path_input()
+            return
+
+        if self.search_active:
+            self.query_one("#search-input", Input).value = ""
+            self.search_active = False
+            self.query_one(DirectoryNavigation).search_filter = ""
+            self.query_one(DirectoryNavigation).focus()
+            return
+
+        if self.show_recent:
+            self.show_recent = False
+            self.query_one(DirectoryNavigation).focus()
+            return
+
+        self.dismiss_safe_once(None)
+
     @on(Button.Pressed, "#cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         """Cancel the dialog.
 
         Args:
             event: The even to handle.
         """
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="visible")
 
     def _action_hidden(self) -> None:
         """Action for toggling the display of hidden entries."""

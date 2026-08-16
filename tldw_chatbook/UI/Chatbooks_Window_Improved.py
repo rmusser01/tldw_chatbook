@@ -379,7 +379,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     # `#chatbooks-container` imperatively via `_update_content()` instead
     # (task-671; see the class docstring for why `recompose=True` on
     # `chatbooks` was actively harmful here).
-    chatbooks = reactive([])
+    chatbooks = reactive(list)
     view_mode = reactive("grid")
     search_query = reactive("")
 
