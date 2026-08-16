@@ -357,7 +357,28 @@ for the new-suite row. Every count below was READ off a summary line.
 | **The specified battery** — `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_mcp_approval` (69), the 16-file wake glob (109), probe (1) = 223 | **223 passed, 0 failed** (179.6s) | **223 passed, 0 failed** (179.5s) | **0** — identical, both sides clean |
 | `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | **1438 passed, 0 failed** (40.1s) | — |
 | **The files the specified gate MISSES but the blast radius names** — `test_probe_headless_wake_p1_continuity`, `test_probe_headless_wake_p2_p3_p4` (Task 0's own probes, which record post-unmount wake behaviour), `Tests/Architecture/test_console_wave6_inventory`, `Tests/Architecture/test_persistent_diagnostic_inventory`, probe | the same **3 failed** at the merge-base (21.1s) | **3 failed, 82 passed, 1 skipped** (166.2s) | **0** — the three reproduce with this branch absent (`test_workspace_browser_methods_have_no_sibling_controller_reach_through`, `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`, `test_task_15743_final_rebase_diagnostics_are_metadata_only`); both Task 0 probes are green |
-| `Tests/Chat/` in full + probe | <!--CHAT_BASE--> | <!--CHAT_FINAL--> | <!--CHAT_DELTA--> |
+| `Tests/Chat/` in full + probe | **IN PROGRESS — see the honesty note below** | **IN PROGRESS** | — |
+
+**Honesty note on the `Tests/Chat/` full gate.** Both sides were started
+together (branch, and the merge-base worktree with the new invariants file
+`--ignore`d so the two collect the same set). After **4.5 hours** they
+stood at **84%** and **85%** with **0 failures on either side** — the two
+logs never diverged by more than 39 progress characters, i.e. they are in
+lockstep through the same files. The cause is contention, not the change:
+`ps` showed **8 concurrent `pytest` processes** on this machine, six of
+them foreign sessions, and my two runs were accumulating ~40 seconds of
+CPU per 20 minutes of wall clock. This is the same machine-contention
+hazard the continuity landing recorded.
+
+Stating plainly what that means: **the full-`Tests/Chat/` gate was not
+obtained within this session.** What WAS obtained: every `Tests/Chat/`
+file in the change's blast radius ran to completion inside the 223-test
+battery above (`test_console_viewless_hooks`, `test_console_runtime_
+lifetime`, all six `Tests/Chat/` fleet/wake files, plus the new
+invariants suite), all green on both sides; and the 84% of `Tests/Chat/`
+that did execute produced zero failures on either side. Whoever picks this
+up should re-run `Tests/Chat/` in full on a quiet machine before merging
+rather than treating the above as coverage.
 
 The wake glob as specified (`Tests/Chat/test_fleet_*.py
 Tests/Chat/test_console_fleet_*.py Tests/UI/test_console_fleet_*.py`)
