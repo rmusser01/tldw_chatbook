@@ -522,7 +522,7 @@ Three production facts compose:
    `query_one("#console-native-tab-strip")` — the widgets a navigation
    away from Console removes.
 3. Textual workers default to `exit_on_error=True`
-   (`textual/worker.py:380`), so the `NoMatches` reaches
+   (`textual/worker.py:382`), so the `NoMatches` reaches
    `App._handle_exception` and **exits the app**. After that every
    `post_message` is silently dropped — which is why the next test's
    `NavigateToScreen("chat")` produced 15 seconds of complete silence and
@@ -553,7 +553,10 @@ Proof, in four parts, each executed:
    `console_runtime.py` — **`chat_screen.py` is untouched by this
    branch**. Both halves of the defect are present verbatim on
    `origin/dev`: the unguarded `finally` re-arm
-   (`origin/dev:chat_screen.py:15853-15862`) and the unguarded
+   (the `finally` of `chat_screen.py`'s
+   `_sync_native_console_chat_ui`, `origin/dev` @ `5b4820931`
+   lines 15859-15868 — cited by name because dev moves under the
+   numbers) and the unguarded
    `query_one` (`origin/dev:console_session_surface.py:532`).
 3. **The gate relaxation is the exposer, measured both ways.** With the
    `_attempt` gate reverted to `_shutdown_requested` *and* the fix
@@ -584,13 +587,27 @@ slowdown source, and no claim here depends on doing so.
 `tldw_chatbook/UI/Screens/chat_screen.py`, three small pieces, one
 invariant — **a torn-down screen renders nothing**:
 
-* `ChatScreen._console_screen_torn_down()` — new predicate reading
-  `_closing`/`_closed`, the pair Textual itself sets first in
+* `_console_screen_is_torn_down(screen)` — new **module-level** predicate
+  reading `_closing`/`_closed`, the pair Textual itself sets first in
   `MessagePump._close_messages` and reads for `is_parent_active`.
   Deliberately **not** `is_mounted` (True for the corpse) and
   deliberately **not** `is_running` (also False *before* a pump starts,
   which would silently no-op every harness that calls the tick on a
   hand-built, never-mounted `ChatScreen`).
+
+  It is a module function rather than a method **because the first draft
+  was a method and that broke three tests.** `MagicMock(spec=ChatScreen)`
+  is a common fixture here, and a spec'd mock auto-answers every *method*
+  on the class — truthily — so as a method the predicate reported "torn
+  down" for every mocked screen and the tick returned before doing
+  anything. Measured: `Tests/UI/test_ui_responsiveness.py` alone was
+  **15 passed** at the pre-fix baseline (`.worktrees/hf-leak-base` @
+  `eae717f53`), **3 failed** with the method form, **15 passed** again
+  with the module form. `_closing`/`_closed` are set in
+  `MessagePump.__init__`, so they are absent from `dir(ChatScreen)` and a
+  spec'd mock — like a never-mounted screen — correctly reads as LIVE.
+  `test_ui_responsiveness.py` is the standing guard against anyone
+  converting this back to a method.
 * `_sync_native_console_chat_ui` returns immediately when the screen is
   torn down, and clears the coalesced request rather than passing it on.
 * Its `finally` no longer re-arms a worker on a dead screen, and a
@@ -620,12 +637,23 @@ Five tests, all driven through the real navigation API on a real app:
 
 | # | Mutation | Killed by | Result |
 |---|---|---|---|
-| 1 | entry guard `if self._console_screen_torn_down():` → `if False:` | test 2 | 1 failed, 3 passed |
-| 2 | `finally` re-arm guard → `if True:` (always re-arm) | test 4 | 1 failed, 3 passed |
+All six re-run against the final (module-function) shape; counts READ off
+the summary lines.
+
+| # | Mutation | Killed by | Result |
+|---|---|---|---|
+| 1 | entry guard `if _console_screen_is_torn_down(self):` → `if False:` | test 2 | 1 failed, 4 passed |
+| 2 | `finally` re-arm guard → `if True:` (always re-arm) | test 4 | 1 failed, 4 passed |
 | 3 | teardown-scoped `except` → always `raise` | test 5 | 1 failed, 4 passed |
 | 4 | teardown-scoped `except` → blanket swallow (`if False: raise`) | test 3 (the control) | 1 failed, 4 passed |
-| 5 | `_console_screen_torn_down()` → `return False` | tests 1, 2, 4, 5 | 4 failed, 1 passed |
-| 6 | `_console_screen_torn_down()` → `return True` | tests 3, 4, 5 | 3 failed, 2 passed |
+| 5 | `_console_screen_is_torn_down()` → `return False` | tests 1, 2, 4, 5 | 4 failed, 1 passed |
+| 6 | `_console_screen_is_torn_down()` → `return True` | tests 3, 4, 5 | 3 failed, 2 passed |
+
+A seventh, shape-level mutation is covered by an existing file rather
+than a new one: converting the predicate back to a **method** turns
+`Tests/UI/test_ui_responsiveness.py` from 15 passed to 3 failed (§11.5).
+That was not a hypothetical — it is what the first draft did, and it is
+how the trap was found.
 
 Recorded honestly: **mutation 3 SURVIVED the first four-test draft.** The
 mid-tick navigation test could not reach the `except` at all, because by

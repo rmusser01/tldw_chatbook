@@ -1646,6 +1646,38 @@ def _console_draft_looks_like_rag_query(draft: Any) -> bool:
     return True
 
 
+def _console_screen_is_torn_down(screen: Any) -> bool:
+    """Whether ``screen``'s message pump has begun closing.
+
+    task-15860 (cross-suite leak). Three deliberate choices:
+
+    * **Not ``is_mounted``.** Measured on the live crash this exists to
+      stop: the removed screen's ``ConsoleSessionSurface`` still reported
+      ``is_mounted=True`` while its own pump reported ``is_running=False``
+      and every child was already gone, so a mount check would have waved
+      through the very tick that then raised ``NoMatches``.
+    * **Not ``is_running``.** That is also False *before* a pump starts,
+      which would silently no-op every harness that drives the sync tick
+      on a hand-built, never-mounted ``ChatScreen``. ``_closing`` /
+      ``_closed`` are the pair Textual sets when a pump is taken down
+      (``MessagePump._close_messages`` sets ``_closing`` as its first
+      statement, before any child comes down) and the pair Textual itself
+      reads for ``is_parent_active``.
+    * **A module function, not a method.** ``MagicMock(spec=ChatScreen)``
+      is a common fixture here, and a spec'd mock auto-answers every
+      *method* on the class -- truthily. As a method this predicate
+      therefore reported "torn down" for every mocked screen and turned
+      three live-screen `test_ui_responsiveness` tests red (measured: 15
+      passed at the baseline, 3 failed with the method form). Read off
+      the raw flags instead: they are set in ``MessagePump.__init__``, so
+      they are absent from ``dir(ChatScreen)``, and a spec'd mock -- like
+      a never-mounted screen -- correctly reads as LIVE.
+    """
+    return bool(
+        getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
+    )
+
+
 def _run_dictionary_summary_off_thread(
     service: Any,
     conversation_id: Any,
@@ -14385,27 +14417,6 @@ class ChatScreen(BaseAppScreen):
                     return composer
         return self._console_composer_or_none()
 
-    def _console_screen_torn_down(self) -> bool:
-        """Whether this screen's message pump has begun closing.
-
-        task-15860 (cross-suite leak): ``is_mounted`` is NOT this
-        predicate. Measured on the live crash below, the removed screen's
-        ``ConsoleSessionSurface`` still reported ``is_mounted=True`` while
-        its own pump reported ``is_running=False`` and every child was
-        already gone -- so a mount check would have passed the very tick
-        that then raised ``NoMatches``.
-
-        ``_closing``/``_closed`` are the two flags Textual sets when a
-        pump is taken down (``MessagePump._close_messages``), and Textual
-        itself reads exactly this pair for ``is_parent_active``. They are
-        chosen over ``is_running`` deliberately: ``is_running`` is also
-        False *before* a pump starts, which would silently no-op the many
-        existing harnesses that call the sync tick on a hand-built,
-        never-mounted ``ChatScreen``. A never-mounted screen has both
-        flags False and is therefore treated as live, exactly as before.
-        """
-        return bool(getattr(self, "_closing", False) or getattr(self, "_closed", False))
-
     def _console_screen_displayed(self) -> bool:
         """Whether THIS screen is the one the user is looking at.
 
@@ -15814,7 +15825,7 @@ class ChatScreen(BaseAppScreen):
         ``NoMatches``, and killed the app -- after which every later
         ``post_message`` was silently dropped and navigation was dead.
         """
-        if self._console_screen_torn_down():
+        if _console_screen_is_torn_down(self):
             # The re-arm below is skipped for the same reason; clearing the
             # flag keeps a resurrected screen from inheriting this one's
             # coalesced request.
@@ -15895,7 +15906,7 @@ class ChatScreen(BaseAppScreen):
             # `NoMatches` would not be narrower in the way that matters,
             # since a torn-down DOM raises several different types
             # depending on how far the tick had got.
-            if not self._console_screen_torn_down():
+            if not _console_screen_is_torn_down(self):
                 raise
             logger.debug(
                 "Console sync tick raced this screen's teardown; nothing to "
@@ -15911,7 +15922,7 @@ class ChatScreen(BaseAppScreen):
                 # (`Widget._on_unmount` -> `workers.cancel_node`), so the
                 # worker it creates is never in the cancelled set and
                 # outlives the screen that owns it.
-                if not self._console_screen_torn_down():
+                if not _console_screen_is_torn_down(self):
                     self.run_worker(
                         self._sync_native_console_chat_ui(),
                         exclusive=True,

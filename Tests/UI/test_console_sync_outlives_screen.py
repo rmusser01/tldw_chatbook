@@ -59,7 +59,10 @@ from Tests.UI.test_console_store_continuity import (
     _navigate,
     _seed_console,
 )
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    ChatScreen,
+    _console_screen_is_torn_down,
+)
 
 
 def _console_sync_workers(app):
@@ -101,7 +104,7 @@ async def test_a_console_sync_tick_scheduled_after_teardown_cannot_kill_the_app(
         )
         await _navigate(app, pilot, "library", expect="LibraryScreen")
         assert chat not in app.screen_stack, "Console must actually unmount"
-        assert chat._console_screen_torn_down(), (
+        assert _console_screen_is_torn_down(chat), (
             "harness precondition: the navigation must really have closed this "
             "screen's pump -- a test that ran against a live screen would prove "
             "nothing"
@@ -149,7 +152,7 @@ async def test_a_torn_down_screen_runs_no_sync_work_and_never_re_arms(tmp_path):
             app, pilot, gateway
         )
         await _navigate(app, pilot, "library", expect="LibraryScreen")
-        assert chat._console_screen_torn_down(), "harness precondition"
+        assert _console_screen_is_torn_down(chat), "harness precondition"
 
         reached: list[object] = []
         chat._sync_console_control_bar = lambda *a, **k: reached.append(a)
@@ -238,7 +241,7 @@ async def test_a_live_screens_console_sync_failure_still_propagates(tmp_path):
         assert injected == [False], (
             f"the control never reached the injected failure: {injected}"
         )
-        assert not chat._console_screen_torn_down(), (
+        assert not _console_screen_is_torn_down(chat), (
             "control precondition: that screen was alive throughout"
         )
 
@@ -264,7 +267,7 @@ async def test_a_real_navigation_arriving_mid_tick_is_absorbed(tmp_path):
         assert injected == [True], (
             f"the teardown case never reached the injected navigation: {injected}"
         )
-        assert chat._console_screen_torn_down(), (
+        assert _console_screen_is_torn_down(chat), (
             "the injected navigation must have really closed this screen"
         )
         assert app.is_running, f"the app died: {app._exception!r}"

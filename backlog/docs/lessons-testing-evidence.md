@@ -4558,3 +4558,29 @@ loop (timers re-arming timers, callbacks re-posting themselves): the framework's
 "cancel everything this node owns" happens once, and anything scheduled after
 it is invisible to it. Guard the re-arm on the owner still being alive, not
 just the body.
+
+## A `MagicMock(spec=Cls)` answers every METHOD truthily — a new guard predicate must not be one (task-15860, 2026-08-16)
+
+A teardown guard was added as `ChatScreen._console_screen_torn_down()`, reading
+`_closing`/`_closed`. Three `Tests/UI/test_ui_responsiveness.py` tests that
+drive `ChatScreen._sync_native_console_chat_ui(mock)` against a
+`MagicMock(spec=ChatScreen)` went red: the spec'd mock auto-provides every
+method in `dir(Cls)`, and the auto-returned `MagicMock` is TRUTHY, so the new
+guard reported "this screen is torn down" for every mocked screen and the code
+under test returned before doing anything. Measured three ways: 15 passed at
+the pre-fix baseline, 3 failed with the method form, 15 passed with the
+identical logic moved to a module-level `_console_screen_is_torn_down(screen)`.
+The reason the module form is immune is the same mechanism read the other way —
+`_closing`/`_closed` are set in `__init__`, so they are NOT in `dir(Cls)`, a
+spec'd mock raises `AttributeError` for them, and `getattr(screen, "_closing",
+False)` correctly reads a mocked (or never-mounted) screen as LIVE.
+
+**What to do.** When adding a *predicate* that new early-returns depend on, ask
+what a spec'd mock of the host class will return for it before choosing where
+it lives. A module function reading raw attributes is the mock-safe shape; a
+method is not. The failure is nasty because it is silent — the guard fires, the
+body is skipped, and the assertion that fails is about something else entirely.
+Trap-detection note: neutralising the method's BODY does not restore the tests
+(the mock never calls it), so the usual "mutate the fix off and compare" check
+reports "identical failure sets, not mine" — the only honest discriminator is a
+real pre-fix baseline worktree.
