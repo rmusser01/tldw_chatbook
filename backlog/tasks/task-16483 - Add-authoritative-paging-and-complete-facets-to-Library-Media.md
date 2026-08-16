@@ -1,9 +1,10 @@
 ---
 id: TASK-16483
 title: Add authoritative paging and complete facets to Library Media
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-15 02:47'
+updated_date: '2026-08-16 15:14'
 labels:
   - library
   - pagination
@@ -34,3 +35,21 @@ Make all top-level Media items reachable through bounded 20-item pages and compl
 - [ ] #6 Media request generations, unmount fencing, broad-snapshot isolation, focus, restoration, concurrent shrink, and recoverable error behavior match the approved design.
 - [ ] #7 Automated database/service/state, mounted Textual, geometry, privacy, mutation, and isolated live verification pass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no new ADR
+ADR path: backlog/decisions/067-library-top-level-pagination-contracts.md
+Reason: Direct implementation of ADR-067's approved Media paging, facet, stale-recovery, and privacy contracts.
+
+Detailed plan: Docs/superpowers/plans/2026-08-16-task-16483-library-media-pagination.md
+
+1. Add coherent exact-offset Media DB paging and metadata-only diagnostics.
+2. Propagate true offsets and complete active type facets through existing local/scope services.
+3. Add exact Media page validation and source-owned requested/applied/retained controller state.
+4. Wire dedicated screen authority, generation/unmount fences, restore, selection clearing, focus, and shrink recovery.
+5. Render the pager and one bounded complete-type OptionList at both supported geometries.
+6. Preserve applied scope and declarative stale-action safety through delete/bulk/undo.
+7. Run only touched Media component tests, focused inverses, isolated live proof, reviews, docs, and closeout; do not run the full repository suite per user direction.
+<!-- SECTION:PLAN:END -->
