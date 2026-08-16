@@ -56,6 +56,10 @@ def test_wait_is_visible_across_threads():
         thread.start()
         assert observed.wait(timeout=5.0), "observer never ran"
         thread.join(timeout=5.0)
+        # A join(timeout=...) that returns says nothing about termination,
+        # and a leaked non-daemon thread hangs interpreter shutdown (the
+        # exact failure mode in the TASK-16789 lesson).
+        assert not thread.is_alive(), "observer thread did not terminate"
 
     assert seen == [True]
     assert human_input_wait_active("run-1") is False
