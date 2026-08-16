@@ -206,7 +206,7 @@ already streaming.
 
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
-counts ("✎ Edited 3 files +92 −468"), then one row per changed file. Press
+counts ("✎ Edited 3 files  +92 −468"), then one row per changed file. Press
 **Enter** or click a row to expand its diff in place — expanding is
 per-row and the diff loads (and is cached) the first time you open it, so
 collapsing and reopening a row is instant. The card never mutates
@@ -218,14 +218,19 @@ or the run inspector's **Review changes** action. Revert-all and the other
 destructive actions live only on that screen, behind a confirm, never as a
 one-keystroke action in the transcript.
 
-If change tracking failed for a turn, or a nested repository wasn't
-tracked, the card's header still shows that warning text instead of file
-rows — it degrades to the same honest header the plain marker used, rather
-than hiding the problem.
+If change tracking failed for one of a turn's roots, that failure shows up
+as its own plain-text disclosure row next to the card, not inside it — the
+same row the transcript rendered before the card shipped. When *every*
+root in a turn failed to track, there is nothing left to count, so the
+turn gets no card and no summary row at all — only the per-root failure
+disclosures. And if a change spans a nested repository the tracker
+excluded, the card and the marker row are both silent about it; that
+exclusion is visible only in the full **Review** screen (`v`), which reads
+it from the stored snapshot.
 
 **`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
 presentation kill switch: set it to `false` to fall back to the original
-plain-text marker row (`` ✎ Edited N files +A −D — review with `v` ``,
+plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
 byte-identical to the pre-card behavior). `v` and the inspector's Review
 changes action work identically either way.
 
