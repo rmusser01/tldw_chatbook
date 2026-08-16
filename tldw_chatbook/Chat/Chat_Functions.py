@@ -1013,8 +1013,8 @@ def chat_api_call(
                             usage_prompt is not None or usage_completion is not None
                         ):
                             recorder.record_usage(
-                                prompt_tokens=usage_prompt or 0,
-                                completion_tokens=usage_completion or 0,
+                                prompt_tokens=usage_prompt,
+                                completion_tokens=usage_completion,
                             )
                         elif recorder is not None:
                             recorder.record_exchange(

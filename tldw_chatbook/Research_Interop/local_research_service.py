@@ -859,6 +859,15 @@ class LocalResearchService:
                 fields["control_state"] = control_state
             if not fields:
                 return self._as_local_run(self.db.get_run(run_id))
+            # Column names are engine-controlled, but the house rule is
+            # explicit: SQL identifiers are validated, not trusted (even
+            # hardcoded ones -- cheap insurance against future field
+            # additions drifting past the whitelist).
+            from ..DB.sql_validation import validate_column_name
+
+            for key in fields:
+                if not validate_column_name(key, "research_runs"):
+                    raise ValueError(f"invalid research_runs column: {key!r}")
             assignments = ", ".join(f"{key} = ?" for key in fields)
             with self.db.transaction() as conn:
                 conn.execute(

@@ -319,3 +319,32 @@ def test_estimate_ignores_non_text_multimodal_content():
 
     # Base64 payloads must not explode the estimate: only the text part counts.
     assert recorder.prompt_tokens() < 100
+
+
+def test_partial_provider_usage_is_not_marked_exact(monkeypatch):
+    # Only the prompt side reported: the exchange must not count as exact.
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 11},  # completion_tokens absent
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "prompt text"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert recorder.prompt_tokens() == 11
+    assert recorder.exact_tokens() == 0  # partial report: never exact
+
+
+def test_fully_reported_usage_is_exact():
+    recorder = UsageTokenRecorder()
+    recorder.record_usage(prompt_tokens=5, completion_tokens=7)
+    assert recorder.exact_tokens() == 12
+    assert recorder.total_tokens() == 12
