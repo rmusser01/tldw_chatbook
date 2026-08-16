@@ -16878,12 +16878,20 @@ class ChatScreen(BaseAppScreen):
         message on completion, and the existing terminal-run notification
         remains the fallback when insertion is impossible.
         """
-        question = (parse.args or "").strip()
-        if not question:
+        from tldw_chatbook.UI.Console_Modules.research_command import (
+            parse_research_command,
+        )
+
+        try:
+            intent = parse_research_command(parse.args or "")
+        except ValueError as usage_error:
             await self._append_native_console_system_message(
-                "Usage: /research <question>"
+                f"/research: {usage_error}"
             )
             return
+        question = intent.question
+        source_policy = intent.source_policy
+        provider_overrides = intent.provider_overrides()
         conversation_id = self._current_console_conversation_id()
         if not conversation_id:
             await self._append_native_console_system_message(
@@ -16924,10 +16932,14 @@ class ChatScreen(BaseAppScreen):
         db = getattr(app, "chachanotes_db", None)
 
         async def _run_research() -> None:
-            run = local_service.launch_run(
-                query=question,
-                chat_handoff={"conversation_id": conversation_id, "origin": "console"},
-            )
+            launch_kwargs: dict = {
+                "query": question,
+                "chat_handoff": {"conversation_id": conversation_id, "origin": "console"},
+                "source_policy": source_policy,
+            }
+            if provider_overrides:
+                launch_kwargs["provider_overrides"] = provider_overrides
+            run = local_service.launch_run(**launch_kwargs)
             engine = LocalResearchEngine(
                 local_service,
                 search_params=search_params,
@@ -16949,8 +16961,11 @@ class ChatScreen(BaseAppScreen):
             exclusive=False,
             description=f"Console research: {question[:60]}",
         )
+        policy_note = (
+            f" [policy: {source_policy}]" if source_policy != "balanced" else ""
+        )
         await self._append_native_console_system_message(
-            f"Deep research started: {question}\n"
+            f"Deep research started: {question}{policy_note}\n"
             "The report will be added to this conversation when the run "
             "completes."
         )

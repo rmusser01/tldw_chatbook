@@ -23,6 +23,11 @@ from tldw_chatbook.Research_Interop.academic_providers import (
     resolve_semantic_scholar_api_key,
     search_arxiv,
     search_biorxiv,
+    search_crossref,
+    search_figshare,
+    search_openalex,
+    search_osf,
+    search_zenodo,
     search_pubmed,
     search_papers,
     search_semantic_scholar,
@@ -527,7 +532,7 @@ def test_default_academic_providers_from_config(monkeypatch):
     assert ap._default_academic_providers() == ["arxiv", "semantic_scholar"]
 
 
-def test_search_papers_dedupes_and_warns_on_unknown_defaults(monkeypatch, caplog):
+def test_search_papers_dedupes_and_rejects_unknown_defaults(monkeypatch):
     from tldw_chatbook.Research_Interop import academic_providers as ap
 
     calls = []
@@ -537,12 +542,215 @@ def test_search_papers_dedupes_and_warns_on_unknown_defaults(monkeypatch, caplog
         return {"items": []}
 
     monkeypatch.setattr(ap, "search_arxiv", fake_arxiv)
+    # Duplicates collapse; unknown tokens now RAISE (a config typo must not
+    # silently narrow the provider set).
     monkeypatch.setattr(
         ap, "_default_academic_providers",
-        lambda: ["arxiv", "arxiv", "not_a_provider"],
+        lambda: ["arxiv", "arxiv"],
     )
-
     papers = asyncio.run(ap.search_papers("q"))
-
     assert calls == ["arxiv"]  # deduped: one call despite the duplicate
+    assert papers == []
+
+    monkeypatch.setattr(
+        ap, "_default_academic_providers",
+        lambda: ["arxiv", "not_a_provider"],
+    )
+    with pytest.raises(ValueError, match="unknown research source or category"):
+        asyncio.run(ap.search_papers("q"))
+
+
+# --- catalog-lane providers: OpenAlex/Crossref/Zenodo/Figshare/OSF (task-16792) ----
+
+_OPENALEX_PAGE = {
+    "results": [
+        {
+            "id": "W1", "doi": "https://doi.org/10.1234/oa.1",
+            "title": "Graph of scholarship",
+            "abstract_inverted_index": {
+                "Scholarship": [0], "is": [1], "vast": [2],
+            },
+            "authorships": [{"author": {"display_name": "E. Scholar"}}],
+            "publication_year": 2026,
+            "primary_location": {
+                "landing_page_url": "https://doi.org/10.1234/oa.1",
+                "pdf_url": "https://example.org/oa1.pdf",
+            },
+        }
+    ],
+    "meta": {"count": 1},
+}
+
+
+def test_search_openalex_reconstructs_abstract_from_inverted_index(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_OPENALEX_PAGE))])
+
+    out = search_openalex(query="scholarship", client=client)
+
+    assert "api.openalex.org/works" in client.request.calls[0]["url"]
+    item = out["items"][0]
+    assert item["abstract"] == "Scholarship is vast"
+    assert item["doi"] == "10.1234/oa.1"  # https://doi.org/ prefix stripped
+    assert item["url"] == "https://doi.org/10.1234/oa.1"
+    assert item["pdf_url"] == "https://example.org/oa1.pdf"
+    assert item["authors"] == "E. Scholar"
+    assert item["source"] == "openalex"
+
+
+_CROSSREF_PAGE = {
+    "message": {
+        "total-results": 1,
+        "items": [
+            {
+                "DOI": "10.5555/cr.1",
+                "title": ["Registry metadata study"],
+                "author": [{"given": "F.", "family": "Registrar"}],
+                "issued": {"date-parts": [[2025]]},
+                "abstract": "<jats:p>DOI metadata at scale.</jats:p>",
+            }
+        ],
+    }
+}
+
+
+def test_search_crossref_strips_jats_from_abstract(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_CROSSREF_PAGE))])
+
+    out = search_crossref(query="registry", client=client)
+
+    assert "api.crossref.org/works" in client.request.calls[0]["url"]
+    item = out["items"][0]
+    assert item["abstract"] == "DOI metadata at scale."
+    assert item["authors"] == "F. Registrar"
+    assert item["source"] == "crossref"
+
+
+_ZENODO_PAGE = {
+    "hits": {
+        "total": 1,
+        "hits": [
+            {
+                "id": 998877,
+                "doi": "10.5281/zenodo.998877",
+                "metadata": {
+                    "title": "Dataset of things",
+                    "description": "<p>A big dataset.</p>",
+                    "creators": [{"name": "G. Curator"}],
+                    "publication_date": "2026-02-01",
+                },
+            }
+        ],
+    }
+}
+
+
+def test_search_zenodo_normalizes_repository_records(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_ZENODO_PAGE))])
+
+    out = search_zenodo(query="dataset", client=client)
+
+    assert "zenodo.org/api/records" in client.request.calls[0]["url"]
+    item = out["items"][0]
+    assert item["title"] == "Dataset of things"
+    assert item["abstract"] == "A big dataset."  # HTML stripped
+    assert item["url"] == "https://zenodo.org/records/998877"
+    assert item["source"] == "zenodo"
+
+
+_FIGSHARE_BODY = [
+    {
+        "id": 776655,
+        "title": "Figures for the paper",
+        "description": "<p>Twelve figures.</p>",
+        "doi": "10.6084/m9.figshare.776655",
+        "url_publication": "https://figshare.com/articles/figure/776655",
+        "authors": [{"full_name": "H. Artist"}],
+    }
+]
+
+
+def test_search_figshare_posts_search_body(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_FIGSHARE_BODY))])
+
+    out = search_figshare(query="figures", client=client)
+
+    call = client.request.calls[0]
+    assert call["method"] == "POST"
+    assert "api.figshare.com/v2/articles/search" in call["url"]
+    item = out["items"][0]
+    assert item["abstract"] == "Twelve figures."
+    assert item["url"] == "https://figshare.com/articles/figure/776655"
+    assert item["source"] == "figshare"
+
+
+_OSF_PAGE = {
+    "data": [
+        {
+            "id": "abc12",
+            "attributes": {
+                "title": "Registered analysis plan",
+                "description": "A preprint with a registration.",
+                "date_created": "2026-03-03T00:00:00.000000Z",
+            },
+            "links": {"html": "https://osf.io/preprints/abc12"},
+        }
+    ]
+}
+
+
+def test_search_osf_normalizes_preprint_records(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_OSF_PAGE))])
+
+    out = search_osf(query="registration", client=client)
+
+    assert "api.osf.io/v2/preprints" in client.request.calls[0]["url"]
+    item = out["items"][0]
+    assert item["title"] == "Registered analysis plan"
+    assert item["url"] == "https://osf.io/preprints/abc12"
+    assert item["published_date"] == "2026-03-03"
+    assert item["source"] == "osf"
+
+
+def test_search_papers_accepts_categories(monkeypatch):
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    calls = []
+
+    def fake_pubmed(**kw):
+        calls.append("pubmed")
+        return {"items": []}
+
+    def unused(**kw):
+        calls.append("other")
+        return {"items": []}
+
+    monkeypatch.setattr(ap, "search_biorxiv", unused)  # serves biorxiv + medrxiv lanes
+    for name in ("arxiv", "semantic_scholar",
+                 "openalex", "crossref", "zenodo", "figshare", "osf"):
+        monkeypatch.setattr(ap, f"search_{name}", unused)
+    monkeypatch.setattr(ap, "search_pubmed", fake_pubmed)
+
+    papers = asyncio.run(ap.search_papers("topic", providers=["biomedical"]))
+
+    assert calls == ["pubmed"]
     assert papers == []
