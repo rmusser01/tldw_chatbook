@@ -4369,3 +4369,30 @@ entry left DBs rolled back to V20..V27 silently missing ALL conversations
 sync triggers after replay — a corruption no per-test fixture would ever
 notice, caught only because the sweep asserts parity with a fresh DB rather
 than "the test I care about passes".
+
+## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
+
+Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
+`Select.NULL`) — but referencing it does NOT raise: the lookup falls through the
+MRO to `Widget.BLANK: ClassVar[bool] = False`, an unrelated render flag added in
+the same major version. Every use of the old sentinel silently became the boolean
+`False`: comparisons went permanently dead, and passing it as a Select's initial
+`value=` crashed at mount with `InvalidSelectValueError: Illegal select value
+False.` Task-565 (2026-07-25) established exactly this mechanism and swept it —
+**scoped to settings_screen.py only**, because that was the file under review.
+Three weeks later the identical construct in `console_model_popover.py` crashed
+the Alt+M popover at mount for any session without a configured model, and was
+reported by a user. A grep at that point found **66 remaining `Select.BLANK`
+usages across 23 files**, including several sites that had independently
+discovered the trap and worked around it locally with comments, and several that
+deliberately exploit the `False` value as a synthetic placeholder option — so the
+eventual sweep (task-16503) needs per-site classification, not find-and-replace.
+
+**What to do.** When a fix reveals that an upstream rename/removal fails
+*silently* (shadowed attribute, `getattr` default, `__getattr__` fallback) rather
+than loudly, the first grep result count is the real scope of the defect. Sweep
+repo-wide in the same arc, or file the sweep task immediately with the grep count
+and the classification burden recorded — a Done task documenting the mechanism
+does not stop the next file from shipping the same crash. Evidence here: the
+mechanism was fully documented on the board for three weeks while the
+user-reachable crash sat live in another file.

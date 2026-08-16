@@ -513,3 +513,32 @@ async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
         assert "Model window (est.)" in window
         assert "model capacity is unverified" in status
         assert "Providers & Models" in status
+
+
+@pytest.mark.asyncio
+async def test_quick_popover_mounts_with_no_model_selected() -> None:
+    """A session with no model opens the popover on the blank model row.
+
+    TASK-16502: on Textual 8.x ``Select.BLANK`` silently resolves to
+    ``Widget.BLANK`` (``False``), which is not a legal Select value, so the
+    popover crashed at mount with InvalidSelectValueError for any session
+    whose settings carry no model.
+    """
+    app = _ContextHarness()
+    async with app.run_test(size=(90, 34)) as pilot:
+        await app.push_screen(
+            ConsoleModelPopover(
+                settings=ConsoleSessionSettings(
+                    provider="llama_cpp",
+                    model=None,
+                    max_tokens=4_000,
+                ),
+                providers_models={"llama_cpp": ["model-a"]},
+                context_state=_state(),
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        assert model_select.value is Select.NULL
