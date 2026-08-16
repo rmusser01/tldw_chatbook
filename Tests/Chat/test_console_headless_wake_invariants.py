@@ -510,6 +510,83 @@ async def test_a_crash_killed_child_swept_to_error_wakes_nobody_after_a_restart(
 
 
 @pytest.mark.asyncio
+async def test_a_wake_racing_app_exit_leaves_consistent_durable_state(tmp_path):
+    """The window this slice opens: quit while a headless wake is in flight.
+
+    Before the gate change a wake could not START between visits, so
+    `dispose()` never raced one. Now it can: a survivor settling after the
+    user navigated away, with the app quitting a moment later. `dispose()`
+    -> `shutdown()` cancels EVERY session's stream task, wake turns
+    included (the `leave_console` exemption is deliberately not shutdown's).
+
+    What must hold is not a particular branch but CONSISTENCY between the
+    two durable layers, because that is what exactly-once rests on:
+
+    * stamped ledger  => the notice row exists and the pending entry is
+      gone (the supervisor was woken; a restart must not re-announce it);
+    * unstamped ledger => the pending entry AND the ◈ mark survive (a
+      restart owes it and will claim it).
+
+    A "stamped but nothing landed" or "unstamped but dropped from pending"
+    outcome is a lost or duplicated completion, and neither is acceptable.
+
+    **Measured branch** (probe run, recorded so nobody has to re-derive
+    it): `stamped=True, notices=1, pending=False, marked=True`. The turn
+    is ACCEPTED before it streams, so quitting mid-stream truncates the
+    reply but does not un-deliver the wake -- the same semantics a mounted
+    Console has when the user presses Stop on a wake turn. The ◈ mark
+    survives (off-view), so the user is still pointed at it next launch.
+    """
+    rig = _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
+    try:
+        runtime = _runtime_for(rig)
+        view = _mounted_view()
+        runtime.attach_view(view)
+        assert await runtime.leave_console(view) is True
+
+        gateway.stream_gate = asyncio.Event()  # park the turn mid-stream
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        app.conversation_local_marks_service.set_mark(
+            session.id, ConversationLocalMarksService.FLEET_UNSEEN
+        )
+        wake = controller.fleet_wake
+        wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "harness precondition: the wake must be IN FLIGHT before quit"
+        )
+
+        await runtime.dispose()
+        gateway.stream_gate.set()
+        await _settle(lambda: wake.delivering_conversation_id() is None)
+
+        stamped = bool((runs_db.get_run(run_id) or {}).get("wake_delivered_at"))
+        notices = _notice_rows(store, session.id)
+        if stamped:
+            assert notices, (
+                "the ledger says this completion was delivered, but no notice "
+                "row ever landed -- a restart will never re-announce it"
+            )
+            assert not wake.has_pending(session.id), (
+                "a stamped completion is still pending; the next claim would "
+                "announce it twice"
+            )
+        else:
+            assert wake.has_pending(session.id), (
+                "an unstamped completion was dropped from the pending "
+                "registry -- nothing will ever wake the supervisor for it"
+            )
+            assert _marked(app, session.id), (
+                "an unstamped completion lost its ◈ mark, so no restart can "
+                "claim it either"
+            )
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
 async def test_the_kill_switch_is_read_fresh_at_the_headless_fire_point(
     tmp_path, monkeypatch
 ):
