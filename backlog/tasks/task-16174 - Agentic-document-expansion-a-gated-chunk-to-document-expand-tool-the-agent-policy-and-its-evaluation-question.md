@@ -148,7 +148,7 @@ method, isolation proof, per-question attribution and disclosed limits:
   `Agents/library_rag_tool_provider._project_row` attaches it. The
   decision rule also sits in the tool's own `description`, pinned verbatim
   by `test_tool_description_states_the_policy_verbatim`. 17 policy tests +
-  42 provider tests cover each branch, the sealing loop's byte budget, and
+  47 provider tests cover each branch, the sealing loop's byte budget, and
   hostile rows.
 
   **DISCLOSURE (added by the fix wave, final review finding 2): "each
