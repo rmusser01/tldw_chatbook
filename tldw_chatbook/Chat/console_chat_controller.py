@@ -173,6 +173,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
+from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
@@ -241,37 +242,38 @@ CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
 )
 
 
-#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
-#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
-#: default (task-201/T2), read directly here since the controller has no
-#: dependency on that service (T6 wires the service into `MCPToolProvider`,
-#: not into this controller).
+#: ADR-067: 0 -- the default for all three human-prompt timeouts below --
+#: means "no deadline": the round stays armed until the user answers or the
+#: run is stopped/cancelled. A positive value still fails undecided calls
+#: closed to ``"timeout"``. A human prompt is not a wedged tool; making the
+#: user race a clock to keep their run was the defect, auto-deny is opt-in.
 #:
-#: task-545/T6: built-in tool approvals reuse this SAME timeout (routed
-#: through `request_mcp_approvals`/`build_tool_review_hook`), so this value
-#: must stay strictly BELOW `RunBudget.max_tool_call_seconds` (300s at
-#: defaults, `Agents/agent_models.py`) -- never equal, never above. The
-#: approval wait happens INSIDE `agent_service._call_with_timeout`'s own
-#: per-call wrapper (task-327): if the approval timeout were >= the
-#: tool-call ceiling, `_call_with_timeout` would fire first, tell the agent
-#: the call failed/timed out, and the underlying `invoke()` call would
-#: still be running on the (by then abandoned) worker thread -- so a late
-#: approval from the user would execute the tool for real after the
-#: runtime already moved on and reported failure. Any future change to
-#: either constant must preserve `approval_timeout < max_tool_call_seconds`.
-_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
+#: The PRE-ADR default was 120.0, kept strictly below
+#: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
+#: ``Agents/agent_models.py``) because the invoke-path approval wait runs
+#: INSIDE ``agent_service._call_with_timeout``'s per-call wrapper: an
+#: approval timeout at/above the wrapper ceiling would let the wrapper fire
+#: first, report the call failed, and a late approval would then execute
+#: the tool for real on the abandoned thread. That invariant is SUPERSEDED:
+#: the wrapper's deadline now PAUSES while a human decision is pending for
+#: the run (``Agents/human_input_wait`` marks the wait;
+#: ``_call_with_timeout``'s ``pauses_deadline`` re-arms the ceiling each
+#: poll slice), so wall-clock counts tool execution, not human deliberation
+#: -- an indefinite wait can no longer lose that race. Cancellation was
+#: already closed by ``revoke_approval_rounds_for_run`` and is unaffected.
+_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 0.0
 #: Poll granularity for `request_mcp_approvals`'s wait loop (binding, from
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
 #: configured timeout/cancellation before this method observes it.
 _MCP_APPROVAL_POLL_SECONDS = 1.0
-#: Fallback used when no `skill_install_confirm_timeout_seconds` seam is
-#: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
-#: `request_skill_install_confirm`'s own wait loop.
-_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
-#: Fallback used when no `skill_script_confirm_timeout_seconds` seam is
-#: injected -- mirrors `_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS`'s
-#: role for `request_skill_script_confirm`'s own wait loop.
-_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
+#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: `request_skill_install_confirm`'s own wait loop (fallback used when no
+#: `skill_install_confirm_timeout_seconds` seam is injected).
+_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: `request_skill_script_confirm`'s own wait loop (fallback used when no
+#: `skill_script_confirm_timeout_seconds` seam is injected).
+_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
 #: safely with the round-keyed `_pending_approvals` accounting (see that
@@ -1592,7 +1594,9 @@ class ConsoleChatController:
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
-        #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
+        #: seconds`` (T2's ``approval_timeout_seconds``) when unset --
+        #: ADR-067: that default is 0 = no deadline (wait indefinitely);
+        #: a positive value re-arms the auto-deny clock.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
         #: Task 9 (Fix round 1): each batch-approval round's release signal
         #: + shared decisions holder + owning session id, keyed by a
@@ -3921,19 +3925,24 @@ class ConsoleChatController:
         later, and ``park_pending_approval`` fires the fleet badge +
         one-shot toast instead of touching the mounted-card slot). Either
         way it then polls ``event.wait(1.0)`` re-checking this run's OWN
-        cancel signal (``_is_session_cancelled``) and a deadline every
-        second until one of three things happens: the user submits a
-        decision (``resolve_pending_approval``, called from the UI thread
-        once the card's own stamped ``round_id`` is delivered back, sets
-        the Event -- Fix round 1: NOT "whichever round belongs to the
-        active session", see ``resolve_pending_approval``'s own docstring
-        for why that was a real cross-session misattribution hazard), the
-        run is cancelled/torn down (``_is_session_cancelled`` -- F5 fix,
-        Qodo wave: this round's OWN cancel event, or real process teardown
-        via ``_shutdown_requested``, never any OTHER session's bare Stop --
-        see that method's own docstring), or the configured approval
-        timeout elapses. Whichever unique ``llm_name`` never received an
-        explicit decision by then fails closed to ``"deny"``
+        cancel signal (``_is_session_cancelled``) and -- only when a
+        POSITIVE timeout is configured (ADR-067: the default is 0 = none)
+        -- a deadline, every second until one of three things happens: the
+        user submits a decision (``resolve_pending_approval``, called from
+        the UI thread once the card's own stamped ``round_id`` is delivered
+        back, sets the Event -- Fix round 1: NOT "whichever round belongs
+        to the active session", see ``resolve_pending_approval``'s own
+        docstring for why that was a real cross-session misattribution
+        hazard), the run is cancelled/torn down (``_is_session_cancelled``
+        -- F5 fix, Qodo wave: this round's OWN cancel event, or real
+        process teardown via ``_shutdown_requested``, never any OTHER
+        session's bare Stop -- see that method's own docstring), or the
+        configured approval timeout elapses. With no deadline armed the
+        round simply waits for one of the first two, however long the
+        human takes -- the wait is marked in ``Agents.human_input_wait``
+        so a per-call wrapper hosting it pauses its ceiling. Whichever
+        unique ``llm_name`` never received an explicit decision by then
+        fails closed to ``"deny"``
         (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
         consumed. The mounted card (if any) is always cleared afterwards
@@ -3966,6 +3975,15 @@ class ConsoleChatController:
                 call_by_name[call.llm_name] = call
         if not unique_names:
             return {}
+        if self.app is None:
+            # ADR-067: with no app bridge nothing can ever surface or
+            # resolve this round, and the no-deadline default means the
+            # loop below would never end -- fail closed on the spot,
+            # mirroring both skill confirms' own no-app guards. (A wired
+            # app with a missing card seam is NOT this case: the round
+            # stays resolvable via `resolve_pending_approval`/cancel, and
+            # `_marshal_pending_approval` already no-ops its missing seam.)
+            return {name: "deny" for name in unique_names}
 
         event = threading.Event()
         decisions: dict[str, str] = {}
@@ -4035,7 +4053,13 @@ class ConsoleChatController:
             self._pending_approval_rounds[round_id] = round_state
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline -- the round waits for a decision
+        # or this run's cancellation, however long the human takes (the
+        # card renders no countdown copy for 0; see
+        # `format_approval_deadline`).
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         payload = {
             "round_id": round_id,
             "session_id": owning_session_id,
@@ -4104,38 +4128,43 @@ class ConsoleChatController:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_approval(payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id,
-                    cancel_event=round_cancel_event,
-                    visit_event=visit_cancel_event,
-                ):
-                    # Finding I3: a stop/unmount that resolves THIS round
-                    # denies every still-undecided call, but
-                    # `run_agent_loop`'s own `should_cancel()` check fires
-                    # for every call in this turn's batch BEFORE any of
-                    # them reaches `invoke()` -- so the "deny" verdict
-                    # stamped below is never consumed there and would
-                    # otherwise leave no audit record at all (contrast
-                    # with the timeout branch, whose calls DO still reach
-                    # `invoke()`'s own gate and get logged there, since a
-                    # timeout is not itself a cancellation). Log directly
-                    # here, best-effort, for exactly the names this branch
-                    # is about to fail closed.
-                    cancelled_names = [
-                        name for name in unique_names if name not in decisions
-                    ]
-                    for name in unique_names:
-                        decisions.setdefault(name, "deny")
-                    self._record_cancelled_approval_decisions(
-                        cancelled_names,
-                        call_by_name,
-                    )
-                    break
-                if time.monotonic() >= deadline:
-                    for name in unique_names:
-                        decisions.setdefault(name, "timeout")
-                    break
+            # ADR-067: mark this run as waiting on a human decision for the
+            # duration of the wait, so a per-call wrapper hosting this round
+            # (the invoke-path fallback approval) pauses its deadline -- an
+            # indefinite wait must not trip `max_tool_call_seconds`.
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        # Finding I3: a stop/unmount that resolves THIS round
+                        # denies every still-undecided call, but
+                        # `run_agent_loop`'s own `should_cancel()` check fires
+                        # for every call in this turn's batch BEFORE any of
+                        # them reaches `invoke()` -- so the "deny" verdict
+                        # stamped below is never consumed there and would
+                        # otherwise leave no audit record at all (contrast
+                        # with the timeout branch, whose calls DO still reach
+                        # `invoke()`'s own gate and get logged there, since a
+                        # timeout is not itself a cancellation). Log directly
+                        # here, best-effort, for exactly the names this branch
+                        # is about to fail closed.
+                        cancelled_names = [
+                            name for name in unique_names if name not in decisions
+                        ]
+                        for name in unique_names:
+                            decisions.setdefault(name, "deny")
+                        self._record_cancelled_approval_decisions(
+                            cancelled_names,
+                            call_by_name,
+                        )
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        for name in unique_names:
+                            decisions.setdefault(name, "timeout")
+                        break
             # PR2a Task 7: a revoked round answers "deny" for every name,
             # unconditionally -- it does not consult `decisions` at all.
             # The run this round belongs to has been cancelled or
@@ -5106,6 +5135,11 @@ class ConsoleChatController:
         # the same reason the run's cancel event is -- see
         # `_bind_visit_cancel_signal`.
         visit_cancel_event = self._bind_visit_cancel_signal()
+        # ADR-067: same run stamp as `request_mcp_approvals` -- keys the
+        # human-input wait mark below (the install confirm is primary-agent
+        # only and in-loop, so no wrapper hosts it today, but the mark
+        # keeps every human wait on one contract).
+        owning_run_id = current_run_id()
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
                 "event": event,
@@ -5118,7 +5152,11 @@ class ConsoleChatController:
             if self.skill_install_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
         )
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         payload = {
             "url": url,
             "timeout_seconds": timeout_seconds,
@@ -5152,15 +5190,18 @@ class ConsoleChatController:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_skill_install(payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id,
-                    cancel_event=round_cancel_event,
-                    visit_event=visit_cancel_event,
-                ):
-                    break
-                if time.monotonic() >= deadline:
-                    break
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see `request_mcp_approvals`' identical wrap for the why).
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
             return bool(decision.get("allow", False))
         finally:
             with self._pending_skill_install_lock:
@@ -5434,7 +5475,11 @@ class ConsoleChatController:
             if self.skill_script_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS
         )
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
@@ -5455,15 +5500,20 @@ class ConsoleChatController:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_skill_script(card_payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id,
-                    cancel_event=round_cancel_event,
-                    visit_event=visit_cancel_event,
-                ):
-                    break
-                if time.monotonic() >= deadline:
-                    break
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see `request_mcp_approvals`' identical wrap for the why).
+            with use_human_input_wait(
+                str(script_round_state.get("run_id") or "")
+            ):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
             # PR2a Task 7 (review M1): a revoked round denies
             # unconditionally, without consulting `decision` at all --
             # `resolve_pending_skill_script` writes into that shared box
