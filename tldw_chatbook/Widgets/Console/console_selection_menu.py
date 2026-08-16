@@ -11,7 +11,7 @@ the screen with ``absolute_offset`` folds the position into the widget's
 region, so paint, clipping, and hit-testing all agree.
 
 Escape and click-outside dismiss with no side effects (task-16211 modal
-contract, recorded by ADR-066). Keyboard navigation: up/down cycles the
+contract, recorded by ADR-068). Keyboard navigation: up/down cycles the
 action buttons, Enter activates the focused one, Escape closes.
 """
 

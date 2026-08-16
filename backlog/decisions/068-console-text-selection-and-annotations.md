@@ -1,8 +1,8 @@
-# ADR-066: Console Text Selection and Annotations
+# ADR-068: Console Text Selection and Annotations
 
 Status: Accepted
 Date: 2026-08-14
-Related Task: TASK-16311
+Related Task: TASK-16481
 Supersedes: N/A
 
 ## Decision
@@ -89,7 +89,7 @@ across the stack.
 - Markdown rows are selectable at line granularity only until a later
   phase tightens cell-to-offset mapping; this is a recorded phase-1
   simplification, not a permanent ceiling. Implemented as decided in
-  phase 1 (TASK-16311): `ConsoleMarkdownMessage` snaps selections outward
+  phase 1 (TASK-16481): `ConsoleMarkdownMessage` snaps selections outward
   to whole markdown source lines (`_snap_to_line_bounds`) and renders the
   highlight as a reverse-video `Static` strip below the Markdown widget
   (the Markdown renderer's block widgets are left untouched); pointer
@@ -111,4 +111,37 @@ across the stack.
 
 - [Console Text Selection, Selection Menu, Side Chat, and Annotations — Design](../../Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md)
 - [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md) — no new keybindings in phase 1
-- [TASK-16311](../tasks/task-16311%20-%20Console-text-selection-phase-1.md)
+- [TASK-16481](../tasks/task-16481%20-%20Console-text-selection-phase-1.md)
+
+## Amendments (2026-08-15, live-terminal spike)
+
+The automated suites (pilot-driven, incl. a real-ChatScreen smoke test) all
+passed while the feature was broken in real terminals. Three successive
+user-run spike rounds found and fixed defects invisible to synthetic events:
+
+1. **Real-terminal press events carry no widget.** Textual's screen
+   forwarding dispatches MouseDown/MouseUp without setting `event.widget`
+   (only the translated MouseMove path assigns one), so arming logic keyed
+   on `event.control` no-oped in kitty/iTerm2/Terminal while pilot events
+   stayed green. The arm now hit-tests from screen coordinates
+   (`get_widget_at`), with `event.control` as the synthetic fallback.
+2. **Markdown selections are character-level, not line-snapped.** Whole-line
+   snapping made any partial drag on a one-line reply select the entire
+   message. The cell-to-offset map already resolves character positions;
+   ranges map verbatim (clamped), and the highlight strip spells the exact
+   range out below the markdown body.
+3. **Anchored floating widgets must use `position: absolute` +
+   `absolute_offset`** (the tooltip mechanism, where region/paint/clip
+   agree). `dock` + `styles.offset` paints translated while clipping and
+   hit-testing at the un-translated dock slot -- one visible button, the
+   rest obscured and unclickable. The menu mounts on the owning screen at
+   the release cell, posts action/dismissal messages directly to the owning
+   transcript, releases the transcript's tail-follow anchor for its
+   lifetime, and supports keyboard navigation (first button focused,
+   up/down cycle, Enter activates, Escape closes).
+4. **Suppression of the synthesized drag-release Click** uses a dedicated
+   one-shot token: Textual can synthesize the release Click late, after an
+   intervening press consumed any shared flag.
+5. **Idle Speak lives in the selected-message action row** (swaps to
+   speak-stop while that message is speaking); the header hosts only
+   active-playback lifecycle status.

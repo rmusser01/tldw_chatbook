@@ -1,7 +1,7 @@
 ---
-id: TASK-16312
+id: TASK-16482
 title: Console side chat phase 2
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-08-15 17:27'
@@ -35,7 +35,7 @@ Per Docs/superpowers/plans/2026-08-15-console-side-chat-phase2.md (tasks 1-6: co
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-ADR: backlog/decisions/066-console-text-selection-and-annotations.md (phase-2 consequence line added). Plan: Docs/superpowers/plans/2026-08-15-console-side-chat-phase2.md. Spec: Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md §2/§4/§5/§7.
+ADR: backlog/decisions/068-console-text-selection-and-annotations.md (phase-2 consequence line added). Plan: Docs/superpowers/plans/2026-08-15-console-side-chat-phase2.md. Spec: Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md §2/§4/§5/§7.
 
 Phase 2 implemented across commits f87a111c9..41eb62744 (+ this wrap-up) on feat/console-side-chat:
 
@@ -53,3 +53,7 @@ Phase 2 implemented across commits f87a111c9..41eb62744 (+ this wrap-up) on feat
 
 **Live-terminal-only verification outstanding** (same as phase 1, per `backlog/docs/lessons-live-verification.md`): real-provider streaming feel, Stop/Retry timing against a live stream, and modal dismissal feel in a real terminal. Task stays In Progress pending that live spike.
 <!-- SECTION:NOTES:END -->
+
+## Live spike result
+
+Live spike PASSED 2026-08-15 with phase 1 (same session; menu actions incl. side-chat entries verified).

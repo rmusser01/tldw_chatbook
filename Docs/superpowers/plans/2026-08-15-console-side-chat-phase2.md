@@ -12,8 +12,8 @@
 
 ```text
 ADR required: no
-ADR path: N/A (implements existing ADR-066 + spec §2; no schema, no new cross-module interface beyond the side-chat service seam, which follows the prompt-improvement precedent)
-Reason: direct implementation of the approved design; ADR-066 already records the system decision.
+ADR path: N/A (implements existing ADR-068 + spec §2; no schema, no new cross-module interface beyond the side-chat service seam, which follows the prompt-improvement precedent)
+Reason: direct implementation of the approved design; ADR-068 already records the system decision.
 ```
 
 ## Global Constraints
@@ -172,10 +172,10 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
 ### Task 6: Wrap-up
 
 **Files:**
-- Modify: backlog task (create via CLI: "Console side chat phase 2"), ADR-066 (one-line consequence noting phase 2 landed), `Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md` (unchanged — spec already covers).
+- Modify: backlog task (create via CLI: "Console side chat phase 2"), ADR-068 (one-line consequence noting phase 2 landed), `Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md` (unchanged — spec already covers).
 
 - [ ] **Step 1:** Full selection + side-chat + dismissal + settings suites green; `uvx ruff check` on branch-owned files; baselines 3/1/4 unchanged.
-- [ ] **Step 2:** Backlog task with honest ACs checked + Implementation Notes; ADR-066 consequence line; do NOT mark Done (live spike pending like phase 1).
+- [ ] **Step 2:** Backlog task with honest ACs checked + Implementation Notes; ADR-068 consequence line; do NOT mark Done (live spike pending like phase 1).
 - [ ] **Step 3:** Commit — `feat(console): side chat wrap-up docs`.
 
 ## Self-Review Notes

@@ -19966,7 +19966,7 @@ class ChatScreen(BaseAppScreen):
         dismissal), so this only fires for clicks that bubbled up from
         elsewhere -- the composer, the control bar, the rail: the user
         moved on, and a menu left floating over the transcript folds with
-        no side effects (ADR-066's dismiss contract). The ancestor walk is
+        no side effects (ADR-068's dismiss contract). The ancestor walk is
         the guard: a transcript-area click that somehow reached this
         screen handler finds its ``ConsoleTranscript`` ancestor and is
         left alone. Menus whose removal is already scheduled (Textual

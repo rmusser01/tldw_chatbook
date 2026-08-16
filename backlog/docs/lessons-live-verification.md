@@ -878,3 +878,30 @@ unexpected field, and do not log raw values or bodies. Turn every newly observed
 sequence rule into RED/GREEN coverage, including negative controls for repeated,
 conflicting, misplaced, and JSON-type-distinct data. A first-event trace proves
 one incompatibility; only consuming the whole live stream proves the contract.
+
+## Pilot-mouse tests cannot certify real-terminal mouse flows (console text selection, 2026-08-15)
+
+**Incident.** The Console drag-text-selection feature passed 400+ pilot-driven
+widget tests (including a real-ChatScreen smoke test) and still did nothing in
+kitty, iTerm2, and Terminal.app. Three successive live-spike rounds each found a
+defect invisible to the synthetic suite: (1) real-terminal `MouseDown`/`MouseUp`
+events arrive with `event.widget` unset -- Textual's screen forwarding only
+assigns it on the translated `MouseMove` path -- so arming logic keyed on
+`event.control` no-oped while pilot events (which carry the widget) stayed
+green; (2) a menu anchored via `dock: top` + `styles.offset` painted translated
+by the offset but CLIPPED to the un-translated dock slot, and hit-tested at the
+un-translated region, so most buttons were invisible AND unclickable; (3) a
+drag's synthesized release Click can dispatch LATE, after an intervening press
+already consumed the suppression flag it relied on. Every fix shipped with a
+regression test that drives the REAL event shape (`widget=None`), the real
+anchor geometry, or the real message ordering.
+
+**What to do.** A mouse-interaction suite is not certified until the flow has
+run in a real terminal. When pilot tests pass but the live terminal disagrees,
+instrument the widget's event handlers to a scratch log and diff the real event
+shapes against the synthetic ones before touching logic. Anything anchored or
+positioned in Textual must use `position: absolute` + `absolute_offset` (the
+tooltip mechanism, where region/paint/clip agree) -- never `dock` plus
+`styles.offset`, whose paint and hit regions diverge. Interaction suppression
+meant for a synthesized follow-up event needs its own one-shot token, not a
+shared flag that other handlers consume.

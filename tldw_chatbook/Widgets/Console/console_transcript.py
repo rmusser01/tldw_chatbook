@@ -2041,7 +2041,7 @@ def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -
     expose which rendered line belongs to which SOURCE line (blocks re-flow,
     wrap, and pad internally), so the body-local ``cell_y`` is distributed
     evenly across the source lines and clamped to the nearest line -- the
-    recorded phase-1 approximation (ADR-066). ``set_selection_range`` then
+    recorded phase-1 approximation (ADR-068). ``set_selection_range`` then
     snaps outward to whole lines, which bounds the damage of a coarse y map:
     the quoted text is always whole lines regardless.
 
