@@ -562,6 +562,13 @@ async def _drain_async(
                 value=await asyncio.shield(task), cancellation=cancellation
             )
         except asyncio.CancelledError as exc:
+            if task.done() and task.cancelled():
+                try:
+                    task.result()
+                except asyncio.CancelledError as child_cancellation:
+                    return _DrainedTaskResult(
+                        cancellation=cancellation or child_cancellation
+                    )
             if cancellation is None:
                 cancellation = exc
         except Exception as exc:

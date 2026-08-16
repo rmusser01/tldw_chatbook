@@ -83,6 +83,19 @@ def _valid_png(color=(20, 40, 60)) -> bytes:
     return stream.getvalue()
 
 
+def _fail_on_cancelled_task_reshield(monkeypatch) -> None:
+    """Bound drain regressions so a cancelled child cannot spin the test loop."""
+
+    shield = asyncio.shield
+
+    def bounded(awaitable):
+        if isinstance(awaitable, asyncio.Task) and awaitable.cancelled():
+            raise RuntimeError("cancelled task was re-shielded")
+        return shield(awaitable)
+
+    monkeypatch.setattr(asyncio, "shield", bounded)
+
+
 class _CaptureApp(ConsolidatedCSSApp):
     """Bare editor host that records the three new generate messages, plus
     (Task 4) the style-pick message."""
@@ -2029,6 +2042,23 @@ async def test_visual_identity_concurrent_save_attempt_publishes_exactly_once(
     assert calls == [1]
 
 
+async def test_drain_async_returns_cancelled_child_without_reshielding(monkeypatch):
+    _fail_on_cancelled_task_reshield(monkeypatch)
+
+    async def cancel_child():
+        raise asyncio.CancelledError("child-cancelled")
+
+    outcome = await asyncio.wait_for(
+        personas_screen_module._drain_async(
+            cancel_child(), task_name="personas-cancelled-child-probe"
+        ),
+        1,
+    )
+
+    assert outcome.error is None
+    assert isinstance(outcome.cancellation, asyncio.CancelledError)
+
+
 async def test_cancelled_reaction_save_drains_commit_before_releasing_admission(
     personas_editor_with_bound_pack, monkeypatch, tmp_path
 ):
@@ -2218,6 +2248,53 @@ async def test_cancelled_reaction_save_drains_post_commit_reconciliation(
     assert screen._visual_identity_operation_task is None
     assert screen._visual_identity_authoring is None
     assert browser._staged == {}
+
+
+async def test_cancelled_reaction_reconciliation_releases_operation_guards(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    notifications = _capture_notifications(app)
+    _fail_on_cancelled_task_reshield(monkeypatch)
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "publish_visual_identity_candidate",
+        lambda *_args, **_kwargs: VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        ),
+    )
+
+    async def cancel_invalidation(_result):
+        raise asyncio.CancelledError("invalidation-cancelled")
+
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        screen, "_invalidate_visual_identity_publication", cancel_invalidation
+    )
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(screen._save_visual_identity_pack(browser.pack), 2)
+
+    refresh.assert_not_awaited()
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+    assert notifications == []
 
 
 async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reaches_it(
@@ -3138,6 +3215,36 @@ async def test_cancelled_character_save_drains_post_commit_reconciliation(
     assert admission is not None
     task, _event = admission
     screen._finish_visual_identity_operation(task)
+
+
+async def test_cancelled_character_reconciliation_releases_save_guard(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    _fail_on_cancelled_task_reshield(monkeypatch)
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+
+    async def cancel_reconciliation(_saved_id, _submitted_name):
+        raise asyncio.CancelledError("character-reconcile-cancelled")
+
+    monkeypatch.setattr(screen, "_after_character_save", cancel_reconciliation)
+    screen._character_save_inflight = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(
+            personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+                screen, {"name": "Packed"}, str(char_id), "edit"
+            ),
+            2,
+        )
+
+    assert not screen._character_save_inflight
+    assert notifications == []
 
 
 async def test_generate_all_restores_missing_canonical_asset_and_direction(
