@@ -4,13 +4,176 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from tldw_chatbook.Library.library_media_state import (
+    MediaBrowseScope,
     LibraryMediaRow,
     LibraryMediaCanvasState,
+    build_media_browse_result,
+    build_library_media_browse_state,
     build_library_media_state,
 )
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
+
+
+def _summary_item(media_id: int) -> dict[str, object]:
+    return {
+        "id": f"local:media:{media_id}",
+        "backing_media_id": media_id,
+        "title": f"Media {media_id}",
+        "media_type": "document",
+        "updated_at": "2026-08-16T00:00:00+00:00",
+    }
+
+
+def _page(scope: MediaBrowseScope, *, total: int) -> dict[str, object]:
+    count = min(20, max(total - scope.offset, 0))
+    return {
+        "items": [_summary_item(scope.offset + index + 1) for index in range(count)],
+        "total": total,
+        "limit": 20,
+        "offset": scope.offset,
+    }
+
+
+def test_media_browse_scope_is_fixed_normalized_and_immutable() -> None:
+    scope = MediaBrowseScope(
+        query="  needle  ", media_type="  video  ", sort_by="title_asc", page=3
+    )
+
+    assert scope.query == "needle"
+    assert scope.media_type == "video"
+    assert scope.page_size == 20
+    assert scope.offset == 40
+    assert scope.with_page(2).same_except_page(scope)
+    assert scope.fingerprint != scope.with_page(2).fingerprint
+    with pytest.raises(Exception):
+        scope.page = 4  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("page", [True, 0, -1, 2**63 // 20 + 2])
+def test_media_browse_scope_rejects_invalid_or_overflowing_pages(page: object) -> None:
+    with pytest.raises(ValueError, match="page"):
+        MediaBrowseScope(page=page)  # type: ignore[arg-type]
+
+
+def test_empty_query_relevance_cannot_misdescribe_database_order() -> None:
+    assert MediaBrowseScope(sort_by="relevance").sort_by == "last_modified_desc"
+    assert MediaBrowseScope(query="find", sort_by="relevance").sort_by == "relevance"
+    assert MediaBrowseScope(media_type=" all ").media_type == "All"
+
+
+def test_media_browse_result_preserves_exact_order_and_detaches_items() -> None:
+    scope = MediaBrowseScope(page=2)
+    payload = _page(scope, total=23)
+    result = build_media_browse_result(scope, payload)
+
+    assert [item["backing_media_id"] for item in result.items] == [21, 22, 23]
+    assert result.total == 23
+    assert result.limit == 20
+    assert result.offset == 20
+    assert result.last_page == 2
+    assert result.out_of_range is False
+    payload["items"][0]["title"] = "mutated"  # type: ignore[index]
+    assert result.items[0]["title"] == "Media 21"
+    with pytest.raises(TypeError):
+        result.items[0]["title"] = "mutated"  # type: ignore[index]
+
+
+def test_media_browse_result_permits_coherent_empty_out_of_range_page() -> None:
+    scope = MediaBrowseScope(page=9)
+    result = build_media_browse_result(scope, _page(scope, total=45))
+
+    assert result.items == ()
+    assert result.out_of_range is True
+    assert result.last_page == 3
+
+
+@pytest.mark.parametrize("field", ["items", "total", "limit", "offset"])
+def test_media_browse_result_requires_every_exact_envelope_field(field: str) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    del payload[field]
+
+    with pytest.raises((TypeError, ValueError), match=field):
+        build_media_browse_result(scope, payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limit", 19), ("offset", 1), ("total", True), ("offset", None)],
+)
+def test_media_browse_result_rejects_repaired_or_mismatched_coordinates(
+    field: str, value: object
+) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    payload[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        build_media_browse_result(scope, payload)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda item: item.pop("id"),
+        lambda item: item.__setitem__("id", None),
+        lambda item: item.__setitem__("backing_media_id", True),
+        lambda item: item.__setitem__("backing_media_id", "1"),
+        lambda item: item.__setitem__("id", "local:media:2"),
+        lambda item: item.__setitem__("extra", "forbidden"),
+    ],
+)
+def test_media_browse_result_rejects_malformed_identity_and_shape(mutate) -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=1)
+    mutate(payload["items"][0])  # type: ignore[index]
+
+    with pytest.raises((TypeError, ValueError)):
+        build_media_browse_result(scope, payload)
+
+
+def test_media_browse_result_rejects_duplicate_page_identity() -> None:
+    scope = MediaBrowseScope()
+    payload = _page(scope, total=2)
+    payload["items"][1]["backing_media_id"] = 1  # type: ignore[index]
+    payload["items"][1]["id"] = "local:media:1"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="unique"):
+        build_media_browse_result(scope, payload)
+
+
+def test_media_browse_result_rejects_wrong_exact_cardinality() -> None:
+    scope = MediaBrowseScope(page=2)
+    payload = _page(scope, total=22)
+    payload["items"] = payload["items"][:1]  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="count"):
+        build_media_browse_result(scope, payload)
+
+
+def test_authoritative_media_page_projection_preserves_order_and_complete_facets() -> (
+    None
+):
+    scope = MediaBrowseScope(media_type="video")
+    payload = _page(scope, total=2)
+    payload["items"][0]["updated_at"] = "2020-01-01T00:00:00+00:00"  # type: ignore[index]
+    payload["items"][1]["updated_at"] = "2026-01-01T00:00:00+00:00"  # type: ignore[index]
+    result = build_media_browse_result(scope, payload)
+
+    state = build_library_media_browse_state(
+        result,
+        type_options=("audio", "document", "video"),
+        now=NOW,
+    )
+
+    assert [row.media_id for row in state.rows] == ["local:media:1", "local:media:2"]
+    assert state.type_options == ("All", "audio", "document", "video")
+    assert state.active_type == "video"
+    assert state.count == 2
 
 
 def test_rows_with_type_and_age_secondary_and_missing_last():
