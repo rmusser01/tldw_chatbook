@@ -120,8 +120,10 @@ all three born red against the pre-fix widget via edit-based revert):
   deterministic interleave. Red: `NoMatches: No nodes match 'SelectOverlay'`
   raised out of the test's app teardown, plus the gate-engaged assert.
 - `test_chapters_set_before_mount_are_replayed_when_ready` — pre-mount
-  `set_chapters` replays table + preview at mount. Red: 0 rows, empty
-  preview.
+  `set_chapters` replays table + preview at mount. Red: empty preview
+  (review measured 3/3: the row-count assert PASSED pre-fix on this path —
+  a pre-mount recompose is a no-op via `Widget.recompose()`'s
+  not-attached early return, so only the preview replay was missing).
 
 **Density restored** in `Tests/UI/test_speech_audiobook_chapter_detection.py`
 (`words_per_chapter` 60_000 → 2000, the pre-workaround default: 999 chapters
