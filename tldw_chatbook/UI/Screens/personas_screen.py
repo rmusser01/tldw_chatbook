@@ -526,6 +526,7 @@ class _VisualIdentityAuthoringState:
     snapshot: _VisualIdentityAuthorSnapshot
     candidate: VisualIdentityCandidate
     cancel_event: threading.Event
+    authoritative_pack: VisualIdentityPackMetadata
 
 
 class PersonasScreen(BaseAppScreen):
@@ -7298,8 +7299,19 @@ class PersonasScreen(BaseAppScreen):
         except VisualIdentityPublicationError:
             pass
         browser = state.snapshot.browser_ref()
-        if browser is not None and browser.is_mounted:
-            browser.reset_staged()
+        if (
+            browser is not None
+            and browser.parent is not None
+            and self._visual_identity_author_snapshot_is_current(state.snapshot)
+        ):
+            try:
+                browser.pack = state.authoritative_pack
+                browser.apply_filter(
+                    browser.query_one("#personas-visual-identity-filter", Input).value
+                )
+                browser.reset_staged()
+            except QueryError:
+                pass
 
     async def _visual_identity_candidate(
         self,
@@ -7337,10 +7349,17 @@ class PersonasScreen(BaseAppScreen):
             event.set()
             candidate.cancel()
             return None
+        browser = snapshot.browser_ref()
+        authoritative_pack = browser.pack if browser is not None else None
+        if authoritative_pack is None:
+            event.set()
+            candidate.cancel()
+            return None
         state = _VisualIdentityAuthoringState(
             snapshot=snapshot,
             candidate=candidate,
             cancel_event=event,
+            authoritative_pack=authoritative_pack,
         )
         self._visual_identity_authoring = state
         return state

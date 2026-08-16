@@ -1959,6 +1959,17 @@ async def test_visual_identity_save_publishes_once_then_invalidates_before_refre
 
     async def refresh(_snapshot):
         order.append("refresh")
+        current = browser.pack
+        assert current is not None
+        browser.pack = replace(
+            current,
+            pack_id=2,
+            pack_version_id=2,
+            assets=tuple(
+                replace(asset, asset_id=asset.asset_id + 100)
+                for asset in current.assets
+            ),
+        )
 
     monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
     monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
@@ -1968,6 +1979,10 @@ async def test_visual_identity_save_publishes_once_then_invalidates_before_refre
     assert not await screen._save_visual_identity_pack(browser.pack)
 
     assert order == ["publish", "invalidate", "refresh"]
+    assert browser.pack is not None
+    assert browser.pack.pack_version_id == 2
+    assert len(browser.pack.assets) == 31
+    assert all(asset.asset_id > 0 for asset in browser.pack.assets)
 
 
 async def test_visual_identity_concurrent_save_attempt_publishes_exactly_once(
@@ -2582,6 +2597,7 @@ async def test_idle_pack_cancel_discards_candidate_and_widget_staging(
 ):
     app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
     browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    original_pack = browser.pack
     asset = browser.selected_asset
     assert asset is not None
     assert await screen._stage_visual_identity_clear(asset)
@@ -2593,11 +2609,44 @@ async def test_idle_pack_cancel_discards_candidate_and_widget_staging(
 
     assert candidate._cancelled
     assert screen._visual_identity_authoring is None
+    assert browser.pack == original_pack
     assert browser._staged == {}
     assert (
         str(browser.query_one("#personas-visual-identity-dirty", Static).renderable)
         == "No staged changes"
     )
+
+
+@pytest.mark.parametrize("newer_authority", ("binding", "session"))
+async def test_cancel_never_restores_pack_over_newer_editor_authority(
+    personas_editor_with_bound_pack, newer_authority
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    candidate = screen._visual_identity_authoring.candidate
+    current = browser.pack
+    assert current is not None
+    newer_pack = replace(current, title="Externally refreshed")
+    if newer_authority == "binding":
+        newer_pack = replace(
+            newer_pack,
+            binding_id=current.binding_id + 1,
+            pack_id=current.pack_id + 1,
+            pack_version_id=current.pack_version_id + 1,
+        )
+    else:
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor._visual_identity_session_token += 1
+    browser.pack = newer_pack
+
+    screen._discard_visual_identity_authoring()
+
+    assert candidate._cancelled
+    assert screen._visual_identity_authoring is None
+    assert browser.pack == newer_pack
 
 
 async def test_candidate_authority_mismatch_refuses_before_staging_or_provider(
@@ -2779,6 +2828,11 @@ async def test_generate_all_restores_missing_canonical_asset_and_direction(
         pack,
         assets=tuple(asset for asset in pack.assets if asset is not omitted),
     )
+    authoritative_pack = browser.pack
+    authoritative_graph = personas_screen_module.VisualIdentityRepository(
+        db
+    ).get_active_actor_pack("character", char_id)
+    assert authoritative_graph is not None
     monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=True))
     monkeypatch.setattr(
         personas_screen_module,
@@ -2816,6 +2870,27 @@ async def test_generate_all_restores_missing_canonical_asset_and_direction(
     candidate = screen._visual_identity_authoring.candidate
     assert set(candidate.replaced_expression_keys) == set(
         SAMIRA_EXPRESSION_KEYS.values()
+    )
+    assert browser.pack is not None
+    assert len(browser.pack.assets) == 31
+    assert any(asset.asset_id < 0 for asset in browser.pack.assets)
+
+    browser.query_one("#personas-visual-identity-cancel", Button).press()
+    await asyncio.sleep(0.05)
+    await app.workers.wait_for_complete()
+
+    assert candidate._cancelled
+    assert screen._visual_identity_authoring is None
+    assert browser.pack == authoritative_pack
+    assert len(browser.pack.assets) == 30
+    assert all(asset.asset_id > 0 for asset in browser.pack.assets)
+    live_graph = personas_screen_module.VisualIdentityRepository(
+        db
+    ).get_active_actor_pack("character", char_id)
+    assert live_graph is not None
+    assert live_graph["version"]["id"] == authoritative_graph["version"]["id"]
+    assert tuple(asset["id"] for asset in live_graph["assets"]) == tuple(
+        asset["id"] for asset in authoritative_graph["assets"]
     )
 
 
