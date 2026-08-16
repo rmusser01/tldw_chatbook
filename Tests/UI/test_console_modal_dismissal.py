@@ -49,6 +49,9 @@ from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
 )
+from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
@@ -291,6 +294,13 @@ def _side_chat_factory() -> ConsoleSideChatModal:
     )
 
 
+def _feedback_comment_factory() -> ConsoleFeedbackCommentModal:
+    return ConsoleFeedbackCommentModal(
+        action="comment",
+        quote="selected transcript text",
+    )
+
+
 def _prompt_variables_factory() -> PromptVariablesDialog:
     return PromptVariablesDialog(
         PromptVariablesDialogRequest(
@@ -472,6 +482,17 @@ TASK3_MODAL_CONTRACTS = (
         None,
         (ConsoleEditResult,),
         "Console transcript message action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleFeedbackCommentModal,
+        _feedback_comment_factory,
+        "#console-feedback-comment-modal",
+        None,
+        (str,),
+        "Console selection Request changes / LGTM / Comment actions",
         None,
         "none",
         _RESTORE_OPENER,
@@ -800,10 +821,16 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 # ChatScreen's ConsoleSideChatRequested handler pushes it after the
 # selection menu's More Details / Ask in Side Chat actions), so it rides
 # the declared root launches like every other root-owned modal.
+# The feedback comment modal is contracted and inventoried but has no
+# launch site yet: the Console screen handler lands with phase 3 task 5,
+# so it is excluded from the declared root launches (the AST walk would
+# otherwise report it missing).
+_FEEDBACK_COMMENT_MODAL_NOT_YET_LAUNCHED = {ConsoleFeedbackCommentModal}
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
     if contract.modal_type is not ConsoleWorkspaceRenameModal
+    and contract.modal_type is not ConsoleFeedbackCommentModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1049,7 +1076,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     }
     discovered_console_types = _discover_console_modal_types()
 
-    assert len(discovered_console_types) == 29
+    assert len(discovered_console_types) == 30
     assert discovered_console_types == console_contract_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
@@ -1063,7 +1090,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
-    assert reachable_modal_types == all_contract_types
+    assert (
+        reachable_modal_types
+        == all_contract_types - _FEEDBACK_COMMENT_MODAL_NOT_YET_LAUNCHED
+    )
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types
@@ -1226,10 +1256,11 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 12
+    assert len(TASK3_MODAL_CONTRACTS) == 13
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
+        "ConsoleFeedbackCommentModal",
         "ConsoleGenerateImageModal",
         "ConsoleRagSettingsModal",
         "ConsoleRenameSessionModal",
