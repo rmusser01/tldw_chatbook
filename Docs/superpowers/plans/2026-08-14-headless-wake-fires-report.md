@@ -357,28 +357,22 @@ for the new-suite row. Every count below was READ off a summary line.
 | **The specified battery** — `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_mcp_approval` (69), the 16-file wake glob (109), probe (1) = 223 | **223 passed, 0 failed** (179.6s) | **223 passed, 0 failed** (179.5s) | **0** — identical, both sides clean |
 | `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | **1438 passed, 0 failed** (40.1s) | — |
 | **The files the specified gate MISSES but the blast radius names** — `test_probe_headless_wake_p1_continuity`, `test_probe_headless_wake_p2_p3_p4` (Task 0's own probes, which record post-unmount wake behaviour), `Tests/Architecture/test_console_wave6_inventory`, `Tests/Architecture/test_persistent_diagnostic_inventory`, probe | the same **3 failed** at the merge-base (21.1s) | **3 failed, 82 passed, 1 skipped** (166.2s) | **0** — the three reproduce with this branch absent (`test_workspace_browser_methods_have_no_sibling_controller_reach_through`, `test_production_diagnostic_inventory_and_sink_topology_are_unchanged`, `test_task_15743_final_rebase_diagnostics_are_metadata_only`); both Task 0 probes are green |
-| `Tests/Chat/` in full + probe | **IN PROGRESS — see the honesty note below** | **IN PROGRESS** | — |
+| **`Tests/Chat/` in full + probe** | **14 failed, 5589 passed, 66 skipped** (1149.2s) | **14 failed, 5602 passed, 66 skipped** (1158.3s) | **0** — the failure SETS are byte-identical (`comm` empty in **both** directions over the sorted node-id lists); **+13 passed = exactly this branch's 13 new invariants tests** |
 
-**Honesty note on the `Tests/Chat/` full gate.** Both sides were started
-together (branch, and the merge-base worktree with the new invariants file
-`--ignore`d so the two collect the same set). After **4.5 hours** they
-stood at **84%** and **85%** with **0 failures on either side** — the two
-logs never diverged by more than 39 progress characters, i.e. they are in
-lockstep through the same files. The cause is contention, not the change:
-`ps` showed **8 concurrent `pytest` processes** on this machine, six of
-them foreign sessions, and my two runs were accumulating ~40 seconds of
-CPU per 20 minutes of wall clock. This is the same machine-contention
-hazard the continuity landing recorded.
+The two `Tests/Chat/` runs were launched together, the merge-base side
+with `--ignore=Tests/Chat/test_console_headless_wake_invariants.py` so
+both collect the same set, and they stayed in lockstep the whole way (the
+progress logs never diverged by more than 39 characters). The fourteen
+shared failures are dev's pre-existing reds, grouped by file:
+`test_console_provider_continuation` ×9, `test_console_chat_controller`
+×2, `test_console_h3_image_edit` ×1, `test_console_visual_evaluation` ×1,
+`test_console_voice_input` ×1 — the same files, and now the same
+node-ids, the viewless and continuity landings recorded.
 
-Stating plainly what that means: **the full-`Tests/Chat/` gate was not
-obtained within this session.** What WAS obtained: every `Tests/Chat/`
-file in the change's blast radius ran to completion inside the 223-test
-battery above (`test_console_viewless_hooks`, `test_console_runtime_
-lifetime`, all six `Tests/Chat/` fleet/wake files, plus the new
-invariants suite), all green on both sides; and the 84% of `Tests/Chat/`
-that did execute produced zero failures on either side. Whoever picks this
-up should re-run `Tests/Chat/` in full on a quiet machine before merging
-rather than treating the above as coverage.
+Machine note, for anyone reading the wall clocks: this battery ran against
+up to **8 concurrent `pytest` processes** (six foreign sessions), so
+elapsed time is not comparable to a quiet machine. Counts were READ off
+the summary lines; none is inferred.
 
 The wake glob as specified (`Tests/Chat/test_fleet_*.py
 Tests/Chat/test_console_fleet_*.py Tests/UI/test_console_fleet_*.py`)
@@ -441,6 +435,13 @@ left ON** (`13 passed` each) — which also rules out order dependence.
    report asked for.
 5. **`Tests/UI/` was not run in full.** What was run is in §8: every UI
    file in the change's blast radius (continuity, ownership, residency,
-   the MCP approval file, all the UI fleet files, the new e2e) plus
-   `Tests/Chat/` in full. Saying so plainly rather than implying coverage
-   that was not obtained.
+   the MCP approval file, all the UI fleet files, both Task 0 probe
+   files, the new e2e) plus `Tests/Chat/` in full and `Tests/Agents/` in
+   full. Saying so plainly rather than implying coverage that was not
+   obtained.
+6. **Three `Tests/Architecture/` failures and fourteen `Tests/Chat/`
+   failures are dev's, not this branch's** — each measured at the
+   merge-base with zero bytes of this branch and reproducing there
+   (the `Tests/Chat/` fourteen byte-identical in both directions). They
+   are pre-existing reds on `dev` and someone should own them, but not
+   this task.
