@@ -740,3 +740,48 @@ would not have been caught by what completed.
    follow-up is a per-worker audit of which of those can run against a
    torn-down DOM, and it is out of this task's scope. Naming it rather
    than quietly widening the fix.
+
+### 11.10 `Tests/UI/` in full — what was actually run, and against what
+
+The literal single invocation was attempted twice and abandoned (§11.8).
+What replaced it covers **every file in `Tests/UI/`**, as four invocations
+chosen so the property that matters for this bug class — many app
+lifetimes inside ONE process — is preserved, with the whole Console
+population kept in one of them:
+
+| Invocation | Branch | Pre-fix baseline (`.worktrees/hf-leak-base` @ `eae717f53`) |
+|---|---|---|
+| **Console population** — every `Tests/UI/test_console_*.py` (158 files) + `test_screen_residency` + probe, **3,298 collected**, one process | **26 failed, 3272 passed** (3412.6s) | **28 failed, 3265 passed** (3292.1s; 157 files — the baseline has no `test_console_sync_outlives_screen.py`) |
+| non-Console chunk 1 (134 files) + probe | 6 failed, 3018 passed, 2 skipped, 9 errors (4422.9s) | — (failures checked individually, below) |
+| non-Console chunk 2 (134 files) + probe | 8 failed, 3951 passed, 1 skipped (4504.9s) | — |
+| non-Console chunk 3 (134 files) + probe | 15 failed, 2544 passed (2769.8s) | **13 failed, 2546 passed** (2767.0s) |
+
+**The headline, and the reason the Console run was worth 57 minutes:
+ZERO failures are unique to the branch in the Console population.** The
+branch's 26 node-ids are a strict **subset** of the baseline's 28 —
+`comm -23` over the sorted lists is **empty**, and the two the baseline
+has extra (`test_console_native_chat_flow::test_console_accepted_send_
+records_first_send_flag`, `test_console_send_disabled_state::test_enter_
+hotkey_queues_draft_behind_accepted_run`) are order-sensitive reds that
+happened not to fire on the branch side. Net: **+7 passed, −2 failed**,
+and the +5 of that +7 is this branch's own new file.
+
+The other three chunks' 29 failures were each run at the baseline:
+
+* chunks 1+2 (14 node-ids, one invocation each side): **12 failed, 2
+  passed on BOTH sides, same node-ids.** Dev's.
+* chunk 3 (15 node-ids, one invocation each side): **13 failed, 2 passed
+  on BOTH sides, same node-ids.** Dev's.
+* the whole chunk-3 run repeated at the baseline gives 13 vs the branch's
+  15, and the two extra are `test_settings_theme_editor::…preset_swatches
+  _are_keyboard_activatable` and `test_speech_playground_pane_lifecycle::
+  …preserves_editable_text_and_current_result_geometry` — **both pass in
+  isolation on BOTH sides** (measured above), and `grep -lE
+  "ChatScreen|chat_screen|console_sync"` returns nothing for either file,
+  so neither can reach the code this branch changes. Order-sensitive
+  Settings/Speech reds inside a 2,559-test chunk, labelled as such rather
+  than swept into "dev's" without checking.
+
+Time cost of the four branch runs plus the two baseline runs: ~4h45m of
+wall clock against a machine carrying three to four foreign `pytest`
+processes throughout.
