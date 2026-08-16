@@ -122,6 +122,25 @@ class ConsoleSelectionMenu(Vertical):
         border-bottom: none !important;
         padding: 0 1 !important;
     }
+    /* ANSI color mode (increment review): the library's disabled rule
+       (Button:ansi.-style-flat:disabled, specificity (0,3,1)) beats the
+       generic compact rule above ((0,0,2)) -- both !important, so
+       specificity decides -- and re-grew tall borders on the run-gated
+       pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
+       rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
+       to ALL six action IDs, not just the two gated ones: any action may
+       end up disabled, and every action must stay one row in every state
+       and color mode. */
+    ConsoleSelectionMenu #console-selection-add-to-chat,
+    ConsoleSelectionMenu #console-selection-more-details,
+    ConsoleSelectionMenu #console-selection-ask-side-chat,
+    ConsoleSelectionMenu #console-selection-request-changes,
+    ConsoleSelectionMenu #console-selection-lgm,
+    ConsoleSelectionMenu #console-selection-comment {
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+    }
     ConsoleSelectionMenu #console-selection-feedback-hint {
         color: $text-muted;
         text-style: dim;

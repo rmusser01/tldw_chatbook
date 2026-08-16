@@ -875,6 +875,56 @@ async def test_compact_menu_fits_height_budget():
         assert menu.region.height <= 8
 
 
+class _AnsiFeedbackMenuApp(App[None]):
+    """Feedback menu harness with native ANSI color mode pinned ON.
+
+    Increment review of e2dc272e4: textual 8.2.8's ANSI-mode
+    ``Button:ansi.-style-flat:disabled`` border rule (specificity (0,3,1))
+    beats the compact rule's ``border: none !important`` ((0,0,2)) -- both
+    important, so specificity decides.
+    """
+
+    def __init__(self) -> None:
+        # textual 8.2.8 supported path: constructor arg -> App.ansi_color
+        # reactive; the :ansi pseudo-class on widgets follows
+        # app.native_ansi_color.
+        super().__init__(ansi_color=True)
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSelectionMenu(
+            screen_x=4,
+            screen_y=6,
+            feedback_available=True,
+            run_active=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_ansi_mode_disabled_buttons_stay_borderless_with_labels():
+    """Increment review of e2dc272e4: in native ANSI color mode the two
+    run-gated buttons re-grew tall borders (2-row border-only boxes, labels
+    clipped out, 11-row menu breaking the <=10 budget). Every action must
+    stay one row with its label actually rendered, in ANSI mode too."""
+    app = _AnsiFeedbackMenuApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        assert app.native_ansi_color is True  # ANSI mode really pinned
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.region.height <= 10  # height budget holds in ANSI mode
+        for selector, label in (
+            ("#console-selection-request-changes", "Request changes"),
+            ("#console-selection-lgm", "LGTM"),
+        ):
+            button = menu.query_one(selector, Button)
+            assert button.disabled  # the gated pair is the reproducer
+            assert button.region.height == 1
+            assert button.content_region.height == 1  # a row for the label
+            rendered = "".join(
+                button.render_line(y).text for y in range(button.region.height)
+            )
+            assert label in rendered  # label survives, not clipped by border
+
+
 @pytest.mark.asyncio
 async def test_feedback_buttons_absent_without_availability():
     """feedback_available=False: only the three base buttons, no hint.
