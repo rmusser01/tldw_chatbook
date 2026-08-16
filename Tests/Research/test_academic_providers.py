@@ -8,6 +8,7 @@ retry, and merge logic run real.
 """
 
 import asyncio
+import json
 from unittest.mock import MagicMock
 
 import httpx
@@ -21,6 +22,8 @@ from tldw_chatbook.Research_Interop.academic_providers import (
     papers_to_evidence,
     resolve_semantic_scholar_api_key,
     search_arxiv,
+    search_biorxiv,
+    search_pubmed,
     search_papers,
     search_semantic_scholar,
 )
@@ -372,3 +375,153 @@ def test_search_papers_runs_providers_concurrently(monkeypatch):
     import asyncio
     papers = asyncio.run(ap.search_papers("query"))
     assert papers == []
+
+
+# --- BioRxiv / MedRxiv / PubMed providers (task-16790) -----------------------------
+
+_BIORXIV_PAGE = {
+    "messages": [{"count": 2, "total": 2}],
+    "collection": [
+        {"doi": "10.1101/2026.01.01.000001", "title": "Protein folding advances",
+         "authors": "A. Author; B. Author", "category": "bioinformatics",
+         "date": "2026-01-02", "abstract": "We study folding dynamics.",
+         "server": "biorxiv", "version": 1},
+        {"doi": "10.1101/2026.01.01.000002", "title": "Unrelated climate paper",
+         "authors": "C. Author", "date": "2026-01-03", "abstract": "Ice cores.",
+         "server": "biorxiv", "version": 1},
+    ],
+}
+
+
+def test_search_biorxiv_filters_and_normalizes(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_BIORXIV_PAGE))])
+
+    out = search_biorxiv(query="protein folding", client=client)
+
+    call = client.request.calls[0]
+    assert "api.biorxiv.org/details/biorxiv/" in call["url"]
+    item = out["items"][0]
+    assert item["title"] == "Protein folding advances"
+    assert item["doi"] == "10.1101/2026.01.01.000001"
+    assert item["source"] == "biorxiv"
+    assert item["url"] == "https://www.biorxiv.org/content/10.1101/2026.01.01.000001v1"
+    assert item["pdf_url"].endswith(".full.pdf")
+    # Client-side query filter drops the unrelated paper.
+    assert len(out["items"]) == 1
+
+
+def test_search_biorxiv_medrxiv_switch(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps(_BIORXIV_PAGE))])
+
+    search_biorxiv(query="folding", server="medrxiv", client=client)
+
+    assert "/details/medrxiv/" in client.request.calls[0]["url"]
+
+
+_ESEARCH = {"esearchresult": {"idlist": ["39123456", "39123457"], "count": "2"}}
+_ESUMMARY = {
+    "result": {
+        "uids": ["39123456"],
+        "39123456": {
+            "title": "CRISPR base editing efficiency",
+            "fulljournalname": "Nature Biotech",
+            "pubdate": "2026 Jan",
+            "authors": [{"name": "D. Researcher"}],
+            "articleids": [
+                {"idtype": "doi", "value": "10.1038/nbt.2026.01"},
+                {"idtype": "pmc", "value": "PMC9999888"},
+            ],
+        },
+    }
+}
+
+
+def test_search_pubmed_two_step_esearch_then_esummary(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning(
+        [_response(text=json.dumps(_ESEARCH)), _response(text=json.dumps(_ESUMMARY))]
+    )
+
+    out = search_pubmed(query="CRISPR base editing", client=client)
+
+    first, second = client.request.calls
+    assert "esearch.fcgi" in first["url"]
+    assert "CRISPR" in first["params"]["term"]
+    assert "esummary.fcgi" in second["url"]
+    assert second["params"]["id"] == "39123456,39123457"
+    item = out["items"][0]
+    assert item["doi"] == "10.1038/nbt.2026.01"
+    assert item["url"] == "https://pubmed.ncbi.nlm.nih.gov/39123456/"
+    assert item["pdf_url"] == "https://pmc.ncbi.nlm.nih.gov/9999888/pdf"
+    assert item["source"] == "pubmed"
+    assert item["authors"] == "D. Researcher"
+
+
+def test_search_pubmed_empty_idlist(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning(
+        [_response(text=json.dumps({"esearchresult": {"idlist": [], "count": "0"}}))]
+    )
+
+    out = search_pubmed(query="nothing", client=client)
+
+    assert out["items"] == [] and out["total_results"] == 0
+
+
+def test_search_papers_provider_set_filtering(monkeypatch):
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    calls = []
+
+    def fake_arxiv(**kw):
+        calls.append("arxiv")
+        return {"items": [{"title": "A", "abstract": "a", "doi": "10.1/a",
+                           "url": "https://doi.org/10.1/a", "source": "arxiv"}]}
+
+    def fake_pubmed(**kw):
+        calls.append("pubmed")
+        return {"items": [{"title": "P", "abstract": "p", "doi": "10.2/p",
+                           "url": "https://pubmed.ncbi.nlm.nih.gov/1/",
+                           "source": "pubmed"}]}
+
+    def unused_s2(**kw):
+        calls.append("semantic_scholar")
+        return {"items": []}
+
+    monkeypatch.setattr(ap, "search_arxiv", fake_arxiv)
+    monkeypatch.setattr(ap, "search_semantic_scholar", unused_s2)
+    monkeypatch.setattr(ap, "search_pubmed", fake_pubmed)
+
+    papers = asyncio.run(ap.search_papers("topic", providers=["arxiv", "pubmed"]))
+
+    assert sorted(calls) == ["arxiv", "pubmed"]
+    assert {p["source"] for p in papers} == {"arxiv", "pubmed"}
+
+
+def test_default_academic_providers_from_config(monkeypatch):
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    monkeypatch.setattr(
+        ap, "get_cli_setting",
+        lambda section, key, default=None: "arxiv, pubmed, biorxiv",
+    )
+    assert ap._default_academic_providers() == ["arxiv", "pubmed", "biorxiv"]
+
+    monkeypatch.setattr(
+        ap, "get_cli_setting", lambda section, key, default=None: default
+    )
+    assert ap._default_academic_providers() == ["arxiv", "semantic_scholar"]

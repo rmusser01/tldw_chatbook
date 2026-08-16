@@ -921,3 +921,94 @@ def test_approved_sources_checkpoint_with_empty_patch_still_passes():
     final = asyncio.run(engine.execute_run(run["id"]))
 
     assert final["status"] == "completed"
+
+
+# --- source policy + provider overrides (task-16791) -------------------------------
+
+def _policy_pipeline(state):
+    def search_fn(q, params):
+        state["web"] = state.get("web", 0) + 1
+        state["last_params"] = dict(params)
+        return ({"results": [{"title": "Web", "url": "https://web.example/"}],
+                 "warnings": []},
+                {"sub_questions": [], "main_goal": q})
+
+    async def paper_fn(query, **kwargs):
+        state.setdefault("papers", []).append(kwargs.get("providers"))
+        return [{"title": "Paper", "abstract": "p", "doi": "10.9/z",
+                 "url": "https://doi.org/10.9/z", "source": "pubmed"}]
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        state["merged"] = list(wsr.get("results") or [])
+        return {
+            "final_answer": {"text": "R[1].", "confidence": 0.5, "chunks": [],
+                             "evidence": [{"id": 1, "url": "https://web.example/",
+                                           "title": "Web", "content": "c",
+                                           "original_content": "o", "reasoning": "r",
+                                           "chunk_index": 1}]},
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
+
+    return search_fn, analyze_fn, paper_fn
+
+
+def _run_policy_engine(service, question, *, policy=None, overrides=None):
+    state: dict = {}
+    search_fn, analyze_fn, paper_fn = _policy_pipeline(state)
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn,
+        paper_search_fn=paper_fn,
+    )
+    kwargs = {"query": question, "autonomy_mode": "autonomous"}
+    if policy:
+        kwargs["source_policy"] = policy
+    if overrides:
+        kwargs["provider_overrides"] = overrides
+    run = service.launch_run(**kwargs)
+    return run, engine, state
+
+
+def test_policy_web_only_skips_academic_lane():
+    service = _make_service()
+    run, engine, state = _run_policy_engine(service, "Q", policy="web_only")
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert state["web"] >= 1
+    assert "papers" not in state
+    assert all(r.get("url") == "https://web.example/" for r in state["merged"])
+
+
+def test_policy_academic_only_skips_web_engine():
+    service = _make_service()
+    run, engine, state = _run_policy_engine(service, "Q", policy="academic_only")
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert "web" not in state  # zero web-engine spend
+    assert state["papers"]  # academic lane ran
+    assert [r.get("url") for r in state["merged"]] == ["https://doi.org/10.9/z"]
+
+
+def test_policy_academic_first_orders_papers_before_web():
+    service = _make_service()
+    run, engine, state = _run_policy_engine(service, "Q", policy="academic_first")
+    asyncio.run(engine.execute_run(run["id"]))
+
+    urls = [r.get("url") for r in state["merged"]]
+    assert urls.index("https://doi.org/10.9/z") < urls.index("https://web.example/")
+
+
+def test_provider_overrides_reach_params_and_papers():
+    service = _make_service()
+    run, engine, state = _run_policy_engine(
+        service, "Q",
+        overrides={"engine": "duckduckgo", "result_count": 3,
+                   "academic_providers": ["pubmed"]},
+    )
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert state["last_params"]["engine"] == "duckduckgo"
+    assert state["last_params"]["result_count"] == 3
+    assert state["papers"] == [["pubmed"]]

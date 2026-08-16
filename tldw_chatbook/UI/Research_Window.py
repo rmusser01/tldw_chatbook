@@ -98,6 +98,9 @@ class ResearchWindow(Vertical):
         # and the rendered follow-up answer.
         self.limits_text = ""
         self.followup_answer_text = ""
+        # task-16791: per-run lane routing + academic provider selection.
+        self.source_policy = "balanced"
+        self.providers_text = ""
         self.controller = ResearchController(
             getattr(app_instance, "research_scope_service", None)
         )
@@ -122,6 +125,18 @@ class ResearchWindow(Vertical):
             yield Input(
                 placeholder="Limits: max_searches=5, max_runtime_seconds=120",
                 id="research-limits-input",
+            )
+            yield Select(
+                [("Balanced", "balanced"), ("Web only", "web_only"),
+                 ("Academic only", "academic_only"), ("Web first", "web_first"),
+                 ("Academic first", "academic_first")],
+                value=self.source_policy,
+                allow_blank=False,
+                id="research-policy-select",
+            )
+            yield Input(
+                placeholder="Providers: arxiv, pubmed",
+                id="research-providers-input",
             )
             yield Button("Create Run", id="research-create-run", variant="primary")
         yield Static(self.status_message, id="research-status")
@@ -166,6 +181,8 @@ class ResearchWindow(Vertical):
             "source": self.current_source,
             "academic": self.academic_enabled,
             "limits": self.limits_text,
+            "policy": self.source_policy,
+            "providers": self.providers_text,
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -173,6 +190,13 @@ class ResearchWindow(Vertical):
         self.current_source = source if source in {"local", "server"} else "local"
         self.academic_enabled = bool((state or {}).get("academic"))
         self.limits_text = str((state or {}).get("limits") or "")
+        policy = str((state or {}).get("policy") or "balanced")
+        self.source_policy = (
+            policy if policy in {
+                "balanced", "web_only", "academic_only", "web_first", "academic_first",
+            } else "balanced"
+        )
+        self.providers_text = str((state or {}).get("providers") or "")
         self._sync_academic_toggle()
         try:
             self.query_one("#research-limits-input", Input).value = self.limits_text
@@ -258,6 +282,11 @@ class ResearchWindow(Vertical):
         self._set_status(f"Follow-up {result.get('status')}.")
         return result
 
+    @on(Select.Changed, "#research-policy-select")
+    def _on_policy_changed(self, event: Select.Changed) -> None:
+        self.source_policy = str(event.value or "balanced")
+        self._set_status(f"Source policy: {self.source_policy}")
+
     @on(Checkbox.Changed, "#research-academic-toggle")
     def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
         self.academic_enabled = bool(event.value)
@@ -295,6 +324,17 @@ class ResearchWindow(Vertical):
             self._set_status("Limits: " + "; ".join(warnings))
         if limits:
             payload = {**payload, "limits_json": limits}
+        # task-16791: lane routing + provider selection ride the run record.
+        payload = {**payload, "source_policy": self.source_policy}
+        providers = [
+            part.strip().lower()
+            for part in self.providers_text.split(",")
+            if part.strip()
+        ]
+        if providers:
+            payload = {**payload, "provider_overrides": {
+                "academic_providers": providers,
+            }}
         created = await self.controller.create_run(self.current_source, payload)
         if self.current_source == "local":
             created_id = (
