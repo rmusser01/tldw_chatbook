@@ -242,6 +242,7 @@ from ...Chat.console_provider_gateway import (
 )
 from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
 
@@ -12859,17 +12860,25 @@ class ChatScreen(BaseAppScreen):
             return
         model_id = server.model_ids[0] if server.model_ids else None
         app_config = self._provider_readiness_app_config()
+        provider_key = provider_config_key(server.provider_key)
         provider_settings = self._config_section(
             self._config_section(app_config, "api_settings"),
-            provider_config_key(server.provider_key),
+            provider_key,
         )
         configured_endpoint = first_configured_endpoint(provider_settings)
         provider_values: dict[str, object] = {}
-        if configured_endpoint and configured_endpoint != server.base_url:
+        # Qodo review (PR #1720): compare connection identities, not raw
+        # strings -- a configured endpoint differing only by a trailing
+        # slash (or a llama.cpp endpoint-path suffix) is the SAME server and
+        # must not warn or skip the canonicalizing write. Same vocabulary
+        # ``_endpoint_differs_for_provider`` uses.
+        if configured_endpoint and self._adoption_endpoints_differ(
+            provider_key, configured_endpoint, server.base_url
+        ):
             self.app_instance.notify(
                 "Keeping the saved endpoint "
                 f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
-                f"for {provider_config_key(server.provider_key)}; using the detected "
+                f"for {provider_key}; using the detected "
                 "server for this session only.",
                 severity="warning",
             )
@@ -12912,6 +12921,41 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
+
+    @staticmethod
+    def _adoption_endpoints_differ(
+        provider_key: str,
+        configured_endpoint: str,
+        detected_endpoint: str,
+    ) -> bool:
+        """Return whether adoption endpoints differ by connection identity.
+
+        Qodo review (PR #1720): raw string inequality treats a trailing
+        slash (or a llama.cpp endpoint-path suffix) as a different server,
+        warning and skipping the write for what is the same connection. Uses
+        the same normalization vocabulary as
+        ``_endpoint_differs_for_provider``.
+
+        Args:
+            provider_key: Normalized provider readiness key.
+            configured_endpoint: Persisted endpoint for the provider.
+            detected_endpoint: Discovered server base URL.
+
+        Returns:
+            ``True`` only when the two endpoints normalize to different
+            connection identities.
+        """
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            configured = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(configured_endpoint)
+            )
+            detected = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(detected_endpoint)
+            )
+            return configured != detected
+        return normalize_generic_endpoint_for_compare(
+            configured_endpoint
+        ) != normalize_generic_endpoint_for_compare(detected_endpoint)
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""

@@ -1003,6 +1003,16 @@ def _console_endpoint_restart_fallback(
     resolves env override -> ``[console] llama_cpp_base_url_override`` -> the
     provider's configured endpoint -> the built-in default; other URL-based
     providers resolve only their configured endpoint.
+
+    Args:
+        provider_key: Normalized provider readiness key.
+        provider_settings: The provider's persisted ``api_settings`` section.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        The restart fallback endpoint, or ``None`` for URL-based providers
+        with nothing configured.
     """
     if provider_key in {"llama_cpp", "local_llamacpp"}:
         env = environ if environ is not None else os.environ
@@ -1030,6 +1040,15 @@ def console_session_endpoint_survives_restart(
     value (so re-deriving defaults next boot reproduces it). ``False`` means
     the endpoint lives only in this session and is silently lost on restart
     -- the task-16473 persistence trap.
+
+    Args:
+        settings: Console session settings carrying the endpoint to check.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        Whether re-deriving defaults on the next boot would reproduce the
+        session's endpoint.
     """
     provider_key = provider_config_key(settings.provider)
     provider_settings = _provider_settings(app_config, provider_key)
@@ -1066,6 +1085,15 @@ def unsaved_console_endpoint_warning(
     endpoints (the direct llama path skips the endpoint-saved check), so
     nothing else tells the user their endpoint evaporates on restart. This is
     the warning that apply surfaces.
+
+    Args:
+        settings: Console session settings carrying the endpoint to describe.
+        app_config: Application configuration mapping.
+        environ: Environment override source; ``None`` reads ``os.environ``.
+
+    Returns:
+        User-facing warning copy, or ``None`` when the endpoint is backed for
+        the next boot.
     """
     if console_session_endpoint_survives_restart(
         settings, app_config=app_config, environ=environ

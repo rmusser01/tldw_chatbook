@@ -106,7 +106,7 @@ def test_unsaved_console_endpoint_warning_cases():
     assert (
         unsaved_console_endpoint_warning(
             ConsoleSessionSettings(provider="openai", model="gpt-4o"),
-            app_config={"api_settings": {"openai": {"api_key": "sk-x"}}},
+            app_config={"api_settings": {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}},
         )
         is None
     )
@@ -115,6 +115,11 @@ def test_unsaved_console_endpoint_warning_cases():
         session("http://192.168.1.50:8080"), app_config=empty_config
     )
     assert "restart" in warning and "Save as default" in warning
+
+
+# Matches the repo-wide dummy convention (self-describing, not
+# token-shaped) so key-scanner rules stay quiet.
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 
 
 def _capture_notifies(app, monkeypatch) -> list[tuple[str, dict]]:
@@ -367,4 +372,54 @@ def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch):
         "Adoption must apply the detected endpoint to the active session so "
         "'Use detected ...' stays effective without the config write; got "
         f"{active_settings.base_url!r}."
+    )
+
+
+def test_detected_server_adoption_treats_trailing_slash_as_same_endpoint(
+    monkeypatch,
+):
+    """TASK-16476 / Qodo review (PR #1720): identity, not raw-string, compare.
+
+    A configured endpoint differing from the detected one only by a trailing
+    slash is the same server: adoption must not warn about "keeping" it and
+    the canonicalizing ``api_url`` write still happens.
+    """
+    detected_endpoint = "http://127.0.0.1:8080"
+    app = _build_test_app()
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:8080/", "model": "user-model"}
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    store.ensure_session()
+
+    notifies = _capture_notifies(app, monkeypatch)
+    captured_sections: dict = {}
+
+    def fake_save(section_values):
+        captured_sections.update(section_values)
+        return True
+
+    monkeypatch.setattr(
+        chat_screen_module, "save_settings_to_cli_config", fake_save
+    )
+    monkeypatch.setattr(console, "_sync_console_transcript_guidance", lambda: None)
+    monkeypatch.setattr(console, "run_worker", _discard_worker)
+    console._session._sync_chat_core_state_fn = lambda: None
+    console._session._sync_settings_summary_fn = lambda: None
+
+    console._console_detected_local_server = DiscoveredLocalServer(
+        provider_key="llama_cpp",
+        base_url=detected_endpoint,
+        model_ids=("detected-model",),
+    )
+    console._apply_detected_local_server()
+
+    assert not [message for message, _kwargs in notifies if "Keeping" in message], (
+        f"Same-server endpoints (trailing slash) must not warn; saw: {notifies}"
+    )
+    provider_write = captured_sections.get("api_settings.llama_cpp", {})
+    assert provider_write.get("api_url") == detected_endpoint, (
+        "Same-server adoption should still write the canonical api_url; got "
+        f"{provider_write.get('api_url')!r}."
     )
