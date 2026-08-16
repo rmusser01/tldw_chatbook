@@ -100,6 +100,13 @@ PROMPT_C = {
 }
 
 
+def test_browse_prompt_scope_defaults_to_library_twenty_row_pages():
+    scope = prompts_state_module.PromptBrowseScope()
+
+    assert prompts_state_module.DEFAULT_PROMPT_BROWSE_PAGE_SIZE == 20
+    assert scope.page_size == 20
+
+
 def test_browse_prompt_scope_normalizes_query_sort_and_bounded_page_size():
     scope = prompts_state_module.PromptBrowseScope(
         query="  alpha beta \n",
@@ -599,7 +606,7 @@ def test_browse_prompt_result_deeply_freezes_detached_mapping_rows():
             "total_items": 1,
             "total_pages": 1,
             "current_page": 1,
-            "per_page": 50,
+            "per_page": 20,
         },
     )
 
@@ -800,7 +807,7 @@ def test_browse_prompt_reducer_rejects_forged_stale_scope_with_copied_guards():
             "total_items": 0,
             "total_pages": 0,
             "current_page": 1,
-            "per_page": 50,
+            "per_page": 20,
         },
         request_token=current.request_token,
     )
@@ -850,7 +857,7 @@ def test_browse_prompt_loading_error_and_stale_fingerprint_are_distinct():
             "total_items": 0,
             "total_pages": 0,
             "current_page": 1,
-            "per_page": 50,
+            "per_page": 20,
         },
     )
 

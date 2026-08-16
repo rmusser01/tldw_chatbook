@@ -550,6 +550,21 @@ async def test_browse_prompt_routes_normalized_local_scope_through_real_adapter(
 
 
 @pytest.mark.asyncio
+async def test_browse_prompt_omitted_page_size_keeps_generic_fifty_row_default():
+    database = RecordingPromptBrowseDatabase()
+    service = PromptScopeService(
+        local_service=LocalPromptService(database),
+        server_service=FakeServerPromptService(),
+        policy_enforcer=FakePolicyEnforcer(),
+    )
+
+    result = await service.browse_prompts()
+
+    assert database.calls[0]["page_size"] == 50
+    assert result["per_page"] == 50
+
+
+@pytest.mark.asyncio
 async def test_browse_prompt_policy_denial_stops_before_local_adapter_call():
     database = RecordingPromptBrowseDatabase()
     policy = FakePolicyEnforcer.deny()

@@ -50,7 +50,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 _TIMESTAMP_KEYS = ("last_modified", "created_at")
 
 MAX_PROMPT_BROWSE_PAGE_SIZE = 100
-DEFAULT_PROMPT_BROWSE_PAGE_SIZE = 50
+DEFAULT_PROMPT_BROWSE_PAGE_SIZE = 20
 _PROMPT_BROWSE_SORT_FIELDS = frozenset({"last_modified", "name"})
 _PROMPT_BROWSE_SORT_ORDERS = frozenset({"asc", "desc"})
 _PROMPT_BROWSE_STATUSES = frozenset(

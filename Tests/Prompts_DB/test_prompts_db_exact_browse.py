@@ -116,6 +116,55 @@ def test_browse_prompts_pages_exactly_beyond_one_hundred_mixed_artifacts(databas
     assert first[0]["has_user_prompt"] == 1
 
 
+def test_browse_prompts_explicit_twenty_row_pages_apply_scope_before_paging(database):
+    matching_ids = [
+        _insert_prompt(
+            database,
+            name=f"Prompt {index:02d}",
+            details=f"Needle match {index:02d}",
+        )
+        for index in range(45)
+    ]
+    nonmatching_id = _insert_prompt(database, name="Unrelated")
+    _insert_prompt(database, name="Outside", details="Needle outside collection")
+    service = LocalPromptService(database)
+    collection_id = service.create_prompt_collection(
+        {
+            "name": "Paged",
+            "prompt_ids": [*matching_ids, nonmatching_id],
+        }
+    )["collection_id"]
+
+    pages = [
+        database.browse_prompts(
+            query="needle",
+            collection_id=collection_id,
+            sort_by="last_modified",
+            sort_order="asc",
+            page=page,
+            page_size=20,
+        )
+        for page in (1, 2, 3)
+    ]
+
+    assert [len(items) for items, *_metadata in pages] == [20, 20, 5]
+    assert [metadata for _items, *metadata in pages] == [
+        [3, 1, 45],
+        [3, 2, 45],
+        [3, 3, 45],
+    ]
+    assert [item["id"] for items, *_metadata in pages for item in items] == matching_ids
+
+
+def test_browse_prompts_omitted_page_size_keeps_generic_fifty_row_default(database):
+    for index in range(51):
+        _insert_prompt(database, name=f"Generic {index:02d}")
+
+    items, total_pages, current_page, total_items = database.browse_prompts()
+
+    assert (len(items), total_pages, current_page, total_items) == (50, 2, 1, 51)
+
+
 def test_browse_prompts_combines_collection_and_literal_text_search(database):
     inside = _insert_prompt(database, name="Inside", details="A Needle in collection")
     outside = _insert_prompt(

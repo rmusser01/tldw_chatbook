@@ -79,6 +79,32 @@ def _controller(
 
 
 @pytest.mark.asyncio
+async def test_controller_sends_explicit_library_twenty_row_default() -> None:
+    screen = _WorkerScreen()
+    service = _BrowseService()
+    controller = _controller(
+        screen=screen,
+        service=lambda: service,
+        sync_view=lambda: lambda _result, _focus: None,
+    )
+
+    controller.request(PromptBrowseScope(), focus_identity=None)
+    await screen.pending.pop()
+
+    assert service.calls == [
+        {
+            "mode": "local",
+            "query": "",
+            "collection_id": None,
+            "sort_by": "last_modified",
+            "sort_order": "desc",
+            "page": 1,
+            "page_size": 20,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("late_kind", ["success", "error"])
 async def test_controller_rejects_late_success_and_error(late_kind: str) -> None:
     screen = _WorkerScreen()
