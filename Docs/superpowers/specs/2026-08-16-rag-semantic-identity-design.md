@@ -23,17 +23,34 @@ both live on the routes a vector/fused profile actually uses:
   tool accepts but the payload WITHHOLDS — so a row the hint declares
   expandable can return `not_found`. This is the code gap (AC#2).
 
-**Verified at this HEAD, and it sharpens (b):** the app's own indexing
-path is two-vocabulary. `ingestion_indexing.py` builds documents whose
-metadata carries `source_id`/`source_type` — yet the 15810 live check's
-scratch profile, seeded through the app's own `index_entries`, produced
-chunk metadata of `doc_id`/`note_id`/`doc_title`/`type` with **no
-`source_id` key** (recorded vector-store stats, 2026-08-15). Somewhere in
-the chunk-indexing layer the keys are transformed, so on real app-built
-indexes `_semantic_row`'s `source_id` falls through to the point id and
-the fallback path is not an edge case — it may be the COMMON case.
-Plan-phase verification item 1 pins down exactly where the
-transformation happens and which vocabulary reaches `provenance`.
+**Verified at this HEAD (correcting this spec's own first draft):** the
+transformation hypothesis was traced end to end and REFUTED for the
+canonical path. `store_documents_batch`
+(`RAG_Search/simplified/indexing_helpers.py:181`, reached from
+`index_entries` → `index_batch_optimized`) SPREADS the entry's metadata
+into every chunk and adds `doc_id` (the PREFIXED entry id, `note_5`) +
+`doc_title` + `chunk_start`/`chunk_end`/`chunk_index`. The app's
+canonical builders (`note_document`/`media_document`/
+`conversation_document`) all write `source_id`/`source_type`, so on a
+canonically-built index `_semantic_row` resolves `source_id` correctly
+and the point-id fallback never fires. The 15810 scratch's
+`doc_id`/`note_id`/`type` vocabulary came from that QA script's OWN
+hand-built `IndexEntry` metadata (`seed_profile.py:72`), not the app's.
+What this means for the arc, pre-registered:
+- (b) is real for LEGACY indexes (pre-`source_id` builders) and for any
+  non-canonical `IndexEntry` producer — the 15810 script is committed
+  proof such producers run against real profiles. It is NOT the common
+  case on a fresh canonical index.
+- The route probe therefore seeds BOTH: a canonical index (expected
+  pre-fix `not_found` on declared-expandable rows: **0** — and a nonzero
+  reading there would be a NEW finding) and a non-canonical one built the
+  15810 script's way (expected pre-fix: nonzero — the fallback's
+  evidence; post-fix: 0).
+- On canonical indexes the payload's `doc_id` fallback is ALWAYS present
+  (prefixed; the tool already strips prefixes), so the fix's value is
+  defensive-plus-legacy, and the spec says so rather than overclaiming.
+- `media_id` never appears in any builder's metadata (verification item
+  2, answered): the payload addition emits `note_id`/`doc_id` only.
 
 ## The change (AC#2, #5): one payload addition, Task 3b's shape exactly
 
