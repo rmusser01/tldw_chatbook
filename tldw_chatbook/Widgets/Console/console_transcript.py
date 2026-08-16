@@ -3728,9 +3728,9 @@ class ConsoleTranscript(VerticalScroll):
         # for the menu's lifetime (the jump pill appears, the standard
         # detached-reader affordance).
         self.release_anchor()
-        # Phase 3: selections in agent output (TOOL-role rows, diff rows)
-        # additionally offer the review-feedback actions, run-gated through
-        # the owning screen's status seam.
+        # Phase 3: selections in agent output (ASSISTANT/TOOL-role rows,
+        # diff rows) additionally offer the review-feedback actions,
+        # run-gated through the owning screen's status seam.
         origin_row = self._active_selection_row()
         feedback_available = self._row_supports_selection_feedback(origin_row)
         screen_size = self.screen.size
@@ -3866,14 +3866,21 @@ class ConsoleTranscript(VerticalScroll):
 
         Diff rows exist only under expanded file-write TOOL markers, so
         they are agent output by definition; plain/markdown rows qualify
-        when the message they render is TOOL-role (tool markers and tool
-        diagnostics). ``None`` (no live selection) offers nothing.
+        when the message they render is ASSISTANT- or TOOL-role. Product
+        decision 2026-08-16: the agent's own prose replies (markdown or
+        plain) are the most natural review target, so ASSISTANT-role rows
+        qualify alongside tool markers/diagnostics; USER-role rows never
+        do (the user's own words are not reviewable output). ``None`` (no
+        live selection) offers nothing.
         """
         if isinstance(row, ConsoleToolDiffRow):
             return True
         if isinstance(row, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
             message = getattr(row, "_message", None)
-            return message is not None and message.role is ConsoleMessageRole.TOOL
+            return message is not None and message.role in (
+                ConsoleMessageRole.ASSISTANT,
+                ConsoleMessageRole.TOOL,
+            )
         return False
 
     def _selection_run_active(self) -> bool:

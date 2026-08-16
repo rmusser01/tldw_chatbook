@@ -113,7 +113,9 @@ across the stack.
   selection + optional comment) routes as the next user message
   through the prompt-queue dispatch seam — it queues behind an active
   run and never touches the composer draft or `submit_draft` (which
-  refuses during runs and would clobber in-progress typing). Phase 4
+  refuses during runs and would clobber in-progress typing). Feedback
+  gating widened to assistant prose (ASSISTANT-role rows; USER rows still
+  excluded) per product decision 2026-08-16. Phase 4
   adds annotation persistence.
 
 ## Links

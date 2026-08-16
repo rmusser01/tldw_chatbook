@@ -13,10 +13,12 @@ gateway, and pushes ``ConsoleSideChatModal`` exactly once -- More Details
 with the rendered template auto-sent, Ask in Side Chat freeform.
 
 Phase 3 (task 3): the selection menu offers ``Request changes | LGTM |
-Comment`` only when the selection sits in agent output (TOOL-role rows or
-diff rows), run-gated through the owning screen's run-status seam, and
-each action makes the transcript post ``ConsoleSelectionFeedbackRequested``
-with the capped quote before clearing the selection UI.
+Comment`` only when the selection sits in agent output (ASSISTANT- or
+TOOL-role rows, or diff rows -- product decision 2026-08-16: the agent's
+own prose replies are review targets; USER rows never are), run-gated
+through the owning screen's run-status seam, and each action makes the
+transcript post ``ConsoleSelectionFeedbackRequested`` with the capped
+quote before clearing the selection UI.
 
 Phase 3 (task 5): the ChatScreen consumes that request -- comment modal,
 then the structured message (action header + ``> ``-quoted selection +
@@ -63,6 +65,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
 )
 from tldw_chatbook.Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleMarkdownMessage,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
     _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES,
@@ -583,6 +586,77 @@ async def test_drag_on_user_row_hides_feedback_entries():
         assert not menu.query("#console-selection-lgm")
         assert not menu.query("#console-selection-comment")
         assert not menu.query("#console-selection-feedback-hint")
+
+
+async def _drag_select_first_markdown_row(
+    pilot, app: _FeedbackTranscriptApp, *, start: int = 0, end: int = 4
+) -> ConsoleMarkdownMessage:
+    """Finish a drag over the first markdown row body and post the selection
+    event.
+
+    ASSISTANT-role messages render through ``ConsoleMarkdownMessage`` (the
+    default ``assistant_markdown`` toggle in this config-less harness), so
+    this mirrors ``_drag_select_first_row`` over the markdown row's
+    character-granular source domain.
+    """
+    transcript = app.query_one(ConsoleTranscript)
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=app._role, content="answer prose worth reviewing", id="m1"
+            )
+        ]
+    )
+    await transcript.refresh_messages()
+    await pilot.pause()
+    row = app.query_one("#console-message-m1", ConsoleMarkdownMessage)
+    region = transcript.region
+
+    transcript.selection_manager.begin_drag(row.id, start)
+    transcript.selection_manager.extend_drag(row.id, end)
+    row.set_selection_range(start, end)
+    transcript.selection_manager.finish_drag()
+    transcript.post_message(
+        ConsoleTranscript.TranscriptTextSelected(
+            selection=TextSelection(row.id, start, end),
+            screen_x=region.x + 4,
+            screen_y=region.y + 2,
+        )
+    )
+    await pilot.pause()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_drag_on_assistant_markdown_row_shows_feedback_entries():
+    """Product decision 2026-08-16: assistant PROSE is agent output too -- a
+    selection over the agent's own markdown reply mounts the menu with the
+    three feedback entries, armed under an active run."""
+    app = _FeedbackTranscriptApp(
+        role=ConsoleMessageRole.ASSISTANT, run_status="streaming"
+    )
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_markdown_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert not menu.query_one("#console-selection-request-changes", Button).disabled
+        assert not menu.query_one("#console-selection-lgm", Button).disabled
+        assert not menu.query_one("#console-selection-comment", Button).disabled
+        assert not menu.query("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_drag_on_assistant_markdown_row_run_gating_without_status_seam():
+    """Assistant-prose feedback follows the same run gating as tool output:
+    with no run-status seam on the owning screen, Request changes and LGTM
+    render disabled (with the hint), Comment stays enabled."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.ASSISTANT)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_markdown_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.query_one("#console-selection-request-changes", Button).disabled
+        assert menu.query_one("#console-selection-lgm", Button).disabled
+        assert not menu.query_one("#console-selection-comment", Button).disabled
+        assert menu.query_one("#console-selection-feedback-hint")
 
 
 @pytest.mark.asyncio
