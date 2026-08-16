@@ -121,8 +121,21 @@ have rescored rows it did not. Two commits on
 fakes `chat_api_call` and plants a fake key so the real path executes instead
 of short-circuiting on the credential check. No `cross_encoder`, no
 profile-default changes. The gate held at `PASSED: No regression. 105
-metric(s) within 0.05 of baseline.` in T1 and again at close-out -- no cell
-moved, despite the stamping change touching the semantic path.
+metric(s) within 0.05 of baseline.` in T1 and again at close-out -- but that
+signal is VACUOUS for the stamping change and must not be read as covering it:
+the harness builds from profile `hybrid_basic`
+(`Tests/RAG_Eval/harness/environment.py:111`), whose `reranking_config is None`
+and `search.enable_reranking is False`, so NO gated cell runs the reranker at
+all (verified by probe at close-out review). 105/105 is a real
+no-collateral-regression signal for the retrieval path and says nothing about
+note-b or AC#4. What actually covers those, with teeth proven by mutation: the
+two note-b degraded-path tests
+(`test_failed_pointwise_rows_do_not_claim_the_reranked_score_kind`,
+`test_failed_pointwise_rows_keep_their_kind_through_the_cache_hit`), the
+construction converse pin
+(`test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity`),
+and the gate16 render test
+(`test_reranking_disclosure_tags_render_one_evidence_notice_line`).
 
 **Filed at close-out (full ID-safety sweep; true max 16865 across 152 remote
 refs + 132 worktrees, leapfrogged):** TASK-16965 implement-or-retire
@@ -130,10 +143,21 @@ refs + 132 worktrees, leapfrogged):** TASK-16965 implement-or-retire
 arc could not answer -- an LLM reranker is unmeasurable on a local
 deterministic instrument, a local cross-encoder is not; retire pre-registered
 as an acceptable outcome), and TASK-17065 the provider-coverage gap the new
-picker exposed (the Select offers 29 providers; `BaseReranker._call_llm_impl`,
-`reranker.py:187-206`, hand-rolls credentials for four and never touches
-`resolve_provider_api_key` -- note-(a)'s notice currently only DISCLOSES that
-failure).
+picker exposed. **Correction after the final review's F1 (the first filing said
+"4 of 29" -- read off the shape of the `if/elif` rather than off a run):**
+credential resolution reaches 1 of 29 (`deepseek` only) and end-to-end dispatch
+reaches 0 of 29. `BaseReranker._call_llm_impl` (`reranker.py:183-206`) reads
+`self._settings["API"]`, a key `load_settings()` NEVER builds (`config.py:1433`
+projects `api_settings` and the `<provider>_api` dicts, never the raw `[API]`
+table), so the openai/anthropic/groq branches read `None` for everyone,
+always; and the one provider whose credential does resolve then dies in
+`chat_api_call`, which is called with positional arguments in the wrong order
+(the API KEY lands in `api_endpoint` -> `Unsupported API endpoint: <key>`).
+This is PRE-EXISTING and total -- before this arc Settings could only produce
+`RerankingConfig()` = openai, so every reranking-enabled profile has silently
+no-opped since the feature existed. note-(a)'s notice DISCLOSES it; TASK-17065
+owns the fix, and must land on top of this arc's cost surface because fixing it
+converts a disclosed no-op into real first-search spend.
 
 **Files.** Production: `RAG_Search/reranker.py`, `RAG_Search/simplified/
 enhanced_rag_service_v2.py`, `Library/library_rag_score_kinds.py`,

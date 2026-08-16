@@ -272,16 +272,23 @@ async def test_failed_pointwise_rows_keep_their_kind_through_the_cache_hit(monke
     scored?" fact has to survive that round trip, or the second identical
     search re-acquires the over-claim."""
     reranker = PointwiseReranker(_degraded_config("pointwise"))
-    _install_fake_provider(
+    calls = _install_fake_provider(
         monkeypatch, reranker, _fail_for_titles(["doc-0"], score=0.8)
     )
 
     first = await reranker.rerank("q", _results(3))
     assert first.failed == 1
-    calls_before = len(reranker._cache)
+    # The PROVIDER-call log, not `len(self._cache)`: a miss rewrites the same
+    # key for the same query+ids, so the cache's LENGTH is identical either
+    # way and cannot tell a hit from a miss (final-review F3).
+    calls_before = len(calls)
+    assert calls_before, "the first pass must really have called the fake provider"
 
     second = await reranker.rerank("q", _results(3))
-    assert len(reranker._cache) == calls_before, "expected a cache hit"
+    assert len(calls) == calls_before, (
+        "expected a cache HIT: the second identical rerank must not re-call "
+        f"the provider (extra calls: {calls[calls_before:]})"
+    )
 
     by_id = {r.id: r for r in second.results}
     assert "rerank_score" not in by_id["doc-0"].metadata

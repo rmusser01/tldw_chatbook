@@ -4063,22 +4063,41 @@ async def test_reranker_cost_disclosure_tracks_the_staged_top_k_and_provider(
         )
 
 
+@pytest.mark.parametrize(
+    "stored_provider",
+    [None, "openai"],
+    ids=["fresh-clone-blank", "explicit-openai"],
+)
 @pytest.mark.asyncio
 async def test_opening_the_category_does_not_dirty_the_draft_via_the_provider_select(
-    monkeypatch, tmp_path
+    stored_provider, monkeypatch, tmp_path
 ):
-    """The Select renders a profile's explicit `openai` as its blank
-    "(default)" row -- so if mounting posted a `Select.Changed`, the screen
-    would stage `""` over a loaded `"openai"` and the category would be
-    DIRTY before the user touched anything (the task-15740 family: the
-    app's own rewrites staged as user edits)."""
+    """Mounting the Select posts a `Select.Changed` carrying the RESOLVED
+    provider name, so the handler must compare EFFECTIVE providers or the
+    category is DIRTY before the user touches anything (the task-15740
+    family: the app's own rewrites staged as user edits).
+
+    `stored_provider=None` is the load-bearing case and the fresh-clone
+    shape: no `reranking_config` means the loaded field is BLANK while the
+    mount echo carries `"openai"`, so removing the guard really does stage
+    a draft nobody edited. With an explicitly stored `"openai"` the two
+    strings already match and the guard is a no-op -- which is why that
+    case alone (this test's original fixture) stayed green with the guard
+    deleted.
+    """
     from tldw_chatbook.RAG_Search.reranker import RerankingConfig
 
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
-    profile.reranking_config = RerankingConfig()
-    profile.rag_config.search.enable_reranking = True
+    if stored_provider is None:
+        # No reranking_config at all -> adapter reports reranker_provider ""
+        # (blank-means-default), the shape every fresh profile starts in.
+        profile.reranking_config = None
+        profile.rag_config.search.enable_reranking = False
+    else:
+        profile.reranking_config = RerankingConfig(model_provider=stored_provider)
+        profile.rag_config.search.enable_reranking = True
+        assert profile.reranking_config.model_provider == "openai"
     mgr.save_profile(profile)
-    assert profile.reranking_config.model_provider == "openai"
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -4088,6 +4107,11 @@ async def test_opening_the_category_does_not_dirty_the_draft_via_the_provider_se
         screen = _active_destination_screen(host)
         await pilot.pause()
 
+        # Pin the fixture's own premise: the guard is only exercised when
+        # the LOADED value differs from the echoed one.
+        assert screen._library_rag_loaded_values()["reranker_provider"] == (
+            stored_provider or ""
+        )
         assert (
             screen.query_one("#settings-library-rag-reranker-provider", Select).value
             == "openai"

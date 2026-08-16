@@ -258,7 +258,7 @@ def normalise_library_rag_distance_metric(value: Any) -> str:
 
 
 def library_rag_reranker_providers() -> tuple[str, ...]:
-    """Return the provider names the reranker's own call seam can dispatch.
+    """Return the chat provider names this build registers.
 
     Enumerated from ``Chat_Functions.API_CALL_HANDLERS`` -- the exact
     dispatch table ``chat_api_call`` looks the reranker's
@@ -269,8 +269,16 @@ def library_rag_reranker_providers() -> tuple[str, ...]:
     deliberately light (see ``load_direct_library_tools``), and
     ``Chat_Functions`` is not.
 
+    This enumerates what ``chat_api_call`` can ROUTE, which is not the same
+    as what the reranker can currently CALL: its credential lookup
+    (``_call_llm_impl``) covers far fewer providers than the table has
+    rows, so most picks fail at run time -- disclosed on the results screen
+    ("Reranking was skipped (No API key found for provider: X)") rather
+    than silently. TASK-17065 owns closing that gap, and until it does the
+    honest reading of this list is "offered", not "guaranteed callable".
+
     Returns:
-        Every dispatchable provider name, ``DEFAULT_RERANKER_PROVIDER``
+        Every registered chat provider name, ``DEFAULT_RERANKER_PROVIDER``
         first and the rest sorted, so the default reads as the head of the
         list rather than an arbitrary row inside it.
     """
@@ -310,16 +318,21 @@ def normalise_library_rag_reranker_provider(value: Any) -> str:
     Returns:
         The provider name when it is one this build can dispatch, else
         ``DEFAULT_RERANKER_PROVIDER`` -- what a blank field actually
-        resolves to at run time (``RerankingConfig``'s own default), so the
-        control shows the provider that would really be billed. A name this
-        build cannot dispatch (a hand-edited profile file, a provider from a
-        newer build) resolves there too rather than raising
-        ``InvalidSelectValueError`` out of ``compose()``.
+        resolves to at run time (``RerankingConfig``'s own default), so for
+        a blank value the control shows the provider that would really be
+        billed. A name this build does not register (a hand-edited profile
+        file, a provider from a newer build) resolves there too rather than
+        raising ``InvalidSelectValueError`` out of ``compose()`` -- and in
+        THAT branch the control is showing the default while the profile
+        still carries the unrecognised name, which the picker cannot
+        currently repair (TASK-17065 owns display + repair for it).
     """
     text = str(value).strip()
     if not text:
         return DEFAULT_RERANKER_PROVIDER
-    return text if text in library_rag_reranker_providers() else DEFAULT_RERANKER_PROVIDER
+    return (
+        text if text in library_rag_reranker_providers() else DEFAULT_RERANKER_PROVIDER
+    )
 
 
 def validate_library_rag_defaults(

@@ -133,9 +133,13 @@ not:
   scores each result with a separate `<provider>` call — up to `<n>` calls
   per search, billed at that provider's rates." — and it tracks the
   provider and **Rerank results** you have staged, so the number you read
-  is the ceiling you would actually buy. **Reranker provider** lists every
-  provider this build can dispatch a chat call to, with the default shown
-  explicitly as "openai (default)"; **Reranker model** blank means the
+  is the ceiling you would actually buy. **Reranker provider** enumerates
+  every chat provider this build registers, with the default shown
+  explicitly as "openai (default)" — note that the reranker's own
+  credential path currently reaches far fewer of them than the list offers,
+  so a pick can fail at search time (you get the skipped/degraded line
+  below, never a broken search); TASK-17065 tracks which providers the
+  reranker can actually call. **Reranker model** blank means the
   reranker's own default model. If the reranker can't run, search results
   still come back — reranking is skipped, disclosed on the results screen
   ([Library Search/RAG](../library/search-and-rag.md#evidence-rows)), and
@@ -192,8 +196,12 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
    **Reranker provider** (or leave "openai (default)"), optionally name a
    **Reranker model** (blank uses the reranker's default), keep **Rerank
    results** at or below **Default results**, and **Save (s)** — no backfill
-   needed. Every search this profile runs will now spend one extra provider
-   call per candidate result, billed to the provider you picked.
+   needed. Every search this profile runs will now attempt one extra provider
+   call per candidate result, at that provider's rates. Whether the call
+   actually goes out depends on the provider: the reranker's credential path
+   covers only some of the names the picker offers (TASK-17065), and when it
+   cannot call one the search still returns, with the reranking line on the
+   results screen saying so.
 6. **Delete a profile you no longer want.** With a profile *of your own* active
    (see Quirks), pick the one to remove, press **Delete**, confirm — delete the
    active one and the pointer falls back to a built-in.
@@ -279,7 +287,12 @@ Select and its cost line). Verified by mounted-widget tests over the real
 asserted equal to `chat_api_call`'s own dispatch table, the cost line's
 exact sentence is asserted with reranking still OFF, and it is re-asserted
 after staging a different provider and rerank top-k
-(`Tests/UI/test_settings_rag_profile_region.py`).*
+(`Tests/UI/test_settings_rag_profile_region.py`). Copy corrected in the
+final-review fix wave (same branch, same date): the picker ENUMERATES the
+registered chat providers — measured against the engine, the reranker's
+credential path can currently call almost none of them, so the "can
+dispatch" / "billed to the provider you picked" phrasing above was an
+over-claim and now points at TASK-17065 instead.*
 
 *Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
 2026-08-11 (TASK-15020 final review wave, doc-only: correcting the
