@@ -133,7 +133,10 @@ async def _run_question(engine, service, question: str) -> dict | None:
     """Execute one bounded research run; return its verification payload (or
     None with the failure printed -- one failed question must not sink the
     baseline)."""
-    run = service.launch_run(query=question)
+    # Autonomous mode: the baseline measures the PIPELINE, not the
+    # checkpoint UX -- checkpointed runs (the service default since
+    # task-16482) park at plan review and never produce a report.
+    run = service.launch_run(query=question, autonomy_mode="autonomous")
     final = await engine.execute_run(run["id"])
     if final.get("status") != "completed":
         print(f"  [run failed: {final.get('status')} — {final.get('progress_message')}]")
