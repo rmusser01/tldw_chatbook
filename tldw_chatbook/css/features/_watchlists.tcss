@@ -1197,8 +1197,23 @@ WatchlistPickerDialog {
  * in `_script_detail_renderable`'s own header ("Script: <preset>"). Longer
  * scripts/turns overflow into this section's OWN `overflow-y: auto`, same
  * as the briefing body already does.
+ *
+ * Task-16852 note: the body/detail half's `1fr` now belongs to
+ * `ScriptDetailRegion` (`#artifacts-script-detail-region`, its own rule
+ * below) -- the nested recompose boundary that lets a SCRIPT selection
+ * rebuild the script detail WITHOUT destroying `#artifacts-scripts-table`
+ * above it, mirroring the table/`BriefingDetailRegion` split above. The
+ * region's own only `fr` child is `#artifacts-script-detail` itself, so
+ * that rule is unchanged -- it still claims all the height the region's
+ * `1fr` allots it, same as when it was a direct sibling of the table.
  */
 #artifacts-scripts-table {
+    width: 100%;
+    height: 1fr;
+    min-height: 1;
+}
+
+#artifacts-script-detail-region {
     width: 100%;
     height: 1fr;
     min-height: 1;

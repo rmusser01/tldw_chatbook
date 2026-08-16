@@ -32,6 +32,7 @@ from textual.widgets import Button, DataTable
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import DestinationHarness
 from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
     WatchlistsCollectionsScreen,
 )
@@ -610,6 +611,69 @@ async def test_a_briefing_selection_never_recomposes_the_pane():
         assert pane.scripts == [], "the previous briefing's scripts must be gone"
         assert pane.citations == [], "and so must its citations"
         assert pane.selected_briefing == rows[1]
+
+
+_SCRIPT_ROSTER = [{"name": "Narrator", "role_prompt": "Calm narration."}]
+
+
+async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
+    """Task-16852: the identical guarantee, one level down.
+
+    Task-15779 retired the briefing-selection rebuild but disclosed, as
+    deliberately unexpanded scope, that a SCRIPT selection still recomposed
+    the whole `BriefingDetailRegion` -- scripts `DataTable` included.
+    `selected_script`/`script_audio` now rebuild only `ScriptDetailRegion`,
+    a second boundary nested inside `BriefingDetailRegion`, so a script
+    selection costs ZERO region rebuilds and ZERO pane rebuilds -- only the
+    nested sub-region.
+    """
+    app = _build_test_app()
+    watchlist_id = _seed(app, briefings=1)
+    db = app.watchlist_bundle_service.db
+    briefing_id = db.list_briefings(watchlist_id)[0]["id"]
+    script_ids = [
+        db.insert_briefing_script(
+            briefing_id,
+            preset_id=None,
+            preset_name=f"Preset-{index}",
+            roster_snapshot_json=dump_roster(_SCRIPT_ROSTER),
+            status="complete",
+        )
+        for index in range(2)
+    ]
+
+    async with _open(app, watchlist_id, section="artifacts") as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        pane.selected_briefing = pane.briefings[0]
+        await _settle(pilot, host)
+        assert len(pane.scripts) == 2, f"the fixture needs two scripts: {pane.scripts}"
+
+        with _RebuildCounter() as counted:
+            pane.select_script_by_id(str(script_ids[0]))
+            await _settle(pilot, host)
+
+        assert counted.recomposes["ArtifactsPane#watchlists-artifacts-pane"] == 0, (
+            "a script selection must never rebuild the pane: "
+            f"{counted.report()}"
+        )
+        assert (
+            counted.recomposes["BriefingDetailRegion#artifacts-detail-region"] == 0
+        ), (
+            "task-16852: a script selection must never rebuild the WHOLE "
+            "detail region either -- that rebuild is what destroyed the "
+            f"scripts table (and its focus, cursor and scroll): {counted.report()}"
+        )
+        assert (
+            counted.recomposes[
+                "ScriptDetailRegion#artifacts-script-detail-region"
+            ]
+            == 1
+        ), (
+            "the script selection and its audio reload landing must "
+            f"coalesce into ONE script-detail-region rebuild: {counted.report()}"
+        )
+        assert pane.selected_script is not None
+        assert pane.selected_script["id"] == script_ids[0]
 
 
 # --------------------------------------------------------------------------
