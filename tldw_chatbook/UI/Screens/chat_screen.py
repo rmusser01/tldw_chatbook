@@ -2890,12 +2890,23 @@ class ChatScreen(BaseAppScreen):
             driver_size = getattr(driver, "size", None)
         except Exception:
             driver_size = "<unavailable>"
-        logger.info(
+        dump_line = (
             f"console_layout_dump screen_size={self.size} "
             f"driver_size={driver_size} | "
             + " | ".join(_desc(w) for w in chain)
         )
-        self.notify("Layout dumped to log (F12)")
+        logger.info(dump_line)
+        # The persistent log sink only admits metadata-tagged diagnostics
+        # records, so the dump also lands in a plain scratch file the spike
+        # can read back without touching the app's logging posture.
+        try:
+            from datetime import datetime
+
+            with open("/tmp/console_layout_dump.txt", "a") as fh:
+                fh.write(f"{datetime.now().isoformat()} {dump_line}\n")
+        except Exception:
+            pass
+        self.notify("Layout dumped (/tmp/console_layout_dump.txt)")
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
