@@ -754,6 +754,9 @@ def _bulk_delete_fake(*, db, records, counts, selected_ids):
         _run_library_service_call=LibraryScreen._run_library_service_call,
         _source_record_id=LibraryScreen._source_record_id,
     )
+    fake._library_media_backing_id = types.MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
@@ -768,7 +771,9 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     DB (``MediaDatabase.mark_as_trash``, the same soft-deletion the
     single-item viewer delete already uses -- never raw SQL), dropped
     from the in-place list/rail-count bookkeeping, and select mode exits
-    since the confirmed action fully completed."""
+    since the confirmed action fully completed. Applied-page canonical
+    identities stay canonical in selection/receipt state while the DB gets
+    positive backing ids."""
     db = MediaDatabase(
         db_path=str(tmp_path / "media.db"), client_id="task-2853-bulk-delete"
     )
@@ -781,20 +786,23 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     delete_b_id, _, _ = db.add_media_with_keywords(
         title="Delete B", content="b", media_type="article", keywords=[]
     )
+    keep_identity = f"local:media:{keep_id}"
+    delete_a_identity = f"local:media:{delete_a_id}"
+    delete_b_identity = f"local:media:{delete_b_id}"
     records = (
-        {"id": str(keep_id), "title": "Keep"},
-        {"id": str(delete_a_id), "title": "Delete A"},
-        {"id": str(delete_b_id), "title": "Delete B"},
+        {"id": keep_identity, "title": "Keep"},
+        {"id": delete_a_identity, "title": "Delete A"},
+        {"id": delete_b_identity, "title": "Delete B"},
     )
     fake = _bulk_delete_fake(
         db=db,
         records=records,
         counts={"media": 3},
-        selected_ids=[str(delete_a_id), str(delete_b_id)],
+        selected_ids=[delete_a_identity, delete_b_identity],
     )
 
     await LibraryScreen._delete_library_media_selection(
-        fake, (str(delete_a_id), str(delete_b_id))
+        fake, (delete_a_identity, delete_b_identity)
     )
 
     assert db.get_media_by_id(delete_a_id, include_trash=True)["is_trash"] in {
@@ -808,7 +816,7 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     assert not db.get_media_by_id(keep_id, include_trash=True)["is_trash"]
 
     remaining_ids = {r["id"] for r in fake._local_source_records["media"]}
-    assert remaining_ids == {str(keep_id)}
+    assert remaining_ids == {keep_identity}
     assert fake._local_source_counts["media"] == 1
 
     assert fake._library_media_row_selection.count == 0
@@ -818,8 +826,8 @@ async def test_delete_selection_soft_deletes_via_real_db_and_updates_records_and
     # task-4022 AC2: a full success leaves a receipt naming exactly the
     # ids that were actually deleted, ready for Undo.
     assert fake._library_media_delete_receipt_ids == (
-        str(delete_a_id),
-        str(delete_b_id),
+        delete_a_identity,
+        delete_b_identity,
     )
     # AC3's rail count lives on the SHELL input (built from
     # ``_local_source_counts`` in ``_build_library_shell_input``), which a
@@ -967,7 +975,8 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
 ):
     """Full success: every id in the receipt is un-trashed in the REAL DB,
     reinserted into the in-place list/rail-count bookkeeping, and the
-    receipt itself is cleared."""
+    receipt itself is cleared. The receipt carries canonical identities while
+    the restore service receives positive backing ids."""
     db = MediaDatabase(
         db_path=str(tmp_path / "media.db"), client_id="task-4022-undo"
     )
@@ -989,10 +998,12 @@ async def test_undo_restores_items_via_real_db_and_updates_records_and_counts(
         counts={"media": 1},
         selected_ids=[],
     )
-    fake._library_media_delete_receipt_ids = (str(undo_a_id), str(undo_b_id))
+    undo_a_identity = f"local:media:{undo_a_id}"
+    undo_b_identity = f"local:media:{undo_b_id}"
+    fake._library_media_delete_receipt_ids = (undo_a_identity, undo_b_identity)
 
     await LibraryScreen._undo_library_media_bulk_delete(
-        fake, (str(undo_a_id), str(undo_b_id))
+        fake, (undo_a_identity, undo_b_identity)
     )
 
     assert not db.get_media_by_id(undo_a_id, include_trash=True)["is_trash"]
@@ -1387,6 +1398,9 @@ async def test_single_item_delete_also_arms_entry_focus_on_success(tmp_path):
         _entry_focus_arm_calls=entry_focus_arm_calls,
         _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
     )
+    fake._library_media_backing_id = types.MethodType(
+        LibraryScreen._library_media_backing_id, fake
+    )
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake
     )
@@ -1542,6 +1556,9 @@ def _single_delete_worker_fake(*, db, records, counts, selected_media_id):
         _arm_library_list_entry_focus=lambda: entry_focus_arm_calls.append(True),
         _run_library_service_call=LibraryScreen._run_library_service_call,
         _source_record_id=LibraryScreen._source_record_id,
+    )
+    fake._library_media_backing_id = types.MethodType(
+        LibraryScreen._library_media_backing_id, fake
     )
     fake._notify_library_media_delete_warning = types.MethodType(
         LibraryScreen._notify_library_media_delete_warning, fake

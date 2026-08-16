@@ -16024,7 +16024,7 @@ class LibraryScreen(BaseAppScreen):
                         await self._run_library_service_call(
                             delete_media_item,
                             mode="local",
-                            media_id=media_id,
+                            media_id=self._library_media_backing_id(media_id),
                             isolate_in_worker=True,
                         )
                         succeeded.append(media_id)
@@ -16195,7 +16195,7 @@ class LibraryScreen(BaseAppScreen):
                         result = await self._run_library_service_call(
                             restore_media_item,
                             mode="local",
-                            media_id=media_id,
+                            media_id=self._library_media_backing_id(media_id),
                             isolate_in_worker=True,
                         )
                         if isinstance(result, Mapping):
