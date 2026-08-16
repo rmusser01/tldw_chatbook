@@ -672,3 +672,43 @@ and only then did mutation 3 die. Every mutation was applied and reverted
 with `Edit`, with `grep -c MUTATION` = 0 and `git diff --stat` checked
 after each.
 
+
+### 11.8 Gate for this section
+
+Runner: `.venv/bin/pytest <paths> -p no:randomly -p no:cacheprovider -q
+--no-header -rf`, cwd = `.worktrees/headless-fires`, `PYTHONPATH` pinned
+to the worktree (the venv's editable install resolves `tldw_chatbook` to a
+FOREIGN worktree). `Tests/test_probe_import_provenance.py` is in every
+row. Every count below was READ off a summary line.
+
+| Gate | Result |
+|---|---|
+| **The red itself** — `test_console_headless_wake_fires.py` + `test_console_store_continuity.py` + probe, one invocation | **6 passed** (run twice; was `1 failed, 4 passed` before the fix) |
+| **The landing's battery + this branch's new files + `test_ui_responsiveness`** (continuity, viewless hooks, runtime lifetime, runtime ownership, screen residency, MCP approval, the 16-file wake glob, headless e2e, the 13 invariants, the 5 new leak tests, probe) — one invocation, 262 collected | **262 passed, 0 failed** (258.0s) |
+| `Tests/Agents/` + probe | **1448 passed, 0 failed** (40.4s) |
+| **The console-sync neighbourhood** — `test_console_control_bar_coalescing`, `test_ui_responsiveness`, `test_console_stop_feedback`, `test_console_switch_draft_integrity`, `test_console_native_transcript`, probe | **4 failed, 119 passed** on the branch vs **4 failed, 114 passed** at the pre-fix baseline (`.worktrees/hf-leak-base` @ `eae717f53`) — the **same four node-ids** both sides, `+5` = this branch's new file. Dev's reds, not this branch's |
+| The 5 new leak tests alone | **5 passed** |
+| `ruff check` on both changed files | 1 error, `F401 inspect imported but unused` in `chat_screen.py` — reproduces at the baseline; pre-existing, untouched |
+
+**`Tests/UI/` in full, in one invocation: attempted twice, not
+completed — stated plainly rather than implied.** The directory collects
+**12,879** tests here. The first attempt was launched at the method-form
+code and had to be discarded when the predicate changed shape; the second
+ran alone and measured **~17 tests/min** (2% in 15 minutes) against a
+machine carrying **three to four concurrent `pytest` processes from other
+sessions** (14 cores, load average ~8) — i.e. ~12 hours, which this task
+could not afford. What replaced it, chosen so the *property that matters
+for this bug class* is preserved — many app lifetimes inside ONE process:
+
+* the 262-test battery above is a single invocation spanning 15 files and
+  dozens of app lifetimes, including every file in the change's blast
+  radius;
+* a single invocation over the **entire Console population** —
+  `Tests/UI/test_console_*.py` (158 files) + `test_screen_residency` +
+  probe, **3,298 collected** — plus three further invocations covering
+  every remaining `Tests/UI` file, were running at the time this section
+  was written. Their counts belong here and are not being guessed.
+
+The honest summary of the risk this leaves: a regression confined to a
+`Tests/UI` file outside the Console population and outside the battery
+would not have been caught by what completed.
