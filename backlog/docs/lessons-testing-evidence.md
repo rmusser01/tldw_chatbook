@@ -315,6 +315,17 @@ LIVE_RESPONSE = { ... }                                    # pasted from the wir
 
 A fake can agree with a wrong assumption; `inspect.signature` cannot.
 
+**Sharpest variant (task-16847, 2026-08-16).** A double can stand in for an attribute
+that does not exist at all. `a8082fe85`'s launch test set
+`instance.call_from_thread = ...` and `instance.push_screen = ...` on a
+`ChatScreen.__new__` instance — but `Screen` defines *neither* (both are App-only in
+Textual 8), so pressing `y` in the real app raised `AttributeError` inside the thread
+worker while the test stayed green, and the repo-wide guard
+(`Tests/test_call_from_thread_guard.py`) sat red on dev for two days. When a unit test
+must fake threading/navigation seams, patch the **collaborator** (`app`) — never spell
+a new attribute onto the class under test; an instance monkeypatch is also an
+existence claim, and nothing checks it.
+
 ---
 
 ## Mutation-test every guard you add
