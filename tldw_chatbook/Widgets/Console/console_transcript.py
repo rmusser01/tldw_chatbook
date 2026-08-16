@@ -70,6 +70,7 @@ from tldw_chatbook.Widgets.Console.console_selection import (
     offset_for_cell,
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -85,6 +86,13 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: Console selection phase 3: run statuses during which review feedback
+#: (Request changes / LGTM) can be queued behind the active run via the
+#: prompt-queue seam. Anything else (or a screen without the run-status
+#: seam at all) leaves those two menu actions gated; Comment never gates.
+_SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES = frozenset(
+    {"validating", "streaming", "checking_citations", "retrying"}
+)
 #: TASK-1365: virtual-height watermarks (terminal rows) for transcript pruning.
 #: 20000 rows is several hundred long messages; rows are cheap to measure but
 #: expensive to keep laid out. Mirrored from the legacy chat log pruning
@@ -2378,9 +2386,10 @@ class ConsoleTranscript(VerticalScroll):
         #: transcript itself), so extension resolves the origin row here
         #: instead of from the event's control. Cleared on finish/cancel and
         #: by the reconciliation guard when the row is removed/rebuilt.
-        #: Plain or markdown row (both implement the selection protocol).
+        #: Plain, markdown, or tool diff row (all implement the selection
+        #: protocol).
         self._selection_origin_row: (
-            ConsoleTranscriptMessage | ConsoleMarkdownMessage | None
+            ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
         ) = None
 
     def on_mount(self) -> None:
@@ -3716,6 +3725,11 @@ class ConsoleTranscript(VerticalScroll):
         # for the menu's lifetime (the jump pill appears, the standard
         # detached-reader affordance).
         self.release_anchor()
+        # Phase 3: selections in agent output (TOOL-role rows, diff rows)
+        # additionally offer the review-feedback actions, run-gated through
+        # the owning screen's status seam.
+        origin_row = self._active_selection_row()
+        feedback_available = self._row_supports_selection_feedback(origin_row)
         screen_size = self.screen.size
         self.screen.mount(
             ConsoleSelectionMenu(
@@ -3726,6 +3740,8 @@ class ConsoleTranscript(VerticalScroll):
                     event.screen_y + 1, screen_size.height, margin=2
                 ),
                 owner=self,
+                feedback_available=feedback_available,
+                run_active=feedback_available and self._selection_run_active(),
             )
         )
 
@@ -3791,6 +3807,91 @@ class ConsoleTranscript(VerticalScroll):
         self.selection_manager.cancel()
         self._selection_origin_row = None
         self._remove_selection_menu()
+
+    @on(ConsoleSelectionMenu.RequestChanges)
+    def _selection_request_changes(
+        self, event: ConsoleSelectionMenu.RequestChanges
+    ) -> None:
+        """Send request-changes review feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(
+            ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES
+        )
+
+    @on(ConsoleSelectionMenu.Lgm)
+    def _selection_lgm(self, event: ConsoleSelectionMenu.Lgm) -> None:
+        """Send LGTM review feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_LGM)
+
+    @on(ConsoleSelectionMenu.Comment)
+    def _selection_comment(self, event: ConsoleSelectionMenu.Comment) -> None:
+        """Send comment feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_COMMENT)
+
+    def _request_selection_feedback(self, action: str) -> None:
+        """Post a capped-selection feedback request and clean up (phase 3).
+
+        Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
+        selection text is capped by ``cap_quote`` before it leaves the
+        transcript (the screen no-ops empty quotes), the row range is
+        cleared, the drag manager cancelled, and the menu removed. The
+        structured message composition and prompt-queue routing live on
+        the owning screen (phase 3 task 5).
+        """
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action=action, quote=cap_quote(row.get_selection_text())
+                )
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    def _row_supports_selection_feedback(
+        self,
+        row: ConsoleTranscriptMessage
+        | ConsoleMarkdownMessage
+        | ConsoleToolDiffRow
+        | None,
+    ) -> bool:
+        """Whether the selection's origin row is agent output (phase 3).
+
+        Diff rows exist only under expanded file-write TOOL markers, so
+        they are agent output by definition; plain/markdown rows qualify
+        when the message they render is TOOL-role (tool markers and tool
+        diagnostics). ``None`` (no live selection) offers nothing.
+        """
+        if isinstance(row, ConsoleToolDiffRow):
+            return True
+        if isinstance(row, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+            message = getattr(row, "_message", None)
+            return message is not None and message.role is ConsoleMessageRole.TOOL
+        return False
+
+    def _selection_run_active(self) -> bool:
+        """Whether the owning screen reports an active console run (phase 3).
+
+        Reads the screen's run-status seam (``ChatScreen``'s
+        ``_current_console_run_status_value``) defensively via ``getattr``:
+        bare harness screens and non-console hosts do not expose it, which
+        simply means "no active run" (Request changes / LGTM stay gated).
+        """
+        try:
+            status_getter = getattr(
+                self.screen, "_current_console_run_status_value", None
+            )
+        except NoScreen:  # pragma: no cover - teardown race only
+            return False
+        if not callable(status_getter):
+            return False
+        return str(status_getter()).strip().lower() in (
+            _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES
+        )
 
     def _active_selection_row(
         self,

@@ -11,6 +11,12 @@ to ``ChatScreen``, which resolves the configured side-chat model + prompt
 template, builds the ephemeral side-chat service over the (fake) provider
 gateway, and pushes ``ConsoleSideChatModal`` exactly once -- More Details
 with the rendered template auto-sent, Ask in Side Chat freeform.
+
+Phase 3 (task 3): the selection menu offers ``Request changes | LGTM |
+Comment`` only when the selection sits in agent output (TOOL-role rows or
+diff rows), run-gated through the owning screen's run-status seam, and
+each action makes the transcript post ``ConsoleSelectionFeedbackRequested``
+with the capped quote before clearing the selection UI.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ from dataclasses import dataclass
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.screen import Screen
+from textual.widgets import Button
 
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -36,6 +44,7 @@ from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -449,3 +458,183 @@ async def test_drag_ask_mode_opens_side_chat_modal_end_to_end():
 
         await pilot.press("escape")
         await pilot.pause()
+
+
+# ---------------------------------------------------------------------------
+# Selection feedback actions (phase 3, task 3)
+# ---------------------------------------------------------------------------
+
+
+class _StubRunStatusScreen(Screen):
+    """Harness screen exposing the ChatScreen run-status seam verbatim."""
+
+    def __init__(self, run_status: str) -> None:
+        super().__init__()
+        self._run_status = run_status
+
+    def _current_console_run_status_value(self) -> str:
+        return self._run_status
+
+
+class _FeedbackTranscriptApp(App[None]):
+    """Drag -> menu harness with app-level capture of feedback requests.
+
+    The default screen is a plain ``Screen`` (no
+    ``_current_console_run_status_value`` attribute: run gating closed,
+    exactly like any non-ChatScreen host) unless ``run_status`` stubs the
+    seam -- the transcript must derive the menu's ``run_active`` kwarg
+    through ``getattr`` rather than assume a ChatScreen.
+    """
+
+    def __init__(self, *, role: ConsoleMessageRole, run_status: str | None = None):
+        super().__init__()
+        self._role = role
+        self._run_status = run_status
+        self.feedback_events: list[ConsoleSelectionFeedbackRequested] = []
+
+    def get_default_screen(self) -> Screen:
+        if self._run_status is None:
+            return Screen()
+        return _StubRunStatusScreen(self._run_status)
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    # Module-level Message classes carry no widget namespace, so the
+    # auto-generated handler is ``on_console_selection_feedback_requested``
+    # (matching how ``on_console_side_chat_requested`` works for phase 2).
+    def on_console_selection_feedback_requested(
+        self, event: ConsoleSelectionFeedbackRequested
+    ) -> None:
+        self.feedback_events.append(event)
+
+
+async def _drag_select_first_row(
+    pilot, app: _FeedbackTranscriptApp, *, start: int = 0, end: int = 4
+) -> ConsoleTranscriptMessage:
+    """Finish a drag over the first row body and post the selection event.
+
+    Mirrors the real release path: the manager finishes with a non-empty
+    selection, the transcript posts ``TranscriptTextSelected``, and the
+    selection menu mounts on the screen at the release cell.
+    """
+    transcript = app.query_one(ConsoleTranscript)
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=app._role, content="tool ran and wrote things", id="m1"
+            )
+        ]
+    )
+    await transcript.refresh_messages()
+    await pilot.pause()
+    row = app.query_one("#console-message-m1", ConsoleTranscriptMessage)
+    region = transcript.region
+
+    transcript.selection_manager.begin_drag(row.id, start)
+    transcript.selection_manager.extend_drag(row.id, end)
+    row.set_selection_range(start, end)
+    transcript.selection_manager.finish_drag()
+    transcript.post_message(
+        ConsoleTranscript.TranscriptTextSelected(
+            selection=TextSelection(row.id, start, end),
+            screen_x=region.x + 4,
+            screen_y=region.y + 2,
+        )
+    )
+    await pilot.pause()
+    return row
+
+
+@pytest.mark.asyncio
+async def test_drag_on_tool_role_row_shows_feedback_entries():
+    """A selection in agent output (TOOL-role plain row) mounts the menu
+    with the three feedback entries."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="streaming")
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.query_one("#console-selection-request-changes", Button)
+        assert menu.query_one("#console-selection-lgm", Button)
+        assert menu.query_one("#console-selection-comment", Button)
+
+
+@pytest.mark.asyncio
+async def test_drag_on_user_row_hides_feedback_entries():
+    """A selection over the user's own message offers no feedback actions."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.USER, run_status="streaming")
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert not menu.query("#console-selection-request-changes")
+        assert not menu.query("#console-selection-lgm")
+        assert not menu.query("#console-selection-comment")
+        assert not menu.query("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_run_gating_when_screen_lacks_status_seam():
+    """No run-status attribute on the owning screen: Request changes and
+    LGTM render disabled (with the hint), Comment stays enabled."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        request = menu.query_one("#console-selection-request-changes", Button)
+        lgm = menu.query_one("#console-selection-lgm", Button)
+        comment = menu.query_one("#console-selection-comment", Button)
+        assert request.disabled
+        assert lgm.disabled
+        assert not comment.disabled
+        assert menu.query_one("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_run_gating_with_idle_status():
+    """An idle run status gates the same as a missing seam."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="idle")
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.query_one("#console-selection-request-changes", Button).disabled
+        assert menu.query_one("#console-selection-lgm", Button).disabled
+        assert not menu.query_one("#console-selection-comment", Button).disabled
+        assert menu.query_one("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_active_run_status_enables_feedback_entries():
+    """A streaming run unlocks Request changes and LGTM (no hint line)."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="streaming")
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert not menu.query_one("#console-selection-request-changes", Button).disabled
+        assert not menu.query_one("#console-selection-lgm", Button).disabled
+        assert not menu.query_one("#console-selection-comment", Button).disabled
+        assert not menu.query("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_comment_posts_selection_feedback_requested_and_cleans_up():
+    """Pressing Comment posts one app-level ConsoleSelectionFeedbackRequested
+    carrying the capped quote, then clears the whole selection UI."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="idle")
+    async with app.run_test(size=(80, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _drag_select_first_row(pilot, app)
+        assert row.get_selection_text() == "tool"  # control: selection live
+
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+
+        assert len(app.feedback_events) == 1
+        event = app.feedback_events[0]
+        assert event.action == "comment"
+        assert event.quote == "tool"
+        # Cleanup mirrors Add-to-chat: highlight cleared, drag state
+        # cancelled, origin row dropped, menu removed.
+        assert row.get_selection_text() == ""
+        assert transcript.selection_manager.state.selection is None
+        assert transcript._selection_origin_row is None
+        assert not app.screen.query(ConsoleSelectionMenu)

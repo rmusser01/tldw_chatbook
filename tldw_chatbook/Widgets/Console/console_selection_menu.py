@@ -65,6 +65,26 @@ class ConsoleSideChatRequested(Message):
         self.mode = mode
 
 
+class ConsoleSelectionFeedbackRequested(Message):
+    """Bubbled when the user sends review feedback about a selection.
+
+    Console selection phase 3: the transcript posts this after the menu's
+    "Request changes" / "LGTM" / "Comment" actions on a selection in agent
+    output; the owning ``ChatScreen`` composes the structured feedback
+    message (action header + quoted selection + optional comment) and
+    routes it as the next user message via the prompt queue.
+    """
+
+    ACTION_REQUEST_CHANGES = "request-changes"
+    ACTION_LGM = "lgm"
+    ACTION_COMMENT = "comment"
+
+    def __init__(self, action: str, quote: str) -> None:
+        super().__init__()
+        self.action = action
+        self.quote = quote
+
+
 class ConsoleSelectionMenu(Vertical):
     """Floating stacked menu anchored at the selection release cell."""
 
