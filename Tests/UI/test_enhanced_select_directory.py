@@ -176,6 +176,73 @@ async def test_dir_path_input_bad_path_shows_error_and_stays_open(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dir_path_input_nul_byte_is_rejected_not_raised(tmp_path):
+    """A NUL byte must set an error line, not raise ValueError (Qodo TASK-16478)."""
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_nul_path")
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        path_input = dialog.query_one("#dir-path-input", Input)
+        path_input.value = str(tmp_path / "bad\x00name")
+        path_input.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        error_line = dialog.query_one("#error-line", Static)
+        assert "null characters" in str(error_line.renderable)
+        assert not app.result_seen
+
+
+@pytest.mark.asyncio
+async def test_dir_path_input_existing_file_reports_not_a_directory(tmp_path):
+    """An existing file path is a different error than a missing one (Qodo)."""
+    (tmp_path / "a_file.txt").write_text("x")
+
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_file_path")
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        path_input = dialog.query_one("#dir-path-input", Input)
+        path_input.value = str(tmp_path / "a_file.txt")
+        path_input.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        error_line = dialog.query_one("#error-line", Static)
+        rendered = str(error_line.renderable)
+        assert "Not a directory" in rendered
+        assert "Path not found" not in rendered
+        assert not app.result_seen
+
+
+@pytest.mark.asyncio
+async def test_dir_path_input_accepts_relative_paths(tmp_path):
+    (tmp_path / "relative-target").mkdir()
+
+    dialog = EnhancedSelectDirectory(location=tmp_path, context="t_relative")
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        nav = dialog.query_one(SearchableDirectoryNavigation)
+
+        path_input = dialog.query_one("#dir-path-input", Input)
+        path_input.value = "relative-target"
+        path_input.focus()
+        await pilot.press("enter")
+        for _ in range(20):
+            if nav.location == (tmp_path / "relative-target").resolve():
+                break
+            await pilot.pause()
+
+        assert nav.location == (tmp_path / "relative-target").resolve()
+
+
+@pytest.mark.asyncio
 async def test_shortcut_hints_name_the_folder_action(tmp_path):
     """Directory-mode hints must not advertise the file-flow Enter-confirm."""
     dialog = EnhancedSelectDirectory(location=tmp_path, context="t_hints")

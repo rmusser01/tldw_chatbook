@@ -2503,6 +2503,23 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         classes: Optional[str] = None,
         name: Optional[str] = None,
     ):
+        """Initialise the directory selection dialog.
+
+        Args:
+            location: Optional starting location; ``"."`` resolves through
+                the per-context remembered start directory.
+            title: Dialog title.
+            select_button: Label for the confirm button.
+            cancel_button: Label for the cancel button.
+            context: Persistence context key (last-dir / recents).
+            id: Optional Textual widget id.
+            classes: Optional Textual widget classes.
+            name: Optional Textual widget name.
+
+        Notes:
+            Directory picking never takes file filters or multi-select;
+            both are fixed off by this constructor.
+        """
         super().__init__(
             location=location,
             title=title,
@@ -2565,21 +2582,45 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
 
     @on(Input.Submitted, "#dir-path-input")
     def _on_dir_path_submit(self, event: Input.Submitted) -> None:
-        """Navigate to the typed path, mirroring the vendored dialog."""
+        """Navigate to the typed path, mirroring the vendored dialog.
+
+        Validation mirrors ``_on_path_input_submit`` (the Ctrl+L bar):
+        a local file picker navigates the user's own filesystem, so
+        ``validate_path_simple`` is deliberately NOT applied here -- it
+        rejects legitimate ``~/``, ``../``, and shell-metacharacter path
+        segments and would break navigation. The one input that is never
+        a valid path (a NUL byte) is rejected explicitly before any
+        ``Path`` construction, which would otherwise raise a bare
+        ``ValueError`` out of this handler (Qodo review, TASK-16478).
+        """
         event.stop()
         value = event.value.strip()
         if not value:
             return
+        if "\x00" in value:
+            self._set_error("Path cannot contain null characters.")
+            self.query_one("#dir-path-input", Input).focus()
+            return
         try:
-            target = MakePath.of(value).expanduser().resolve()
-        except (RuntimeError, OSError) as error:
+            target = MakePath.of(value).expanduser()
+            if not target.is_absolute():
+                target = self._dir_nav().location / target
+            target = target.resolve()
+        except (RuntimeError, OSError, ValueError) as error:
             self._set_error(str(error))
+            self.query_one("#dir-path-input", Input).focus()
             return
         if target.is_dir():
             self._dir_nav().location = target
+            return
+        if target.exists():
+            # A real path that is not a directory is a different mistake
+            # than a nonexistent one; the vendored SelectDirectory
+            # distinguishes them too.
+            self._set_error(f"Not a directory: {target.name}")
         else:
             self._set_error(f"Path not found: {value}")
-            self.query_one("#dir-path-input", Input).focus()
+        self.query_one("#dir-path-input", Input).focus()
 
     @on(Button.Pressed, "#select")
     def _select_viewed_directory(self, event: Button.Pressed) -> None:
