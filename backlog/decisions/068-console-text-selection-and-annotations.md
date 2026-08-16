@@ -106,6 +106,15 @@ across the stack.
   never leaves the modal), and whose worker runs in the
   non-exclusive `console-side-chat` group so it never cancels or
   blocks `console-run-{session_id}` session workers.
+- Phase 3 (review feedback) landed: selections in agent output (tool
+  and diff rows) offer `Request changes | LGTM | Comment` in the
+  selection menu (run-gated with a visible hint when no run is
+  active), and the composed feedback (action header + quoted
+  selection + optional comment) routes as the next user message
+  through the prompt-queue dispatch seam — it queues behind an active
+  run and never touches the composer draft or `submit_draft` (which
+  refuses during runs and would clobber in-progress typing). Phase 4
+  adds annotation persistence.
 
 ## Links
 
