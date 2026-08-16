@@ -712,13 +712,20 @@ def test_sealing_loop_terminates_when_the_identity_itself_is_hostile():
     a halved id is a WRONG id, not a smaller one -- so the loop shrinks the
     four text fields around it and the identity survives verbatim."""
     huge = "界" * 40_000
-    oversized_id = "x" * 5_000
+    # TWO REGIMES (Qodo PR-1729 finding 3 refined the 16174 pin): below the
+    # projection bound an id survives VERBATIM -- the shrink loop never
+    # touches it, because a halved id is a WRONG id. AT the bound it is
+    # truncated at projection instead, because the alternative demonstrated
+    # by the finding is worse: an unbounded id is unshrinkable ballast that
+    # forces the sealing loop to drop the ENTIRE row (id, snippet and all),
+    # and an id past _MAX_RESULT_ID_CHARS names nothing fetchable anyway.
+    verbatim_id = "x" * 1_500
     row = LibraryRagResultRow(
         result_id=huge,
         title=huge,
         snippet="Matched media · pdf",
         score=0.5,
-        source_id=oversized_id,
+        source_id=verbatim_id,
         chunk_id="",
         citations=(),
         provenance=MappingProxyType({"source_type": "media"}),
@@ -734,4 +741,198 @@ def test_sealing_loop_terminates_when_the_identity_itself_is_hostile():
     payload = json.loads(result.content)
     assert serialized_size(payload) <= MAX_RESULT_BYTES
     assert payload["returned"] == len(payload["results"]) == 1
-    assert payload["results"][0]["source_id"] == oversized_id
+    assert payload["results"][0]["source_id"] == verbatim_id
+
+
+# --------------------------------------------------------------------------
+# LibraryRagToolProvider: provenance identity fallbacks (TASK-16588)
+# --------------------------------------------------------------------------
+
+
+def _point_id_row(index: int, *, chars: int = 300) -> dict:
+    """A NON-CANONICAL semantic row, as `_semantic_row` builds one when the
+    indexed entry carried no `source_id`/`document_id` metadata: `source_id`
+    fell through to the vector store's POINT id, and the real document
+    identity survives only in the provenance extras.
+
+    BYTE-COST CAVEAT: the ids below (`n1`, `note_n1`) are deliberately SHORT,
+    so the cost `test_sealed_payload_survives_fallbacks` reports (15.0 B per
+    carrying row) is a fixture artefact and is NOT the production figure.
+    Real ids are UUIDs: re-measured by the same strip-and-reserialize method
+    on 34 real route payloads, the fallbacks cost **45.94 B/row on a
+    canonical index (a redundant `doc_id`) and 102.0 B/row non-canonical
+    (`note_id` + `doc_id`)** -- 3-7x this fixture. See
+    `Docs/superpowers/qa/2026-08-16-rag-semantic-identity/report.md`
+    (§ "Byte cost, on the real route payloads").
+    """
+    return {
+        "title": f"Doc {index}",
+        "snippet": (f"doc-{index}: " + "the plan says a great deal. " * 40)[:chars],
+        "score": 0.7,
+        "source_id": f"a1b2c3d4-e5f6-{index}",
+        "chunk_id": f"note_{index}_chunk_3",
+        "provenance": {
+            "source_type": "note",
+            "chunk_start": 1200,
+            "note_id": f"n{index}",
+            "doc_id": f"note_n{index}",
+        },
+    }
+
+
+def test_rows_carry_note_id_and_doc_id_fallbacks():
+    """A point-id row's `source_id` names nothing `expand_document` can fetch;
+    the identity that CAN be fetched is in provenance, so the payload carries
+    it verbatim rather than withholding it behind an `expandable` verdict."""
+    provider = LibraryRagToolProvider(
+        FakeRagService(result={"results": [_point_id_row(1)]})
+    )
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    projected = json.loads(result.content)["results"][0]
+    assert projected["note_id"] == "n1"
+    assert projected["doc_id"] == "note_n1"
+    # The point id still ships as `source_id` -- the fallbacks are ADDITIONS,
+    # and the tool tries `source_id` first by design.
+    assert projected["source_id"] == "a1b2c3d4-e5f6-1"
+    assert "provenance" not in projected
+    assert "citations" not in projected
+
+
+def test_fallbacks_absent_when_provenance_lacks_them():
+    """A canonically-indexed row resolves through `source_id` alone, so it
+    pays no bytes for keys it does not have: absent, never `None` or `""`."""
+    rows = [_chunked_row(4), _point_id_row(5)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    canonical, point_id = json.loads(result.content)["results"]
+    assert "note_id" not in canonical
+    assert "doc_id" not in canonical
+    assert canonical["source_id"] == "note_4", "the rest of the identity is intact"
+    # The same payload proves the absence is discrimination, not inertness.
+    assert point_id["note_id"] == "n5"
+    assert point_id["doc_id"] == "note_n5"
+
+
+def test_fallbacks_ride_the_hint_precondition():
+    """The fallbacks are identity, and identity is emitted on exactly the rows
+    the tool can act on. A canonicalization VARIANT source type (`media_chunk`)
+    gets no hint, so it gets no identity -- and no fallbacks either."""
+    row = _point_id_row(6)
+    row["provenance"]["source_type"] = "media_chunk"
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "expand_hint" not in projected
+    assert "source_type" not in projected
+    assert "source_id" not in projected
+    assert "note_id" not in projected
+    assert "doc_id" not in projected
+
+
+@pytest.mark.parametrize(
+    "empty_value", ["", "   ", None], ids=["empty", "whitespace", "none"]
+)
+def test_empty_string_fallbacks_are_dropped(empty_value):
+    """An empty fallback resolves nothing; emitting it would spend bytes in a
+    sealed payload to hand the tool a candidate it must discard."""
+    row = _point_id_row(7)
+    row["provenance"]["note_id"] = empty_value
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "note_id" not in projected
+    assert projected["doc_id"] == "note_n7", "the usable fallback still ships"
+
+
+def test_media_id_is_never_projected():
+    """`media_id` is accepted by the tool but written by NO indexing builder
+    (spec verification item 2), so the payload never emits it: a key that
+    cannot occur in real provenance is inert surface, not a fallback."""
+    row = _point_id_row(8)
+    row["provenance"]["media_id"] = "7"
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "media_id" not in projected
+    assert projected["note_id"] == "n8", "the fallbacks that DO occur still ship"
+
+
+def test_oversized_identity_values_are_bounded_at_projection():
+    """Qodo PR-1729 finding 3: identity keys are excluded from the sealing
+    loop's shrink order, so an untrusted 50k-char provenance id could force
+    row drops. Identity strings are bounded at projection instead, by the
+    same _MAX_RESULT_ID_CHARS precedent result_id already uses -- an id past
+    that length names nothing fetchable (production ids are <= 1000 chars),
+    while unbounded it is payload ballast."""
+    row = _point_id_row(9)
+    row["source_id"] = "s" * 50_000
+    row["chunk_id"] = "c" * 50_000
+    row["provenance"]["note_id"] = "n" * 50_000
+    row["provenance"]["doc_id"] = "d" * 50_000
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload["returned"] == 1
+    projected = payload["results"][0]
+    # source_id/chunk_id pass through from_result's display sanitizer (1000)
+    # on this dict-row path; the provenance fallbacks bypass it, so the
+    # projection bound (2000) is their ONLY defence.
+    for key in ("source_id", "chunk_id"):
+        assert len(projected[key]) == 1000, (key, len(projected[key]))
+    for key in ("note_id", "doc_id"):
+        assert len(projected[key]) == 2000, (key, len(projected[key]))
+
+
+def test_sealed_payload_survives_fallbacks():
+    """The ceiling re-check every payload ADDITION on this seam owes: ten rows,
+    five carrying both fallbacks, all kept under 32 KiB -- with the cost of the
+    added keys measured by strip-and-reserialize and stated."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_point_id_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    stripped = json.loads(result.content)
+    carriers = 0
+    for row in stripped["results"]:
+        if row.pop("note_id", None) is not None or row.pop("doc_id", None) is not None:
+            carriers += 1
+    size = serialized_size(payload)
+    cost = size - serialized_size(stripped)
+    # The per-row figure below is scaled by THIS fixture's short ids (`n1`);
+    # on real UUID ids the same method reads 45.94 B/row canonical and
+    # 102.0 B/row non-canonical (TASK-16588 QA report, § "Byte cost").
+    # NOTE: an f-string in an assert message is rendered only when the assert
+    # FAILS -- a green run prints nothing. To read the numbers, run this test
+    # under `-s` with the assert forced, or use the QA report's figures.
+    assert size <= MAX_RESULT_BYTES, (
+        f"fallbacks cost {cost} B over ten rows ({carriers} carrying both keys, "
+        f"{cost / max(carriers, 1):.1f} B per carrying row, {cost / 10:.1f} B per row) "
+        f"-- fixture-short ids; real UUID ids cost 46-102 B/carrying row; "
+        f"payload {size} B of the {MAX_RESULT_BYTES} B ceiling, headroom "
+        f"{MAX_RESULT_BYTES - size} B"
+    )
+    assert payload["returned"] == len(payload["results"]) == 10
+    assert [row.get("note_id") for row in payload["results"]] == (
+        [None] * 5 + [f"n{index}" for index in range(5, 10)]
+    )
+    assert [row.get("doc_id") for row in payload["results"]] == (
+        [None] * 5 + [f"note_n{index}" for index in range(5, 10)]
+    )
