@@ -4455,3 +4455,38 @@ reseed) to the swap -- bracket the exact call under test, not the settle;
 belonged to a different mechanism. The residual's fix-shaped hypothesis is a
 hypothesis; A/B the mechanism (here: neuter the proposed fix on the same
 HEAD) before writing the Implementation Notes around it.
+
+## "Nothing happened" cannot name WHICH guard stopped it — count the dispatch (task-15860, 2026-08-16)
+
+Second occurrence in one arc, so it is a class rather than an accident. A
+headless-wake test asserted the shipped behaviour "a wake into a busy session
+never streams" by giving the loop a window and checking the provider double
+recorded no payload. Mutating the guard it was written for -- bypassing
+`send_refusal_copy` inside `ConsoleFleetWakeCoordinator._attempt` -- left it
+**green**, because `submit_draft` refuses a busy session on its own. The read
+site is double-guarded, so an absence-of-effect assertion is satisfied by
+EITHER guard and can never say which one it is testing; the test claimed
+coverage of the coordinator's gate while actually pinning the controller's.
+(The viewless landing hit the identical shape earlier in the same arc: an
+unguarded `_apply_world_info` survived because the applier was unreachable in
+that rig AND wrapped in a broad `except`.) The repair is cheap and general:
+count the DISPATCH, not the effect -- wrap the next seam (`controller.
+submit_draft`) with a recorder and assert the list is empty, which fails the
+moment the outer guard stops firing. Under the same mutation the repaired test
+died with its sibling (2 failed); restored, 13 passed. Corollary for the other
+direction: a mutation that leaves everything green is a finding about your
+tests, not a nuisance -- both survivors in this arc were real gaps.
+
+## A registry that self-heals on the next attempt is invisible to every test that takes another attempt (task-15860, 2026-08-16)
+
+Mutating `_deliver` so delivered run ids never left the in-memory pending
+registry killed exactly ONE test out of fourteen -- and not the exactly-once
+test, which is the one whose subject it is. The reason: `_rows_for` drops any
+run the durable ledger already shows delivered, so the leak is repaired by the
+very next `_attempt`, and any assertion taken after a retry sees a healthy
+registry. Only an observation taken at a moment when no further attempt is
+coming can see it; here that moment was app exit (`ConsoleRuntime.dispose()`
+mid-delivery). When a component has a self-healing path, the state it heals is
+untestable through the normal flow -- so a test for it has to pin a TERMINAL
+moment (quit, crash, teardown) on purpose. That is also the argument for
+keeping such a test when it looks redundant next to the happy-path one.
