@@ -15568,6 +15568,12 @@ class ChatScreen(BaseAppScreen):
             region.sync_recovery()
         if transcript is not None:
             transcript.set_presentation_context(self._console_presentation_context())
+            # Turn file card spec: keeps the mounted transcript's provider
+            # factory current every tick -- late-bound so a session switch
+            # or a bridge becoming available never needs a fresh instance.
+            transcript.set_change_review_provider_factory(
+                self._console_change_review_provider
+            )
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
@@ -17946,16 +17952,11 @@ class ChatScreen(BaseAppScreen):
             return None
         return str(run_id) if run_id else None
 
-    def _open_change_review(self, run_id: str | None = None) -> None:
-        """Push the Change Review screen for the active conversation.
+    def _console_change_review_provider(self):
+        """The v-opener's provider recipe, shared with the turn file card.
 
-        TASK-1972. Honest empty states are the SCREEN's job: opening with no
-        recorded turns shows "No file changes recorded", so this opener only
-        needs a provider -- absent (no tracker / no git / no persisted
-        conversation) it explains instead of silently no-oping.
-
-        Args:
-            run_id: Turn to select on open; ``None`` opens the latest.
+        Returns None whenever any collaborator is missing -- the card
+        degrades to the marker header; only the v opener toasts.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = None
@@ -17976,11 +17977,7 @@ class ChatScreen(BaseAppScreen):
             else None
         )
         if provider is None:
-            self.app_instance.notify(
-                "Change review needs git and a saved conversation.",
-                severity="warning",
-            )
-            return
+            return None
         # TASK-1974: reverts refuse while a run is active -- the engine's
         # probe reads THIS controller's live run state each time.
         if controller is not None:
@@ -17988,6 +17985,26 @@ class ChatScreen(BaseAppScreen):
             provider.run_active = lambda: (
                 controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             )
+        return provider
+
+    def _open_change_review(self, run_id: str | None = None) -> None:
+        """Push the Change Review screen for the active conversation.
+
+        TASK-1972. Honest empty states are the SCREEN's job: opening with no
+        recorded turns shows "No file changes recorded", so this opener only
+        needs a provider -- absent (no tracker / no git / no persisted
+        conversation) it explains instead of silently no-oping.
+
+        Args:
+            run_id: Turn to select on open; ``None`` opens the latest.
+        """
+        provider = self._console_change_review_provider()
+        if provider is None:
+            self.app_instance.notify(
+                "Change review needs git and a saved conversation.",
+                severity="warning",
+            )
+            return
         from tldw_chatbook.UI.Screens.change_review_screen import (
             ChangeReviewScreen,
         )

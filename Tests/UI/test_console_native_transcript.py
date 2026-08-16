@@ -768,6 +768,109 @@ async def test_console_transcript_selection_update_preserves_message_rows():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild():
+    """Turn-file-card final-review fix: a card row's signature folds in
+    ``selected`` exactly like every other "message" kind row (shared
+    ``_message_row_signature``), so moving keyboard/click selection onto or
+    off the card row DOES reach ``_update_row_widget``. Before the fix that
+    method had no ``ConsoleTurnFileCard`` branch, so it fell through to a
+    full rebuild -- collapsing any expanded diff and dropping the row's
+    diff cache purely from a selection change. This pins: the SAME widget
+    instance survives a selection round-trip, an expanded diff stays
+    expanded, the ``-selected`` class toggles, and a header click selects
+    the row (parity with ``ConsoleTranscriptMessage.on_click``).
+    """
+    from Tests.UI.test_console_turn_file_card import _FakeProvider
+    from tldw_chatbook.Widgets.Console.console_turn_file_card import (
+        ConsoleTurnFileCard,
+    )
+
+    card_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="✎ Edited 2 files  +8 −3 — review with `v`",
+        id="m-card",
+        change_review_run_id="run-1",
+    )
+    other_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", id="m-other"
+    )
+
+    app = MutableTranscriptHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_change_review_provider_factory(lambda: _FakeProvider())
+        transcript.set_messages([card_message, other_message])
+        await transcript.refresh_messages()
+
+        card = transcript.query_one(
+            f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
+        )
+        for _ in range(60):
+            if card.query(".console-turn-file-row"):
+                break
+            await pilot.pause(0.02)
+        assert card.query(".console-turn-file-row"), "card rows never loaded"
+        assert not card.has_class("console-turn-file-card-selected")
+
+        # Header click selects the row -- checked first, while layout is
+        # still simple (a later selection round-trip mounts an action row
+        # for the other message and can scroll the card off-screen, which
+        # would make a click target here flaky for reasons unrelated to
+        # what this assertion pins). Tail-follow scrolls to the newest
+        # message on mount, which can carry the card above the fold; force
+        # the scroll position back to the top before targeting it.
+        transcript.scroll_home(animate=False)
+        await pilot.pause()
+        await pilot.click(".console-turn-file-header")
+        await pilot.pause()
+        assert transcript.selected_message_id == card_message.id
+        transcript.selected_message_id = None
+        await transcript.refresh_messages()
+
+        # Expand the first row's diff -- real state that a rebuild would
+        # lose. Poking the widget's own post-expand state directly (rather
+        # than driving a click/keypress through the row Button) keeps this
+        # test independent of Button focus/binding resolution inside a real
+        # ConsoleTranscript, which is unrelated to what this test pins; the
+        # expand mechanism itself is already covered by
+        # Tests/UI/test_console_turn_file_card.py.
+        body = card.query(".console-turn-file-diff").first()
+        body.display = True
+        card._diff_cache[0] = "SENTINEL_DIFF_TEXT"
+
+        # Move selection ONTO the card row (same direct-state + refresh
+        # pattern this file's other rebuild-avoidance tests use above).
+        transcript.selected_message_id = card_message.id
+        await transcript.refresh_messages()
+        card_after_select = transcript.query_one(
+            f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
+        )
+        assert card_after_select is card, "selecting the card row rebuilt the widget"
+        assert card.has_class("console-turn-file-card-selected")
+        assert card.query(".console-turn-file-diff").first().display, (
+            "expanded diff collapsed on selection"
+        )
+        assert card._diff_cache.get(0) == "SENTINEL_DIFF_TEXT", (
+            "diff cache dropped on selection"
+        )
+
+        # Move selection OFF the card row.
+        transcript.selected_message_id = other_message.id
+        await transcript.refresh_messages()
+        card_after_deselect = transcript.query_one(
+            f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
+        )
+        assert card_after_deselect is card, "deselecting the card row rebuilt the widget"
+        assert not card.has_class("console-turn-file-card-selected")
+        assert card.query(".console-turn-file-diff").first().display, (
+            "expanded diff lost on deselection"
+        )
+        assert card._diff_cache.get(0) == "SENTINEL_DIFF_TEXT", (
+            "diff cache dropped on deselection"
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_transcript_removes_build_counts_for_stale_rows():
     app = MutableTranscriptHarness()
     removed = ConsoleChatMessage(
