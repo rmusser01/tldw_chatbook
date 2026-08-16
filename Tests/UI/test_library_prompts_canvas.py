@@ -5249,13 +5249,51 @@ async def test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_
         assert controller.pager.previous_disabled is True
         assert controller.pager.next_disabled is True
         assert str(screen.query_one("#library-prompts-header").renderable) == "Prompts"
-        assert screen.query_one(
-            f"#library-prompt-row-{survivor_id}", Button
-        ).disabled is True
-        assert screen.query_one("#library-prompts-select", Button).disabled is True
-        assert screen.query_one("#library-prompts-export", Button).disabled is True
-        assert screen.query_one("#library-prompts-retry", Button).disabled is False
-        assert screen.query_one("#library-prompts-filter", Input).disabled is False
+        stale_reason = "List may be out of date. Retry or change the scope."
+
+        def assert_stale_actions() -> None:
+            for selector in (
+                f"#library-prompt-row-{survivor_id}",
+                "#library-prompts-select",
+                "#library-prompts-export",
+            ):
+                button = screen.query_one(selector, Button)
+                assert button.disabled is True
+                assert str(button.label).startswith(
+                    f"{LIBRARY_DISABLED_ACTION_MARKER} "
+                )
+                assert str(button.tooltip) == stale_reason
+            assert screen.query_one(
+                "#library-prompts-retry", Button
+            ).disabled is False
+            assert screen.query_one(
+                "#library-prompts-filter", Input
+            ).disabled is False
+            assert screen.query_one(
+                "#library-prompts-sort", Button
+            ).disabled is False
+            assert screen.query_one(
+                "#library-prompts-collection", Button
+            ).disabled is False
+            assert not screen.query("#library-prompts-selection-reason")
+
+        assert_stale_actions()
+        stale_row = screen.query_one(f"#library-prompt-row-{survivor_id}", Button)
+        screen.query_one(
+            "#library-prompts-delete-receipt-dismiss", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen.query("#library-prompts-delete-receipt-copy")
+                and screen.query_one(
+                    f"#library-prompt-row-{survivor_id}", Button
+                )
+                is not stale_row
+            ),
+            message="Receipt dismissal never replaced the stale Prompt controls.",
+        )
+        assert_stale_actions()
 
         screen.query_one(f"#library-prompt-row-{survivor_id}", Button).press()
         await pilot.pause()

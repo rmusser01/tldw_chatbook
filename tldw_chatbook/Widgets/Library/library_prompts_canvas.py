@@ -69,6 +69,7 @@ _PAGE_UNAVAILABLE_REASON = (
     "Current page is unavailable; selected items remain available for Export or Delete."
 )
 _MUTATION_PROGRESS = "Updating selected items…"
+_STALE_PAGE_ACTIONS = "List may be out of date. Retry or change the scope."
 PROMPT_DISCARD_TOOLTIP_CLEAN = "No unsaved Prompt changes to discard."
 PROMPT_DISCARD_TOOLTIP_DIRTY = "Return to the Prompt list without saving these changes."
 PROMPT_DISCARD_TOOLTIP_BUSY = (
@@ -168,6 +169,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         | PromptBatchDeleteResult
         | None = None,
         mutation_in_flight: bool = False,
+        page_actions_disabled: bool = False,
         write_in_flight: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -196,6 +198,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.membership_state = membership_state
         self.delete_receipt = delete_receipt
         self.mutation_in_flight = mutation_in_flight
+        self.page_actions_disabled = page_actions_disabled
         self.write_in_flight = write_in_flight
         self.styles.width = "1fr"
         self.styles.min_width = 40
@@ -238,6 +241,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         collection_label: str,
         membership_state: PromptMembershipState | None,
         sort_choices_visible: bool,
+        page_actions_disabled: bool,
     ) -> None:
         """Apply a complete prompt snapshot within the mounted canvas.
 
@@ -263,6 +267,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             collection_label: Collection membership label for the prompt.
             membership_state: Prompt collection-membership snapshot.
             sort_choices_visible: Whether the sort chooser is expanded.
+            page_actions_disabled: Whether stale retained rows and bulk actions
+                are read-only until an authoritative refresh succeeds.
         """
         self.state = state
         self.sort_mode = sort_mode
@@ -285,6 +291,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.collection_label = collection_label
         self.membership_state = membership_state
         self.sort_choices_visible = sort_choices_visible
+        self.page_actions_disabled = page_actions_disabled
         self.refresh(recompose=True)
 
     def _compose_list(self) -> ComposeResult:
@@ -383,6 +390,16 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         page_unavailable = bool(
             browse_result is not None and browse_result.status in {"loading", "error"}
         )
+        page_actions_disabled = (
+            self.mutation_in_flight or self.page_actions_disabled
+        )
+        page_action_reason = (
+            _MUTATION_PROGRESS
+            if self.mutation_in_flight
+            else _STALE_PAGE_ACTIONS
+            if self.page_actions_disabled
+            else None
+        )
         page_selectable = bool(state.rows) and not page_unavailable
         selection_reason = ""
         if state.select_mode:
@@ -393,9 +410,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 classes="library-toolbar-count",
                 markup=False,
             )
-            select_page_disabled = not page_selectable or self.mutation_in_flight
+            select_page_disabled = not page_selectable or page_actions_disabled
             zero_selection = state.total_selected == 0
-            selection_disabled = zero_selection or self.mutation_in_flight
+            clear_disabled = zero_selection or self.mutation_in_flight
+            selection_disabled = zero_selection or page_actions_disabled
             management_toolbar = Horizontal(classes="ds-toolbar")
             management_toolbar.styles.height = "auto"
             with management_toolbar:
@@ -406,8 +424,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     compact=True,
                     disabled=select_page_disabled,
                     tooltip=(
-                        _MUTATION_PROGRESS
-                        if self.mutation_in_flight
+                        page_action_reason
+                        if page_actions_disabled
                         else (
                             _PAGE_UNAVAILABLE
                             if page_unavailable
@@ -418,16 +436,16 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ),
                 )
                 yield Button(
-                    library_disabled_action_label("Clear all", selection_disabled),
+                    library_disabled_action_label("Clear all", clear_disabled),
                     id="library-prompts-clear-selection",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=selection_disabled,
+                    disabled=clear_disabled,
                     tooltip=(
                         _MUTATION_PROGRESS
                         if self.mutation_in_flight
                         else _SELECT_FIRST
-                        if selection_disabled
+                        if clear_disabled
                         else None
                     ),
                 )
@@ -456,8 +474,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                         disabled=selection_disabled,
                         tooltip=(
-                            _MUTATION_PROGRESS
-                            if self.mutation_in_flight
+                            page_action_reason
+                            if page_actions_disabled
                             else _SELECT_FIRST
                             if selection_disabled
                             else None
@@ -471,7 +489,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 elif not state.rows:
                     selection_reason = _NOTHING_TO_SELECT
         else:
-            select_disabled = not page_selectable or self.mutation_in_flight
+            select_disabled = not page_selectable or page_actions_disabled
             sort_label = library_choice_label(
                 "sort", _SORT_LABELS.get(self.sort_mode, "Newest")
             )
@@ -502,8 +520,8 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     compact=True,
                     disabled=select_disabled,
                     tooltip=(
-                        _MUTATION_PROGRESS
-                        if self.mutation_in_flight
+                        page_action_reason
+                        if page_actions_disabled
                         else _NOTHING_TO_SELECT
                         if select_disabled
                         else None
@@ -527,17 +545,21 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     ("Import…", "library-prompts-import"),
                     ("Export…", "library-prompts-export"),
                 ):
+                    disabled = self.mutation_in_flight or (
+                        self.page_actions_disabled
+                        and action_id == "library-prompts-export"
+                    )
                     yield Button(
-                        library_disabled_action_label(label, self.mutation_in_flight),
+                        library_disabled_action_label(label, disabled),
                         id=action_id,
                         classes="library-canvas-action",
                         compact=True,
-                        disabled=self.mutation_in_flight,
+                        disabled=disabled,
                         tooltip=(
-                            _MUTATION_PROGRESS if self.mutation_in_flight else None
+                            page_action_reason if disabled else None
                         ),
                     )
-            if not self.mutation_in_flight and select_disabled:
+            if not page_actions_disabled and select_disabled:
                 selection_reason = _NOTHING_TO_SELECT
         if self.mutation_in_flight:
             yield Static(
@@ -654,13 +676,13 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 button = Button(
                     library_disabled_action_label(
                         "\n".join(part for part in label_parts if part),
-                        self.mutation_in_flight,
+                        page_actions_disabled,
                     ),
                     id=f"library-prompt-row-{row.prompt_id}",
                     classes="library-prompt-row",
                     compact=True,
-                    disabled=self.mutation_in_flight,
-                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
+                    disabled=page_actions_disabled,
+                    tooltip=page_action_reason,
                 )
                 button.prompt_id = row.prompt_id
                 button.prompt_version = row.version
