@@ -3100,7 +3100,12 @@ async def test_empty_diagnosis_no_servers_shows_add_server_and_button_opens_form
 async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
     """task-3240 SECONDARY breadcrumb: `_empty_tools_diagnosis()` appends
     "N tool gate(s) are off ..." whenever `all_tool_gates()` finds any --
-    TASK-14807 defaults the local master gate on, leaving 8 gates off."""
+    TASK-14807 defaults the local master gate on, leaving every other gate
+    off. N is DERIVED (TASK-16174): a new gateable built-in changes the
+    count, and this test is about the breadcrumb, not the arity."""
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
     app = NoServersApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3109,7 +3114,7 @@ async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
         await pilot.pause()
         canvas = app.query_one(MCPToolsMode)
         message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
-        assert "8 tool gate(s) are off" in message
+        assert f"{off_count} tool gate(s) are off" in message
         assert "Tools mode" in message
 
 

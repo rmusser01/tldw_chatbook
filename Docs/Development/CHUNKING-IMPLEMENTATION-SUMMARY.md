@@ -1,5 +1,36 @@
 # Template-Based Chunking Implementation Summary
 
+> ## ⚠️ Correction (2026-08-15, TASK-16174): parent-document inclusion was never wired
+>
+> This document claims a **parent document inclusion** feature was
+> implemented. It was not. The three `SearchConfig` knobs it names —
+> `include_parent_docs`, `parent_size_threshold`,
+> `parent_inclusion_strategy` — existed as dataclass fields and were
+> written by three shipped RAG profiles, but a grep of the whole
+> repository found **zero reads**: nothing in the retrieval path ever
+> consulted them, so switching them on changed nothing. The
+> `ContextAssembler` class and the
+> `tldw_chatbook/RAG_Search/late_chunking_integration.py` module named
+> below **do not exist in this repository**.
+>
+> TASK-16174 Phase K **retired all three fields** from `SearchConfig` and
+> deleted the nine profile writes. `RAGConfig.from_dict` now filters
+> unknown `[search]` keys with a logged notice, so a saved config that
+> still carries them loads instead of raising `TypeError` — but the
+> `SearchConfig(...)` call shown below now raises `TypeError` if copied.
+>
+> The capability those knobs promised — following a hit into its document
+> — shipped instead as the gated `expand_document` agent tool
+> (`tldw_chatbook/Tools/document_expansion_tool.py`, `[tools]
+> expand_document_enabled`, OFF by default). It is pull-based and
+> per-hit rather than engine-side inclusion during retrieval. Its
+> answer-level measurement is
+> `Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/report.md`.
+>
+> Everything else in this document is left as written and is **not**
+> re-verified by that task.
+
+
 ## Overview
 We've successfully implemented a comprehensive template-based chunking system with per-document configurations and late chunking capabilities. The system includes parent document inclusion as a RAG pipeline feature rather than a database option, providing maximum flexibility.
 
@@ -37,9 +68,9 @@ We've successfully implemented a comprehensive template-based chunking system wi
   - `/tldw_chatbook/RAG_Search/config_profiles.py` - Updated profiles with new settings
 - **New Settings**:
   - `enable_late_chunking` - Enable late chunking in pipeline
-  - `include_parent_docs` - Enable parent document inclusion
-  - `parent_size_threshold` - Maximum parent document size
-  - `parent_inclusion_strategy` - How to decide on inclusion
+  - `include_parent_docs` - **RETIRED (TASK-16174)**: never read by any code path; deleted from `SearchConfig`
+  - `parent_size_threshold` - **RETIRED (TASK-16174)**: never read by any code path; deleted from `SearchConfig`
+  - `parent_inclusion_strategy` - **RETIRED (TASK-16174)**: never read by any code path; deleted from `SearchConfig`
   - `max_context_size` - Total context size limit
 
 ### 5. Integration Example
@@ -74,6 +105,9 @@ await update_document_chunking_config(
 ```
 
 ### 2. Search with Late Chunking and Parent Inclusion
+
+> **⚠️ Retired (TASK-16174):** `include_parent_docs` / `parent_size_threshold` / `parent_inclusion_strategy` were never read by any code path and have been deleted from `SearchConfig`; the snippet below no longer runs. See the correction at the top of this file.
+
 ```python
 config = {
     'chunking': {

@@ -49,6 +49,18 @@ application. Assert containment and compositor text, not only a child widget's
 declared height. A shortened DOM or partial stylesheet can make both overflow
 and clipping tests pass for a product path that still hides its controls.
 
+**Recurred, TASK-16478, 2026-08-15.** A picker-comparison investigation
+rendered `EnhancedFileOpen` in a bare `App` (widget DEFAULT_CSS only) and
+concluded the dialog was fine; the user's live app showed no Select/Cancel
+buttons at all. Under the app bundle, the bare `Select { width: 100% }` rule
+beat the dialog's DEFAULT_CSS, crushed the filename input to 6 columns, and
+laid the buttons out at x=161/178 inside a 152-wide dialog -- clipped. The
+bare-host screenshot even contained the buttons, and a truncated text
+extraction of the bundled render hid their absence. The fix's regression test
+(`Tests/UI/test_enhanced_file_dialog_bundle_css.py`) registers the exact
+`TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
+against the unfixed bundle without touching app code.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test
@@ -4369,3 +4381,77 @@ entry left DBs rolled back to V20..V27 silently missing ALL conversations
 sync triggers after replay — a corruption no per-test fixture would ever
 notice, caught only because the sweep asserts parity with a fresh DB rather
 than "the test I care about passes".
+
+## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
+
+Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
+`Select.NULL`) — but referencing it does NOT raise: the lookup falls through the
+MRO to `Widget.BLANK: ClassVar[bool] = False`, an unrelated render flag added in
+the same major version. Every use of the old sentinel silently became the boolean
+`False`: comparisons went permanently dead, and passing it as a Select's initial
+`value=` crashed at mount with `InvalidSelectValueError: Illegal select value
+False.` Task-565 (2026-07-25) established exactly this mechanism and swept it —
+**scoped to settings_screen.py only**, because that was the file under review.
+Three weeks later the identical construct in `console_model_popover.py` crashed
+the Alt+M popover at mount for any session without a configured model, and was
+reported by a user. A grep at that point found **66 remaining `Select.BLANK`
+usages across 23 files**, including several sites that had independently
+discovered the trap and worked around it locally with comments, and several that
+deliberately exploit the `False` value as a synthetic placeholder option — so the
+eventual sweep (task-16503) needs per-site classification, not find-and-replace.
+
+**What to do.** When a fix reveals that an upstream rename/removal fails
+*silently* (shadowed attribute, `getattr` default, `__getattr__` fallback) rather
+than loudly, the first grep result count is the real scope of the defect. Sweep
+repo-wide in the same arc, or file the sweep task immediately with the grep count
+and the classification burden recorded — a Done task documenting the mechanism
+does not stop the next file from shipping the same crash. Evidence here: the
+mechanism was fully documented on the board for three weeks while the
+user-reachable crash sat live in another file.
+## A dodged flake can be the only visible symptom of a deterministic bug (task-15773, 2026-08-15)
+
+Task-15478 hit a once-in-a-full-file-run flake in `ChapterEditorWidget`/`Select`'s
+mount sequence when the chapter table populated ~999 rows in one reactive update,
+and (honestly, documented as a dodge) reduced the test's chapter density until it
+went 0/4. Task-15773 owned the flake and started, per the reproduce-first brief, by
+stress-running the interleave -- 34 un-gated iterations across three shapes, zero
+trips. What found it was a five-minute CHARACTERIZATION probe of what the code
+deterministically does: `chapters = reactive([], recompose=True)` on a widget whose
+`compose()` is static meant `watch_chapters` populated the current DataTable and the
+scheduled recompose then threw that subtree away -- the settled table had **0 rows
+after every single update**, in the minimal host and in the real STTS host alike
+(`detected=13 table_rows=0` at HEAD). The "rare flake" was just the narrow-window
+crash variant of a 100%-reproducible data-loss defect: the remount re-ran the
+Select's Compose->Mount on every data arrival, and any teardown landing between the
+fresh Select's registration and its Compose dispatch made its child-mount a silent
+no-op (`_pruning`) while `Mount` still fired -- `NoMatches: No nodes match
+'SelectOverlay'`. Once the mechanism was named, a gated `_on_compose` interleave
+reproduced the exact exception on the first run, every run, and the fix (drop the
+recompose; populate the persistent children in place) closed both the flake and the
+always-empty table. Two halves to keep: (1) before stress-running a flake, spend one
+probe characterizing what the code does deterministically under the flake's stimulus
+-- the flake may be the tail of a bug whose body is fully reproducible; (2) a
+repetition budget that finds nothing (34/34 clean here) is not evidence the race is
+gone -- the gated one-run interleave was both stronger and cheaper.
+
+## Re-verify a residual's CAUSAL hypothesis before building the fix around it (task-15778, 2026-08-15)
+
+Task-15461's Implementation Notes recorded a residual with a cause attached:
+the cold Read tab's wall-clock regressed "because the scoped path does the
+CONTENT remount as its own discrete remove/mount pair rather than inside one
+batched recompose -- Textual's `batch()` is the obvious next move." Task-15778
+was filed around that hypothesis. A neutered-batch A/B on the same HEAD
+refuted it: **zero** in-swap layout passes and zero compositor refreshes with
+AND without `App.batch_update`, because the entire swap already runs inside
+`_drain_surface_refresh`'s single `call_next` callback -- a paint-atomicity
+that 15461's own `run_worker` -> `call_next` move had bought silently, one
+task before it filed the residual blaming its absence. The batch shipped
+anyway, but as an explicit contract (survives a future awaiting factory or a
+drain restructure), documented as such -- not as the measured win the task
+title promised. Two probe traps that nearly hid this: (1) counting layout
+passes over the whole settle window attributed 3 post-swap passes (loader,
+reseed) to the swap -- bracket the exact call under test, not the settle;
+(2) the first probe "confirmed" the premise with numbers that were real but
+belonged to a different mechanism. The residual's fix-shaped hypothesis is a
+hypothesis; A/B the mechanism (here: neuter the proposed fix on the same
+HEAD) before writing the Implementation Notes around it.

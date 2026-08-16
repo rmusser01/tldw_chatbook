@@ -1,5 +1,28 @@
 # Template-Based Chunking with Per-Document Late Chunking Plan
 
+> ## ⚠️ Correction (2026-08-15, TASK-16174): Phase 3 was never wired, and its knobs are retired
+>
+> **Phase 3 (Parent Document Inclusion) below is an unimplemented plan.**
+> Its three config keys — `include_parent_docs`, `parent_size_threshold`,
+> `parent_inclusion_strategy` — did reach `SearchConfig` and three shipped
+> RAG profiles, but nothing in the retrieval path ever read them (grep:
+> zero reads), so they were a user-switchable surface wired to nothing.
+> The `ContextAssembler` class sketched below was never written.
+>
+> TASK-16174 Phase K **retired all three fields**; `RAGConfig.from_dict`
+> now drops unknown `[search]` keys with a logged notice so saved configs
+> still load. `max_context_size`, which appears in the same snippets, is
+> **live** and was not touched.
+>
+> The capability shipped instead as the gated `expand_document` agent tool
+> (`tldw_chatbook/Tools/document_expansion_tool.py`), pull-based and
+> per-hit rather than engine-side. Measurement:
+> `Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/report.md`.
+>
+> The rest of this plan is left as written and is **not** re-verified by
+> that task.
+
+
 ## Overview
 Implement a system that allows per-document chunking configurations with late chunking during RAG retrieval, plus parent document inclusion logic.
 
@@ -52,6 +75,9 @@ def get_chunks_for_document(media_id, default_config):
 ```
 
 ## Phase 3: Parent Document Inclusion (RAG Pipeline Feature)
+
+> **⚠️ Retired (TASK-16174):** `include_parent_docs` / `parent_size_threshold` / `parent_inclusion_strategy` were never read by any code path and have been deleted from `SearchConfig`; the snippet below no longer runs. See the correction at the top of this file.
+
 
 ### 3.1 RAG Pipeline Configuration
 - Add to RAG pipeline config:

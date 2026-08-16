@@ -1486,3 +1486,101 @@ describes the engine path and does not transfer to the pipeline path.
    scoring anything — re-stamp deliberately (see above), with the new
    fixture content named as the reason in the PR, not silently absorbed
    into an unrelated change's re-stamp.
+
+## This corpus as an ANSWER-level instrument (TASK-16174, 2026-08-15)
+
+Everything above measures **retrieval**: whether the right document
+arrives, scored rank-wise at the document level. TASK-16174 needed a
+different question — *what happens after it arrives?* — and reused this
+corpus for it, without touching a fixture, a golden query, or a baseline.
+The gated suite read **`[rag-eval baselines] PASSED: No regression. 105
+metric(s) within 0.05 of baseline.`** with all 105 cells at `(+0.000)`
+before and after the arc; that is the proof the answer-level work changed
+no retrieval behaviour.
+
+**What the arc shipped.**
+
+- **Phase K — the knobs retired.** `SearchConfig.include_parent_docs`,
+  `parent_size_threshold` and `parent_inclusion_strategy` were deleted,
+  along with nine writes across three shipped RAG profiles. A grep had
+  proved zero reads: they were a user-switchable surface wired to nothing.
+  `RAGConfig.from_dict` now filters unknown `[search]` keys with a logged
+  notice, so a saved config still carrying them loads instead of raising
+  `TypeError`. (`Docs/Development/CHUNKING-*.md` carried the false claim
+  that this feature was implemented; those documents now carry a
+  correction.)
+- **Phase T — the tool.** `expand_document`
+  (`tldw_chatbook/Tools/document_expansion_tool.py`), a gateable built-in
+  behind `[tools] expand_document_enabled` (OFF by default) and
+  `risk_tags=("reads",)`, which floors it to *ask*. It takes exactly what
+  a row carries — `source_type` + `source_id` required, plus optional
+  `chunk_start` (the window anchor) and `offset` (continuation) — and
+  returns a budgeted window of the note / media / conversation / prompt
+  behind the hit. `chunk_id` is NOT a parameter: it is an index
+  (`f"{doc_id}_chunk_{i}"`), nothing in the tool reads it, and the final
+  review found it shipped as agent-facing schema wired to nothing — the
+  fix wave retired it (a pasted row still works: it rides the
+  `**_provenance` swallow).
+- **Phase P — the policy, wired.** `Library/library_expand_policy.py`
+  computes a per-row `{expandable, reason}` verdict, and
+  `Agents/library_rag_tool_provider._project_row` attaches it *plus* the
+  `source_type`/`source_id` the tool requires, under exactly the hint's
+  own precondition. The agent is told which rows are labels rather than
+  left to infer it, and is given an identity it can act on rather than
+  one it must guess. A row also carries `chunk_id` when it has one and
+  `chunk_start` **when its provenance carries a usable anchor** (fix wave,
+  after the final review): a head anchor (`0`) or an unparseable one is
+  dropped, because `expand_document` centres its window only for
+  `anchor > 0` and a key that changes nothing is bytes spent for no
+  behaviour. Cost re-measured by T3b's strip-and-reserialize method on a
+  ten-row payload with five anchored rows: **+19.0 B per anchored row,
+  +95 B total (9.5 B/row), 11.7 % of the 32 KiB ceiling**; an unanchored
+  payload pays nothing.
+
+**Phase E — the oracle run.** Eight fixed questions over this corpus,
+each naming one media or conversation document and carrying a fact-oracle
+regex grep-verified to appear only in that document's **body** — never in
+a title (the agent sees titles), never in another document, never in the
+question. The real agent loop (`AgentService` → `chat_api_call` →
+`api.anthropic.com`, `claude-haiku-4-5`, temperature 0) answered each
+question twice: once in the shipped default posture (gate off) and once
+with the gate on. Scoring is mechanical oracle inclusion in the final
+answer — **no LLM grader**. The route is `plain`
+(`default_search_mode = "plain"`), which is what emits the label-only
+`Matched media · document` / `Matched conversation · N messages` rows the
+tool exists for; under `hybrid` there is nothing label-only to expand.
+
+| question | target (label-only row) | oracle | tool-OFF | tool-ON | ON tool calls |
+|---|---|---|---|---|---|
+| `q1-quillon-access` | `media-quillon-antenna` (media) | `/rescue certification/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q2-pellucid-lag` | `media-pellucid-gauge` (media) | `/lowest decade/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q3-ashgrove-seal` | `conv-ashgrove-pump` (conversation) | `/shimming/` | miss | HIT | search_library_rag, expand_document |
+| `q4-obsidian-bearing` | `media-obsidian-lathe` (media) | `/brinelling/` | miss | HIT | search_library_rag, expand_document |
+| `q5-dunnock-cooling` | `conv-dunnock-row-cooling` (conversation) | `/blown sand/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q6-gatehouse-ups` | `conv-gatehouse-power` (conversation) | `/(?:ninety\|90)\s*minutes/` | miss | miss | search_library_rag, search_library_rag |
+| `q7-filling-head-mtbf` | `media-filling-head-reliability` (media) | `/(?:nine hundred\|900)\s+(?:running\s+)?hours/` | miss | HIT | search_library_rag, search_library_rag, search_library_rag, expand_document |
+| `q8-larkspur-lubrication` | `media-larkspur-turbine` (media) | `/starved a bearing/` | miss | HIT | search_library_rag, expand_document |
+| **TOTAL** | | | **0/8** | **7/8** | |
+
+Total spend $0.177 (plus $0.022 for a one-question smoke run). The single
+tool-ON miss is a **retrieval** failure present in both arms — both of
+`q6`'s searches returned `status: "empty"`, so there was never a row to
+expand (the four-seam keyword path ANDs every query token, and the model's
+own phrasings over-constrained; the document is reachable at rank 1 for
+`gate house UPS`). Conditioned on the target row actually being returned,
+the tool-ON arm answered **7 of 7**. Four tool-OFF questions retrieved the
+label-only row and still scored zero, saying so unprompted: *"I can only
+see that it's a media document and cannot access its full contents through
+the search results."*
+
+Method, isolation proof, per-question attribution, disclosed limits and
+the full artifact:
+`Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/` (`questions.toml`,
+`oracle_run.py`, `report.md`, `run-artifacts.json`). The run is a
+**script, never a test** — the suite is network-blocked by default, and
+`oracle_run.py --dry-run` reproduces everything except the model calls.
+
+**If you extend this instrument**, keep two properties or it stops
+measuring anything: an oracle must never appear in a title (the agent sees
+titles), and the route must stay `plain` unless you are deliberately
+measuring a different regime.

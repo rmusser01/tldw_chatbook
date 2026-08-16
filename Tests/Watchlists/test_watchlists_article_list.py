@@ -124,7 +124,7 @@ class ProductionCssArticleListHarness(ArticleListHarness):
 def _row_texts(pane: ArticleListPane) -> list[str]:
     """One plain-text string per ListView node (headers included)."""
     list_view = pane.query_one("#items-table", ListView)
-    return [str(node.query_one(Static).renderable) for node in list_view.children]
+    return [str(node.render()) for node in list_view.children]
 
 
 def _item_rows(pane: ArticleListPane) -> list:
@@ -136,7 +136,7 @@ def _item_rows(pane: ArticleListPane) -> list:
 def _header_texts(pane: ArticleListPane) -> list[str]:
     list_view = pane.query_one("#items-table", ListView)
     return [
-        str(node.query_one(Static).renderable)
+        str(node.render())
         for node in list_view.children
         if node.disabled
     ]
@@ -153,8 +153,8 @@ async def test_unread_row_is_bold_with_dot_and_read_row_is_plain():
         await pilot.pause()
 
         rows = _item_rows(pane)
-        unread_renderable = rows[0].query_one(Static).renderable
-        read_renderable = rows[1].query_one(Static).renderable
+        unread_renderable = rows[0].render()
+        read_renderable = rows[1].render()
 
         assert isinstance(unread_renderable, Text)
         assert pane._UNREAD_DOT in str(unread_renderable)
@@ -184,7 +184,7 @@ async def test_starred_and_queued_rows_show_their_glyphs():
         ]
         await pilot.pause()
 
-        texts = [str(row.query_one(Static).renderable) for row in _item_rows(pane)]
+        texts = [str(row.render()) for row in _item_rows(pane)]
         assert pane._STAR_GLYPH in texts[0]
         assert pane._QUEUED_GLYPH not in texts[0]
         assert pane._QUEUED_GLYPH in texts[1]
@@ -199,7 +199,7 @@ async def test_ingested_row_renders_read_styled_with_a_marker():
         pane.items = [_item(1, status="ingested")]
         await pilot.pause()
 
-        renderable = _item_rows(pane)[0].query_one(Static).renderable
+        renderable = _item_rows(pane)[0].render()
         assert "ingested" in str(renderable)
         assert pane._UNREAD_DOT not in str(renderable)
         assert not [span for span in renderable.spans if "bold" in str(span.style)]
@@ -214,7 +214,7 @@ async def test_hostile_title_renders_as_literal_text():
         pane.items = [_item(1, title="[bold red]x[/]\x1b[31m")]
         await pilot.pause()
 
-        rendered = str(_item_rows(pane)[0].query_one(Static).renderable)
+        rendered = str(_item_rows(pane)[0].render())
         assert "[bold red]x[/]" in rendered
         assert "\x1b" not in rendered
 
@@ -559,7 +559,7 @@ async def test_update_item_status_cell_repaints_in_place_without_recompose():
         assert pane.query_one("#items-table", ListView) is list_view_before, (
             "a status repaint must never recompose the list"
         )
-        rendered = str(_item_rows(pane)[0].query_one(Static).renderable)
+        rendered = str(_item_rows(pane)[0].render())
         assert pane._UNREAD_DOT not in rendered
 
 
@@ -573,11 +573,11 @@ async def test_update_item_queued_cell_toggles_the_glyph_in_place():
 
         pane.update_item_queued_cell(items[0]["id"], True)
         await pilot.pause()
-        assert pane._QUEUED_GLYPH in str(_item_rows(pane)[0].query_one(Static).renderable)
+        assert pane._QUEUED_GLYPH in str(_item_rows(pane)[0].render())
 
         pane.update_item_queued_cell(items[0]["id"], False)
         await pilot.pause()
-        assert pane._QUEUED_GLYPH not in str(_item_rows(pane)[0].query_one(Static).renderable)
+        assert pane._QUEUED_GLYPH not in str(_item_rows(pane)[0].render())
 
 
 async def test_repaints_never_write_back_to_the_stored_item_dict():
@@ -610,7 +610,7 @@ async def test_repaints_never_write_back_to_the_stored_item_dict():
         assert not items[0].get("queued_for_briefing"), (
             "same for the queued flag"
         )
-        rendered = str(_item_rows(pane)[0].query_one(Static).renderable)
+        rendered = str(_item_rows(pane)[0].render())
         assert "· ingested" in rendered and pane._QUEUED_GLYPH in rendered, (
             "and the row itself must still show both"
         )
@@ -630,7 +630,7 @@ async def test_select_and_reveal_selects_and_moves_the_cursor():
         list_view = pane.query_one("#items-table", ListView)
         highlighted = list_view.children[list_view.index]
         assert not highlighted.disabled
-        assert "Article 3" in str(highlighted.query_one(Static).renderable)
+        assert "Article 3" in str(highlighted.render())
 
 
 async def test_filter_change_is_mirrored_for_the_screen():
@@ -702,11 +702,11 @@ async def test_update_item_starred_cell_toggles_the_glyph_in_place():
 
         pane.update_item_starred_cell(items[0]["id"], True)
         await pilot.pause()
-        assert pane._STAR_GLYPH in str(_item_rows(pane)[0].query_one(Static).renderable)
+        assert pane._STAR_GLYPH in str(_item_rows(pane)[0].render())
 
         pane.update_item_starred_cell(items[0]["id"], False)
         await pilot.pause()
-        assert pane._STAR_GLYPH not in str(_item_rows(pane)[0].query_one(Static).renderable)
+        assert pane._STAR_GLYPH not in str(_item_rows(pane)[0].render())
 
         assert not items[0].get("is_flagged"), (
             "display-only: the repaint must not freshen the shared dict "
@@ -799,3 +799,35 @@ def test_render_row_snippet_falls_back_to_content_when_no_preview():
     rendered = str(_render_row(item))
 
     assert item["content"] in rendered
+
+
+async def test_rows_and_headers_are_single_widgets_with_no_children():
+    """task-15776: each `_ArticleRow`/`_DayHeader` IS the widget.
+
+    Task-15462's audit measured ~15-18% of the Watchlists screen push going
+    to widget-count overhead because every row was a `ListItem` wrapping one
+    `Static` -- two DOM nodes, two style computations, two layout passes per
+    row. The collapse makes each row a single self-rendering `ListItem`, so
+    the ListView subtree census equals the row count exactly: no row or
+    header may mount a child widget.
+    """
+    app = ArticleListHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        pane = app.query_one(ArticleListPane)
+        pane.items = [
+            _item(index, published_offset_hours=index * 12 + 1)
+            for index in range(1, 11)
+        ]
+        await pilot.pause()
+
+        list_view = pane.query_one("#items-table", ListView)
+        rows = list(list_view.children)
+        assert rows, "precondition: the feed rendered rows"
+        for node in rows:
+            assert len(node.children) == 0, (
+                f"{node!r} must render its own content, not wrap a child widget"
+            )
+        assert len(list_view.query("*")) == len(rows), (
+            "the ListView subtree must be exactly the rows -- one widget per "
+            "row/header, half the pre-task-15776 census"
+        )
