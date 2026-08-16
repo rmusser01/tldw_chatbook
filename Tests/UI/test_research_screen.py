@@ -372,10 +372,14 @@ def test_window_academic_toggle_defaults_off_and_persists_in_state():
     window = ResearchWindow(app_instance=app)
 
     assert window.academic_enabled is False
-    assert window.save_state() == {"source": "local", "academic": False, "limits": ""}
+    assert window.save_state() == {"source": "local", "academic": False,
+                                   "limits": "", "policy": "balanced",
+                                   "providers": ""}
 
     window.academic_enabled = True
-    assert window.save_state() == {"source": "local", "academic": True, "limits": ""}
+    assert window.save_state() == {"source": "local", "academic": True,
+                                   "limits": "", "policy": "balanced",
+                                   "providers": ""}
 
 
 def test_window_academic_toggle_restores_from_state():
@@ -720,3 +724,68 @@ def test_academic_lane_default_parses_string_booleans(monkeypatch):
         (True, True), (False, False),
     ]:
         assert _parse_config_bool(raw) is expected, f"{raw!r} should parse {expected}"
+
+
+# --- source policy + providers in the window (task-16791) -------------------------
+
+@pytest.mark.asyncio
+async def test_window_policy_and_providers_sent_on_create(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+
+    window.source_policy = "academic_only"
+    window.providers_text = "arxiv, pubmed"
+    await window.create_run({"query": "Policy question"})
+
+    create_call = [c for c in service.calls if c[0] == "create_run"][0]
+    payload = create_call[2]
+    assert payload["source_policy"] == "academic_only"
+    assert payload["provider_overrides"] == {"academic_providers": ["arxiv", "pubmed"]}
+
+
+def test_window_policy_persists_in_state():
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    window.source_policy = "web_first"
+    window.providers_text = "pubmed"
+    state = window.save_state()
+    assert state["policy"] == "web_first"
+    assert state["providers"] == "pubmed"
+
+    window2 = ResearchWindow(app_instance=app)
+    window2.restore_state(state)
+    assert window2.source_policy == "web_first"
+    assert window2.providers_text == "pubmed"
+
+
+# --- Qodo remediation on PR 1722 ---------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_run_reads_limits_and_providers_from_inputs(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+
+    # Simulate what compose() + typing produces: the widgets' values must
+    # reach the payload even when only the attributes were never set.
+    window.limits_text = "max_searches=3"
+    window.providers_text = "pubmed, arxiv, typo_lane"
+    await window.create_run({"query": "Inputs question"})
+
+    create_call = [c for c in service.calls if c[0] == "create_run"][0]
+    payload = create_call[2]
+    assert payload["provider_overrides"]["academic_providers"] == ["pubmed", "arxiv"]
+    assert payload["limits_json"] == {"max_searches": 3}
+
+
+def test_parse_provider_tokens_validates_and_dedupes():
+    from tldw_chatbook.UI.Research_Window import _parse_provider_tokens
+
+    assert _parse_provider_tokens("pubmed, arxiv, pubmed") == ["pubmed", "arxiv"]
+    assert _parse_provider_tokens("  ARXIV ,, biorxiv ") == ["arxiv", "biorxiv"]
+    # Dangerous input fails validation -> empty list (caller warns).
+    assert _parse_provider_tokens("pubmed, <script>x") == []

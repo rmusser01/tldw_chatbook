@@ -219,6 +219,36 @@ class LocalResearchEngine:
             raise _RunCancelled(run)
         return run
 
+    @staticmethod
+    def _normalize_source_policy(raw: Any) -> str:
+        """Normalize a run's source_policy (task-16791) to one of
+        web_only / academic_only / web_first / academic_first / balanced
+        (default balanced: both lanes, web evidence first)."""
+        value = str(raw or "").strip().lower()
+        return value if value in {
+            "web_only", "academic_only", "web_first", "academic_first", "balanced",
+        } else "balanced"
+
+    def _paper_fn_accepts_providers(self) -> bool:
+        """Whether the injected paper callable takes a ``providers`` kwarg
+        (Qodo PR 1722: decided by signature inspection UP FRONT -- a broad
+        except-TypeError retry masked real TypeErrors raised from inside
+        provider implementations)."""
+        cached = getattr(self, "_paper_fn_accepts_providers_cache", None)
+        if cached is not None:
+            return cached
+        try:
+            parameters = inspect.signature(self.paper_search_fn).parameters
+            accepts = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD
+                or param.name == "providers"
+                for param in parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts = False
+        self._paper_fn_accepts_providers_cache = accepts
+        return accepts
+
     def _is_checkpointed(self, run: dict[str, Any]) -> bool:
         return str(run.get("autonomy_mode") or "") == "checkpointed"
 
@@ -273,6 +303,25 @@ class LocalResearchEngine:
             limits = {**limits, **plan_patch_limits}
         ledger = BudgetLedger.from_limits(limits)
         self._active_ledger = ledger
+        # task-16791: per-run routing/overrides (server parity). The run's
+        # provider_overrides merge OVER the engine's construction params.
+        policy = self._normalize_source_policy(run.get("source_policy"))
+        overrides = (
+            run.get("provider_overrides")
+            if isinstance(run.get("provider_overrides"), dict)
+            else {}
+        )
+        run_params = dict(self.search_params)
+        if "engine" in overrides:
+            run_params["engine"] = overrides["engine"]
+        if "result_count" in overrides:
+            try:
+                run_params["result_count"] = max(1, int(overrides["result_count"]))
+            except (TypeError, ValueError):
+                pass
+        self._active_run_params = run_params
+        self._active_policy = policy
+        self._active_academic_providers = overrides.get("academic_providers")
 
         try:
             return await self._execute_phases(run, ledger)
@@ -299,20 +348,30 @@ class LocalResearchEngine:
             return self.service.fail_run(run_id, error_msg=str(exc))
         finally:
             self._active_ledger = None
+            self._active_run_params = None
+            self._active_policy = None
+            self._active_academic_providers = None
 
     async def _collect_round(
         self,
         queries: list[str],
         base_params: dict[str, Any],
         ledger: BudgetLedger,
+        *,
+        source_policy: str = "balanced",
+        academic_providers: list | None = None,
     ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
         """Run one collection round: one search call per query, each with the
         fan-out cap clamped to the remaining search budget BEFORE it can
-        spend (task-16323), settling the actual query count after."""
+        spend (task-16323), settling the actual query count after.
+        task-16791: source_policy gates the lanes (academic_only spends
+        nothing on the web engine; web_only skips the paper lane) and sets
+        the evidence merge order (academic_first puts papers first, which
+        is what the docs-budget truncation keeps)."""
         collected: list[dict[str, Any]] = []
         sub_questions: list[str] = []
         warnings: list[str] = []
-        for query in queries:
+        for query in queries if source_policy != "academic_only" else []:
             params = dict(base_params)
             if ledger.max_runtime_seconds is not None:
                 params["phase1_time_budget_s"] = max(
@@ -337,7 +396,9 @@ class LocalResearchEngine:
                 sqd = shaped.get("sub_query_dict") or {}
             call_sub_questions = list((sqd or {}).get("sub_questions") or [])
             sub_questions.extend(call_sub_questions)
-            collected.extend(r for r in (wsr or {}).get("results") or [] if isinstance(r, dict))
+            collected.extend(
+                r for r in (wsr or {}).get("results") or [] if isinstance(r, dict)
+            )
             warnings.extend(w for w in (wsr or {}).get("warnings") or [])
             # task-16789: settle EXECUTED searches, not the reserved cap --
             # the pipeline can stop its fan-out early (phase-1 deadline), and
@@ -444,18 +505,33 @@ class LocalResearchEngine:
             self._check_control(run_id, "collecting")
             ledger.check_runtime()
             round_results, round_sub_questions, round_warnings = await self._collect_round(
-                round_queries, search_params, ledger
+                round_queries,
+                self._active_run_params or search_params,
+                ledger,
+                source_policy=self._active_policy or "balanced",
+                academic_providers=self._active_academic_providers,
             )
             all_sub_questions.extend(round_sub_questions)
             merged_warnings.extend(round_warnings)
-            if self.paper_search_fn is not None:
+            paper_results: list[dict[str, Any]] = []
+            if (
+                self.paper_search_fn is not None
+                and (self._active_policy or "balanced") != "web_only"
+            ):
                 # Academic lane: papers for this round's queries join the
                 # same evidence pool, deduped by DOI across providers and
                 # rounds (task-16326). A provider error is a warning, not a
-                # run failure -- the web lane already collected.
+                # run failure -- the other lane already collected.
+                providers_filter = self._active_academic_providers
+                accepts_providers = self._paper_fn_accepts_providers()
                 for query in round_queries:
                     try:
-                        papers = await self._maybe_await(self.paper_search_fn(query))
+                        if providers_filter is not None and accepts_providers:
+                            papers = await self._maybe_await(
+                                self.paper_search_fn(query, providers=providers_filter)
+                            )
+                        else:
+                            papers = await self._maybe_await(self.paper_search_fn(query))
                     except Exception as exc:  # noqa: BLE001 - lane degrades
                         merged_warnings.append(f"academic search failed: {exc}")
                         continue
@@ -465,7 +541,13 @@ class LocalResearchEngine:
                             if doi in seen_dois:
                                 continue
                             seen_dois.add(doi)
-                        round_results.append(paper)
+                        paper_results.append(paper)
+            # task-16791: merge order follows the policy's preferred lane.
+            round_results = (
+                paper_results + round_results
+                if (self._active_policy or "balanced") == "academic_first"
+                else round_results + paper_results
+            )
             for result in round_results:
                 url = str(result.get("url") or "")
                 if url and url in seen_urls:
