@@ -4687,3 +4687,26 @@ assert on the widget.
 Second trap in the same assertion: `Toast` is a `Static` that never calls
 `update()`, so its `renderable` is empty — a helper reading `renderable`
 reports "no toast" for a toast that is on screen. Read `Toast.render()`.
+
+## Do not commit to a file the running suite imports — `inspect`/`linecache` read source off disk lazily (task-15860, 2026-08-16)
+
+A 59-minute single-process Console population (3,404 tests) came back with
+**4 failures unique to the branch**, all in
+`test_console_prompts_controller.py::test_screen_keeps_a_real_delegation_for_
+every_outside_caller[...]` — a test that does
+`inspect.getsource(getattr(ChatScreen, name))`. Its message showed it had read
+a *different method's* body entirely.
+
+The cause was a comment-only commit to `chat_screen.py` (net +7 lines at line
+14903) made **while the run was in flight**. Each method's `co_firstlineno` is
+fixed at import; `inspect.findsource` calls `linecache.checkcache`, re-reads
+the now-changed file, and every method defined below the edit reports source
+shifted by the delta. The tell was not the assertion text but the SPLIT: the
+two parametrisations that passed are defined at lines 5330 and 6264, the four
+that failed at 16684, 16790, 16794 and 17198 — a clean line-number boundary at
+the edit point. Re-run on a stable tree: 37 passed.
+
+**What to do.** While a long run is in flight, stage edits somewhere the run
+does not import, or wait. This bites any assertion built on `inspect.getsource`
+/ `inspect.getsourcelines` / traceback rendering — and those are exactly the
+architecture-contract tests that a big single-process gate is there to run.

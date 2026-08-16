@@ -367,11 +367,57 @@ the skip is `test_probe_p4_headless_approval_cost`, which needs
 
 Because per-file runs cannot see app-lifetime bugs (the fires landing's
 §11 found a production self-kill exactly that way), the whole Console
-population runs in ONE process on both sides: every
+population ran in ONE process on both sides: every
 `Tests/UI/test_console_*.py` + `test_screen_residency` + the provenance
-probe.
+probe. Both sides ran concurrently on the same machine (plus three
+foreign `pytest` processes from other sessions throughout), so the
+comparison below is of failure *sets*, not durations.
 
-*(numbers below)*
+| | Branch (`f7ef432b5`) | Baseline (`.worktrees/headless-approval-base` @ `e112798f1`) |
+|---|---|---|
+| Files | 165 | 164 (no `test_console_headless_approval.py`) |
+| Collected | 3,404 | 3,390 |
+| Result | **27 failed, 3377 passed** (3562.97s) | **23 failed, 3367 passed** (3553.41s) |
+
+`comm -13` over the sorted node-id lists is **empty**: every one of the
+baseline's 23 failures is also on the branch, unchanged. The arithmetic
+closes exactly — +14 collected (the new file), +10 passed, +4 failed.
+
+**All 14 of the new file's tests passed inside the population.**
+
+### The 4 branch-unique failures are an artefact of MY editing, not a regression
+
+All four are
+`Tests/UI/test_console_prompts_controller.py::test_screen_keeps_a_real_
+delegation_for_every_outside_caller[...]`, which does
+`inspect.getsource(getattr(ChatScreen, name))` and asserts the body is a
+thin forwarder. Its failure text gives the game away — it read the wrong
+method entirely:
+
+```
+>       assert "self._prompts." + name in body
+E       assert ('self._prompts.' + '_console_command_apply_system') in
+        '    def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:\n ...'
+```
+
+The parametrisation has six names. **The two that passed are defined at
+`chat_screen.py:5330` and `:6264`; the four that failed are at `:16684`,
+`:16790`, `:16794` and `:17198`** — i.e. exactly those *after* line
+14903, which is where commit `a3f04b280` (a comment-only correction, net
++7 lines) landed **while the hour-long run was in flight**. Each method's
+`co_firstlineno` was fixed at import, `inspect.findsource` calls
+`linecache.checkcache` and re-reads the changed file, and every method
+below the edit reports source that is 7 lines off.
+
+Re-run on a stable tree, same branch, same commit:
+**`Tests/UI/test_console_prompts_controller.py` → 37 passed.**
+
+**Lesson, recorded because it cost an investigation:** do not commit to a
+file the running suite imports. An hour-long single-process run reads
+source off disk lazily (`inspect`, `linecache`, tracebacks), so an edit
+mid-run manufactures failures that look like yours and are not — and the
+tell is a line-number-ordered split in the parametrisation, not the
+assertion text.
 
 ---
 
