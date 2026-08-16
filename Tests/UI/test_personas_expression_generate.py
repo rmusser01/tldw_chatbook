@@ -36,7 +36,7 @@ from dataclasses import replace
 from io import BytesIO
 from threading import Event, Lock
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
@@ -3079,6 +3079,39 @@ async def test_publication_invalidation_isolated_and_busy_state_always_restored(
     )
 
 
+@pytest.mark.parametrize("error_type", (OSError, ValueError))
+async def test_visual_identity_replace_read_failure_redacts_private_path(
+    personas_editor_with_bound_pack, monkeypatch, error_type
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    private_path = "/private/people/alice/reactions/secret-portrait.png"
+    notifications = _capture_notifications(app)
+    fake_logger = Mock()
+    monkeypatch.setattr(personas_screen_module, "logger", fake_logger)
+    monkeypatch.setattr(app, "push_screen_wait", AsyncMock(return_value=private_path))
+
+    def fail_read(path):
+        assert path == private_path
+        raise error_type(f"cannot read {private_path}")
+
+    monkeypatch.setattr(screen, "_read_avatar_image_bytes", fail_read)
+
+    await screen._visual_identity_replace_dialog(asset)
+
+    assert notifications == [
+        ("Reaction replacement failed. Choose another image.", "error")
+    ]
+    assert private_path not in str(notifications)
+    assert private_path not in str(fake_logger.mock_calls)
+    fake_logger.warning.assert_called_once_with(
+        "Reaction replacement failed (category=image_read_failed, error_type={}).",
+        error_type.__name__,
+    )
+
+
 async def test_character_save_presentation_failure_releases_all_admission_guards(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -3110,6 +3143,64 @@ async def test_character_save_presentation_failure_releases_all_admission_guards
     assert admission is not None
     task, _event = admission
     screen._finish_visual_identity_operation(task)
+
+
+async def test_character_save_reread_failure_warns_without_success_toast(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    private_token = "/private/people/alice/characters/saved.sqlite"
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+
+    def fail_fetch(_character_id):
+        raise OSError(private_token)
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        fail_fetch,
+    )
+    screen._character_save_inflight = True
+
+    await personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+        screen, {"name": "Packed"}, str(char_id), "edit"
+    )
+
+    assert notifications == [
+        ("Character saved, but the editor could not refresh.", "warning")
+    ]
+    assert private_token not in str(notifications)
+    assert screen.character_handler.current_character_id is None
+    assert screen.character_handler.current_character_data == {}
+    assert screen.state.selected_entity_id == str(char_id)
+    assert screen.query_one("#personas-character-card-empty").display
+    assert not screen._character_save_inflight
+
+
+async def test_character_save_success_emits_one_information_toast(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    notifications = _capture_notifications(app)
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(screen, "_render_all_character_editor_thumbnails", AsyncMock())
+    screen._character_save_inflight = True
+
+    await personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+        screen, {"name": "Packed"}, str(char_id), "edit"
+    )
+
+    assert notifications == [("Character saved.", "information")]
+    assert not screen._character_save_inflight
 
 
 @pytest.mark.parametrize("stale_session", (False, True))

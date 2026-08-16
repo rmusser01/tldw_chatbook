@@ -8074,9 +8074,14 @@ class PersonasScreen(BaseAppScreen):
             data = await asyncio.to_thread(self._read_avatar_image_bytes, str(path))
             await self._stage_visual_identity_replacement(asset, data, source="upload")
         except (OSError, ValueError) as exc:
-            self._notify(f"Reaction replacement failed: {exc}", "error")
+            logger.warning(
+                "Reaction replacement failed (category=image_read_failed, error_type={}).",
+                type(exc).__name__,
+            )
+            self._notify("Reaction replacement failed. Choose another image.", "error")
         finally:
             self._io_dialog_active = False
+
     async def _render_character_expression_slot(
         self, character_id: int, state: str
     ) -> None:
@@ -11076,7 +11081,12 @@ class PersonasScreen(BaseAppScreen):
                 return
         self._character_save_inflight = False
         self._sync_title_and_console_actions()
-        self._notify("Character saved.", severity="information")
+        if saved_record is None:
+            self._notify(
+                "Character saved, but the editor could not refresh.", "warning"
+            )
+        else:
+            self._notify("Character saved.", severity="information")
 
     @on(PersonaProfileSaveRequested)
     async def _handle_profile_save_requested(
