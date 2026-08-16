@@ -31,6 +31,12 @@ Feedback recorded here should be usable as context for the agent's next
 reply, closing the loop between "the agent shows me a diff" and "I tell it
 what to change" without leaving the transcript to type a follow-up
 message by hand.
+
+Two other V1.5 polish items were also trimmed from V1 and belong in this
+same follow-up bucket: a header collapse/expand-all chevron (today each
+row toggles independently, with no all-at-once control) and middle-elided
+per-row paths (today a long path is shown in full rather than elided to
+fit the row).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

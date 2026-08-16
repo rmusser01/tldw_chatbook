@@ -1772,8 +1772,6 @@ class ConsoleTranscript(VerticalScroll):
 
     def __init__(
         self,
-        *,
-        change_review_provider_factory: Callable[[], Any] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -1781,11 +1779,13 @@ class ConsoleTranscript(VerticalScroll):
         #: change-review provider, or ``None``. Late-binding (the same
         #: builder convention as the region's other constructor callables)
         #: so a stale reference is never cached across session switches.
-        #: The screen's sync loop keeps this current on the mounted
-        #: instance (``set_change_review_provider_factory``); the
-        #: constructor default keeps every harness that builds this widget
-        #: directly working unmodified.
-        self._change_review_provider_factory = change_review_provider_factory
+        #: Always set post-construction via ``set_change_review_provider_
+        #: factory`` (the screen's sync loop keeps it current on the
+        #: mounted instance every tick, mirroring ``set_summary_boundary``/
+        #: ``set_image_specs``) -- no constructor kwarg for this, so every
+        #: harness that builds this widget directly starts with the card
+        #: switched off until the setter runs.
+        self._change_review_provider_factory: Callable[[], Any] | None = None
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None

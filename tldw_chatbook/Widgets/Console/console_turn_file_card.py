@@ -238,6 +238,14 @@ class ConsoleTurnFileCard(Vertical):
         event.stop()
         bodies = list(self.query(".console-turn-file-diff"))
         rows = list(self.query(".console-turn-file-row"))
+        # A partial-mount desync (the row-load worker still mid-mount, or a
+        # stale button event arriving after a rebuild) could otherwise index
+        # past a shorter list here -- an IndexError escaping this `on_*`
+        # handler would propagate to `app._handle_exception()` and exit the
+        # whole app, exactly the failure class every other seam in this file
+        # is guarded against. Degrade to a no-op instead.
+        if idx >= len(bodies) or idx >= len(rows) or idx >= len(self._entries):
+            return
         body = bodies[idx]
         row = rows[idx]
         entry = self._entries[idx]
