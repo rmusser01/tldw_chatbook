@@ -719,3 +719,65 @@ def test_engine_verification_summary_carries_gate_block():
     assert final["status"] == "completed"
     summary = _artifact_content(service.get_bundle(run["id"]), "verification_summary.json")
     assert summary["gate"] == {"relevant": 3, "raw": 5, "fallback": True}
+
+
+# --- chat handoff on completion (task-16481) --------------------------------------
+
+def test_engine_fires_completion_handoff_with_report_bundle():
+    service = _make_service()
+    run = service.launch_run(
+        query="Handoff question",
+        chat_handoff={"conversation_id": "conv-42", "origin": "console"},
+    )
+    search_fn, analyze_fn, _ = _make_pipeline("Handoff question")
+    fired = []
+
+    def handoff(payload):
+        fired.append(payload)
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, completion_handoff=handoff
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert len(fired) == 1
+    payload = fired[0]
+    assert payload["run_id"] == run["id"]
+    assert payload["question"] == "Handoff question"
+    assert payload["chat_handoff"] == {"conversation_id": "conv-42", "origin": "console"}
+    assert "Answer citing" in payload["report_markdown"]
+    assert payload["bundle"]["query"] == "Handoff question"
+
+
+def test_engine_skips_handoff_without_chat_handoff_target():
+    service = _make_service()
+    run = service.launch_run(query="No handoff")
+    search_fn, analyze_fn, _ = _make_pipeline("No handoff")
+    fired = []
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn,
+        completion_handoff=fired.append,
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+    assert fired == []
+
+
+def test_engine_handoff_failure_never_fails_the_run():
+    service = _make_service()
+    run = service.launch_run(query="Boom handoff", chat_handoff={"conversation_id": "x"})
+    search_fn, analyze_fn, _ = _make_pipeline("Boom handoff")
+
+    def exploding_handoff(payload):
+        raise RuntimeError("handoff sink down")
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn,
+        completion_handoff=exploding_handoff,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+    assert final["status"] == "completed"  # handoff failure is a warning only

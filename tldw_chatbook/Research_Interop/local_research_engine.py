@@ -66,6 +66,7 @@ class LocalResearchEngine:
         gap_fn: "GapFn | None" = None,
         search_params: dict[str, Any] | None = None,
         paper_search_fn: "Callable[[str], Any] | None" = None,
+        completion_handoff: "Callable[[dict[str, Any]], Any] | None" = None,
     ) -> None:
         self.service = local_service
         self.search_fn = search_fn or self._default_search_fn
@@ -79,6 +80,11 @@ class LocalResearchEngine:
         # Set for the duration of execute_run so _llm_bounded_call can
         # settle usage without threading the ledger through every seam.
         self._active_ledger: BudgetLedger | None = None
+        # task-16481: fired when a run that carried a chat_handoff target
+        # completes; the app wires this to insert the report into the
+        # originating conversation. Failures are warnings, never run
+        # failures -- the terminal state is already recorded.
+        self.completion_handoff = completion_handoff
 
     @staticmethod
     def _default_search_fn(question: str, params: dict[str, Any]) -> Any:
@@ -548,25 +554,49 @@ class LocalResearchEngine:
                     "unverified_claim_count": len(claims) - supported,
                 },
             )
+        bundle_content = {
+            "query": question,
+            "sub_questions": all_sub_questions,
+            "confidence": final_answer.get("confidence"),
+            "report_markdown": report_markdown,
+            "source_count": len(evidence),
+            "iterations": iteration,
+            "remaining_gaps": remaining_gaps,
+        }
         self.service.save_artifact(
             run_id,
             artifact_name="bundle.json",
             content_type="application/json",
-            content={
-                "query": question,
-                "sub_questions": all_sub_questions,
-                "confidence": final_answer.get("confidence"),
-                "report_markdown": report_markdown,
-                "source_count": len(evidence),
-                "iterations": iteration,
-                "remaining_gaps": remaining_gaps,
-            },
+            content=bundle_content,
         )
 
-        return self.service.complete_run(
+        completed = self.service.complete_run(
             run_id,
             progress_message=f"Completed with {len(evidence)} source(s)",
         )
+        chat_handoff = run.get("chat_handoff")
+        if (
+            self.completion_handoff is not None
+            and isinstance(chat_handoff, dict)
+            and chat_handoff
+            and completed.get("status") == "completed"
+        ):
+            try:
+                result = self.completion_handoff(
+                    {
+                        "run_id": run_id,
+                        "question": question,
+                        "chat_handoff": chat_handoff,
+                        "report_markdown": report_markdown,
+                        "bundle": bundle_content,
+                        "verification_summary": verification_summary,
+                    }
+                )
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:  # noqa: BLE001 - handoff degrades, never fails
+                logger.warning(f"Research completion handoff failed: {exc}")
+        return completed
 
     # -- follow-up Q&A over stored claims (task-16325) ----------------------
 
