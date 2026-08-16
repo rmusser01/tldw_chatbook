@@ -18,6 +18,16 @@ harness (`Tests/RAG_Eval/harness/ingest.build_eval_runtime`, the whole
 indexed through the production indexing helper; 166 of 172 indexed — the 6
 prompts have no vector index by design, `UNINDEXED_SOURCE_TYPES`).
 
+> **Two figures here are CONSOLE-OBSERVED, not archived** (final review,
+> finding 8). "166 of 172 indexed" is printed by `oracle_run.py`'s
+> `index_summary` and never persisted to `run-artifacts.json`, and the
+> smoke-run cost below was likewise read off the console; the run's console
+> log was not committed and cannot now be reconstructed. Both are stated as
+> observations, not as artifact-backed numbers. Everything else in this
+> report is recomputable from `run-artifacts.json` (the final review
+> re-derived the spend, the byte costs and the 0/8 → 7/8 score
+> independently, and every one reproduced exactly).
+
 | | |
 |---|---|
 | Model | `claude-haiku-4-5`, temperature 0, non-streaming, `max_tokens=1024` |
@@ -61,8 +71,10 @@ document's BODY, in no title anywhere, and not in its own question text
 | ON | 29 | 87,033 | 2,770 | $0.1009 |
 | **run total** | 54 | 149,696 | 5,390 | **$0.1766** |
 
-A one-question smoke run (both arms) preceded it at **$0.0222**, so the
-whole exercise cost **$0.199**. Priced at `claude-haiku-4-5` list rates
+A one-question smoke run (both arms) preceded it at **$0.0222**
+(console-observed; the smoke run wrote no artifact — see the note above),
+so the whole exercise cost **$0.199**, of which the $0.1766 above is
+artifact-backed. Priced at `claude-haiku-4-5` list rates
 ($1.00/MTok in, $5.00/MTok out); no cache reads or writes were reported.
 The ON arm costs ~33% more — expansion buys the answer, it does not come
 free.
@@ -138,7 +150,15 @@ It does not touch the four-question sub-result above.
 
 Both are therefore **unrefuted rather than refuted**, and remain the first
 things to check if the tool is ever measured on a semantic/hybrid route. A
-follow-up task carries them.
+follow-up task carries them (TASK-16588).
+
+> **Fix-wave update (2026-08-15, after the final review).** Suspect (a)'s
+> *cause* is now fixed, though the *measurement* is not: `_project_row`
+> emits `chunk_start` whenever a row's provenance carries a usable anchor,
+> so a chunked hit no longer expands from the document head by
+> construction. That closes TASK-16588 AC#1 at the unit level only — this
+> run still cannot exercise it, because the `plain` route emits no chunked
+> rows, so AC#3's route measurement stands. Suspect (b) is untouched.
 
 ## Disclosed limits
 

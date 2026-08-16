@@ -1513,16 +1513,29 @@ no retrieval behaviour.
   (`tldw_chatbook/Tools/document_expansion_tool.py`), a gateable built-in
   behind `[tools] expand_document_enabled` (OFF by default) and
   `risk_tags=("reads",)`, which floors it to *ask*. It takes exactly what
-  a row carries — `source_type` + `source_id`, optional
-  `chunk_id`/`chunk_start`/`offset` — and returns a budgeted window of
-  the note / media / conversation / prompt behind the hit.
+  a row carries — `source_type` + `source_id` required, plus optional
+  `chunk_start` (the window anchor) and `offset` (continuation) — and
+  returns a budgeted window of the note / media / conversation / prompt
+  behind the hit. `chunk_id` is NOT a parameter: it is an index
+  (`f"{doc_id}_chunk_{i}"`), nothing in the tool reads it, and the final
+  review found it shipped as agent-facing schema wired to nothing — the
+  fix wave retired it (a pasted row still works: it rides the
+  `**_provenance` swallow).
 - **Phase P — the policy, wired.** `Library/library_expand_policy.py`
   computes a per-row `{expandable, reason}` verdict, and
   `Agents/library_rag_tool_provider._project_row` attaches it *plus* the
   `source_type`/`source_id` the tool requires, under exactly the hint's
   own precondition. The agent is told which rows are labels rather than
   left to infer it, and is given an identity it can act on rather than
-  one it must guess.
+  one it must guess. A row also carries `chunk_id` when it has one and
+  `chunk_start` **when its provenance carries a usable anchor** (fix wave,
+  after the final review): a head anchor (`0`) or an unparseable one is
+  dropped, because `expand_document` centres its window only for
+  `anchor > 0` and a key that changes nothing is bytes spent for no
+  behaviour. Cost re-measured by T3b's strip-and-reserialize method on a
+  ten-row payload with five anchored rows: **+19.0 B per anchored row,
+  +95 B total (9.5 B/row), 11.7 % of the 32 KiB ceiling**; an unanchored
+  payload pays nothing.
 
 **Phase E — the oracle run.** Eight fixed questions over this corpus,
 each naming one media or conversation document and carrying a fact-oracle

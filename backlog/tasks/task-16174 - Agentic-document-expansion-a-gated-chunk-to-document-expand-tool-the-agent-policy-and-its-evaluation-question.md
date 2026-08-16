@@ -130,23 +130,48 @@ method, isolation proof, per-question attribution and disclosed limits:
   from the same table (`builtin_tool_gate.all_tool_gates`), so it appeared
   with zero UI wiring.
 - **#2 — an actionable contract.** `execute(source_type, source_id,
-  chunk_id="", chunk_start=None, offset=0, max_chars=None, note_id=…,
-  media_id=…, doc_id=…, **provenance)` returning the SAME keys on every
-  branch — `status | source_type | source_id | title | text | total_size |
+  offset=0, max_chars=None, chunk_start=None, note_id=…, media_id=…,
+  doc_id=…, **provenance)` returning the SAME keys on every branch —
+  `status | source_type | source_id | title | text | total_size |
   window{start,end} | truncated | next_offset` — for note / media /
   conversation / prompt and for `not_found` / `unsupported` / `error`. Over
   budget it returns a window (chunk-centred when `chunk_start` is known,
   else the head) plus `next_offset`, so a long document is navigable
-  without re-querying. Eleven contract tests, RED-first.
+  without re-querying. Eleven contract tests, RED-first, plus seven added
+  by the fix wave below (the retired `chunk_id` parameter, the
+  `HARD_MAX_CHARS` cap and its `<= 0` floor, and the >500-message
+  conversation, which used to be reported as a complete read).
 - **#3 — a testable policy, in the payload the agent actually reads.**
   `Library/library_expand_policy.expand_hint` is pure and returns
   `{expandable, reason}` ∈ `label_only` / `truncated_snippet` /
   `text_bearing`, or `None` for a row with nothing to expand;
   `Agents/library_rag_tool_provider._project_row` attaches it. The
   decision rule also sits in the tool's own `description`, pinned verbatim
-  by `test_tool_description_states_the_policy_verbatim`. 16 policy tests +
-  39 provider tests cover each branch, the sealing loop's byte budget, and
+  by `test_tool_description_states_the_policy_verbatim`. 17 policy tests +
+  42 provider tests cover each branch, the sealing loop's byte budget, and
   hostile rows.
+
+  **DISCLOSURE (added by the fix wave, final review finding 2): "each
+  branch" means each branch THE HELPER HAS — and the helper has two of the
+  spec's four.** The spec
+  (`Docs/superpowers/specs/2026-08-15-rag-agentic-expansion-design.md`)
+  named four: label-only → expand; text-bearing → no; **budget exhausted →
+  no**; **repeat expansion of the same source → no**. The shipped
+  `expand_hint` has three reasons (`label_only` / `truncated_snippet` /
+  `text_bearing`) and no concept of budget or repetition. Those two branches
+  ship as INSTRUCTION in the tool's description and nothing enforces them,
+  measures them, or could: both are properties of a CONVERSATION, not of a
+  row — "have I already expanded this source?" and "what context budget is
+  left?" require per-run agent-loop state that a stateless per-call tool and
+  a pure per-row helper both lack, and adding that state (a per-run
+  expansion ledger in `AgentService`) is a different piece of work from this
+  arc. The plan dropped them silently; this bullet is the correction. Both
+  sentences are now pinned verbatim by
+  `test_description_carries_the_two_branches_no_code_enforces`
+  (`Tests/Library/test_library_expand_policy.py`) so they cannot quietly
+  evaporate, and the "budget exhausted" sentence was ADDED to the
+  description by the fix wave — before it, that branch existed nowhere at
+  all.
 - **#4 — the label-only problem addressed, not scoped out.** Media and
   conversation rows are the tool's first-class acceptance cases, not
   afterthoughts: the contract works from exactly what such a row carries
@@ -187,7 +212,14 @@ method, isolation proof, per-question attribution and disclosed limits:
   consumer is a default is exactly the dead surface Phase K just retired.
 - **`chunk_id` is an INDEX, not an offset** (`f"{doc_id}_chunk_{i}"`), so
   the window anchor is `chunk_start` — a real chunk-metadata key. No
-  index→offset guessing path exists, deliberately.
+  index→offset guessing path exists, deliberately. **The fix wave finished
+  the job**: `chunk_id` was still standing in the tool's JSON schema and
+  signature while nothing in `execute` read it — a dead agent-facing knob
+  inside the arc whose thesis is that such knobs must not ship (finding 1).
+  It is retired from the schema (a pasted row still works: it rides the
+  `**_provenance` swallow) and `chunk_start` is now EMITTED by
+  `_project_row`, so the seam is wired at both ends instead of offering the
+  one field the tool discards and withholding the one it consumes.
 - **Identity rides the hint's own precondition** (Task 3b). A row with
   nothing to expand carries neither hint nor identity, so verdict and
   identity cannot drift apart and no raw id leaks on an unsupported row.
@@ -213,8 +245,17 @@ route emits no chunked rows and real database ids, so it cannot exercise
 either. They remain the first things to check if the tool is measured on a
 semantic/hybrid route, and are carried by **TASK-16588**:
 
-1. `chunk_start` is absent from the projected payload, so a chunked row
-   would expand from the document HEAD rather than around the match.
+1. ~~`chunk_start` is absent from the projected payload, so a chunked row
+   would expand from the document HEAD rather than around the match.~~
+   **CAUSE FIXED by the fix wave** (it was the other half of finding 1's
+   wire-or-retire): `_project_row` now emits `chunk_start` whenever a row's
+   provenance carries a usable anchor (`> 0`; a head anchor or an
+   unparseable value is dropped, since the tool centres only for
+   `anchor > 0`). Cost re-measured by Task 3b's strip-and-reserialize
+   method: **+19.0 B per anchored row**, +95 B on a ten-row payload with
+   five anchored rows (11.7 % of the 32 KiB ceiling; an unanchored payload
+   pays nothing). Still UNMEASURED on a route that can produce a chunked
+   row — TASK-16588 AC#3 stands.
 2. A semantic `source_id` can be a vector-store point id whose
    `note_id`/`doc_id` fallbacks are likewise absent from the payload, so a
    declared-expandable row could return `not_found`.
@@ -257,5 +298,122 @@ implemented; each now carries a correction).
   optional-dependency guards).
 - Collection sweep over every test file this branch touched vs merge-base
   `8727a2861`: 6 files, 348 tests collected, 0 errors.
-- Ruff clean on every touched file.
+- Ruff (the repo's 0.15.22, whole-file) clean on every file this arc
+  touched **with one exception, which is dev's and not this arc's**:
+  `tldw_chatbook/RAG_Search/simplified/config.py` reports `F401
+  load_cli_config_and_ensure_existence imported but unused` at `:18`. The
+  same finding exists at the merge-base `8727a2861`, so the arc neither
+  introduced nor removed it — the earlier unqualified "clean on every
+  touched file" was falsifiable in one command (final review finding 10).
+
+---
+
+## Fix wave — the final review's findings (2026-08-15)
+
+The whole-branch adversarial review returned **SHIP-WITH-FIXES**: every
+recomputable number in this file, the QA report and the README arc section
+reproduced exactly (the gate's 105 cells, the arm-level spend, the sealed
+payload byte costs, and the 0/8 → 7/8 score re-derived from the raw
+answers), and what held it back was three blockers plus a set of pin and
+claim-precision gaps. This wave closed them. Everything below is RED-first
+where it is a behaviour change and mutation-checked where it is a pin.
+
+**1 (blocker) — `chunk_id` was inert agent-facing surface, and the payload
+emitted exactly the field the tool ignores.** Applied this arc's own
+wire-or-retire doctrine to the seam, both ends:
+*retired* `chunk_id` from the tool's JSON schema, signature and docstring
+(nothing in `execute` ever read it; a pasted row still works because it
+rides the `**_provenance` swallow), and *wired* the anchor the tool does
+read — `_project_row` now emits `chunk_start` whenever a row's provenance
+carries a usable one. A head anchor (`0`), a negative, a bool or an
+unparseable value is dropped, because `_window_bounds` centres only for
+`anchor > 0` and a key that changes nothing is bytes spent in a sealed
+payload for no behaviour. Byte cost re-measured with Task 3b's
+strip-and-reserialize method: **+19.0 B per anchored row**, +95 B over a
+ten-row payload with five anchored rows (9.5 B/row, 11.7 % of the 32 KiB
+ceiling, headroom 28,943 B); a payload with no anchored row pays nothing.
+The description's window sentence now names `chunk_start`, and the
+misleading test name (`test_chunk_centred_window_when_chunk_id_known`,
+whose decorative `chunk_id` did nothing) is gone.
+
+**2 (blocker) — AC#3's coverage claim vs the spec's four branches.**
+Disclosed in the AC#3 bullet above rather than narrowed silently, with the
+reason: two of the four are conversation-level, not row-level, and need
+per-run agent-loop state neither a stateless tool nor a pure per-row helper
+has. Both sentences are now pinned verbatim, and the "budget exhausted"
+sentence had to be ADDED to the description first — before this wave that
+branch existed in neither code nor prose.
+
+**3 (blocker) — a >500-message conversation was truncated and reported as
+complete.** `total_size` is the length of the RENDERED text, so for a
+conversation past `MAX_TRANSCRIPT_MESSAGES` the payload described a prefix
+while saying `truncated: False`, `next_offset: None` — a partial read
+indistinguishable from a whole-document one. `_fetch_conversation` now
+reads one message past the cap purely to tell "exactly at the cap" from
+"over it", and a capped read comes back as a typed `_Document` carrying a
+`note`; `execute` reports `truncated: True` and attaches that note
+(`MESSAGE_CAP_NOTE`, which names the cap and says the window and
+`next_offset` describe the prefix). `next_offset` stays honest: character
+offsets genuinely cannot reach message 501, so it is `None` at the end of
+the prefix and the note is what explains why. Uniform-keys contract kept
+(`note`, like `error`, is a branch-specific ADDITION, never a removal).
+
+**4 — the budget promise is now pinned.** `HARD_MAX_CHARS` and the
+non-positive floor had no test at all: the review's mutation
+(`int(mc) if mc else DEFAULT_MAX_CHARS`) left the suite at 11/11 green.
+Two tests added; both mutation-verified (cap deleted → 1 red; `<= 0` guard
+deleted → 2 red).
+
+**8 — two report figures had no committed backing.** The smoke-run cost
+($0.0222, and therefore the $0.199 headline) and "166 of 172 indexed" were
+console output that was never persisted, and the console log cannot now be
+reconstructed. They are restated in the QA report as **console-observed,
+not archived**, with a note saying which figures ARE recomputable from
+`run-artifacts.json`.
+
+**10 — the "ruff clean" claim.** Restated in Verification above with the
+pre-existing `F401` named. Re-verified in both directions during this wave:
+identical finding at `HEAD` and at the merge-base `8727a2861`.
+
+**11 — docs drift.** `Docs/User_Guide/mcp.md`'s "Agent built-ins"
+enumeration gained the eighth gate (`expand_document`, with its ask-floor
+consequence stated) and a fresh "Verified against" stamp;
+`Tests/RAG_Eval/README.md`'s arc section no longer implies a row carries
+`chunk_start` unconditionally — it now says exactly when it does, and
+records the retirement of `chunk_id` as a parameter.
+
+**12 — a stale invariant comment.** `Tests/Agents/test_library_tool_provider.py`'s
+"Raw backing identities and provenance never leave the adapter" stayed
+green only because its fixture carries no provenance. Qualified to the
+precondition truth, pointing at `_project_row` and both sides' tests.
+
+**Not fixed here, filed as TASK-16688** (id swept against `origin/dev`,
+every remote branch and all 127 worktrees; max found 16588, +100 leapfrog,
+collision re-checked): findings **5** (the two source-type allowlists have
+nothing pinning them together), **6** (the policy allowlist is narrower
+than `_SEMANTIC_SOURCE_TYPE_MAP`'s canonicalization variants — also added
+to TASK-16588 as in-scope evidence for its route measurement), **13** (the
+`[console] direct_library_tools` consent-boundary relationship is recorded
+nowhere), **15** (the conversation fetch loads image BLOBs it never
+renders) and **16** (the live run never exercised the window/continuation
+half). Findings **7** (the report's "verbatim" vs the 400-char tool-result
+clip) and **9** (the absolute developer path in `oracle_run.py`) were left
+untouched by this wave's scope.
+
+### Fix-wave verification
+
+- RED first: 6 new tests failed before the change (`chunk_id` still in the
+  schema; the description missing both new sentences; the >500-message
+  conversation asserting `truncated is False`; `KeyError: 'chunk_start'`
+  ×2). Born-green pins were mutation-checked instead — 6 mutations, every
+  one red: budget cap, budget floor, cap-note→truncated, note never set,
+  `chunk_start` emitted unconditionally, `chunk_start` never emitted.
+- `Tests/Tools Tests/Agents` **2009 passed, 15 skipped**;
+  `Tests/Library` **1986 passed, 2 skipped** (skips are the pre-existing
+  optional-dependency and platform guards).
+- Gate, re-run after the payload addition:
+  `[rag-eval baselines] PASSED: No regression. 105 metric(s) within 0.05 of
+  baseline.` — `Tests/RAG_Eval` **307 passed**. A payload addition after
+  retrieval cannot move retrieval, and did not.
+- Ruff clean on every file this wave touched.
 <!-- SECTION:NOTES:END -->
