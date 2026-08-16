@@ -227,3 +227,66 @@ def test_description_carries_the_two_branches_no_code_enforces():
         "Stop expanding once your remaining context budget is short — a "
         "window you cannot afford to read is spent for nothing."
     ) in description
+
+
+# --------------------------------------------------------------------------
+# TASK-16688 AC#2: the canonicalization-variant EXCLUSION is deliberate
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["notes", "media_chunk", "conversations", "chat", "prompts"],
+)
+def test_canonicalization_variant_rows_get_no_hint(variant):
+    """A VARIANT spelling gets no hint, and that is the recorded decision.
+
+    `library_local_rag_search_service._SEMANTIC_SOURCE_TYPE_MAP` treats
+    these five spellings as live raw provenance values, so a row could in
+    principle carry one; `EXPANDABLE_SOURCE_TYPES` accepts only the four
+    singulars. TASK-16174's final review (finding 6) asked whether to
+    broaden the allowlist. TASK-16588's route probe then MEASURED the case
+    -- 0 variant rows across all 340 rows on four (index x route) arms,
+    with a committed positive control showing its detector fires on every
+    variant and on no singular -- and today's indexer
+    (`RAG_Search/ingestion_indexing.py`) stamps only singulars.
+
+    Broadening on a measured zero would ship speculative surface, so the
+    exclusion stands and this test is what makes it deliberate rather than
+    accidental: it reds if someone widens the allowlist without revisiting
+    the reasoning in `library_expand_policy`'s module docstring.
+    """
+    assert (
+        expand_hint(
+            _row(
+                source_id="42",
+                chunk_id="",
+                snippet="Matched media · pdf",
+                provenance={"source_type": variant},
+            )
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "singular", ["note", "media", "conversation", "prompt"]
+)
+def test_singular_twin_of_each_variant_still_gets_a_hint(singular):
+    """The control that makes the exclusion above a reading, not a tautology.
+
+    Mirrors the probe's own positive control: the same helper, the same
+    row, only the spelling differs -- so "no hint" for a variant is a
+    statement about the allowlist and not about a malformed row.
+    """
+    assert (
+        expand_hint(
+            _row(
+                source_id="42",
+                chunk_id="",
+                snippet="Matched media · pdf",
+                provenance={"source_type": singular},
+            )
+        )
+        is not None
+    )

@@ -1661,6 +1661,16 @@ which is Phase E's regime), and retrieval quality (every marker query put its
 target at rank 1 by design; the gated suite is the instrument for that, and
 it read 105/105 at (+0.000) throughout).
 
+The table's last column is the answer to TASK-16174's finding 6:
+**canonicalization-VARIANT rows (`notes`, `media_chunk`, `conversations`,
+`chat`, `prompts` — spellings `_SEMANTIC_SOURCE_TYPE_MAP` treats as live but
+`library_expand_policy.EXPANDABLE_SOURCE_TYPES` does not) read 0 of 340**,
+against a committed positive control showing the same `expand_hint` helper
+fires on every variant and on no singular; on that measured zero TASK-16688
+RECORDED the exclusion (a module docstring note plus a both-directions pin in
+`Tests/Library/test_library_expand_policy.py`) rather than broadening the
+allowlist for a producer that does not exist.
+
 Method, isolation proof, per-row detail and the full artifact:
 `Docs/superpowers/qa/2026-08-16-rag-semantic-identity/` (`route_probe.py`,
 `report.md`, `probe-artifacts.json`). The probe is a **script, never a test**

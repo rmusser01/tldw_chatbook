@@ -28,6 +28,25 @@ from typing import Any
 
 #: Seams ``expand_document`` (Phase T) can actually fetch. A row of any other
 #: type gets no hint: a hint the agent cannot act on is worse than silence.
+#:
+#: **Singulars only, deliberately** (TASK-16688 AC#2, from TASK-16174's final
+#: review finding 6). ``library_local_rag_search_service.
+#: _SEMANTIC_SOURCE_TYPE_MAP`` also treats the VARIANT spellings ``notes``,
+#: ``media_chunk``, ``conversations``, ``chat`` and ``prompts`` as live raw
+#: provenance values, so a row carrying one would get no hint here and --
+#: by the Phase P/T shared precondition -- no identity either. That gap was
+#: MEASURED before it was decided: TASK-16588's route probe counted variant
+#: rows at **0 across all 340 rows** on four (index x route) arms, carrying a
+#: positive control proving its detector fires on every variant and on no
+#: singular (``Docs/superpowers/qa/2026-08-16-rag-semantic-identity/report.md``,
+#: "Canonicalization-variant rows"), and today's local indexer
+#: (``RAG_Search/ingestion_indexing.py``) stamps only singulars. Broadening
+#: the allowlist on a measured zero would ship agent-facing surface with no
+#: producer, so the exclusion stands; it is pinned (both directions) by
+#: ``Tests/Library/test_library_expand_policy.py``'s variant tests. Revisit
+#: only if a writer starts emitting a variant into chunk metadata -- e.g.
+#: third-party or legacy index entries -- which is the live hazard this note
+#: exists to keep discoverable.
 EXPANDABLE_SOURCE_TYPES: tuple[str, ...] = ("note", "media", "conversation", "prompt")
 
 #: Seams whose keyword rows are rendered as a LABEL rather than as content.

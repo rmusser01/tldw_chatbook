@@ -567,3 +567,74 @@ def test_tool_carries_risk_tags():
     state = resolve_builtin_state({}, tool_ref(tool))
     assert state.state == "ask"
     assert state.risk_floored is True
+
+
+# --- the conversation fetch does not read image BLOBs it never renders ------
+
+
+async def test_conversation_fetch_asks_for_no_image_blobs(dbs, monkeypatch):
+    """TASK-16688 AC#4 (TASK-16174 finding 15): `include_image_data=False`.
+
+    The transcript renders `sender`/`content` only, so the reader's default
+    (`include_image_data=True`, `ChaChaNotes_DB.get_messages_for_conversation`)
+    pulls up to `MAX_TRANSCRIPT_MESSAGES` image BLOBs into memory for text
+    that cannot use them -- the task-260 case, one seam later.
+
+    The pin wraps the REAL reader (it still runs; only the kwargs are
+    recorded), so it fails both ways: drop the flag and the recorded kwargs
+    lose it, and the returned rows carry the BLOB again.
+    """
+    conversation_id = dbs.chacha.add_conversation({"title": "Optics chat"})
+    assert conversation_id, "precondition: the conversation writer returned an id"
+    dbs.chacha.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "Why does the beam carry?",
+            "image_data": b"\x89PNG\r\n\x1a\n" + b"NOT-A-REAL-PNG" * 64,
+            "image_mime_type": "image/png",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+    )
+    dbs.chacha.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": MEDIA_BODY,
+            "timestamp": "2026-01-01T00:00:01Z",
+        }
+    )
+
+    real_reader = dbs.chacha.get_messages_for_conversation
+    calls: list[dict] = []
+
+    def _recording_reader(*args, **kwargs):
+        calls.append({"args": args, "kwargs": dict(kwargs)})
+        return real_reader(*args, **kwargs)
+
+    monkeypatch.setattr(
+        dbs.chacha, "get_messages_for_conversation", _recording_reader
+    )
+
+    result = await _tool().execute(
+        source_type="conversation", source_id=str(conversation_id)
+    )
+
+    assert len(calls) == 1, "the transcript is ONE read, not a per-message loop"
+    assert calls[0]["kwargs"].get("include_image_data") is False, (
+        "the transcript fetch must opt out of the image BLOB column"
+    )
+    rows = real_reader(str(conversation_id), limit=10, include_image_data=False)
+    assert rows[0]["image_data"] is None, (
+        "control: the flag is what suppresses the BLOB, and the message "
+        "really does carry one"
+    )
+    assert (
+        real_reader(str(conversation_id), limit=10)[0]["image_data"] is not None
+    ), "control: the default still returns it, so the pin is a real reading"
+
+    _assert_shape(result)
+    assert result["status"] == "ok"
+    assert result["text"] == (
+        f"user: Why does the beam carry?\nassistant: {MEDIA_BODY}"
+    ), "the rendered text is byte-identical with the BLOBs skipped"
