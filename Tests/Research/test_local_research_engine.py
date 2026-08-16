@@ -325,10 +325,19 @@ def _iter_pipeline(question):
 
     async def analyze_fn(wsr, sqd, params, cancel_event=None):
         state["analyze"] += 1
-        state["merged_results"] = list(wsr.get("results") or [])
+        merged = list(wsr.get("results") or [])
+        state["merged_results"] = merged
         return {
-            "final_answer": {"text": f"Round {state['analyze']} answer", "evidence": [],
-                             "confidence": 0.5, "chunks": []},
+            "final_answer": {
+                "text": f"Round {state['analyze']} answer",
+                "evidence": [
+                    {"id": i, "url": r.get("url"), "title": r.get("title"),
+                     "content": r.get("content"), "original_content": r.get("content"),
+                     "reasoning": "", "chunk_index": 1}
+                    for i, r in enumerate(merged, 1)
+                ],
+                "confidence": 0.5, "chunks": [],
+            },
             "relevant_results": {},
             "web_search_results_dict": wsr,
         }
@@ -558,3 +567,124 @@ def test_follow_up_without_claims_artifact_never_calls_the_llm():
 
     assert result["status"] == "insufficient_evidence"
     assert called["n"] == 0
+
+
+# --- academic lane into the evidence pool (task-16326) --------------------------
+
+def test_engine_merges_academic_papers_with_doi_dedup():
+    service = _make_service()
+    run = service.launch_run(query="Papers question", limits_json={"max_iterations": 2})
+    search_fn, analyze_fn, state = _iter_pipeline("Papers question")
+    paper_rounds = [
+        [
+            {"title": "Paper v1", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://doi.org/10.1/x", "source": "arxiv"},
+            {"title": "Paper v1 preprint", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://other.example/x", "source": "semantic_scholar"},
+        ],
+        [
+            {"title": "Paper v1 again", "abstract": "abs", "doi": "10.1/x",
+             "url": "https://doi.org/10.1/x", "source": "arxiv"},
+            {"title": "Paper v2", "abstract": "abs2", "doi": "10.2/y",
+             "url": "https://doi.org/10.2/y", "source": "arxiv"},
+        ],
+    ]
+
+    async def paper_search_fn(query):
+        return paper_rounds.pop(0) if paper_rounds else []
+
+    gap_calls = {"n": 0}
+
+    async def gap_fn(context):
+        gap_calls["n"] += 1
+        return ["gap 1"] if gap_calls["n"] == 1 else []
+
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_search_fn,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    urls = [r["url"] for r in state["merged_results"]]
+    # r1 (web round 1) + paper v1 ONCE (deduped across providers in round 1
+    # and across rounds) + r2 (web round 2) + paper v2 (new DOI round 2).
+    assert urls == [
+        "https://r1.example/",
+        "https://doi.org/10.1/x",
+        "https://r2.example/",
+        "https://doi.org/10.2/y",
+    ]
+    sources = _artifact_content(service.get_bundle(run["id"]), "sources.json")
+    paper_entries = [
+        e for e in sources["evidence"] if str(e.get("url", "")).startswith("https://doi.org/")
+    ]
+    assert len(paper_entries) == 2
+
+
+# --- token usage settlement + enforcement (task-16329) ---------------------------
+
+def test_engine_settles_recorded_usage_into_ledger():
+    from tldw_chatbook.Chat.usage_recorder import active_recorder
+
+    service = _make_service()
+    run = service.launch_run(query="Tokens question")
+    search_fn, analyze_fn, _ = _make_pipeline("Tokens question")
+
+    async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=30, completion_tokens=10)
+        return await analyze_fn(wsr, sqd, params, cancel_event=cancel_event)
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_with_usage
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
+    assert ledger["tokens_settled"] == 40
+    assert ledger["tokens_estimated"] is True
+
+
+def test_engine_enforces_max_tokens_between_llm_calls():
+    from tldw_chatbook.Chat.usage_recorder import active_recorder
+
+    service = _make_service()
+    run = service.launch_run(query="Token capped", limits_json={"max_tokens": 25})
+    search_fn, analyze_fn, _ = _make_pipeline("Token capped")
+
+    async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=20, completion_tokens=10)
+        return await analyze_fn(wsr, sqd, params, cancel_event=cancel_event)
+
+    async def gap_with_usage(context):
+        recorder = active_recorder()
+        if recorder is not None:
+            recorder.record_usage(prompt_tokens=5, completion_tokens=5)
+        return []
+
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_with_usage,
+        gap_fn=gap_with_usage,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    # Synthesis settled 30 of 25 tokens; the gap call is refused at the
+    # boundary -> clean research_limit_exceeded stop with partial artifacts.
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_tokens" in final["progress_message"]
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    assert "report_v1.md" not in names
+    assert "budget_ledger.json" in names

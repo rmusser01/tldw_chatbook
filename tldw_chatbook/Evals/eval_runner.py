@@ -2631,6 +2631,7 @@ class EvalRunner:
                 SafetyEvaluationRunner,
                 MultilingualEvaluationRunner,
                 CreativeEvaluationRunner,
+                ResearchReportRunner,
             )
 
             specialized_available = True
@@ -2665,6 +2666,13 @@ class EvalRunner:
                 "dialogue_generation",
             ]:
                 self.runner = CreativeEvaluationRunner(task_config, effective_config)
+            elif (
+                category == "research"
+                or task_config.task_type == "research_report"
+            ):
+                # task-16327: deterministic scoring of stored verification
+                # payloads; see Evals/research_report_scorer.py.
+                self.runner = ResearchReportRunner(task_config, effective_config)
             else:
                 self.runner = self._create_basic_runner(task_config, effective_config)
         else:

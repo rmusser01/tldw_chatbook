@@ -360,3 +360,67 @@ def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch
     window._start_local_engine("local-run")
 
     assert engines == [local_service]
+
+
+# --- academic lane toggle (task-16328) ------------------------------------------
+
+def test_window_academic_toggle_defaults_off_and_persists_in_state():
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+
+    assert window.academic_enabled is False
+    assert window.save_state() == {"source": "local", "academic": False}
+
+    window.academic_enabled = True
+    assert window.save_state() == {"source": "local", "academic": True}
+
+
+def test_window_academic_toggle_restores_from_state():
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+
+    window.restore_state({"source": "local", "academic": True})
+
+    assert window.academic_enabled is True
+
+
+def test_window_academic_toggle_default_comes_from_config(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Research_Window._academic_lane_default", lambda: True
+    )
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+
+    assert window.academic_enabled is True
+
+
+def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Research_Interop import academic_providers
+
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, service, **kwargs):
+            captured["paper_search_fn"] = kwargs.get("paper_search_fn")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        FakeEngine,
+    )
+    service = FakeResearchScopeService()
+    local_service = LocalResearchService(":memory:")
+    app = SimpleNamespace(research_scope_service=service,
+                          local_research_service=local_service)
+
+    window_off = ResearchWindow(app_instance=app)
+    window_off._start_local_engine("run-1")
+    assert captured["paper_search_fn"] is None
+
+    window_on = ResearchWindow(app_instance=app)
+    window_on.academic_enabled = True
+    window_on._start_local_engine("run-2")
+    assert captured["paper_search_fn"] is academic_providers.search_papers

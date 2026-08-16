@@ -981,6 +981,25 @@ def chat_api_call(
             logger.debug(
                 f"Debug - Chat API Call - Response type=str; length={len(response)}"
             )
+            # task-16329: token-usage plumbing. When a usage scope is active
+            # (research budget ledger), record estimated prompt/completion
+            # tokens for this exchange. One contextvar get when no scope is
+            # active -- zero behavior change for every other caller.
+            try:
+                from .usage_recorder import active_recorder
+
+                recorder = active_recorder()
+                if recorder is not None:
+                    recorder.record_exchange(
+                        prompt_text="\n".join(
+                            str(message.get("content") or "")
+                            for message in (messages_payload or [])
+                            if isinstance(message, dict)
+                        ),
+                        completion_text=response,
+                    )
+            except Exception:  # noqa: BLE001 - accounting must never break a call
+                logger.debug("usage recording skipped", exc_info=True)
         elif hasattr(response, "__iter__") and not isinstance(
             response, (str, bytes, dict)
         ):
