@@ -351,7 +351,18 @@ same invocation in a throwaway detached worktree at `bab84f7d9`
 (`.worktrees/headless-fires-base`), with the two new test files copied in
 for the new-suite row. Every count below was READ off a summary line.
 
-<!--GATE_TABLE-->
+| Gate | Baseline @ merge-base `bab84f7d9` | Final @ branch | Delta |
+|---|---|---|---|
+| **The new suite** — `Tests/UI/test_console_headless_wake_fires.py` (1) + `Tests/Chat/test_console_headless_wake_invariants.py` (13) + probe | **11 failed, 4 passed** (both files copied into a detached worktree at the merge-base) | **15 passed** | **+11**; the 4 that pass on both sides are the two disposed-direction tests, the phantom test (its restarted controller never had a visit) and the provenance probe |
+| **The specified battery** — `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_mcp_approval` (69), the 16-file wake glob (109), probe (1) = 223 | **223 passed, 0 failed** (179.6s) | **223 passed, 0 failed** (179.5s) | **0** — identical, both sides clean |
+| `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | **1438 passed, 0 failed** (40.1s) | — |
+| `Tests/Chat/` in full + probe | <!--CHAT_BASE--> | <!--CHAT_FINAL--> | <!--CHAT_DELTA--> |
+
+The wake glob as specified (`Tests/Chat/test_fleet_*.py
+Tests/Chat/test_console_fleet_*.py Tests/UI/test_console_fleet_*.py`)
+collects **109** tests across **16** files here — the same figure the
+lifetime landing's report recorded, and not the 177 quoted earlier in the
+arc.
 
 ---
 
@@ -365,7 +376,15 @@ for the new-suite row. Every count below was READ off a summary line.
   `_is_session_cancelled` denies it at the first poll — fail-closed and
   *faster* than P4's 120.43s timeout, not slower. Task 5 owns whether
   that is the desired policy; this slice does not change it.
-- **Launch / first-boot wake** (plan Task 6) is untouched.
+- **Launch / first-boot wake** (plan Task 6) is untouched, and this
+  change cannot have accidentally enabled it. Read, not executed: the
+  app constructs the `ConsoleRuntime` holder eagerly (`app.py`
+  `self.console_runtime = ConsoleRuntime(self)`) but `ensure_chat_
+  controller` / `ensure_agent_bridge` are lazy and their only callers are
+  `ChatScreen` and its Console modules — so with Console never opened in
+  a process there is no controller, therefore no
+  `ConsoleFleetWakeCoordinator` and no fan-out registration, and nothing
+  can fire. The wake still needs Console to have been opened **once**.
 - **Documentation** (plan Task 8) is untouched: the User Guide's "**If
   Console isn't open, no wake fires**" paragraph and the spec's "honest
   architectural limit as built" are now stale and are that task's job.
