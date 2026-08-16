@@ -528,6 +528,29 @@ ledger-creation time; by cleanup time it is too late.
 
 ---
 
+## A checkout-based baseline round silently discards uncommitted work on that file
+
+**TASK-15777, 2026-08-15.** To attribute test failures, the standard baseline
+round is: `git checkout <base> -- <file>` → run the failing tests → `git
+checkout HEAD -- <file>`. During the two-sided-windowing work this round was
+run twice; between the two runs an uncommitted improvement (the reveal-segment
+recenter criterion) had been made to that same file on top of the last WIP
+commit. The second round's `git checkout HEAD -- <file>` restored the WIP
+commit and silently discarded the improvement — no error, no prompt, working
+tree "clean". It was only caught because `git status --porcelain` in the same
+command's output listed fewer modified files than expected; the edit had to be
+re-applied from the conversation's diff and every suite re-run on the
+re-committed state.
+
+**What to do.** `git checkout ... -- <file>` is a mutation of the working
+tree, exactly like the `git checkout HEAD --` restore trap in
+`lessons-testing-evidence.md`. Before ANY checkout-based baseline round,
+commit the current state first — the round's restore step is then provably a
+no-op. If the file was touched after the last commit, the restore step
+destroys that delta unconditionally.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

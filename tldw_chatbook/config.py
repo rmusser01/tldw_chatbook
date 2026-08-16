@@ -3402,7 +3402,13 @@ prune_low_watermark = 12000
 # more. Both values are FLOORS in terminal rows -- the effective budget is the
 # larger of the floor and the mounted viewport (6x for the initial window, 4x
 # per scrollback step). Set transcript_window_lines <= 0 to mount the whole
-# history at load, as before.
+# history at load, as before. With windowing on and sane watermarks the
+# window is two-sided (TASK-15777): sustained scroll-back keeps loading older
+# history while trimming the newest end back out of the view (never a
+# selected message, which pauses the sliding while pinned at that end), so
+# the session stays reachable by scrolling at a bounded mounted size, and a
+# jump to a far-away message mounts a fresh window around it instead of
+# everything between it and the tail.
 transcript_window_lines = 144
 transcript_scrollback_lines = 96
 
