@@ -14905,14 +14905,21 @@ class ChatScreen(BaseAppScreen):
             self._restore_native_console_state(native_console_state)
         # task-15860 Task 5: the snapshot's `task_resume_state` is a VIEW
         # projection taken when the last Console visit ended, so restoring
-        # it plainly (`_restore_native_console_state`) both erases an
-        # approval round armed since -- the headless case, where a
-        # risk-tagged tool in a wake turn arms one with nothing mounted --
-        # and could resurrect a card for a round that has since resolved.
-        # The app-owned controller is the only source of truth for what is
-        # actually armed, so re-derive from it after the snapshot lands.
-        # Measured: without this the attach-time remount ran, set the
-        # card, and was overwritten microseconds later by the snapshot.
+        # it plainly (`_restore_native_console_state`) ERASES an approval
+        # round armed since -- the headless case, where a risk-tagged tool
+        # in a wake turn arms one with nothing mounted. The app-owned
+        # controller is the only source of truth for what is armed, so
+        # re-derive from it AFTER the snapshot lands. Measured: without
+        # this the attach-time remount ran, set the card, and was
+        # overwritten microseconds later by the snapshot.
+        #
+        # Scoped deliberately: this MOUNTS an armed round, it does not
+        # CLEAR a stale one. A snapshot carrying a `pending_approval` for
+        # a round that has since resolved still restores a dead card
+        # (clicking it resolves nothing -- `resolve_pending_approval`
+        # fails closed on the missing round id). That is a pre-existing
+        # defect on this path, no red was reproduced for it here, and
+        # fixing it belongs with whoever does.
         self._console_runtime().remount_pending_approval()
         self.sync_task_resume_state()
 

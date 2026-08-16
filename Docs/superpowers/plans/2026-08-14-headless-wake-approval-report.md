@@ -214,9 +214,15 @@ That alone was not enough, and the reason was measured, not guessed:
 `ChatScreen.restore_state` now re-derives from the controller *after* the
 snapshot lands. That is the continuity landing's own principle applied
 one slot further: the app-owned controller is the only source of truth
-for what is armed, and a view snapshot of it is a second one. It also
-closes the mirror bug nobody had hit — a snapshot resurrecting a card for
-a round that has since resolved.
+for what is armed, and a view snapshot of it is a second one.
+
+Scoped deliberately: it **mounts** an armed round, it does not **clear** a
+stale one. A snapshot carrying a `pending_approval` for a round that has
+since resolved still restores a dead card — clicking it resolves nothing,
+because `resolve_pending_approval` fails closed on the missing round id.
+That is a pre-existing defect on the same path, I reproduced no red for
+it, and the discipline is reproduce-red-before-fixing, so it is named in
+§12 rather than quietly swept up.
 
 ---
 
@@ -447,7 +453,16 @@ limit remains" — the launch-wake limit is still real and still Task 6's.
    caller exists today (the slots are cleared together), and the
    alternative — asking `ConsoleRuntime.view` — is wrong in the case that
    matters. Stated so the next reader does not have to re-derive it.
-5. **The parallel population runs shared a machine.** Branch and baseline
+5. **A stale restored card is a pre-existing defect on the path I
+   touched, left alone.** `ScreenStateStore`'s `task_resume_state`
+   snapshot can carry a `pending_approval` for a round that resolved
+   after the snapshot was taken (e.g. denied by the very
+   `leave_console()` that preceded it), and `restore_state` mounts it. The
+   card is dead: `resolve_pending_approval` fails closed on the missing
+   round id, so clicking it does nothing at all. The one-line fix would be
+   to clear when nothing is armed — but no red was reproduced for it and
+   it is outside this task's ACs, so it is reported rather than bundled.
+6. **The parallel population runs shared a machine.** Branch and baseline
    Console populations ran concurrently, so both carry the same
    contention. The comparison that matters is the failure *set*, which is
    what §9.2 compares; absolute durations are not comparable to the fires
