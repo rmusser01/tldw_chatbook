@@ -54,8 +54,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
+    console_settings_warnings,
     normalize_console_model_value,
     normalize_llamacpp_base_url,
+    reasoning_effort_hint_for_model,
     resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
@@ -1408,6 +1410,8 @@ class ConsoleSettingsModal(
         result = self._validated_result_or_show_errors()
         if result is None:
             return
+        for warning in console_settings_warnings(result.settings):
+            self.notify(warning, severity="warning", timeout=8000)
         self.dismiss(result)
 
     @on(Button.Pressed, "#console-settings-save-default")
@@ -1426,6 +1430,8 @@ class ConsoleSettingsModal(
         result = self._validated_result_or_show_errors()
         if result is None:
             return
+        for warning in console_settings_warnings(result.settings):
+            self.notify(warning, severity="warning", timeout=8000)
         try:
             saved = await asyncio.to_thread(
                 save_settings_to_cli_config,
@@ -1757,6 +1763,10 @@ class ConsoleSettingsModal(
 
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
+        if input_id == "console-settings-reasoning-effort":
+            hint = reasoning_effort_hint_for_model(self._settings.model)
+            if hint is not None:
+                return " / ".join(sorted(hint)) + " (consumed by this model)"
         for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
             if choice_input_id == input_id:
                 return placeholder
