@@ -340,8 +340,13 @@ def test_aggregate_success_typed_and_numbered(monkeypatch):
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
-    assert set(out) == {"text", "evidence", "confidence", "chunks"}
+    # Success branch carries the citation-verification verdict (task-16331);
+    # failure/empty branches (pinned by their own tests) omit the key.
+    assert set(out) == {"text", "evidence", "confidence", "chunks", "citation_verification"}
     assert out["text"] == "Answer citing [1]."
+    cv = out["citation_verification"]
+    assert cv["markers_total"] == 1 and cv["markers_resolved"] == 1
+    assert cv["unknown_marker_ids"] == []
     assert out["evidence"][0]["id"] == 1
     assert out["evidence"][0]["url"] == "https://one.example/"
     assert "[1]" in captured["prompt"]          # numbered payload shown to the LLM

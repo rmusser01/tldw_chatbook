@@ -5,12 +5,12 @@ import pytest
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
 from tldw_chatbook.UI.Research_Window import ResearchWindow
 
-# NOTE: ``ResearchScreen`` (UI/Screens/research_screen.py) and its screen
-# registration were removed in Task 255 -- the route was an orphan with no
-# shell destination or navigation entry point, and the "research" route id
-# now aliases to Library. ``ResearchWindow``/``ResearchController`` below
-# remain in the tree (their removal is a separate decision), so their
-# behavior stays covered here.
+# NOTE (task-16322, ADR-068): ``ResearchScreen`` is back -- the local
+# research execution engine drives launched local runs, so the window is
+# reachable from navigation again under the "research" route id (the
+# task-255 library alias is reversed). The screen-level behavior is covered
+# by Tests/UI/test_screen_navigation.py; this module covers
+# ``ResearchWindow``/``ResearchController`` and the engine-start wiring.
 
 
 class FakeResearchScopeService:
@@ -53,6 +53,14 @@ class FakeResearchScopeService:
         )
         self.runs[mode].insert(0, run)
         return run
+
+    async def resume_run(self, run_id, *, mode):
+        self.calls.append(("resume_run", mode, run_id))
+        resumed = self.runs[mode][0] if self.runs[mode] else None
+        if resumed is not None:
+            resumed.status = "running"
+            resumed.control_state = "running"
+        return resumed
 
     async def pause_run(self, run_id, *, mode):
         self.calls.append(("pause_run", mode, run_id))
@@ -277,3 +285,78 @@ async def test_research_window_reports_local_checkpoint_approval_unavailable():
 
     assert updated is None
     assert "Local research checkpoints" in window.status_message
+
+
+# --- local engine start wiring (task-16322, ADR-068) ---------------------------
+
+@pytest.mark.asyncio
+async def test_research_window_starts_local_engine_after_local_create(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    started = []
+    monkeypatch.setattr(window, "_start_local_engine", started.append)
+
+    created = await window.create_run({"query": "Local engine question"})
+
+    assert created.id == "local-created"
+    assert started == ["local-created"]
+
+
+@pytest.mark.asyncio
+async def test_research_window_does_not_start_engine_for_server_create(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    started = []
+    monkeypatch.setattr(window, "_start_local_engine", started.append)
+    await window.switch_source("server")
+
+    await window.create_run({"query": "Server question"})
+
+    assert started == []
+
+
+@pytest.mark.asyncio
+async def test_research_window_resume_restarts_local_engine(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    started = []
+    monkeypatch.setattr(window, "_start_local_engine", started.append)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    window.runs[0].status = "running"
+    window.runs[0].control_state = "paused"
+
+    await window.resume_selected_run()
+
+    assert started == ["local-run"]
+
+
+def test_research_window_engine_start_skips_without_local_service():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    # Not mounted, no worker infrastructure: must not raise, just report.
+    window._start_local_engine("local-run")
+
+
+def test_research_window_engine_start_builds_engine_from_app_service(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+
+    service = FakeResearchScopeService()
+    local_service = LocalResearchService(":memory:")
+    app = SimpleNamespace(
+        research_scope_service=service, local_research_service=local_service
+    )
+    window = ResearchWindow(app_instance=app)
+    engines = []
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        lambda svc, **kwargs: engines.append(svc) or SimpleNamespace(),
+    )
+
+    window._start_local_engine("local-run")
+
+    assert engines == [local_service]

@@ -129,3 +129,52 @@ def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
             },
         }
     ]
+
+
+# --- update_run_progress (task-16322 engine seam) ------------------------------
+
+def test_update_run_progress_sets_fields_records_event_and_bumps_version(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = service.launch_run(query="How do persistent agents checkpoint?")
+
+    updated = service.update_run_progress(
+        run["id"],
+        phase="collecting",
+        progress_percent=45.0,
+        progress_message="Collecting sources",
+    )
+
+    assert updated["phase"] == "collecting"
+    assert updated["progress_percent"] == 45.0
+    assert updated["progress_message"] == "Collecting sources"
+    assert updated["status"] == "running"  # untouched
+    assert updated["version"] == run["version"] + 1
+    events = list(service.list_run_events(run["id"]))
+    assert events[-1]["event"] == "progress"
+    assert events[-1]["data"] == {"phase": "collecting", "progress_percent": 45.0}
+
+
+def test_update_run_progress_supports_status_and_control_for_engine_start(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    draft = service.create_run(query="Draft question")
+
+    started = service.update_run_progress(
+        draft["id"],
+        status="running",
+        control_state="running",
+        phase="planning",
+        progress_percent=10.0,
+        event="engine_started",
+    )
+
+    assert started["status"] == "running"
+    assert started["control_state"] == "running"
+    assert started["phase"] == "planning"
+    events = list(service.list_run_events(draft["id"]))
+    assert events[-1]["event"] == "engine_started"
+
+
+def test_update_run_progress_missing_run_raises(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    with pytest.raises(ValueError, match="research run not found"):
+        service.update_run_progress("local:research_run:nope", phase="collecting")

@@ -389,23 +389,25 @@ def test_skills_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
-def test_research_route_resolves_to_library_screen():
-    """Verify the retired "research" route id resolves to ``LibraryScreen``.
+def test_research_route_resolves_to_research_screen():
+    """task-16322 (ADR-068) reverses task-255's library alias: the research
+    route is a real screen again.
 
-    The orphan "research" screen registration is removed (Task 255): no
-    shell destination or navigation call ever targeted it, and the Workbench
-    route inventory already mapped research -> library. The legacy "research"
-    route id (still a command-palette direct command via ``TAB_RESEARCH`` and
-    valid in saved startup configs) must resolve to ``LibraryScreen`` instead
-    of dead-ending, mirroring the "notes"/"prompts"/"skills" compatibility
-    aliases above. ``ResearchScreen`` itself is deleted; ``ResearchWindow``/
-    ``Research_Modules`` remain (their removal is a separate decision).
+    The local research execution engine now drives launched local runs
+    (planning -> collecting -> synthesizing -> packaging), so
+    ``ResearchWindow`` -- the only run/event observation surface -- is
+    reachable from navigation under the legacy "research" route id
+    (still a command-palette direct command via ``TAB_RESEARCH`` and valid
+    in saved startup configs). The Workbench migration owner stays
+    "library" (route_inventory).
     """
     from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
 
-    _screen_name, _canonical_tab, screen_class = resolve_screen_target("research")
-    assert screen_class is LibraryScreen
+    screen_name, canonical_tab, screen_class = resolve_screen_target("research")
+    assert screen_class is ResearchScreen
+    assert screen_name == "research"
+    assert canonical_tab == "research"
 
 
 def test_media_route_resolves_to_library_screen():

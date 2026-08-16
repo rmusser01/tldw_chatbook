@@ -35,6 +35,9 @@ import httpx
 from loguru import logger
 
 from .local_tool_impls import LocalToolError
+from ..Web_Scraping.deep_search_citations import (
+    summarize_for_footer as deep_search_citations_footer,
+)
 
 # XXE hardening for attacker-controlled sitemap XML (mirrors
 # tldw_chatbook/Subscriptions/security.py's pattern): defusedxml is an
@@ -2473,10 +2476,19 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # the RELEVANT count, not an analyzed count either).
     coverage_verb = "found" if deadline_hit else "scored"
 
+    # Citation verification (task-16331): when the pipeline ran its
+    # citation/quote check (LLM-success branch only), surface the counts in
+    # the footer so the model can weigh the answer's grounding; absent on
+    # fallback/failure branches, which have no verdict to report.
+    citation_note = ""
+    citation_summary = deep_search_citations_footer(final_answer.get("citation_verification"))
+    if citation_summary:
+        citation_note = f" · {citation_summary}"
+
     footer = (
         f"Confidence: {confidence:.2f} · Engine: {engine} · Sub-queries: {len(sub_questions)} · "
         f"Relevant: {len(relevant_results)} of {len(results)} {coverage_verb}"
-        f"{fallback_note}{warning_note}{deadline_note}"
+        f"{fallback_note}{warning_note}{deadline_note}{citation_note}"
     )
 
     text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)

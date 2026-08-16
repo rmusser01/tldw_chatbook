@@ -55,9 +55,10 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
     "stts": "settings",
     "study": "library",
     "writing": "artifacts_writing",
-    # The orphan "research" screen registration is removed (Task 255): the
-    # route id survives only as TAB_RESEARCH plus a screen_registry alias
-    # that resolves to Library, matching this owner mapping.
+    # "research" is a real screen route again (task-16322, ADR-068); the
+    # Workbench migration owner stays "library" -- the workbench model keeps
+    # Library as research's destination owner even though the shell now
+    # resolves the route to ResearchScreen.
     "research": "library",
     "chatbooks": "artifacts",
     "subscriptions": "watchlists_collections",
