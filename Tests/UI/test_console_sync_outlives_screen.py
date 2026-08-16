@@ -183,10 +183,13 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
     loudly rather than pass vacuously.
 
     `navigate_away=True` performs the REAL navigation (and therefore the
-    real screen teardown) inside that window -- no flag is poked. Setting
-    `_closing` by hand was tried and is a trap: `MessagePump.
-    _close_messages` early-returns when it is already set, so the pump is
-    never actually closed and the app hangs at shutdown.
+    real screen teardown) inside that window -- no flag is poked. Where a
+    test does have to set `_closing` by hand (the partial-teardown case
+    below, which a real navigation cannot stage), it must restore it:
+    `MessagePump._close_messages` early-returns when the flag is already
+    set, so a screen left flagged never actually closes and the app hangs
+    at shutdown -- measured, it wedged this file's first draft past a
+    120s timeout.
     """
     chat, _controller, _store, _session_id, _conversation_id = await _seed_console(
         app, pilot, gateway
