@@ -347,7 +347,7 @@ behavior.
 
 Retain the existing prompt browse controller and exact service contract. Change
 the default Library page size from 50 to 20. Preserve debounced search, Enter
-flush, source authority, sort/type scope, mutations, and retained-history
+flush, source authority, sort/collection scope, mutations, and retained-history
 ownership. Adapt only pager presentation and the requested/applied recovery
 contract.
 
