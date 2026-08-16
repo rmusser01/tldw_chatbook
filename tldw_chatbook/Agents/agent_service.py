@@ -1500,6 +1500,15 @@ class AgentService:
         # disallowed tool must never even be disclosed to the model.
         active = [schema for schema in active if schema.name in config.allowed_tools]
         disclosed_names = {schema.name for schema in active}
+        # TASK-16788: this filter is the WHOLE reach of `allowed_tools` on
+        # the offered set -- it governs the CATALOG only. Every
+        # `runtime_schemas.append` below is deliberately outside it, each
+        # gated by its own condition instead, and `run_agent_loop`
+        # dispatches those names in dedicated branches before
+        # `invoke_tool`'s allow-list check can see them. That contract is
+        # documented in full on `AgentConfig.allowed_tools`; do not add an
+        # allow-list filter here without reading it (a caller narrowing
+        # `allowed_tools` is NOT narrowing the runtime layer, by design).
         runtime_schemas = []
         # PR2a Task 6: this run's fleet, or None when there is none. A
         # sub-agent NEVER gets one -- depth-1 is structural (a child's

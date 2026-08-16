@@ -397,6 +397,68 @@ class AgentStep:
 
 @dataclass(frozen=True)
 class AgentConfig:
+    """One run's model, prompt, tool allow-list and budget.
+
+    Attributes:
+        model: The model id handed to ``chat_api_call``.
+        system_prompt: The run's system prompt, before any protocol or
+            run-log section the service appends.
+        allowed_tools: **The CATALOG allow-list — it does not govern the
+            runtime tools.** TASK-16788 recorded this deliberately rather
+            than "fixing" it; the contract is:
+
+            *What it governs.* Every name reached through the tool
+            CATALOG (``ToolCatalogRegistry``: builtins, local tools,
+            Library tools, MCP tools, skill tools). ``AgentService.
+            _run_one`` filters the initial disclosure by it (Q7(a)), the
+            ``find_tools`` and ``load_schemas`` closures re-filter by it
+            (Q7(b)/(c)), and ``_make_invoke_tool``'s ``invoke_tool``
+            refuses a call whose name is outside it. An empty tuple
+            therefore means "no catalog tool at all", disclosed or
+            callable.
+
+            *What it does NOT govern.* The runtime tools --
+            ``RUNTIME_TOOL_NAMES`` above: ``spawn_subagent``,
+            ``wait_agents``/``check_agents``, ``find_tools``/
+            ``load_tools``, ``skill_file``, ``install_skill``,
+            ``run_skill_script``, and ``search_run_log``/
+            ``run_log_stats``/``run_log_slice``. These are not catalog
+            entries; ``_run_one`` appends their schemas to
+            ``runtime_schemas`` AFTER the allow-list filter, each under
+            its OWN gate (``max_subagents > 0``; a live fleet; the
+            progressive-disclosure ``offer_find_load``; authorized skill
+            bindings; the primary-only ``install_skill`` wiring; the
+            run-script wiring; ``log_active`` = primary + an active run-log
+            writer + something else already disclosed). So a run with an
+            EMPTY allow-list is still offered whichever runtime tools its
+            own gates admit -- pinned by ``Tests/Agents/
+            test_run_log_service_wiring.py::
+            test_run_log_tools_are_offered_under_an_empty_allow_list``.
+
+            *Why calls are not caught later.* ``run_agent_loop`` dispatches
+            each runtime name in its own dedicated ``elif`` branch BEFORE
+            the generic ``deps.invoke_tool`` fallback, so ``invoke_tool``'s
+            allow-list check structurally never sees a runtime call. The
+            one exception is ``spawn_subagent``, whose branch re-checks
+            ``config.allowed_tools`` itself and refuses before dispatch
+            (Q6) -- the rest are governed only by their gates and by the
+            permission layer.
+
+            *Consequence for callers.* An embedder that narrows
+            ``allowed_tools`` to isolate an experiment's tool set does NOT
+            get an exhaustive restriction: the run-log tools in particular
+            can still consume agent steps. That confound is recorded in
+            ``Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/
+            report.md`` (TASK-16174's oracle run, whose tool-OFF arm ended
+            question q3 ``stuck`` on run-log calls). To hold a runtime tool
+            out of a run, close its own gate (e.g. ``max_subagents=0``,
+            or leave the run-log writer inactive) rather than the
+            allow-list.
+        budget: This run's caps (see ``RunBudget``).
+        native_tools: Whether to use provider-native tool-calling when the
+            endpoint supports it; ``False`` forces the fence protocol.
+    """
+
     model: str
     system_prompt: str
     allowed_tools: tuple[str, ...] = ()
