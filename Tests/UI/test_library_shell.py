@@ -6958,17 +6958,18 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
                 and not screen._library_conversation_loading,
                 message="Mounted Conversation Retry did not reach the Task 4 handler.",
             )
-            assert not screen.query("#library-conversations-retry")
-            assert str(
-                screen.query_one("#library-conversations-title", Static).renderable
-            ) == "Conversations (2)"
             await _wait_for_condition(
                 pilot,
-                lambda: screen.query_one(
-                    "#library-conversations-pager"
-                ).region.width
+                lambda: not screen.query("#library-conversations-retry")
+                and str(
+                    screen.query_one(
+                        "#library-conversations-title", Static
+                    ).renderable
+                )
+                == "Conversations (2)"
+                and screen.query_one("#library-conversations-pager").region.width
                 > 0,
-                message="Recovered Conversation pager never completed layout.",
+                message="Recovered Conversation canvas never completed layout.",
             )
             _assert_conversation_widget_inside_pane(
                 screen, screen.query_one("#library-conversations-pager")
@@ -9951,7 +9952,14 @@ async def test_library_conversation_new_scope_supersedes_locator_retry_intent(
 
 
 @pytest.mark.asyncio
-async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigation():
+@pytest.mark.parametrize(
+    "warm_page",
+    (False, True),
+    ids=("uninitialized", "warm-page-2"),
+)
+async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigation(
+    warm_page: bool,
+):
     app = _build_test_app()
     conversations = _conversation_records(45)
     target = conversations[24]
@@ -9976,6 +9984,23 @@ async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigati
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        if warm_page:
+            await pilot.click("#library-row-browse-conversations")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_conversation_page == 1
+                and screen._library_conversation_page_loaded
+                and not screen._library_conversation_loading,
+                message="Initial Conversation page never settled.",
+            )
+            await pilot.click("#library-conversations-next")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_conversation_page == 2
+                and screen._library_conversation_requested_page == 2
+                and not screen._library_conversation_loading,
+                message="Warm Conversation page 2 never settled.",
+            )
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-query-input")
         open_task = asyncio.create_task(
@@ -9999,6 +10024,33 @@ async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigati
             assert screen.query("#library-media-canvas")
             assert screen._selected_conversation_id != target["conversation_id"]
             assert screen._pending_library_source_open is None
+
+            page_calls_before_reentry = sum(
+                not call.get("locator") for call in service.calls
+            )
+            await pilot.click("#library-row-browse-conversations")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_selected_row_id
+                == LIBRARY_ROW_BROWSE_CONVERSATIONS
+                and screen._library_conversation_page_loaded
+                and not screen._library_conversation_loading
+                and screen._library_conversation_requested_page
+                == screen._library_conversation_page
+                and screen._library_conversation_requested_query
+                == screen._library_conversation_query,
+                message=lambda: (
+                    "Conversation re-entry did not recover after the fenced locator: "
+                    f"loading={screen._library_conversation_loading!r}, "
+                    f"calls={service.calls!r}."
+                ),
+            )
+
+            assert sum(not call.get("locator") for call in service.calls) == (
+                page_calls_before_reentry + int(not warm_page)
+            )
+            assert screen._library_conversation_page == (2 if warm_page else 1)
+            assert screen._selected_conversation_id != target["conversation_id"]
         finally:
             service.release.set()
             if not open_task.done():

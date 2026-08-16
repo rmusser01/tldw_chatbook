@@ -1,10 +1,10 @@
 ---
 id: TASK-16481
 title: Standardize Library pager display and harden Conversation paging
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-15 02:44'
-updated_date: '2026-08-15 23:34'
+updated_date: '2026-08-16 00:37'
 labels:
   - library
   - pagination
@@ -31,7 +31,7 @@ Make every top-level Conversation reachable through a consistent 20-item Library
 - [x] #4 Conversation count and page rows come from one coherent read transaction and malformed page or locator envelopes fail closed inside the canvas.
 - [x] #5 Conversation selection clears with visible notice on page or scope change, while focus and detail/back behavior follow the approved design.
 - [x] #6 The shared code is limited to one pure pager-display calculation; Conversation retains request, state, worker, widget, and event ownership.
-- [ ] #7 Automated state, service, mounted Textual, geometry, race, privacy, mutation, and isolated live verification required by the approved design pass.
+- [x] #7 Automated state, service, mounted Textual, geometry, race, privacy, mutation, and isolated live verification required by the approved design pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -78,11 +78,21 @@ malformed envelopes fail closed.
   cardinality; enabling a stale action changed selection; and allowing another
   clamp called offsets `[40, 20, 0]` instead of `[40, 20]`. File hashes and
   status were clean between mutations.
-- Automated evidence: the final task-local suite passed 261 tests; the final
-  Conversation owner/mounted suite passed 66 tests (675 deselected). The full
+- Automated evidence: the post-rebase task-local suite passed 274 tests; the
+  Conversation owner/mounted suite passed 75 tests twice (678 deselected each).
+  The recovered-DOM synchronization regression passed 30/30 repetitions, and
+  the related Retry/focus/page-failure matrix passed 60/60. After final review,
+  the owner suite passed 76 tests with the added locator-reentry case. The full
   Library shell passed 625 tests; its only two failures were the Notes
-  `create_discard` keyboard parametrizations, reproduced identically on exact
-  base `2ff12ac50b0d7a73599f34e796ca9e933f40a4e8`. Ruff and diff checks passed.
+  `create_discard` keyboard parametrizations, reproduced identically on the
+  then-pinned pre-feature comparison base
+  `2ff12ac50b0d7a73599f34e796ca9e933f40a4e8`. The final branch base is
+  `e032b5b882f880eee2d6295f3c0be3806247ffaf`. Ruff and diff checks passed.
+- Final review found that rail navigation could abandon a Conversation locator
+  while leaving its loading/requested scope active. Navigation now revokes only
+  that pending locator, restores the retained applied scope, and permits cold
+  recovery. Mounted regressions prove one authoritative read for an
+  uninitialized source and zero extra reads while preserving a warm page 2.
 - Live/privacy evidence: fresh isolated profiles at true
   100x30 and 170x48 each passed all 8 checkpoints with 45 synthetic
   conversations: exact three-page ranges, fixed pager/row 20, source-wide

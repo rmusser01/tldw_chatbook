@@ -15172,6 +15172,19 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         self._library_navigation_context_generation += 1
+        if (
+            self._pending_library_source_open is not None
+            and self._pending_library_source_open[0] == "conversations"
+            and self._library_conversation_loading
+        ):
+            self._library_conversation_request_generation += 1
+            self._library_conversation_requested_page = (
+                self._library_conversation_page
+            )
+            self._library_conversation_requested_query = (
+                self._library_conversation_query
+            )
+            self._library_conversation_loading = False
         self._pending_library_source_open = None
         if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)

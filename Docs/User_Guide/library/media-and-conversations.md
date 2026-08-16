@@ -204,7 +204,7 @@ requested load.
 
 | Control | What it does |
 |---|---|
-| "Filter conversations… (Enter)" | Type and press Enter to search every conversation title (case-insensitive) before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
+| "Filter conversations… (Enter)" | Type and press Enter to search conversation titles, stable IDs, and indexed message content before the 20-item result page is chosen. Clearing it restores unfiltered page 1. |
 | "Previous" / "Next" | Moves through complete 20-item pages; the final page may contain fewer rows. Disabled buttons state why they cannot move. |
 | Row press | Selects the row and shows the preview (title, "Messages: N", "Updated: age"). |
 | "Open in Console" | Stages the conversation as **source context** in Console — see below. |
@@ -303,9 +303,8 @@ navigation keys live in the [guide index](../index.md).
 - **"Open in Library ▸ Media" stays in Library.** The separate Media
   screen it used to jump to was retired; the button now returns to
   Library's own Media surface.
-- **Conversations shows at most 75 rows**, newest first, and the filter
-  only matches within what is loaded. Very old conversations may not
-  appear; find them via [Search / RAG](search-and-rag.md) instead.
+- **Conversations are paged 20 at a time**, newest first. The filter searches
+  the complete source before paging, so older matches remain reachable.
 - **"Open in Console" can refuse with "Copy or link blocked Library
   sources into the active workspace before using them in Console."** The
   handoff requires the conversation to be eligible for the active
