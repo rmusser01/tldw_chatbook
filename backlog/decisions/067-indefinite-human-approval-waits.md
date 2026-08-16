@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-15
-Related Task: [TASK-16320](../tasks/task-16320%20-%20Console-approval-prompts-wait-indefinitely-by-default.md)
+Related Task: [TASK-16789](../tasks/task-16789%20-%20Console-approval-prompts-wait-indefinitely-by-default.md)
 Supersedes: the `approval_timeout < max_tool_call_seconds` invariant as stated in
 `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s comment (Chat/console_chat_controller.py)
 and `RunBudget.max_tool_call_seconds`'s comment (Agents/agent_models.py). Those

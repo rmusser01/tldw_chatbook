@@ -4459,7 +4459,7 @@ HEAD) before writing the Implementation Notes around it.
 
 ## An unbounded wait default turns leaked test rounds into post-suite interpreter hangs
 
-**TASK-16320, 2026-08-15.** After flipping the human-prompt timeouts to a
+**TASK-16789, 2026-08-15.** After flipping the human-prompt timeouts to a
 no-deadline default (ADR-067), `Tests/Chat/test_console_skill_script_confirm.py`
 printed "1 failed, 28 passed in 7.49s" — and then the pytest process sat at 0%
 CPU for 20+ minutes producing no output (the `| tail` wrapper hid everything
