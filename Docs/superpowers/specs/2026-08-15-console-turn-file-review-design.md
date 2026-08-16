@@ -33,7 +33,94 @@ pattern (Cursor/Claude-Code style) the owner supplied.
    diff: true nets need before/after content we deliberately do not
    store. Counts are summed and labeled `across N edits`.
 
-## Architecture
+## Prior-art discovery (2026-08-15, during planning)
+
+The plan survey found the architecture below this section was designed
+against a stale model: **capture, persistence, the summary row, and the
+review screen already shipped** under TASK-1972 + fleet PR3a-1 and
+TASK-1366:
+
+- `change_snapshots` (AgentRuns_DB) + `Workspaces/change_tracking.py`
+  capture per-turn changes **workspace-scan style** (`ChangedFile{path,
+  status A/M/D/R, adds, dels}` via a shadow repo), including concurrent
+  sub-agent windows — the spec's own "V2 scan mode", already shipped and
+  superior to the planned seam capture (it sees MCP/external mutations).
+- Both live (`run_reply`'s finally) and resume (`resume_marker_messages`)
+  already emit a transcript row -- `✎ Edited N files +A −D — review with
+  `v`` -- as a `ConsoleChatMessage(role=TOOL,
+  change_review_run_id=run_id)`.
+- `change_review_screen.py` (the `v` action) is a full review screen:
+  turns, changed files, windowed diffs, retention, guarded per-path
+  revert — most of the planned V1.5.
+- TASK-1366 renders per-tool-call inline diffs (`tool_diff`,
+  `ConsoleToolDiffRow`, async-prepared `DiffView`).
+
+**Re-scope (owner-approved):** V1 is now bounded — replace the one-line
+marker with the stacked card, sourcing the existing subsystem. The
+original capture/model/persistence/restore design below is RETIRED
+UNBUILT and kept only as history.
+
+## Architecture (re-scoped)
+
+### 1. Card widget
+
+`ConsoleTurnFileCard` (`Widgets/Console/console_turn_file_card.py`), a
+transcript ROW widget — the native transcript derives rows from
+`ConsoleChatMessage` records; the legacy `ChatMessage` widget family
+does not apply here.
+
+- Header: the existing marker text (counts precomputed at emit time),
+  plus a collapse/expand-all chevron.
+- Per-file rows: loaded **async on mount** (shadow-repo reads run off
+  the UI thread — the `ConsoleToolDiffRow` pattern) from the snapshot
+  rows for `change_review_run_id`, via
+  `AgentRunsChangeReviewProvider.changed_files(row)`; multi-root turns
+  prefix paths with their root. Each row: status letter, middle-elided
+  path, `+a −d`, chevron; always mounted, display-managed;
+  keyboard-toggleable; never color-only.
+- Expand: `provider.diff_text(row, path)` off-thread on first expand,
+  cached, rendered as styled unified-diff text in a capped scroll
+  container (`max-height` + `overflow-y: auto`), windowed by the
+  provider's `diff_display_max_lines`.
+- Tracking-error / pruned-snapshot rows degrade to the marker text with
+  the review screen's own wording (no rows, no fake counts).
+
+### 2. Row-factory branch + kill switch
+
+The transcript row factory (`console_transcript.py`) gains one branch: a
+TOOL row whose message carries `change_review_run_id` renders as
+`ConsoleTurnFileCard` when `[console] turn_file_cards` (default ON) —
+and as today's plain marker row when OFF. Pure presentation toggle; no
+data-path changes. Live and resume need **no seam changes**: both
+already emit the same message shape.
+
+### 3. Provider plumbing
+
+`chat_screen` already constructs `AgentRunsChangeReviewProvider` for the
+`v` action; that construction is extracted into one shared factory both
+the review screen and the card use (db + `ShadowRepoService` +
+conversation_id + run-active probe).
+
+## Testing (re-scoped)
+
+- **Pure**: file-entry assembly from snapshot rows (multi-root
+  prefixing, tracking-error/pruned degradation, status letters, counts).
+- **Widget** (real CSS stack — geometry without the bundle is not
+  measured): header renders the marker text; rows appear after the
+  async load; expand shows styled diff lines in a capped,
+  internally-scrolling container; keyboard toggle; ASCII glyph
+  fallback; queries by id/class only.
+- **Factory**: switch ON → card row; OFF → today's marker row
+  (byte-identical text); the branch keys on `change_review_run_id`.
+- **Integration**: live path (bridge emit → card in the owning session)
+  and resume path (persisted snapshots → same card), reusing the fake
+  shadow-repo/provider doubles the review-screen tests already use.
+- **Mutation checks**: remove the factory branch → factory test red;
+  break the off-thread diff load → expand test red.
+
+## Retired original design (history only — do not implement)
+
+### (retired) Architecture
 
 ### 1. Capture layer (pure + one seam)
 
@@ -192,12 +279,13 @@ Verified at spec time (not deferred to planning): the provider holds
 
 ## Out of scope (backlog seeds)
 
-- **V1.5**: `Review` button → dedicated screen (File-Notes-workspace
-  structural model): all turn changes, annotations/feedback on specific
-  hunks, per-file Undo (reverse-apply guarded by `after_digest` match).
+- **V1.5**: annotations/feedback on specific hunks (the review screen
+  and guarded per-path revert ALREADY EXIST via `v`, so V1.5 shrinks to
+  the annotate/feedback loop plus a `Review` affordance on the card that
+  opens the existing screen).
 - **V2**: sidebar multi-file review; `current` / `git commit` /
   `git push` / PR modes when the workspace is a git repo.
-- Workspace-scan capture (`source: "scan"`) for MCP/external mutations.
+- ~~Workspace-scan capture~~ — already shipped (TASK-1972 shadow-repo snapshots).
 - Sub-agent run aggregation into the parent card.
 - Whole-turn Undo from the card header.
 
