@@ -59,6 +59,24 @@ Screen-owned TIMERS (transcript sync, fleet survivor tick, cost TTL) are
 not runtime state and are not in that list: they stay screen-owned and
 stay stopped at unmount.
 
+## What "viewless" MEANS (Task 4)
+
+The lifetime landing made every slot CLEARABLE; this one makes each
+cleared value semantically right, and says why next to it (`why` on each
+`ConsoleViewHookSlot`). Three slots are not `None`:
+`wake_conversation_in_view` (whose read site reads unwired as IN VIEW and
+would clear the ◈ mark for a delivery nobody could have seen),
+`wake_user_priority_probe` (no composer, so no user claim) and
+`_global_user_display_name` (called with no guard). Everywhere else
+`None` is kept only because the production read site's own guard makes it
+inert — or, for the two skill confirms, fail-closed-at-once.
+
+A runtime is viewless in two ways, and both are covered: after a detach,
+and from BIRTH (`ensure_chat_controller` with nothing attached — the
+wake-at-launch shape). `delivery_ui_hook` gets a third guarantee: it is
+re-armed by the next attach if a wake is still delivering, because a
+Console opened mid-delivery would otherwise never repaint the turn.
+
 ## Why an app attribute rather than a global
 
 `app.console_runtime` follows `app.console_image_edit_operations`
@@ -111,7 +129,9 @@ __all__ = [
     "dispose_console_runtime",
     "ensure_console_runtime",
     "leave_console_runtime",
+    "viewless_conversation_in_view",
     "viewless_user_display_name",
+    "viewless_user_priority_probe",
 ]
 
 
@@ -121,8 +141,59 @@ def viewless_user_display_name() -> str:
     `ConsoleChatController.__init__` does `global_user_display_name or
     (lambda: "User")`, so `None` is NOT this slot's viewless default —
     clearing it to `None` would turn every read into a `TypeError`.
+    (`_presentation_context_for`'s broad `except` catches that TypeError
+    and falls back to "User" anyway — which is *worse* than a raise: the
+    slot would be silently degraded, logging a warning per read, which is
+    exactly the class of failure Task 4 exists to remove.)
     """
     return "User"
+
+
+def viewless_conversation_in_view(conversation_id: str, session_id: str) -> bool:
+    """A runtime with no view is watching nothing. Always `False`.
+
+    task-15860 Task 4, and the reason this function exists rather than a
+    `None`: `ConsoleFleetWakeCoordinator._conversation_in_view` reads an
+    UNWIRED probe as **in view** (the pre-screen rig's documented
+    clear-on-delivery), so a viewless default of `None` makes a wake that
+    nobody could possibly have watched commit as "seen" and CLEARS the
+    `FLEET_UNSEEN` ◈ mark. task-15971's whole point is the opposite: the
+    user must be able to learn that a supervisor turn ran and landed
+    while they were elsewhere.
+
+    Args:
+        conversation_id: The delivered conversation (unused — no view
+            means no conversation is displayed).
+        session_id: The session the wake turn ran in (unused, same
+            reason).
+
+    Returns:
+        False, always.
+    """
+    return False
+
+
+def viewless_user_priority_probe(session_id: str) -> bool:
+    """A runtime with no view has no user claim. Always `False`.
+
+    `_attempt`'s user-wins-ties gate asks the view whether the user is
+    mid-thought (a non-empty composer draft). With no view there is no
+    composer, so no user can hold a claim and a wake must not defer.
+
+    `None` happens to produce the same outcome today, because `_attempt`
+    guards with `callable(probe)` — but only by accident of that guard's
+    direction. The sibling probe above uses the OPPOSITE convention for
+    an unwired slot (uncertainty defers toward the badge), so leaving
+    this one's correctness resting on a `callable()` check one line of
+    someone else's refactor away is not a default, it is a coincidence.
+
+    Args:
+        session_id: The session a wake would fire into (unused).
+
+    Returns:
+        False, always.
+    """
+    return False
 
 
 @dataclass(frozen=True)
@@ -142,6 +213,13 @@ class ConsoleViewHookSlot:
     name: str
     target: str
     viewless_default: Any = None
+    #: WHY this slot's viewless default is correct — i.e. what the
+    #: production read site does with it. Task 4's rule: a `None` default
+    #: is only allowed where the read site's own guard makes `None` mean
+    #: the semantically right thing (inert, or fail-closed); anywhere the
+    #: guard's fallback is a WRONG answer, the default must be an explicit
+    #: callable. Kept next to the value so the two cannot drift.
+    why: str = ""
 
 
 #: **The one enumerated list of screen-owned hook slots.** `attach_view`
@@ -169,34 +247,166 @@ class ConsoleViewHookSlot:
 #: `controller.app` is deliberately absent: it is the APP, which outlives
 #: every view, and clearing it would break the `call_from_thread` bridge a
 #: surviving turn still needs.
+#:
+#: **Task 4's rule for `viewless_default`.** Every entry now carries a
+#: `why` naming the production read site that makes its value correct.
+#: `None` is allowed only where that read site's own guard turns `None`
+#: into the semantically right behaviour — inert, or fail-closed. The two
+#: slots where it did NOT (`wake_conversation_in_view`, whose read site
+#: treats "unwired" as IN-VIEW; and `_global_user_display_name`, whose read
+#: site calls the slot with no guard at all) carry explicit callables. A
+#: third, `wake_user_priority_probe`, is explicit for a different reason:
+#: `None` is right there only by accident of one `callable()` check, and
+#: its sibling probe uses the opposite unwired convention.
 CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
     # -- constructor-supplied callables (read at construction only, so with
     #    a surviving runtime they would otherwise stay bound to visit 1's
     #    screen for the whole app's life) -----------------------------------
-    ConsoleViewHookSlot("_chat_dictionary_applier", "controller"),
-    ConsoleViewHookSlot("_world_info_applier", "controller"),
-    ConsoleViewHookSlot("_rag_capture_provider", "controller"),
-    ConsoleViewHookSlot("_default_session_settings", "controller"),
-    ConsoleViewHookSlot("_library_provider_factory", "controller"),
     ConsoleViewHookSlot(
-        "_global_user_display_name", "controller", viewless_user_display_name
+        "_chat_dictionary_applier",
+        "controller",
+        why="`_apply_chat_dictionaries` early-returns the payload unchanged "
+        "when it is None: a viewless turn substitutes nothing, which is "
+        "correct — dictionaries are a per-conversation view concern and a "
+        "wake notice is machine text.",
     ),
-    ConsoleViewHookSlot("_turn_context_provider", "controller"),
+    ConsoleViewHookSlot(
+        "_world_info_applier",
+        "controller",
+        why="`_apply_world_info` early-returns the payload unchanged when "
+        "it is None. Same reasoning as the dictionary applier.",
+    ),
+    ConsoleViewHookSlot(
+        "_rag_capture_provider",
+        "controller",
+        why="`_resolve_staged_rag_context` returns the empty 4-tuple when "
+        "it is None. Staged RAG is composed IN the composer; with no "
+        "composer there is nothing staged to consume.",
+    ),
+    ConsoleViewHookSlot(
+        "_default_session_settings",
+        "controller",
+        why="Both read sites are `if self._default_session_settings is not "
+        "None` guards; a viewless session falls back to the controller's "
+        "own defaults rather than a dead screen's widget state.",
+    ),
+    ConsoleViewHookSlot(
+        "_library_provider_factory",
+        "controller",
+        why="`_library_provider_for_context` returns None when it is None, "
+        "and the send path already degrades a missing factory to 'no "
+        "Library tools this run'. The factory reads Settings through the "
+        "SCREEN, so a viewless turn must not use a stale one.",
+    ),
+    ConsoleViewHookSlot(
+        "_global_user_display_name",
+        "controller",
+        viewless_user_display_name,
+        why="**Not None.** `_presentation_context_for` CALLS this slot with "
+        "no `is None` guard (the constructor's `... or (lambda: \"User\")` "
+        "runs once, at construction). None makes every read raise "
+        "TypeError into a broad `except` that logs and falls back — a "
+        "silently degraded slot. The explicit accessor returns the same "
+        "\"User\" that fallback would, without the warning per read.",
+    ),
+    ConsoleViewHookSlot(
+        "_turn_context_provider",
+        "controller",
+        why="`_compose_turn_context` guards with `is not None` and uses the "
+        "controller's own selection state instead. The provider reads live "
+        "WIDGET state (mode toggles, tool switches), so a viewless turn "
+        "must not consult it at all.",
+    ),
     # -- post-construction UI bridges -------------------------------------
-    ConsoleViewHookSlot("on_submission_accepted", "controller"),
-    ConsoleViewHookSlot("prompt_history", "controller"),
-    ConsoleViewHookSlot("set_pending_approval", "controller"),
-    ConsoleViewHookSlot("park_pending_approval", "controller"),
-    ConsoleViewHookSlot("notify_run_outcome", "controller"),
-    ConsoleViewHookSlot("notify_run_failure", "controller"),
-    ConsoleViewHookSlot("set_pending_skill_install", "controller"),
-    ConsoleViewHookSlot("set_pending_skill_script", "controller"),
-    ConsoleViewHookSlot("wake_user_priority_probe", "controller"),
-    ConsoleViewHookSlot("wake_conversation_in_view", "controller"),
+    ConsoleViewHookSlot(
+        "on_submission_accepted",
+        "controller",
+        why="Guarded (`if callback is None: return`) and MANUAL-origin "
+        "only. Its whole job is clearing a composer that does not exist.",
+    ),
+    ConsoleViewHookSlot(
+        "prompt_history",
+        "controller",
+        why="Guarded (`if history is None ... return`). Prompt history "
+        "records what the USER typed; a wake notice is not user input "
+        "(the wake invariant), so a viewless turn must record nothing.",
+    ),
+    ConsoleViewHookSlot(
+        "set_pending_approval",
+        "controller",
+        why="Inert but NOT lossy: `request_mcp_approvals` calls "
+        "`add_pending_round` and retains the round's payload in "
+        "`_parked_approval_payloads` BEFORE consulting this hook, and "
+        "does so unconditionally. So a round armed with no view is still "
+        "registered and still claimable at the next mount. (Surfacing it "
+        "app-wide, and the 120s clock it runs against, are plan Task 5.)",
+    ),
+    ConsoleViewHookSlot(
+        "park_pending_approval",
+        "controller",
+        why="Same as above — the badge/toast half of the same round. "
+        "Guarded by `is not None` at both call sites; the registry write "
+        "that makes the round recoverable does not depend on it.",
+    ),
+    ConsoleViewHookSlot(
+        "notify_run_outcome",
+        "controller",
+        why="Guarded at every call site. A toast with no screen to toast "
+        "into is the exact dead-screen call Task 0's P3 found; inert is "
+        "the whole point.",
+    ),
+    ConsoleViewHookSlot(
+        "notify_run_failure",
+        "controller",
+        why="Guarded at every call site; same reasoning. The run's own "
+        "terminal state and its DB row are unaffected by the missing "
+        "toast, so nothing durable is lost.",
+    ),
+    ConsoleViewHookSlot(
+        "set_pending_skill_install",
+        "controller",
+        why="None makes `request_skill_install_confirm` **fail closed "
+        "immediately** — its read site says so in as many words: nothing "
+        "could ever set the Event, so denying at once beats blocking for "
+        "the full timeout with no way to be resolved.",
+    ),
+    ConsoleViewHookSlot(
+        "set_pending_skill_script",
+        "controller",
+        why="Same fail-closed-at-once contract for "
+        "`request_skill_script_confirm` (`allow=False, remember=False`).",
+    ),
+    ConsoleViewHookSlot(
+        "wake_user_priority_probe",
+        "controller",
+        viewless_user_priority_probe,
+        why="**Not None.** No composer exists, so no user can be "
+        "mid-thought and a wake must not defer. See the function.",
+    ),
+    ConsoleViewHookSlot(
+        "wake_conversation_in_view",
+        "controller",
+        viewless_conversation_in_view,
+        why="**Not None.** `_conversation_in_view` reads an unwired probe "
+        "as IN VIEW and CLEARS the ◈ FLEET_UNSEEN mark. See the function.",
+    ),
     # -- the store's one screen-owned callback ----------------------------
-    ConsoleViewHookSlot("on_scope_flushed", "store"),
+    ConsoleViewHookSlot(
+        "on_scope_flushed",
+        "store",
+        why="Guarded (`if flushed_scope is not None and self."
+        "on_scope_flushed is not None`). It repaints the scope chip; the "
+        "flush itself already happened in the store.",
+    ),
     # -- the wake coordinator's repaint hook ------------------------------
-    ConsoleViewHookSlot("delivery_ui_hook", "wake"),
+    ConsoleViewHookSlot(
+        "delivery_ui_hook",
+        "wake",
+        why="Guarded (`if callable(hook)`), so None is exactly 'no repaint "
+        "target' — correct while detached. The hazard is not the inert "
+        "detached value but the MISSING RE-ARM: see "
+        "`ConsoleRuntime._rearm_delivery_ui_hook`.",
+    ),
 )
 
 
@@ -500,7 +710,25 @@ class ConsoleRuntime:
         )
 
         self._chat_controller = ConsoleChatController(**kwargs)
-        self._bind_view_hooks()
+        if self.view is None:
+            # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
+            # only after a detach — nothing about the caller that supplies
+            # these constructor parameters makes it an attached view, and
+            # the wake-at-launch case (Console never opened) has no view at
+            # all. Without this the fresh controller would keep the
+            # constructor's own `None`s, and `wake_conversation_in_view`'s
+            # read site reads that as IN VIEW: the ◈ mark cleared for a
+            # delivery nobody could have seen. `only="controller"` because
+            # the STORE's one slot (`on_scope_flushed`) is a constructor
+            # parameter its own caller just supplied, and nulling it in the
+            # restore-before-attach window would drop scope flushes.
+            # Production attaches one line later
+            # (`ChatScreen._ensure_console_chat_controller`), so this costs
+            # a mounted Console nothing.
+            self._clear_view_hooks(only="controller")
+            self._clear_view_hooks(only="wake")
+        else:
+            self._bind_view_hooks()
         return self._chat_controller
 
     # -- the view seam -----------------------------------------------------
@@ -539,13 +767,66 @@ class ConsoleRuntime:
                 continue
             setattr(target, slot.name, hooks.get(slot.name, slot.viewless_default))
 
-    def _clear_view_hooks(self) -> None:
-        """Restore every slot's viewless default. The mirror of the above."""
+    def _clear_view_hooks(self, *, only: str | None = None) -> None:
+        """Restore every slot's viewless default. The mirror of the above.
+
+        Args:
+            only: Restrict to one `target` kind (`"controller"`, `"store"`,
+                `"wake"`). Used by `ensure_chat_controller` to give a
+                controller built with NO view claimed its viewless values
+                without touching the store, whose `on_scope_flushed` is a
+                CONSTRUCTOR parameter the caller just supplied.
+        """
         for slot in CONSOLE_VIEW_HOOK_SLOTS:
+            if only is not None and slot.target != only:
+                continue
             target = self._hook_target(slot.target)
             if target is None:
                 continue
             setattr(target, slot.name, slot.viewless_default)
+
+    def _rearm_delivery_ui_hook(self) -> None:
+        """Fire the just-bound `delivery_ui_hook` if a wake is mid-delivery.
+
+        task-15860 Task 4. A wake turn entering through the coordinator is
+        the ONLY turn that arms the screen's 0.2s transcript poll from
+        outside the user-send worker, and it arms it exactly once, in
+        `_attempt`, at delivery start. With a runtime that survives the
+        screen, delivery start and view attach are now independent events:
+        a wake can begin with nothing attached (no repaint target — inert
+        and correct) and the user can open Console *during* it. Without
+        this re-arm that Console shows a frozen transcript for the rest of
+        the turn — the live 4+ minute freeze PR 3a-2 Task 7 measured, which
+        is what makes a missing re-arm the expensive half of this slot.
+
+        Best-effort in both directions: no delivery in flight arms nothing
+        (a poll with nothing to repaint is the recurring-idle-repaint
+        regression 15664 AC#2 forbids), and a raising hook is logged, never
+        propagated into the attach.
+
+        Deliberately NOT gated on "the view actually changed": `attach_view`
+        runs on every `_ensure_console_chat_controller()` call, and the
+        production hook is idempotent (`_start_console_transcript_sync_
+        timer` early-returns when a timer already exists), so an extra
+        re-arm costs one pump hop while a MISSED one costs the freeze.
+        """
+        wake = self._hook_target("wake")
+        if wake is None:
+            return
+        reader = getattr(wake, "delivering_session_id", None)
+        session_id = reader() if callable(reader) else None
+        if not session_id:
+            return
+        hook = getattr(wake, "delivery_ui_hook", None)
+        if not callable(hook):
+            return
+        try:
+            hook(session_id)
+        except Exception as exc:  # noqa: BLE001 -- UI freshness is best-effort
+            logger.debug(
+                "wake delivery UI hook re-arm raised (exception_type={})",
+                type(exc).__name__,
+            )
 
     def attach_view(self, view: Any) -> None:
         """Claim this runtime for `view` and open a new Console visit.
@@ -575,6 +856,7 @@ class ConsoleRuntime:
             if callable(begin_visit):
                 begin_visit()
         self._bind_view_hooks()
+        self._rearm_delivery_ui_hook()
 
     def detach_view(self, view: Any | None = None) -> bool:
         """Clear every screen-owned slot; the runtime itself survives.

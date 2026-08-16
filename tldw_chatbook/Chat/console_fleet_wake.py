@@ -300,6 +300,13 @@ class ConsoleFleetWakeCoordinator:
         #: deliveries app-wide (one wake at a time) and anchors
         #: ``authorizes``.
         self._delivering: str | None = None
+        #: The SESSION the in-flight delivery is running in, or None.
+        #: Written and cleared in lockstep with ``_delivering`` (a
+        #: conversation id is not a session id -- ``_resolve_session_id``
+        #: maps between them). task-15860 Task 4 needs the session id after
+        #: the fact: a Console attaching mid-delivery has to re-arm
+        #: ``delivery_ui_hook``, which takes the session.
+        self._delivering_session: str | None = None
         self._delivery_tasks: set[asyncio.Task] = set()
         #: task-15862: screen-wired hook fired on the loop thread the
         #: moment a delivery is scheduled (``_delivering`` already set).
@@ -380,6 +387,20 @@ class ConsoleFleetWakeCoordinator:
             The conversation id being delivered, or ``None``.
         """
         return self._delivering
+
+    def delivering_session_id(self) -> str | None:
+        """The session a wake turn is delivering into right now.
+
+        task-15860 Task 4: ``ConsoleRuntime.attach_view`` reads this to
+        re-arm ``delivery_ui_hook`` for a Console that opened DURING a
+        delivery -- the hook fires once, at delivery start, and a runtime
+        that outlives the screen makes "delivery start" and "view attach"
+        independent events.
+
+        Returns:
+            The session id being delivered into, or ``None``.
+        """
+        return self._delivering_session
 
     # -- the drain half (child thread) ---------------------------------------
 
@@ -500,6 +521,7 @@ class ConsoleFleetWakeCoordinator:
         if loop is None or loop.is_closed():
             return
         self._delivering = conversation_id
+        self._delivering_session = session_id
         authorization = AgentWakeAuthorization(
             self, session_id, _key=_WAKE_AUTHORIZATION_KEY
         )
@@ -569,6 +591,7 @@ class ConsoleFleetWakeCoordinator:
             )
         finally:
             self._delivering = None
+            self._delivering_session = None
         if accepted:
             runs_db = self._runs_db()
             stamp = getattr(runs_db, "mark_wake_delivered", None)
@@ -617,6 +640,16 @@ class ConsoleFleetWakeCoordinator:
         conversation self-heals on the next displayed sync tick, while a
         cleared mark on an unviewed delivery is the live silent-delivery
         failure this exists to prevent.
+
+        task-15860 Task 4: a controller owned by a ``ConsoleRuntime`` is
+        never in the "unwired" case above -- attach binds the view's probe
+        and detach restores ``viewless_conversation_in_view``, which
+        reports NOT in view. The unwired branch survives only for
+        controllers built outside the runtime (doubles, the pre-screen
+        rig); if it is ever made to mean "unwatched" globally, the test
+        that pins the historical clear
+        (``test_an_unwired_view_probe_keeps_the_historical_clear``) is the
+        one to rewrite alongside it.
 
         Args:
             conversation_id: The delivered conversation.

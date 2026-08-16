@@ -159,8 +159,21 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         assert visit_one_event.is_set()
         # ...every screen-owned slot is back at its viewless default...
         assert controller_one.notify_run_outcome is None
-        assert controller_one.wake_conversation_in_view is None
         assert controller_one.fleet_wake.delivery_ui_hook is None
+        # task-15860 Task 4: the view probe's viewless default is NOT None
+        # (its read site reads an unwired probe as IN VIEW). Asserted here
+        # through the DECISION the production path makes, after a real
+        # navigation -- an unwatched delivery must not be able to report
+        # itself as watched and clear the ◈ mark.
+        assert (
+            controller_one.fleet_wake._conversation_in_view(
+                "conv-anything", "sess-anything"
+            )
+            is False
+        ), (
+            "with Console genuinely unmounted the runtime still reported the "
+            "conversation as being watched"
+        )
         assert runtime_one.view is None
         # ...and the runtime itself is untouched and still the app's.
         assert runtime_one.generation == 0, "leaving Console must NOT dispose"
@@ -302,6 +315,79 @@ async def test_a_superseded_screen_never_detaches_the_successors_runtime(tmp_pat
             "the outgoing screen's leave_console poisoned the incoming "
             "visit -- a dead Console after a same-target navigation"
         )
+
+
+@pytest.mark.asyncio
+async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path):
+    """task-15860 Task 4: the mid-delivery freeze, at the REAL mount.
+
+    `delivery_ui_hook` fires exactly once, in `_attempt`, at delivery
+    start -- and it is the only thing that arms the 0.2s transcript poll
+    for a wake turn (a wake bypasses the user-send worker that normally
+    arms it). With the runtime outliving the screen, "delivery start" and
+    "view attach" are independent events, so a Console opened DURING a
+    delivery that began with no view must be re-armed by the attach
+    itself. PR 3a-2 Task 7 measured the cost of not doing it live: a 4+
+    minute frozen transcript.
+
+    Driven through the production navigation API, with a control leg
+    (return with nothing delivering -> no poll) so the assertion cannot
+    pass for the wrong reason.
+    """
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app._initial_screen_pushed = True
+        app.current_tab = "chat"
+        await pilot.pause()
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+
+        controller = chat._ensure_console_chat_controller()
+        store = chat._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert session_id, "the rig must have an active session"
+        wake = controller.fleet_wake
+
+        # -- control leg: leave and return with NOTHING delivering -------
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await pilot.pause()
+        control = app.screen
+        await _wait_for_selector(control, pilot, "#console-native-composer")
+        await pilot.pause()
+        assert control._console_transcript_sync_timer is None, (
+            "returning to Console with nothing in flight armed the poll "
+            "anyway -- the delivery leg below would prove nothing"
+        )
+
+        # -- the real leg: a wake begins while Console is unmounted ------
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        assert control not in app.screen_stack, "Console must actually unmount"
+        # Harness precondition ONLY: stand in for `_attempt` having marked
+        # a delivery in flight. Everything after this line is production.
+        wake._delivering = session_id
+        wake._delivering_session = session_id
+        try:
+            await app.handle_screen_navigation(NavigateToScreen("chat"))
+            await pilot.pause()
+            reopened = app.screen
+            assert isinstance(reopened, ChatScreen), type(reopened).__name__
+            await _wait_for_selector(reopened, pilot, "#console-native-composer")
+            await pilot.pause()
+
+            assert reopened._console_transcript_sync_timer is not None, (
+                "Console opened during a wake delivery with no transcript "
+                "poll armed -- this is the live 4+ minute freeze"
+            )
+        finally:
+            wake._delivering = None
+            wake._delivering_session = None
 
 
 @pytest.mark.unit
