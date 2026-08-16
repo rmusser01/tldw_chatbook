@@ -72,7 +72,7 @@ except ImportError:
 # Local Imports
 from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 from tldw_chatbook.Web_Scraping import deep_search_citations
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.Internal_Prompts import render_internal_prompt
 from tldw_chatbook.Utils.egress import is_public_http_url
 
@@ -853,16 +853,18 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                     "content": input_data + "\n\n" + sub_question_generation_prompt,
                 }
             ]
-            response = chat_api_call(
-                api_endpoint=api_endpoint,
-                messages_payload=messages_payload,
-                api_key=None,
-                temp=0.7,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
+            response = chat_reply_text(
+                chat_api_call(
+                    api_endpoint=api_endpoint,
+                    messages_payload=messages_payload,
+                    api_key=None,
+                    temp=0.7,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                )
             )
             if response:
                 try:
@@ -1134,7 +1136,9 @@ async def search_result_relevance(
                     )
                 )
 
-            relevancy_result = await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            relevancy_result = chat_reply_text(
+                await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            )
 
             # FIXME
             logger.debug(
@@ -1789,18 +1793,20 @@ def aggregate_results(
                 "content": input_data + "\n\n" + analyze_search_results_prompt_2,
             }
         ]
-        returned_response = chat_api_call(
-            api_endpoint=api_endpoint,
-            messages_payload=messages_payload,
-            api_key=None,
-            temp=0.7,
-            system_message=None,
-            streaming=False,
-            minp=None,
-            maxp=None,
-            model=None,
-            topk=None,
-            topp=None,
+        returned_response = chat_reply_text(
+            chat_api_call(
+                api_endpoint=api_endpoint,
+                messages_payload=messages_payload,
+                api_key=None,
+                temp=0.7,
+                system_message=None,
+                streaming=False,
+                minp=None,
+                maxp=None,
+                model=None,
+                topk=None,
+                topp=None,
+            )
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:

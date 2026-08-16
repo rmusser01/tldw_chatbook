@@ -124,18 +124,22 @@ class LocalResearchEngine:
             f"Synthesized answer:\n{context.get('answer_text')}"
         )
         try:
-            response = chat_api_call(
-                api_endpoint=llm,
-                messages_payload=[{"role": "user", "content": prompt}],
-                api_key=None,
-                temp=0.2,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
-                topk=None,
-                topp=None,
+            from ..Chat.Chat_Functions import chat_reply_text
+
+            response = chat_reply_text(
+                chat_api_call(
+                    api_endpoint=llm,
+                    messages_payload=[{"role": "user", "content": prompt}],
+                    api_key=None,
+                    temp=0.2,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                    topk=None,
+                    topp=None,
+                )
             )
             parsed = json.loads(str(response or "[]"))
             if isinstance(parsed, list):
@@ -635,7 +639,9 @@ class LocalResearchEngine:
             f"Follow-up question: {question}"
         )
         try:
-            response = str(
+            from ..Chat.Chat_Functions import chat_reply_text
+
+            response = chat_reply_text(
                 chat_api_call(
                     api_endpoint=llm,
                     messages_payload=[{"role": "user", "content": prompt}],
@@ -649,7 +655,6 @@ class LocalResearchEngine:
                     topk=None,
                     topp=None,
                 )
-                or ""
             ).strip()
         except Exception as exc:  # noqa: BLE001 - follow-up degrades, never fails hard
             logger.warning(f"Follow-up answer call failed: {exc}")

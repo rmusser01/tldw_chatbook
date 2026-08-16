@@ -115,7 +115,10 @@ def test_chat_api_call_records_nothing_without_active_recorder(monkeypatch):
 
 # --- OpenAI-shaped dict normalization (task-16330 live-baseline unblock) --------
 
-def test_chat_api_call_normalizes_openai_dict_to_content_string(monkeypatch):
+def test_chat_api_call_passes_provider_dicts_through_unchanged(monkeypatch):
+    # The Console gateway parses tool_calls/finish_reason/usage from these
+    # dicts -- chat_api_call must NOT normalize them to content strings
+    # (task-16331 correction). String consumers use chat_reply_text.
     payload = {
         "choices": [
             {"index": 0, "finish_reason": "stop",
@@ -134,7 +137,20 @@ def test_chat_api_call_normalizes_openai_dict_to_content_string(monkeypatch):
         minp=None, maxp=None, model=None, topk=None, topp=None,
     )
 
-    assert result == "the answer"
+    assert result == payload
+
+
+def test_chat_reply_text_extracts_known_shapes_and_empty_for_unknown():
+    from tldw_chatbook.Chat.Chat_Functions import chat_reply_text
+
+    assert chat_reply_text("plain") == "plain"
+    assert chat_reply_text(
+        {"choices": [{"message": {"role": "assistant", "content": "duck"}}]}
+    ) == "duck"
+    assert chat_reply_text({"choices": [{"text": "legacy"}]}) == "legacy"
+    assert chat_reply_text({"choices": [{"message": {"content": None}}]}) == ""
+    assert chat_reply_text({"error": "odd"}) == ""
+    assert chat_reply_text(None) == ""
 
 
 def test_chat_api_call_records_real_usage_from_dict_responses(monkeypatch):
@@ -166,14 +182,16 @@ def test_chat_api_call_dict_without_usage_falls_back_to_estimates(monkeypatch):
         Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
     )
 
+    result = None
     with usage_scope() as recorder:
-        chat_api_call(
+        result = chat_api_call(
             api_endpoint="llama_cpp",
             messages_payload=[{"role": "user", "content": "abcdefg"}],
             api_key=None, temp=0.5, system_message=None, streaming=False,
             minp=None, maxp=None, model=None, topk=None, topp=None,
         )
 
+    assert result == payload  # passthrough preserved
     assert recorder.prompt_tokens() == estimate_tokens("abcdefg")
     assert recorder.completion_tokens() == estimate_tokens("abcde")
 
