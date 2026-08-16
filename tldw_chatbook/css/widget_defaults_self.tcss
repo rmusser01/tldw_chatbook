@@ -229,11 +229,7 @@
     `max-height: 70%` below resolves against a definite height, same
     percentage-inside-a-definite-not-auto-parent discipline the Select
     slot comment above documents for the filter bar. */
-    #mcp-audit-executions-view{
-        width: 1fr;
-        height: 1fr;
-        min-height: 0;
-    }
+
 
 
     
@@ -479,17 +475,11 @@
     }
 
 
-    #mcp-tools-local-config-title-row{
-        height: auto;
-        min-height: 0;
-    }
 
 
 
-    #mcp-tools-local-config-help{
-        height: auto;
-        color: $text-muted;
-    }
+
+
 
 
 
@@ -645,17 +635,7 @@
        button could never be measured again, i.e. never un-ghosted. Left
        out rather than reworking every geometry read onto a different
        property. */
-    .nav-button.nav-button-clip-ghost,
-    .nav-button.nav-button-clip-ghost:hover,
-    .nav-button.nav-button-clip-ghost:focus,
-    .nav-button.nav-button-clip-ghost.is-active,
-    .nav-button.nav-button-clip-ghost.is-active:focus{
-        background: $background !important;
-        color: $background !important;
-        text-style: none;
-        opacity: 100% !important;
-        text-opacity: 100% !important;
-    }
+
 
 
 
@@ -758,36 +738,15 @@
 
     /* Presentation-only row wrappers keep the established wide stacked
        workbench. Compact rules below switch only these wrappers to rows. */
-    #library-notes-filter-row,
-    #library-notes-status-row,
-    #library-note-heading,
-    #library-note-title-row,
-    #library-note-context-keywords-row,
-    #library-notes-create-heading,
-    #library-notes-sync-heading,
-    #library-notes-sync-folder-row,
-    #library-notes-sync-direction-row,
-    #library-notes-sync-conflict-row{
-        layout: vertical;
-        height: auto;
-        min-height: 0;
-    }
-
-    #library-notes-create-viewport{
-        height: 1fr;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
 
 
 
 
 
-    #library-note-preview-region:focus{
-        border: solid $accent;
-        background: $boost;
-    }
+
+
+
+
 
 
 
@@ -809,18 +768,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-notes-browse-actions,
-    #library-canvas.library-notes-compact #library-notes-sort-choices,
-    #library-canvas.library-notes-compact #library-notes-transfer-actions,
-    #library-canvas.library-notes-compact #library-notes-selection-actions,
-    #library-canvas.library-notes-compact #library-note-primary-actions,
-    #library-canvas.library-notes-compact #library-note-conflict-actions{
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
 
 
 
@@ -838,40 +785,12 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-editor-title,
-    #library-canvas.library-notes-compact #library-note-preview-title,
-    #library-canvas.library-notes-compact #library-note-context-title,
-    #library-canvas.library-notes-compact #library-note-loading-title,
-    #library-canvas.library-notes-compact #library-notes-create-header{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
 
 
 
 
 
-    #library-canvas.library-notes-compact #library-note-title-label{
-        width: 10;
-        height: 1;
-        padding: 0 1;
-    }
 
-    #library-canvas.library-notes-compact #library-note-title,
-    #library-canvas.library-notes-compact #library-note-context-keywords{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-    }
 
 
 
@@ -885,12 +804,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-context-region .destination-section,
-    #library-canvas.library-notes-compact #library-note-context-meta{
-        height: 1;
-        min-height: 1;
-        margin: 0;
-    }
 
 
 
@@ -898,12 +811,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-transfer-status{
-        display: none;
-        height: 0;
-        min-height: 0;
-        margin: 0;
-    }
 
 
 
@@ -929,41 +836,21 @@
 
 
 
-    #library-canvas.library-notes-compact #library-notes-sync-purpose,
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    #library-canvas.library-notes-compact #library-notes-sync-actions{
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
 
 
 
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row{
-        layout: horizontal;
-    }
 
-    #library-canvas.library-notes-compact #library-notes-sync-folder-label,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-label{
-        width: 11;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
 
-    #library-canvas.library-notes-compact #library-notes-sync-direction-choices{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
+
+
+
+
+
+
+
+
+
+
 
     /* task-14900: Media list|preview side by side above the measured
        compact breakpoint; the host's library-notes-compact class flips it
@@ -972,20 +859,6 @@
        wins when loaded. */
 
 
-    #library-media-list,
-    #library-media-preview{
-        width: 1fr;
-        min-width: 0;
-        height: 100%;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    #library-media-preview{
-        margin: 0 0 0 1;
-        padding: 0 1;
-    }
 
 
 
@@ -993,13 +866,10 @@
 
 
 
-    #library-canvas.library-notes-compact #library-media-list{
-        width: 100%;
-        height: auto;
-        margin: 0;
-        padding: 0;
-        overflow-y: hidden;
-    }
+
+
+
+
 
 
     
@@ -1021,21 +891,11 @@
     under a harness App that never sets CSS_PATH. `$ds-focus-bg` and
     `$ds-focus-fg` currently alias to exactly `$surface` and `$text` (see
     css/core/_variables.tcss), so this is not a visual compromise. */
-    .mcp-mode-chip:focus{
-        background: $surface;
-        color: $text;
-        text-style: bold;
-        outline: none;
-    }
+
     /* Active AND focused: still reads as "active" (bold underline, same
     background as non-focused .is-active) rather than picking up the
     reverse-video focus treatment above. */
-    .mcp-mode-chip.is-active:focus{
-        background: $surface;
-        color: $text-muted;
-        text-style: bold underline;
-        outline: none;
-    }
+
     
 
 /* ===== WIDGET: CuratedView (UI/Screens/model_curated_view.py) ===== */
@@ -1297,15 +1157,10 @@
         height: auto;
         padding: 1;
     }
-    #scheduling-owner-local{
-        width: auto;
-    }
+
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
-    #scheduling-last-pull{
-        width: auto;
-        margin-left: 2;
-    }
+
 
 
     

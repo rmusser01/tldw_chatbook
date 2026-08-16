@@ -156,10 +156,13 @@ def _scope_one_selector(selector: str, scope: str) -> str:
     list only: ``parse_rule_set`` flushes each earlier group to ``rule_selectors``
     when it meets the comma, and scopes just the group left over when the loop
     ends (``textual/css/parse.py``).  So in scoped ``DEFAULT_CSS``, ``A, B {…}``
-    scopes ``B`` but leaves ``A`` matching app-wide.  That is upstream behaviour
-    this app's styling already depends on, so the transform reproduces it rather
-    than quietly "fixing" it (which would silently unstyle whatever those leaked
-    selectors are currently reaching).  Filed as a follow-up, not changed here.
+    scopes ``B`` but leaves ``A`` matching app-wide.  ``split_scoped_css``'s
+    default reproduces that quirk exactly, so the exactness test can pin this
+    transform against Textual's own parser -- but **both** build-time callers
+    now opt out via ``scope_every_selector=True``: the screen sheets from the
+    start (TASK-15450) and the widget-defaults sheets since TASK-15998, because
+    consolidation made every sheet live from boot and the leak was measured
+    cascade-neutral to close (see ``build_css.build_widget_defaults``).
 
     Args:
         selector: One selector, possibly with leading/trailing whitespace.

@@ -22,6 +22,7 @@ import ast
 import asyncio
 import importlib
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -188,9 +189,12 @@ def test_scope_rewrite_reproduces_textuals_comma_quirk():
 
     ``parse_rule_set`` flushes each earlier group when it meets the comma and
     scopes only the group left over, so ``A, .b {…}`` in scoped ``DEFAULT_CSS``
-    leaves ``A`` matching app-wide. Widget CSS depends on that today, so the
-    rewrite keeps it; ``scope_every_selector`` opts out, and the screen sheets
-    use it because they are live from boot rather than from a modal's first open.
+    leaves ``A`` matching app-wide. ``split_scoped_css``'s default keeps that
+    quirk so ``test_scope_rewrite_matches_textuals_own_scoping`` can pin the
+    transform against Textual's own parser; ``scope_every_selector`` opts out,
+    and BOTH build-time streams now use it -- the screen sheets from TASK-15450
+    and the widget-defaults sheets since TASK-15998 -- because consolidation
+    made every generated sheet live from boot rather than from a first mount.
     """
     css = ".leaked, .scoped { color: red; }\n"
     own, scoped = widget_css.split_scoped_css(css, "MyWidget")
@@ -227,6 +231,46 @@ def test_top_level_variable_declarations_stay_out_of_selectors():
     assert "$fallback: $surface;" in scoped
     assert "MyWidget $fallback" not in scoped
     assert "MyWidget .thing" in scoped
+
+
+_BANNER_RE = re.compile(r"/\* ===== WIDGET: (\S+) \(\S+\) ===== \*/")
+
+
+@pytest.mark.parametrize("filename", _GENERATED_SHEETS)
+def test_generated_sheets_scope_every_selector(filename: str):
+    """Every top-level selector in every generated sheet names its class first.
+
+    TASK-15998. Textual's scoped-DEFAULT_CSS parser prefixes only the LAST
+    selector of a comma list, so ``A, .b {…}`` leaves ``A`` matching app-wide.
+    Per-class registration confined that leak to first-mount time; the
+    consolidated sheets are live from boot, so the builder now writes the scope
+    onto EVERY selector in both tiers (``scope_every_selector=True`` in
+    ``build_css.py`` -- see the decision comment there for the parity evidence).
+    Born red against the quirked widget-defaults build: the self sheet carried
+    56 leaked selectors across 6 classes (LibraryScreen, MCPAuditMode,
+    MCPToolsMode, MCPScreen, MainNavigationBar, SyncStatusWidget), and this
+    guard is what keeps that set from silently growing back.
+    """
+    text = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+    parts = _BANNER_RE.split(text)
+    blocks = list(zip(parts[1::2], parts[2::2]))  # (class_name, block css)
+    assert blocks, f"{filename}: no WIDGET banners found -- the split is broken"
+
+    variables = _css_variables()
+    leaks = []
+    checked = 0
+    for class_name, css in blocks:
+        for chain, _specificity, _declarations in _selector_entries(css, "", variables):
+            checked += 1
+            first_name, first_type, _combinator, _pseudo = chain[0]
+            if not (first_type == "TYPE" and first_name == class_name):
+                leaks.append(f"{filename}::{class_name}: {chain}")
+    assert checked, f"{filename}: no selectors parsed -- the guard is vacuous"
+    assert not leaks, (
+        f"{len(leaks)} selector(s) not scoped to their declaring class -- these "
+        "match app-wide from boot (Textual's comma-list quirk has crept back "
+        "into the build; see build_css.build_widget_defaults):\n" + "\n".join(leaks)
+    )
 
 
 @pytest.mark.parametrize("filename", _GENERATED_SHEETS)
