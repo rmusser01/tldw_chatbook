@@ -1409,8 +1409,7 @@ class ConsoleChatController:
         #: unmounting it". An app-owned runtime falsifies that premise: the
         #: SAME controller now serves visit after visit. So ``leave_console
         #: ()`` sets THIS Event (denying every round armed during the visit
-        #: that is ending, and keeping ``_attempt``'s wake gate refusing
-        #: while nothing is mounted), and the NEXT ``attach_view`` calls
+        #: that is ending), and the NEXT ``attach_view`` calls
         #: ``begin_visit()``, which REPLACES the attribute with a fresh,
         #: unset Event. ``shutdown()``/``begin_shutdown()`` keep the old
         #: permanent meaning and additionally set ``_disposed``, after
@@ -5927,8 +5926,7 @@ class ConsoleChatController:
           cancellation, exactly as `begin_shutdown` did it;
         - this visit's cancellation Event is set, which denies every parked
           approval/confirm round armed during the visit (each captured the
-          Event at arm time) and keeps `ConsoleFleetWakeCoordinator.
-          _attempt`'s gate refusing while nothing is mounted;
+          Event at arm time);
         - this visit's in-flight USER turns are signalled, cancelled and
           awaited, with `cancel_reason="shutdown"` stamped on each one's
           in-flight citation repair -- the same stamp `shutdown()` makes,
@@ -5936,6 +5934,12 @@ class ConsoleChatController:
           the user who stopped it);
         - cross-turn fleet SURVIVORS keep running, untouched, as they
           already did.
+
+        What does NOT happen: a wake is not blocked. task-15860's
+        wake-fires-headless slice moved `ConsoleFleetWakeCoordinator.
+        _attempt`'s gate onto `_disposed`, so a survivor settling after
+        this call delivers a full wake turn with no Console mounted;
+        only `begin_shutdown()` (app exit) refuses one.
 
         What does NOT happen, by owner ruling: an in-flight `AGENT_WAKE`
         turn is not cancelled. Cancelling it would re-create the exact

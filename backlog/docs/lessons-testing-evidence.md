@@ -4464,6 +4464,40 @@ belonged to a different mechanism. The residual's fix-shaped hypothesis is a
 hypothesis; A/B the mechanism (here: neuter the proposed fix on the same
 HEAD) before writing the Implementation Notes around it.
 
+## "Nothing happened" cannot name WHICH guard stopped it — count the dispatch (task-15860, 2026-08-16)
+
+Second occurrence in one arc, so it is a class rather than an accident. A
+headless-wake test asserted the shipped behaviour "a wake into a busy session
+never streams" by giving the loop a window and checking the provider double
+recorded no payload. Mutating the guard it was written for -- bypassing
+`send_refusal_copy` inside `ConsoleFleetWakeCoordinator._attempt` -- left it
+**green**, because `submit_draft` refuses a busy session on its own. The read
+site is double-guarded, so an absence-of-effect assertion is satisfied by
+EITHER guard and can never say which one it is testing; the test claimed
+coverage of the coordinator's gate while actually pinning the controller's.
+(The viewless landing hit the identical shape earlier in the same arc: an
+unguarded `_apply_world_info` survived because the applier was unreachable in
+that rig AND wrapped in a broad `except`.) The repair is cheap and general:
+count the DISPATCH, not the effect -- wrap the next seam (`controller.
+submit_draft`) with a recorder and assert the list is empty, which fails the
+moment the outer guard stops firing. Under the same mutation the repaired test
+died with its sibling (2 failed); restored, 13 passed. Corollary for the other
+direction: a mutation that leaves everything green is a finding about your
+tests, not a nuisance -- both survivors in this arc were real gaps.
+
+## A registry that self-heals on the next attempt is invisible to every test that takes another attempt (task-15860, 2026-08-16)
+
+Mutating `_deliver` so delivered run ids never left the in-memory pending
+registry killed exactly ONE test out of fourteen -- and not the exactly-once
+test, which is the one whose subject it is. The reason: `_rows_for` drops any
+run the durable ledger already shows delivered, so the leak is repaired by the
+very next `_attempt`, and any assertion taken after a retry sees a healthy
+registry. Only an observation taken at a moment when no further attempt is
+coming can see it; here that moment was app exit (`ConsoleRuntime.dispose()`
+mid-delivery). When a component has a self-healing path, the state it heals is
+untestable through the normal flow -- so a test for it has to pin a TERMINAL
+moment (quit, crash, teardown) on purpose. That is also the argument for
+keeping such a test when it looks redundant next to the happy-path one.
 ---
 
 ---
@@ -4490,6 +4524,77 @@ process idles at 0% CPU; macOS `sample` shows `wait_for_thread_shutdown`;
 `kill -ABRT` (with `PYTHONFAULTHANDLER=1`) dumps the stuck thread stacks into
 stderr.
 
+---
+
+## A cross-suite ordering failure can be an app KILLING ITSELF, not an object crossing the boundary (task-15860, 2026-08-16)
+
+`Tests/UI/test_console_headless_wake_fires.py` +
+`Tests/UI/test_console_store_continuity.py` run together gave **1 failed, 4
+passed**; each file alone was green. Every hypothesis on the obvious list was
+about something *surviving* the test boundary — an undisposed app-owned
+`ConsoleRuntime`, a pending delivery, a leaked DB handle, a module singleton,
+a daemon thread. All of them were wrong. Four *identical* wake rounds in one
+process were green, and the two poisoners followed by a plain no-wake nav probe
+were green: nothing accumulated. What actually happened was that the THIRD
+app killed itself — a `console-sync` worker whose screen had been closed raised
+`NoMatches`, Textual's default `exit_on_error=True` handed it to
+`App._handle_exception`, and from then on every `post_message` was silently
+dropped, so the next `NavigateToScreen` produced 15 seconds of total silence
+and "stuck on LibraryScreen". The prior tests contributed timing pressure, not
+state.
+
+**What to do.** Before hunting for the leaked object, ask whether the victim
+app is still ALIVE: dump `app.is_running` / `app._closing` / `app._closed` /
+`app._exception` at the point of the symptom. A dead Textual app is
+indistinguishable from a hung one from the outside — the message queue is
+empty, the workers list is empty, the loop is running, and nothing logs. Two
+corollaries that generalise: (1) `is_mounted` stays **True** for a screen
+Textual has already closed (the removed surface reported `is_mounted=True`
+with `is_running=False` and no children), so a mount check is not a liveness
+check — `_closing`/`_closed` are; (2) a per-file green gate structurally
+cannot see this class, because the damage needs several app lifetimes in one
+process. Running the whole directory in one invocation is what surfaces it.
+
+## A coroutine that re-arms itself from `finally` escapes the framework's teardown sweep (task-15860, 2026-08-16)
+
+Textual cancels a node's workers in `Widget._on_unmount`
+(`workers.cancel_node(self)`). `ChatScreen._sync_native_console_chat_ui`
+re-armed itself with `self.run_worker(...)` inside its own `finally` — which
+runs *after* that sweep — so the worker it created was never in the cancelled
+set, ran a full DOM sync against a screen with no children, and killed the app.
+The instrumentation that named it in one pass: wrap `DOMNode.run_worker`
+filtered to the suspect group and log `traceback.format_stack()` at creation;
+the creating frame was the `finally` itself. Generalises to any self-scheduling
+loop (timers re-arming timers, callbacks re-posting themselves): the framework's
+"cancel everything this node owns" happens once, and anything scheduled after
+it is invisible to it. Guard the re-arm on the owner still being alive, not
+just the body.
+
+## A `MagicMock(spec=Cls)` answers every METHOD truthily — a new guard predicate must not be one (task-15860, 2026-08-16)
+
+A teardown guard was added as `ChatScreen._console_screen_torn_down()`, reading
+`_closing`/`_closed`. Three `Tests/UI/test_ui_responsiveness.py` tests that
+drive `ChatScreen._sync_native_console_chat_ui(mock)` against a
+`MagicMock(spec=ChatScreen)` went red: the spec'd mock auto-provides every
+method in `dir(Cls)`, and the auto-returned `MagicMock` is TRUTHY, so the new
+guard reported "this screen is torn down" for every mocked screen and the code
+under test returned before doing anything. Measured three ways: 15 passed at
+the pre-fix baseline, 3 failed with the method form, 15 passed with the
+identical logic moved to a module-level `_console_screen_is_torn_down(screen)`.
+The reason the module form is immune is the same mechanism read the other way —
+`_closing`/`_closed` are set in `__init__`, so they are NOT in `dir(Cls)`, a
+spec'd mock raises `AttributeError` for them, and `getattr(screen, "_closing",
+False)` correctly reads a mocked (or never-mounted) screen as LIVE.
+
+**What to do.** When adding a *predicate* that new early-returns depend on, ask
+what a spec'd mock of the host class will return for it before choosing where
+it lives. A module function reading raw attributes is the mock-safe shape; a
+method is not. The failure is nasty because it is silent — the guard fires, the
+body is skipped, and the assertion that fails is about something else entirely.
+Trap-detection note: neutralising the method's BODY does not restore the tests
+(the mock never calls it), so the usual "mutate the fix off and compare" check
+reports "identical failure sets, not mine" — the only honest discriminator is a
+real pre-fix baseline worktree.
 ## A parity test that passes against the pre-fix tree proves nothing (TASK-16811, 2026-08-16)
 
 The first version of `test_focus_token_parity.py` asserted a selected

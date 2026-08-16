@@ -536,13 +536,23 @@ defines which completions are still owed.
   accepted prompt chain, and a wake starts none. While a wake turn is
   streaming, sending behaves like any other busy moment — it waits.
 
-**If Console isn't open, no wake fires** — that is the honest limit of
-the current release. The completion is still recorded (toast + `◈`
-mark + ledger), and the staged wake is claimed the next time the
-Console screen mounts: marked conversations are read, the ledger says
-which runs are still owed, and deliveries run one at a time under all
-the same rules above. A supervisor that acts with no Console mounted at
-all is follow-up work (task-15860).
+**Leaving Console no longer parks the supervisor.** A sub-agent that
+finishes while you are on Library, Watchlists, or any other screen wakes
+its supervisor there and then: the wake turn runs, its result is written
+to the conversation, and the `◈` mark stays set so you can see on return
+that something happened while you were away. Navigating back shows the
+completed turn already in the transcript.
+
+Two honest limits remain. **Nothing wakes while the app is not running**
+— completions are recorded durably (mark + ledger) and claimed the next
+time the app starts and Console opens; a wake at launch, before Console
+has ever been opened in that session, is follow-up work (task-15860).
+And **a headless wake that needs an approval card parks it**: the card is
+retained and is claimable when you next open Console, but nothing
+surfaces it while you are away, and if nobody answers it the request
+denies itself at the `[mcp] approval_timeout_seconds` deadline
+(default 120s). A wake turn also spends model tokens with no window
+open — the `◈` mark is your signal that it did.
 
 **Turning the wake off.** Set `[agents] autowake_enabled = false` in
 `config.toml` (default `true`; no Settings UI switch). OFF loses
