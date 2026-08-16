@@ -30,7 +30,6 @@ try:
         TTSCompleteEvent,
         TTSPlaybackEvent,
         TTSProgressEvent,
-        TTSExportEvent,
         play_audio_file,
         CostTracker,
     )
@@ -41,7 +40,6 @@ except ImportError:
     TTSCompleteEvent = None
     TTSPlaybackEvent = None
     TTSProgressEvent = None
-    TTSExportEvent = None
     play_audio_file = None
     CostTracker = None
 try:
@@ -382,29 +380,25 @@ class TestTTSEventHandler:
         assert artifact is not None
         assert not artifact.exists()
 
-    @pytest.mark.asyncio
-    async def test_export_functionality(self, handler, tmp_path):
-        """Test audio export with custom naming"""
-        # Create a mock audio file
-        test_audio = tmp_path / "test_audio.mp3"
-        test_audio.write_bytes(b"fake audio data")
+    def test_per_message_export_surface_stays_retired(self, handler):
+        """The TTSExportEvent path was retired, not just left unwired.
 
-        # Add to handler's audio files
-        handler._audio_files["test_msg"] = test_audio
-
-        # Export to custom location
-        export_path = tmp_path / "exports" / "my_audio.mp3"
-        event = TTSExportEvent("test_msg", export_path, include_metadata=True)
-
-        await handler.handle_tts_export(event)
-
-        # Check file was exported
-        assert export_path.exists()
-        assert export_path.read_bytes() == b"fake audio data"
-
-        # Check metadata was created
-        metadata_path = export_path.with_suffix(".mp3.json")
-        assert metadata_path.exists()
+        task-16837: `TTSExportEvent` was never constructed or posted in
+        production, and `TTSEventHandler` is a plain class (no MessagePump
+        name-dispatch), so `on_tts_export_event` was unreachable by
+        construction. The export half -- event, both handlers, the
+        `_exporting_audio_refcounts` claim machinery, and the shutdown
+        sweep's claim snapshot/union -- was deleted. The user-reachable
+        audio export lives on the S/TT/S playground path
+        (`STTSEventHandler.export_current_audio`). This pin keeps the dead
+        surface from being reintroduced without a real dispatch path and
+        the concurrency review (F6/F4 of the task-16199 review) it would
+        then owe.
+        """
+        assert not hasattr(tts_events_module, "TTSExportEvent")
+        assert not hasattr(handler, "handle_tts_export")
+        assert not hasattr(handler, "on_tts_export_event")
+        assert not hasattr(handler, "_exporting_audio_refcounts")
 
     @pytest.mark.asyncio
     async def test_audio_cleanup_keeps_ownership_until_secure_delete_succeeds(
@@ -615,136 +609,30 @@ class TestTTSEventHandler:
         assert handler._last_played == ("msg-4", last_audio)
 
     @pytest.mark.asyncio
-    async def test_export_claim_keeps_cleanup_from_destroying_the_source_mid_copy(
-        self, handler, tmp_path, monkeypatch
+    async def test_shutdown_sweep_still_deletes_cached_and_retry_artifacts(
+        self, handler, tmp_path
     ):
-        """A cleanup firing mid-export must wait, not zero the source.
+        """Retiring the export claims must not soften the sweep itself.
 
-        task-15471 fix round (review M2): the export's `shutil.copy2` moved
-        to `asyncio.to_thread`, so it now yields -- and the 5s
-        `_cleanup_audio_file` task could resume mid-copy and secure-delete
-        the source, which OVERWRITES IT IN PLACE with zeros before the
-        unlink (`Utils/secure_temp_files.py`). The overlapping copy then
-        reads zeros for the uncopied tail while the handler still toasts
-        success. The export must claim the file first; a cleanup landing
-        inside the copy window waits for the claim to clear, then deletes.
+        task-16837 removed the claim snapshot/union/skip branches from
+        `cleanup_tts_resources` (they guarded exports that could never be
+        posted). This pins the surviving contract: the sweep still
+        secure-deletes every cached artifact and every retry-set path.
         """
-        import shutil as shutil_module
-        import threading
+        cached_audio = tmp_path / "cached.mp3"
+        cached_audio.write_bytes(b"cached audio")
+        handler._audio_files["msg-cached"] = cached_audio
 
-        payload = b"real audio payload"
-        test_audio = tmp_path / "claimed.mp3"
-        test_audio.write_bytes(payload)
-        handler._audio_files["msg-claim"] = test_audio
+        retry_audio = tmp_path / "retry.mp3"
+        retry_audio.write_bytes(b"retry audio")
+        handler._artifact_cleanup_retry.add(retry_audio)
 
-        copy_started = threading.Event()
-        release_copy = threading.Event()
-        real_copy2 = shutil_module.copy2
-
-        def gated_copy2(src, dst, **kwargs):
-            copy_started.set()
-            assert release_copy.wait(5), "test never released the gated copy"
-            return real_copy2(src, dst, **kwargs)
-
-        monkeypatch.setattr(shutil_module, "copy2", gated_copy2)
-
-        export_path = tmp_path / "exports" / "out.mp3"
-        export_task = asyncio.create_task(
-            handler.handle_tts_export(
-                TTSExportEvent("msg-claim", export_path, include_metadata=False)
-            )
-        )
-        # Wait (off-loop) until the pool thread is inside the gated copy.
-        assert await asyncio.to_thread(copy_started.wait, 5)
-
-        # Fire the deferred cleanup exactly mid-copy.
-        cleanup_task = asyncio.create_task(
-            handler._cleanup_audio_file("msg-claim", delay=0)
-        )
-        await asyncio.sleep(0.1)
-        # The claim holds the destroyer off: source present and NOT zeroed.
-        assert test_audio.exists(), "cleanup destroyed the source mid-copy"
-        assert test_audio.read_bytes() == payload
-        assert not cleanup_task.done()
-
-        release_copy.set()
-        await asyncio.wait_for(export_task, timeout=10)
-        assert export_path.read_bytes() == payload
-
-        # Once the export releases its claim, the pending cleanup completes.
-        await asyncio.wait_for(cleanup_task, timeout=10)
-        assert not test_audio.exists()
-        assert "msg-claim" not in handler._audio_files
-
-    @pytest.mark.asyncio
-    async def test_shutdown_sweep_skips_a_source_an_export_is_still_copying(
-        self, handler, tmp_path, monkeypatch
-    ):
-        """Quitting mid-copy must not zero the export's source (task-16199).
-
-        The task-15471 review's N1: `cleanup_tts_resources`'s shutdown
-        sweep deleted every cached artifact WITHOUT consulting
-        `_exporting_audio_refcounts`. Worse, the sweep first CANCELS the
-        export task, whose `finally` then releases the claim even though
-        the already-running pool thread keeps copying (cancellation cannot
-        stop a thread) -- so even a claim-aware sweep reading only the
-        live refcounts would miss it. The sweep must snapshot the claims
-        BEFORE the cancel pass and skip those files; the still-running
-        copy then finishes against an intact source.
-        """
-        import shutil as shutil_module
-        import threading
-
-        payload = b"real audio payload"
-        test_audio = tmp_path / "claimed-at-quit.mp3"
-        test_audio.write_bytes(payload)
-        handler._audio_files["msg-quit"] = test_audio
-
-        copy_started = threading.Event()
-        release_copy = threading.Event()
-        real_copy2 = shutil_module.copy2
-
-        def gated_copy2(src, dst, **kwargs):
-            copy_started.set()
-            assert release_copy.wait(5), "test never released the gated copy"
-            return real_copy2(src, dst, **kwargs)
-
-        monkeypatch.setattr(shutil_module, "copy2", gated_copy2)
-
-        export_path = tmp_path / "exports" / "out.mp3"
-        export_task = asyncio.create_task(
-            handler.handle_tts_export(
-                TTSExportEvent("msg-quit", export_path, include_metadata=False)
-            )
-        )
-        # Register the task exactly as production's `on_tts_export_event`
-        # does, so the shutdown sweep's cancel pass reaches it -- that
-        # cancel-releases-the-claim interleaving is the window under test.
-        await handler._add_active_task(export_task)
-
-        # Wait (off-loop) until the pool thread is inside the gated copy.
-        assert await asyncio.to_thread(copy_started.wait, 5)
-
-        # Quit the app mid-copy. Must return promptly: the sweep skips the
-        # claimed file rather than waiting out the (gated, i.e. "hung") copy.
         await asyncio.wait_for(handler.cleanup_tts_resources(), timeout=10)
 
-        # The sweep skipped the claimed source: still present, NOT zeroed
-        # in place (the secure delete overwrites with zeros before unlink).
-        assert test_audio.exists(), "shutdown sweep destroyed the source mid-copy"
-        assert test_audio.read_bytes() == payload
-
-        # Shutdown cancelled the export task without waiting on its thread.
-        assert export_task.cancelled()
-
-        # Let the still-running pool thread finish: the export it writes
-        # must carry the real bytes, not zeros.
-        release_copy.set()
-        for _ in range(200):
-            if export_path.exists() and export_path.read_bytes() == payload:
-                break
-            await asyncio.sleep(0.05)
-        assert export_path.read_bytes() == payload
+        assert not cached_audio.exists()
+        assert not retry_audio.exists()
+        assert handler._audio_files == {}
+        assert handler._artifact_cleanup_retry == set()
 
 
 class TestAudioPlayer:
