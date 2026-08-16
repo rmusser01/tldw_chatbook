@@ -240,10 +240,10 @@ class SiteConfigSettings(Container):
 
             auth_select = Select(
                 options=[
-                    ("none", "None"),
-                    ("basic", "Basic Auth"),
-                    ("bearer", "Bearer Token"),
-                    ("api_key", "API Key"),
+                    ("None", "none"),
+                    ("Basic Auth", "basic"),
+                    ("Bearer Token", "bearer"),
+                    ("API Key", "api_key"),
                 ],
                 id="auth-type-select",
             )
@@ -389,9 +389,22 @@ class SiteConfigSettings(Container):
             return
         try:
             config = self.config_manager.get_config(f"https://{domain}")
-            self.app.call_from_thread(self.display_config, config)
         except Exception as e:
+            # A narrow, expected failure mode: the config store itself
+            # (DB/file read) is unavailable or corrupt for this domain.
             logger.error(f"Error loading config for {domain}: {str(e)}")
+            return
+
+        try:
+            self.app.call_from_thread(self.display_config, config)
+        except Exception:
+            # display_config is UI-rendering code, not data loading -- a
+            # failure here (e.g. a backwards Select options list raising
+            # InvalidSelectValueError, TASK-16841) is a programming bug, not
+            # an expected runtime condition. Logging with a full traceback
+            # (instead of a bare str(e)) keeps this bug class from hiding
+            # behind a one-line, stack-free log message again.
+            logger.exception(f"Error displaying config for {domain}")
 
     def display_config(self, config: SiteConfig):
         """Display configuration in the form."""
