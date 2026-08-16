@@ -477,7 +477,11 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
+from ...Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
 from ...Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -643,6 +647,16 @@ CONSOLE_ACTIVE_RUN_STATUSES = (
     ConsoleRunStatus.STREAMING,
     ConsoleRunStatus.CHECKING_CITATIONS,
 )
+# Console selection phase 3 (task 5): the bracketed header each feedback
+# action stamps on the composed next-user message (plan task 5 template:
+# header line, ``> ``-quoted selection, optional comment). Unknown action
+# strings fall back to the Comment header (mirrors the comment modal's
+# own ``_DEFAULT_HEADER`` fallback).
+CONSOLE_FEEDBACK_MESSAGE_HEADERS = {
+    ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES: "[Request changes]",
+    ConsoleSelectionFeedbackRequested.ACTION_LGM: "[LGTM]",
+    ConsoleSelectionFeedbackRequested.ACTION_COMMENT: "[Comment]",
+}
 # Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
 # count previously re-queried the DB once per visible row on every 0.2s
 # poll tick. The batched replacement is still cheap to cache; this TTL is
@@ -19864,6 +19878,69 @@ class ChatScreen(BaseAppScreen):
                 auto_send_prompt=auto_send_prompt,
             )
         )
+
+    @on(ConsoleSelectionFeedbackRequested)
+    def on_console_selection_feedback_requested(
+        self, event: ConsoleSelectionFeedbackRequested
+    ) -> None:
+        """Compose structured review feedback and route it via the prompt queue.
+
+        Console selection phase 3 (task 5): the transcript's floating menu
+        posted this after its "Request changes" / "LGTM" / "Comment"
+        action on a selection in agent output. The flow collects an
+        optional comment, composes the plan-task-5 template -- action
+        header line, ``> ``-quoted selection (blank lines a bare ``>``,
+        mirroring ``insert_quote``), optional comment appended verbatim --
+        and dispatches through ``_prompt_queue``, the ONLY send seam: it
+        queues behind an active run, sends immediately otherwise, and
+        owns every refusal toast. The composer draft is never touched
+        (the user may be mid-typed), and ``submit_draft`` is never called
+        (it refuses during runs).
+
+        Synchronous handler dispatching a worker because
+        ``push_screen_wait`` raises ``NoActiveWorker`` outside one (see
+        ``EvalsScreen._on_delete_bench_pressed``'s identical note); the
+        action/quote are captured here, before the worker's first line
+        runs. The modal returns the stripped comment, or ``None`` for
+        Cancel/Escape/backdrop AND an empty submitted comment -- every
+        ``None`` path abandons the whole feedback (plan task 5: modal
+        escape dispatches nothing). ``event.stop()`` because nothing
+        above this screen subscribes -- the transcript already consumed
+        the originating menu action.
+        """
+        event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as the quote/side-chat guards:
+            # the row range was cleared while the menu was open.
+            return
+        action, quote = event.action, event.quote
+        self.run_worker(
+            self._console_selection_feedback_flow(action, quote),
+            group="console-selection-feedback",
+        )
+
+    async def _console_selection_feedback_flow(
+        self, action: str, quote: str
+    ) -> None:
+        """Comment modal, then compose and dispatch the feedback message.
+
+        Runs as a worker (see the handler above). NOT ``exclusive=True``:
+        this coroutine awaits ``push_screen_wait``, whose internal
+        ``asyncio.shield`` protects the wait -- not the already-mounted
+        modal -- from cancellation, so a superseding exclusive cancel
+        would strand a live modal with no owner for its result (the
+        ``EvalsScreen._on_delete_bench_pressed`` rationale).
+        """
+        comment = await self.app.push_screen_wait(
+            ConsoleFeedbackCommentModal(action=action, quote=quote)
+        )
+        if comment is None:
+            return
+        lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
+        lines.extend(f"> {line}" if line.strip() else ">" for line in quote.splitlines())
+        if comment:
+            lines.append(comment)
+        await self._prompt_queue.dispatch("\n".join(lines))
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"

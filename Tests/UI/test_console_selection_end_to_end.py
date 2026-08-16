@@ -17,6 +17,13 @@ Comment`` only when the selection sits in agent output (TOOL-role rows or
 diff rows), run-gated through the owning screen's run-status seam, and
 each action makes the transcript post ``ConsoleSelectionFeedbackRequested``
 with the capped quote before clearing the selection UI.
+
+Phase 3 (task 5): the ChatScreen consumes that request -- comment modal,
+then the structured message (action header + ``> ``-quoted selection +
+optional comment) routed as the next user message through the prompt
+queue. The queue seam queues behind an active run and sends immediately
+otherwise; the composer draft is never touched, and a modal cancel
+(Escape/Cancel/backdrop) abandons the whole feedback.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ from dataclasses import dataclass
 import pytest
 from textual.app import App, ComposeResult
 from textual.screen import Screen
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -42,6 +49,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
 from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
@@ -638,3 +648,199 @@ async def test_comment_posts_selection_feedback_requested_and_cleans_up():
         assert transcript.selection_manager.state.selection is None
         assert transcript._selection_origin_row is None
         assert not app.screen.query(ConsoleSelectionMenu)
+
+
+# ---------------------------------------------------------------------------
+# Selection feedback routing (phase 3, task 5)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingPromptQueue:
+    """Test double for ``ConsolePromptQueueUIController``: records dispatches.
+
+    The real controller owns the send semantics (queue behind an active
+    run, send immediately otherwise, refusal toasts); the routing tests
+    only need to see WHAT text the screen hands it -- and that nothing
+    else is touched, especially not the live composer draft.
+    """
+
+    def __init__(self) -> None:
+        self.dispatched: list[str] = []
+
+    async def dispatch(self, draft: str, *, stash: object = None) -> None:
+        self.dispatched.append(draft)
+
+
+def _stub_comment_modal(screen, comment: str | None) -> list:
+    """Replace the app's ``push_screen_wait`` with a canned resolver.
+
+    Records every modal instance the handler pushes (so tests can pin the
+    action/quote it was built with) and resolves with ``comment``.
+    """
+    pushed: list[ConsoleFeedbackCommentModal] = []
+
+    async def _resolve(modal, *args, **kwargs):
+        pushed.append(modal)
+        return comment
+
+    screen.app.push_screen_wait = _resolve  # type: ignore[method-assign]
+    return pushed
+
+
+async def _run_feedback_request(
+    pilot, *, action: str, quote: str, comment: str | None
+):
+    """Post one feedback request on the real console screen, stubbed seams.
+
+    Returns ``(queue, pushed_modals, composer, draft_before)``; the
+    composer is pre-loaded with an in-progress draft so "the draft is
+    untouched" is a real assertion, not a vacuous one.
+    """
+    screen = pilot.app.screen
+    queue = _RecordingPromptQueue()
+    screen._prompt_queue = queue
+    pushed = _stub_comment_modal(screen, comment)
+    composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+    composer.insert_text("in-progress user draft")
+    draft_before = composer.draft_text()
+    screen.post_message(ConsoleSelectionFeedbackRequested(action=action, quote=quote))
+    await pilot.pause()
+    await pilot.pause()
+    return queue, pushed, composer, draft_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "header"),
+    [
+        ("request-changes", "[Request changes]"),
+        ("lgm", "[LGTM]"),
+        ("comment", "[Comment]"),
+    ],
+)
+async def test_feedback_routes_composed_message_via_prompt_queue(action, header):
+    """Header + quoted selection + comment, dispatched through the queue.
+
+    The ONLY send seam: the text goes to ``_prompt_queue.dispatch`` (which
+    queues behind an active run / sends immediately), never to the
+    composer draft.
+    """
+    async with make_console_pilot() as pilot:
+        queue, pushed, composer, draft_before = await _run_feedback_request(
+            pilot,
+            action=action,
+            quote="fix the retry loop",
+            comment="tighten error paths",
+        )
+        assert queue.dispatched == [
+            f"{header}\n> fix the retry loop\ntighten error paths"
+        ]
+        assert len(pushed) == 1
+        assert pushed[0]._action == action
+        assert pushed[0]._quote == "fix the retry loop"
+        assert composer.draft_text() == draft_before == "in-progress user draft"
+
+
+@pytest.mark.asyncio
+async def test_feedback_without_comment_omits_comment_block():
+    """A comment-less submit composes header + quote only."""
+    async with make_console_pilot() as pilot:
+        queue, _, composer, draft_before = await _run_feedback_request(
+            pilot, action="comment", quote="the selection", comment=""
+        )
+        assert queue.dispatched == ["[Comment]\n> the selection"]
+        assert composer.draft_text() == draft_before
+
+
+@pytest.mark.asyncio
+async def test_feedback_multiline_quote_prefixes_every_line():
+    """Every quoted line gains ``> ``; blank lines become a bare ``>``.
+
+    Mirrors ``ConsoleComposerBar.insert_quote``'s block-quote rendering so
+    the same selection reads identically in the draft and in feedback.
+    """
+    async with make_console_pilot() as pilot:
+        queue, _, composer, draft_before = await _run_feedback_request(
+            pilot,
+            action="request-changes",
+            quote="line one\nline two\n\nline four",
+            comment="rework this",
+        )
+        assert queue.dispatched == [
+            "[Request changes]\n> line one\n> line two\n>\n> line four\nrework this"
+        ]
+        assert composer.draft_text() == draft_before
+
+
+@pytest.mark.asyncio
+async def test_feedback_empty_quote_dispatches_nothing():
+    """A cleared row range dispatches nothing -- the modal never opens.
+
+    Same blank-selection window as the Add-to-chat / side-chat guards:
+    the row range was cleared while the menu was open.
+    """
+    async with make_console_pilot() as pilot:
+        queue, pushed, composer, draft_before = await _run_feedback_request(
+            pilot, action="comment", quote="   \n  ", comment="never reached"
+        )
+        assert queue.dispatched == []
+        assert pushed == []
+        assert composer.draft_text() == draft_before
+
+
+@pytest.mark.asyncio
+async def test_feedback_modal_escape_cancels_without_dispatch():
+    """Escape/cancel (modal returns None) abandons the whole feedback."""
+    async with make_console_pilot() as pilot:
+        queue, pushed, composer, draft_before = await _run_feedback_request(
+            pilot, action="request-changes", quote="fix this", comment=None
+        )
+        assert len(pushed) == 1  # the modal did open...
+        assert queue.dispatched == []  # ...and its cancellation sent nothing
+        assert composer.draft_text() == draft_before
+
+
+@pytest.mark.asyncio
+async def test_feedback_real_modal_submit_dispatches_composed_text():
+    """Full loop with the real modal: request -> type -> Submit -> queue."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("untouched draft")
+        screen.post_message(
+            ConsoleSelectionFeedbackRequested(action="lgm", quote="ship it")
+        )
+        await pilot.pause()
+
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleFeedbackCommentModal)
+        modal.query_one("#console-feedback-comment-input", Input).value = "nice work"
+        await pilot.click("#console-feedback-comment-submit")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert queue.dispatched == ["[LGTM]\n> ship it\nnice work"]
+        assert composer.draft_text() == "untouched draft"
+
+
+@pytest.mark.asyncio
+async def test_feedback_real_modal_escape_dispatches_nothing():
+    """Full loop with the real modal: request -> Escape -> nothing sent."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        screen.post_message(
+            ConsoleSelectionFeedbackRequested(action="comment", quote="a note")
+        )
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConsoleFeedbackCommentModal)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert queue.dispatched == []
+        assert pilot.app.screen is screen  # modal popped; console back on top

@@ -820,17 +820,14 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 # The side-chat modal launches from the Console root (phase 2 task 5:
 # ChatScreen's ConsoleSideChatRequested handler pushes it after the
 # selection menu's More Details / Ask in Side Chat actions), so it rides
-# the declared root launches like every other root-owned modal.
-# The feedback comment modal is contracted and inventoried but has no
-# launch site yet: the Console screen handler lands with phase 3 task 5,
-# so it is excluded from the declared root launches (the AST walk would
-# otherwise report it missing).
-_FEEDBACK_COMMENT_MODAL_NOT_YET_LAUNCHED = {ConsoleFeedbackCommentModal}
+# the declared root launches like every other root-owned modal. The
+# feedback comment modal rides the same way (phase 3 task 5:
+# ChatScreen's ConsoleSelectionFeedbackRequested flow pushes it before
+# routing the composed feedback through the prompt queue).
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
     if contract.modal_type is not ConsoleWorkspaceRenameModal
-    and contract.modal_type is not ConsoleFeedbackCommentModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
@@ -1086,14 +1083,11 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 38
+    assert len(reachable_modal_types) == 39
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     }
-    assert (
-        reachable_modal_types
-        == all_contract_types - _FEEDBACK_COMMENT_MODAL_NOT_YET_LAUNCHED
-    )
+    assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types
