@@ -15813,10 +15813,11 @@ class ChatScreen(BaseAppScreen):
         down. It also touches the DOM (``_sync_console_native_session_
         tabs`` -> ``ConsoleSessionSurface.sync_sessions`` ->
         ``query_one("#console-native-tab-strip")``), which is exactly what
-        a navigation away from Console removes. The two guards here --
-        the entry check and the teardown-scoped ``except`` below -- close
-        both halves of that: a tick that starts after teardown, and a tick
-        that is mid-flight when teardown arrives.
+        a navigation away from Console removes. Three guards here close
+        every half of that: the entry check (a tick that STARTS after
+        teardown), the teardown-scoped ``except`` (a tick that is
+        mid-flight when teardown arrives), and the ``finally``'s re-arm
+        check (a tick that would CREATE one of the first kind).
 
         Measured, not assumed: with a wake turn in flight, navigating away
         from Console had this tick's own ``finally`` re-arm (below)
