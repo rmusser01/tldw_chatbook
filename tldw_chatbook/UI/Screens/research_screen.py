@@ -23,6 +23,8 @@ class ResearchScreen(BaseAppScreen):
         self._pending_restore_state: Dict[str, Any] | None = None
 
     def compose_content(self) -> ComposeResult:
+        """Compose the screen's content: the ResearchWindow plus any pending
+        state restoration."""
         self.research_window = ResearchWindow(
             self.app_instance,
             id="research-window",
@@ -34,6 +36,12 @@ class ResearchScreen(BaseAppScreen):
         yield self.research_window
 
     def save_state(self) -> Dict[str, Any]:
+        """Persist the hosted window's state for navigation restore.
+
+        Returns:
+            The window's save-state dict, or the pending restore state when
+            the window has not been composed yet.
+        """
         try:
             window = self.query_one("#research-window", ResearchWindow)
         except Exception:
@@ -43,6 +51,12 @@ class ResearchScreen(BaseAppScreen):
         return window.save_state()
 
     def restore_state(self, state: Dict[str, Any]) -> None:
+        """Restore the hosted window's state after navigation.
+
+        Args:
+            state: The state dict previously returned by ``save_state``;
+                deferred until compose when the window is not mounted yet.
+        """
         try:
             window = self.query_one("#research-window", ResearchWindow)
         except Exception:

@@ -347,3 +347,28 @@ def test_arxiv_single_word_queries_stay_unquoted(monkeypatch):
     search_arxiv(query="transformers", client=client)
 
     assert client.request.calls[0]["params"]["search_query"] == "all:transformers"
+
+
+def test_search_papers_runs_providers_concurrently(monkeypatch):
+    import threading
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    arxiv_started = threading.Event()
+    s2_release = threading.Event()
+
+    def blocking_arxiv(**kwargs):
+        arxiv_started.set()
+        assert s2_release.wait(timeout=5), "serial execution would deadlock here"
+        return {"items": []}
+
+    def releasing_s2(**kwargs):
+        s2_release.set()  # proves S2 ran WHILE arxiv was in flight
+        return {"items": []}
+
+    monkeypatch.setattr(ap, "search_arxiv", blocking_arxiv)
+    monkeypatch.setattr(ap, "search_semantic_scholar", releasing_s2)
+
+    papers = ap.search_papers_sync_for_test() if hasattr(ap, "search_papers_sync_for_test") else None
+    import asyncio
+    papers = asyncio.run(ap.search_papers("query"))
+    assert papers == []

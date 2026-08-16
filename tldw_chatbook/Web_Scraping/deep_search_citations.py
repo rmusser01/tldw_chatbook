@@ -93,8 +93,15 @@ def match_quote_in_sources(quote: str, source_texts: Sequence[str]) -> Dict[str,
     """Match one quoted span against source texts with the verbatim-first
     ladder: exact substring, then normalized containment, then bounded fuzzy.
 
-    Returns ``{"matched": bool, "level": "exact"|"normalized"|"fuzzy"|None,
-    "source_index": int|None}`` (index into ``source_texts``, 0-based).
+    Args:
+        quote: The quoted span from the answer text.
+        source_texts: Candidate source texts (raw scrapes first, then LLM
+            summaries), searched in order.
+
+    Returns:
+        Dict with ``matched`` (bool), ``level`` (``"exact"``,
+        ``"normalized"``, ``"fuzzy"``, or ``None`` when unmatched), and
+        ``source_index`` (0-based index into ``source_texts``, or ``None``).
     """
     quote = (quote or "").strip()
     if not quote:
@@ -185,8 +192,16 @@ def verify_citations(
         if match_quote_in_sources(span, source_texts)["matched"]:
             quotes_verified += 1
 
-    sentences = [s for s in _SENTENCE_SPLIT_RE.split(annotated) if s.strip()]
-    uncited_sentences = sum(1 for s in sentences if not CITATION_MARKER_RE.search(s))
+    # Uncited counting runs on the ORIGINAL answer (task-16789): the
+    # annotated form rewrites unknown markers to "[n?]", which the numeric
+    # marker regex cannot see -- those sentences ATTEMPTED citations and
+    # must not be miscounted as uncited.
+    original_sentences = [
+        s for s in _SENTENCE_SPLIT_RE.split(answer_text) if s.strip()
+    ]
+    uncited_sentences = sum(
+        1 for s in original_sentences if not CITATION_MARKER_RE.search(s)
+    )
 
     # Per-claim detail (task-16325): every sentence carrying at least one
     # citation marker becomes a claim record -- resolved source ids, unknown

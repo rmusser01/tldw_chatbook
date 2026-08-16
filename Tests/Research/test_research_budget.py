@@ -100,6 +100,7 @@ def test_snapshot_is_persistable_and_reports_all_axes():
     ledger.reserve_searches(1)
     ledger.settle_searches(2)
     ledger.settle_docs(3)
+    ledger.settle_tokens(5)  # estimate-settled: flag must be True here
 
     snap = ledger.snapshot()
 
@@ -114,7 +115,7 @@ def test_snapshot_is_persistable_and_reports_all_axes():
         "searches_overshoot": 1,
         "docs_used": 3,
         "tokens_reserved": 0,
-        "tokens_settled": 0,
+        "tokens_settled": 5,
         "tokens_estimated": True,
         "runtime_elapsed_s": snap["runtime_elapsed_s"],  # float, asserted below
     }
@@ -158,3 +159,30 @@ def test_snapshot_marks_tokens_as_estimates():
 
     assert ledger.snapshot()["tokens_estimated"] is True
     assert ledger.snapshot()["tokens_settled"] == 20
+
+
+# --- Qodo remediation (task-16789) ------------------------------------------------
+
+def test_allot_docs_zero_batch_returns_zero_even_with_exhausted_budget():
+    ledger = BudgetLedger.from_limits({"max_fetched_docs": 0})
+
+    assert ledger.allot_docs(0) == 0  # nothing to process: no budget failure
+
+
+def test_tokens_estimated_reflects_exactness_of_settled_usage():
+    ledger = BudgetLedger.from_limits({"max_tokens": 1000})
+    ledger.settle_tokens(10, exact=True)
+    assert ledger.snapshot()["tokens_estimated"] is False
+
+    ledger.settle_tokens(10)  # estimate-settled
+    assert ledger.snapshot()["tokens_estimated"] is True
+
+
+def test_release_searches_returns_unused_reservations():
+    ledger = BudgetLedger.from_limits({"max_searches": 3})
+
+    ledger.reserve_searches(3)
+    ledger.release_searches(2)  # fan-out stopped early: 2 never executed
+    ledger.settle_searches(1)
+
+    assert ledger.remaining_searches() == 2

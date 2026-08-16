@@ -677,6 +677,16 @@ class LocalResearchService:
             fields["progress_message"] = error_msg
         return self._update_run_state(run_id, "failed", **fields)
 
+    # Hardcoded assignment fragments for update_run_progress's external-DB
+    # branch (task-16789): the ONLY source of SQL text for those columns.
+    _RUN_PROGRESS_FIELD_SQL = {
+        "phase": "phase = ?",
+        "progress_percent": "progress_percent = ?",
+        "progress_message": "progress_message = ?",
+        "status": "status = ?",
+        "control_state": "control_state = ?",
+    }
+
     # Patch keys allowed per checkpoint type (task-16482; server
     # checkpoint_service parity, scoped to the local engine's phases).
     _CHECKPOINT_PATCH_KEYS = {
@@ -843,6 +853,9 @@ class LocalResearchService:
         notifications because it never sets a terminal status.
         """
         if self._uses_external_db:
+            # delete_run's precedent (task-16789): raw statement inside the
+            # db's own transaction() context, per the standardized
+            # transaction-handling rule.
             fields: dict[str, Any] = {}
             if phase is not None:
                 fields["phase"] = phase
@@ -854,7 +867,28 @@ class LocalResearchService:
                 fields["status"] = status
             if control_state is not None:
                 fields["control_state"] = control_state
-            return self._as_local_run(self.db.update_run_state(run_id, **fields))
+            if not fields:
+                return self._as_local_run(self.db.get_run(run_id))
+            # SQL is never built from variable text: each field maps to a
+            # HARDCODED literal assignment fragment, field names only select
+            # among the literals, and every value stays parameterized
+            # (house rule: no SQL via string interpolation of identifiers).
+            try:
+                assignments = ", ".join(
+                    self._RUN_PROGRESS_FIELD_SQL[key] for key in fields
+                )
+            except KeyError as exc:
+                raise ValueError(
+                    f"unsupported run-progress column: {exc.args[0]!r}"
+                ) from exc
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "UPDATE research_runs SET "
+                    + assignments
+                    + ", updated_at = ?, version = version + 1 WHERE id = ?",
+                    (*fields.values(), self._now(), run_id),
+                )
+            return self._as_local_run(self.db.get_run(run_id))
         fields = {
             key: value
             for key, value in (

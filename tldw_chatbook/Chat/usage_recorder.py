@@ -47,12 +47,36 @@ class UsageTokenRecorder:
     def __init__(self) -> None:
         self._prompt_tokens = 0
         self._completion_tokens = 0
+        self._exact_tokens = 0
 
-    def record_usage(self, *, prompt_tokens: int, completion_tokens: int) -> None:
-        """Record exact counts (the real-usage path for future provider
-        plumbing)."""
-        self._prompt_tokens += max(0, int(prompt_tokens))
-        self._completion_tokens += max(0, int(completion_tokens))
+    def record_usage(
+        self,
+        *,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+    ) -> None:
+        """Record exact, provider-reported counts.
+
+        Args:
+            prompt_tokens: Exact prompt tokens reported by the provider;
+                ``None`` when the provider did not report that side (the
+                missing side stays uncounted rather than zero-filled, so
+                partial reports never masquerade as exact totals).
+            completion_tokens: Exact completion tokens reported by the
+                provider; ``None`` when unreported.
+        """
+        # A PARTIAL report (one side unreported) is not exact: the settled
+        # total is incomplete, so it must not flip the ledger's
+        # tokens_estimated flag (task-16789 follow-up).
+        both_reported = prompt_tokens is not None and completion_tokens is not None
+        if prompt_tokens is not None:
+            self._prompt_tokens += max(0, int(prompt_tokens))
+        if completion_tokens is not None:
+            self._completion_tokens += max(0, int(completion_tokens))
+        if both_reported:
+            self._exact_tokens += max(0, int(prompt_tokens)) + max(
+                0, int(completion_tokens)
+            )
 
     def record_exchange(self, *, prompt_text: str, completion_text: str) -> None:
         """Record one non-streaming exchange by estimating both sides."""
@@ -69,6 +93,15 @@ class UsageTokenRecorder:
 
     def total_tokens(self) -> int:
         return self._prompt_tokens + self._completion_tokens
+
+    def exact_tokens(self) -> int:
+        """Settled tokens that came from provider-reported usage (not
+        estimates) -- drives the ledger's tokens_estimated flag.
+
+        Returns:
+            The token count settled through ``record_usage`` so far.
+        """
+        return self._exact_tokens
 
 
 def active_recorder() -> Optional[UsageTokenRecorder]:

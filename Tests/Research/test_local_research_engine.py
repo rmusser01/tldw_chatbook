@@ -652,7 +652,8 @@ def test_engine_settles_recorded_usage_into_ledger():
     assert final["status"] == "completed"
     ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
     assert ledger["tokens_settled"] == 40
-    assert ledger["tokens_estimated"] is True
+    # record_usage counts are provider-exact (task-16789): not estimates.
+    assert ledger["tokens_estimated"] is False
 
 
 def test_engine_enforces_max_tokens_between_llm_calls():

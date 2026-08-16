@@ -1013,15 +1013,13 @@ def chat_api_call(
                             usage_prompt is not None or usage_completion is not None
                         ):
                             recorder.record_usage(
-                                prompt_tokens=usage_prompt or 0,
-                                completion_tokens=usage_completion or 0,
+                                prompt_tokens=usage_prompt,
+                                completion_tokens=usage_completion,
                             )
                         elif recorder is not None:
                             recorder.record_exchange(
-                                prompt_text="\n".join(
-                                    str(message.get("content") or "")
-                                    for message in (messages_payload or [])
-                                    if isinstance(message, dict)
+                                prompt_text=_estimate_prompt_text(
+                                    messages_payload, system_message
                                 ),
                                 completion_text=content,
                             )
@@ -1042,10 +1040,8 @@ def chat_api_call(
                 recorder = active_recorder()
                 if recorder is not None:
                     recorder.record_exchange(
-                        prompt_text="\n".join(
-                            str(message.get("content") or "")
-                            for message in (messages_payload or [])
-                            if isinstance(message, dict)
+                        prompt_text=_estimate_prompt_text(
+                            messages_payload, system_message
                         ),
                         completion_text=response,
                     )
@@ -1192,6 +1188,31 @@ def chat_api_call(
             ),
             status_code=500,
         )
+
+
+def _estimate_prompt_text(
+    messages_payload: Any, system_message: Optional[str]
+) -> str:
+    """Text used for ESTIMATED prompt tokens (task-16789): the system
+    message is part of the prompt and must count; multimodal content lists
+    contribute only their text parts so base64 image payloads cannot
+    explode the estimate."""
+    parts: list = []
+    if system_message:
+        parts.append(str(system_message))
+    for message in messages_payload or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+    return "\n".join(part for part in parts if part)
 
 
 def chat_reply_text(response: Any) -> str:

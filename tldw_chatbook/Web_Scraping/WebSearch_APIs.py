@@ -41,13 +41,14 @@ import asyncio
 import base64
 import concurrent.futures
 import json
-from html import unescape
 import random
 import re
 import threading
 import time
-from typing import Optional, Dict, Any, List, Union, Callable, TypedDict, NotRequired
-from urllib.parse import urlparse, urlencode, unquote
+from functools import wraps
+from html import unescape
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
+from urllib.parse import unquote, urlencode, urlparse
 
 #
 # 3rd-Party Imports
@@ -55,7 +56,6 @@ import requests
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
-from functools import wraps
 
 # Handle optional lxml dependency
 try:
@@ -70,12 +70,6 @@ except ImportError:
 
 #
 # Local Imports
-from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
-from tldw_chatbook.Web_Scraping import deep_search_citations
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
-from tldw_chatbook.Internal_Prompts import render_internal_prompt
-from tldw_chatbook.Utils.egress import is_public_http_url
-
 # `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
 # stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
 # lazily inside search_result_relevance(), only when actually summarizing a
@@ -83,8 +77,14 @@ from tldw_chatbook.Utils.egress import is_public_http_url
 # load it (this module sits on the app.py -> Tools -> WebSearch_APIs boot
 # path via the tool-executor registry).
 from loguru import logger
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Internal_Prompts import render_internal_prompt
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import is_public_http_url
+from tldw_chatbook.Web_Scraping import deep_search_citations
+from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
 # Handle optional defusedxml (Yandex XML parsing)
 try:
@@ -1315,7 +1315,9 @@ async def search_result_relevance(
                         # lazily here (chatbook precedent, see module docstring)
                         # so a plain import of this module doesn't eagerly pull in
                         # the summarization stack.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                            analyze,
+                        )
 
                         logger.info(f"Summarizing relevant result: ID={result_id}")
 
@@ -1706,7 +1708,9 @@ def aggregate_results(
         # is explicitly told to preserve "[n]" citation markers verbatim so
         # the citation-integrity fix (adaptation 4) survives this reduce step.
         # `analyze` is imported lazily (chatbook precedent, see module docstring).
-        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+            analyze as _analyze,
+        )
 
         summarized_chunks: List[str] = []
         for info in chunk_infos:
