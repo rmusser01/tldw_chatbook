@@ -88,13 +88,15 @@ must outlive a navigation cannot live on one.
 
 ## Still deliberately unchanged
 
-- **`_attempt`'s `_shutdown_requested` gate** (`console_fleet_wake.py`).
-  It is not relaxed here — and it does not need to be touched to keep
-  refusing, because `leave_console` still SETS that Event and only
-  `begin_visit` (i.e. the next `attach_view`) replaces it with a fresh
-  one. Between visits the flag is set exactly as it was before this
-  landing, so a wake still does not fire headless. Making it fire is the
-  next task.
+- ~~**`_attempt`'s `_shutdown_requested` gate**~~ — **relaxed by
+  task-15860's wake-fires-headless slice.** The lifetime landing left it
+  alone deliberately: `leave_console` SETS that visit's Event and only
+  `begin_visit` (the next `attach_view`) replaces it, so between visits
+  the flag stayed set and no wake fired headless. That slice has now
+  landed, and the gate reads `_disposed` instead — `dispose()` (app exit)
+  refuses a wake; a visit that merely ended does not. `leave_console`'s
+  Event is unchanged and still denies this visit's parked approval
+  rounds.
 ## Continuity (task-15860 Task 3, landed)
 
 The store this holds is now the SINGLE source of truth for Console message
