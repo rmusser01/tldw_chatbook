@@ -1,7 +1,7 @@
 """Research-report self-eval scorer (task-16327).
 
 Deterministic scoring of deep-search research reports from the verification
-outcomes the pipeline already produces (task-16319's citation_verification
+outcomes the pipeline already produces (task-16331's citation_verification
 payload / task-16325's claims). The runner plugs into the existing Evals
 framework (specialized runner + category dispatch) -- no parallel harness.
 """

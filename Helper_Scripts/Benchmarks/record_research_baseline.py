@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live baseline recorder for the research-report self-eval (task-16330).
 
-Runs N real research questions through the local research engine (ADR-066)
+Runs N real research questions through the local research engine (ADR-068)
 with the configured deep-search pipeline settings, scores each completed
 run's verification payload with the existing self-eval scorer, and prints
 the aggregated live baseline (mean metrics + per-run detail) plus JSON.

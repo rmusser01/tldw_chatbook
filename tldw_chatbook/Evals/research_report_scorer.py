@@ -1,7 +1,7 @@
 """Research-report self-eval scorer (task-16327).
 
 Deterministic scoring of deep-search research reports from the verification
-outcomes the pipeline already produces: task-16319's ``citation_verification``
+outcomes the pipeline already produces: task-16331's ``citation_verification``
 payload (marker resolution, quote grounding, uncited sentences) and
 task-16325's claims (supported/unverified). No LLM is consulted -- the
 metrics are computed from the stored payload, so the same run always scores
