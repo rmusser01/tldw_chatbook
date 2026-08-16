@@ -3347,6 +3347,8 @@ class ConsoleTranscript(VerticalScroll):
                     str(row.message.content),
                     str(review_run_id),
                     self._change_review_provider_factory,
+                    message_id=row.message.id,
+                    selected=row.selected,
                     id=f"console-turn-file-card-{row.message.id}",
                 )
             presentation = self._message_presentation(row.message)
@@ -3439,6 +3441,35 @@ class ConsoleTranscript(VerticalScroll):
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleTurnFileCard)
+        ):
+            # A card row's signature (`_message_row_signature`, shared with
+            # every other "message" kind row) folds in `selected` -- so
+            # moving keyboard/click selection onto or off this row DOES
+            # change the signature and reaches this method. Marker text and
+            # run id are fixed at append time (TOOL markers never mutate),
+            # so a mismatch here can only mean the row identity itself
+            # changed underneath the same key -- fall through to a full
+            # rebuild for that case; otherwise sync in place. Rebuilding on
+            # every selection flip would collapse whatever diffs were
+            # expanded and drop the diff cache for no reason.
+            review_run_id = getattr(row.message, "change_review_run_id", None)
+            still_a_card = (
+                review_run_id is not None
+                and self._change_review_provider_factory is not None
+                and bool(get_cli_setting("console", "turn_file_cards", True))
+            )
+            if (
+                still_a_card
+                and widget.marker_text == str(row.message.content)
+                and widget.run_id == str(review_run_id)
+            ):
+                widget.update_selected(row.selected)
+                return widget
+            return self._build_row_widget(row, track=True)
         if (
             row.kind == "message"
             and row.message is not None

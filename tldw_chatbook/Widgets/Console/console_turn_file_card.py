@@ -17,6 +17,7 @@ from typing import Any, Callable
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.events import Click
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
@@ -33,6 +34,10 @@ class ConsoleTurnFileCard(Vertical):
     """Stacked, expandable per-file diff card rendered under a turn marker."""
 
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     ConsoleTurnFileCard {
         height: auto;
         min-height: 1;
@@ -54,6 +59,16 @@ class ConsoleTurnFileCard(Vertical):
         overflow-x: hidden;
         scrollbar-size: 1 1;
     }
+    /* Selection styling parity with the plain marker row it replaces
+       (`.console-transcript-message-selected` in the app bundle): same
+       focus tokens, same bold-underline header treatment. */
+    ConsoleTurnFileCard.console-turn-file-card-selected {
+        background: $ds-focus-bg;
+    }
+    ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
+        color: $ds-focus-fg;
+        text-style: bold underline;
+    }
     """
 
     def __init__(
@@ -62,15 +77,72 @@ class ConsoleTurnFileCard(Vertical):
         run_id: str,
         provider_factory: Callable[[], Any],
         *,
+        message_id: str | None = None,
+        selected: bool = False,
         id: str | None = None,
     ) -> None:
-        super().__init__(id=id, classes="console-turn-file-card")
+        classes = "console-turn-file-card"
+        if selected:
+            classes += " console-turn-file-card-selected"
+        super().__init__(id=id, classes=classes)
         self._marker_text = marker_text
         self._run_id = run_id
         self._provider_factory = provider_factory
+        #: The transcript message id this card renders (final-review fix
+        #: wave): needed so a click can select the row and
+        #: `_update_row_widget` can confirm identity before syncing rather
+        #: than rebuilding. ``None`` only for bare unit construction (a
+        #: click is then a no-op rather than raising).
+        self._message_id = message_id
+        self._selected = selected
         self._entries: list[TurnFileEntry] = []
         self._row_for_entry: dict[int, dict] = {}
         self._diff_cache: dict[int, str] = {}
+
+    @property
+    def marker_text(self) -> str:
+        """The marker text this card was built from (identity check for reuse)."""
+        return self._marker_text
+
+    @property
+    def run_id(self) -> str:
+        """The run id this card renders (identity check for reuse)."""
+        return self._run_id
+
+    def update_selected(self, selected: bool) -> None:
+        """Sync selection styling onto this mounted card without a rebuild.
+
+        Called from ``ConsoleTranscript._update_row_widget`` when only the
+        row's selection flipped -- expanded rows and the cached diff text
+        must survive a selection change (final-review fix wave).
+        """
+        self._selected = selected
+        self.set_class(selected, "console-turn-file-card-selected")
+
+    def on_click(self, event: Click) -> None:
+        """Clicking the card selects its transcript row (parity with the
+        plain marker's ``ConsoleTranscriptMessage.on_click``) -- except a
+        file-row button, whose own click already toggles that row's
+        expand/collapse and must not also flip transcript selection.
+        """
+        if event.control is not None and event.control.has_class(
+            "console-turn-file-row"
+        ):
+            return
+        event.stop()
+        if self._message_id is None:
+            return
+        # Duck-typed walk to the owning ConsoleTranscript rather than an
+        # isinstance check: that class lives in console_transcript.py,
+        # which already imports THIS module at load time, so a module-level
+        # import back here would be circular.
+        node = self.parent
+        while node is not None:
+            toggle = getattr(node, "toggle_message_selection", None)
+            if callable(toggle):
+                toggle(self._message_id)
+                return
+            node = node.parent
 
     def compose(self) -> ComposeResult:
         # Header keeps the marker's counts but drops its "review with v"
