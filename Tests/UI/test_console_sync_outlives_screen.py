@@ -179,7 +179,7 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
     screen closed -- the traced crash showed exactly that transition
     (`tick EXIT-OK screen_running=False`). Reproducing it by real timing
     would be a race, so the failure is injected at a fixed point instead:
-    `_refresh_active_character_avatar_if_scope_changed` is the last awaited
+    `_character._refresh_active_character_avatar_if_scope_changed` is the last awaited
     step before the DOM-touching `_sync_console_native_session_tabs`.
     Deliberately private-method-coupled: if that step is renamed or moved
     after the tab sync, this stops proving anything, and it should fail
@@ -197,7 +197,7 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
     chat, _controller, _store, _session_id, _conversation_id = await _seed_console(
         app, pilot, gateway
     )
-    original = chat._refresh_active_character_avatar_if_scope_changed
+    original = chat._character._refresh_active_character_avatar_if_scope_changed
     injected: list[bool] = []
 
     async def _break_the_tab_strip():
@@ -218,7 +218,7 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
         lambda: not chat._console_sync_in_progress, seconds=10.0
     ), "a console-sync tick never finished; the direct call would coalesce"
     chat._console_sync_requested = False
-    chat._refresh_active_character_avatar_if_scope_changed = _break_the_tab_strip
+    chat._character._refresh_active_character_avatar_if_scope_changed = _break_the_tab_strip
     return chat, injected
 
 
@@ -302,7 +302,7 @@ async def test_a_partly_dismantled_screen_mid_tick_is_absorbed(tmp_path):
         chat, _controller, _store, _session_id, _conversation_id = await _seed_console(
             app, pilot, gateway
         )
-        original = chat._refresh_active_character_avatar_if_scope_changed
+        original = chat._character._refresh_active_character_avatar_if_scope_changed
         injected: list[bool] = []
 
         async def _dismantle_mid_tick():
@@ -316,12 +316,12 @@ async def test_a_partly_dismantled_screen_mid_tick_is_absorbed(tmp_path):
             lambda: not chat._console_sync_in_progress, seconds=10.0
         ), "a console-sync tick never finished; the direct call would coalesce"
         chat._console_sync_requested = False
-        chat._refresh_active_character_avatar_if_scope_changed = _dismantle_mid_tick
+        chat._character._refresh_active_character_avatar_if_scope_changed = _dismantle_mid_tick
         try:
             await chat._sync_native_console_chat_ui()
         finally:
             chat._closing = False
-            chat._refresh_active_character_avatar_if_scope_changed = original
+            chat._character._refresh_active_character_avatar_if_scope_changed = original
 
         assert injected == [True], (
             f"the tick never reached the injected dismantling: {injected}"
