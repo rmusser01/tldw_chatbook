@@ -2029,6 +2029,132 @@ async def test_visual_identity_concurrent_save_attempt_publishes_exactly_once(
     assert calls == [1]
 
 
+async def test_cancelled_reaction_save_drains_commit_before_releasing_admission(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    entered = Event()
+    release = Event()
+    order = []
+
+    def publish(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        order.append("publish")
+        return VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        )
+
+    async def invalidate(_result):
+        order.append("invalidate")
+
+    async def refresh(_snapshot):
+        order.append("refresh")
+
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack), name="cancelled-reaction-save"
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is save
+    assert not await screen._stage_visual_identity_clear(asset)
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == ["publish", "invalidate", "refresh"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+
+
+async def test_cancelled_reaction_save_drains_failure_and_cleans_exact_orphan(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    app, screen, db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    before = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    token = "packs/profile-0123456789abcdef0123456789abcdef/versions/" + "c" * 32
+    user_root = tmp_path / "user-root"
+    entered = Event()
+    release = Event()
+    cleanup_calls = []
+    notifications = _capture_notifications(app)
+
+    def publish(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed", cleanup_candidate_relpath=token
+        )
+
+    def cleanup(cleanup_db, cleanup_token, *, user_data_dir):
+        cleanup_calls.append((cleanup_db, cleanup_token, user_data_dir))
+        return True
+
+    monkeypatch.setattr(personas_screen_module, "get_user_data_dir", lambda: user_root)
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "cleanup_visual_identity_publication_candidate",
+        cleanup,
+    )
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack), name="cancelled-reaction-error"
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert not await screen._stage_visual_identity_clear(asset)
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert cleanup_calls == [(db, token, user_root)]
+    assert token not in " ".join(message for message, _severity in notifications)
+    after = personas_screen_module.VisualIdentityRepository(db).get_active_actor_pack(
+        "character", screen._visual_identity_authoring.snapshot.character_id
+    )
+    assert after["version"]["id"] == before["version"]["id"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+
+
 async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reaches_it(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -2804,6 +2930,93 @@ async def test_character_save_presentation_failure_releases_all_admission_guards
     assert admission is not None
     task, _event = admission
     screen._finish_visual_identity_operation(task)
+
+
+@pytest.mark.parametrize("stale_session", (False, True))
+async def test_cancelled_character_save_drains_commit_before_reconcile_and_release(
+    personas_editor_with_bound_pack, monkeypatch, stale_session
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+
+    def persist(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        return True
+
+    reconcile = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-save",
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    if stale_session:
+        editor = screen.query_one(PersonasCharacterEditorWidget)
+        editor._visual_identity_session_token += 1
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+    assert screen._begin_visual_identity_operation(snapshot) is None
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert not screen._character_save_inflight
+    if stale_session:
+        reconcile.assert_not_awaited()
+    else:
+        reconcile.assert_awaited_once_with(str(char_id), "Packed")
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_cancelled_character_save_drains_late_error_and_releases_guard(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+
+    def persist(*_args, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        raise RuntimeError("/private/secret/character.db")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-error",
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert not screen._character_save_inflight
+    assert notifications == [("Character save failed.", "error")]
 
 
 async def test_generate_all_restores_missing_canonical_asset_and_direction(

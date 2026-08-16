@@ -529,6 +529,51 @@ class _VisualIdentityAuthoringState:
     authoritative_pack: VisualIdentityPackMetadata
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _CharacterSaveAuthority:
+    """Editor identity allowed to reconcile one completed character save."""
+
+    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
+    selected_id: str | None
+    edit_mode: str
+    screen_generation: int
+    editor_session_token: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DrainedThreadResult:
+    """One blocking result observed after every outer cancellation is drained."""
+
+    value: Any = None
+    error: Exception | None = None
+    cancellation: asyncio.CancelledError | None = None
+
+
+async def _drain_to_thread(
+    function: Callable[..., Any],
+    /,
+    *args: Any,
+    task_name: str,
+    **kwargs: Any,
+) -> _DrainedThreadResult:
+    """Shield one irreversible thread and report cancellation after it settles."""
+
+    thread_task = asyncio.create_task(
+        asyncio.to_thread(function, *args, **kwargs), name=task_name
+    )
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return _DrainedThreadResult(
+                value=await asyncio.shield(thread_task), cancellation=cancellation
+            )
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+        except Exception as exc:
+            return _DrainedThreadResult(error=exc, cancellation=cancellation)
+
+
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, dictionaries, and behavior profiles."""
 
@@ -7792,29 +7837,37 @@ class PersonasScreen(BaseAppScreen):
         task, _event = admission
         browser = state.snapshot.browser_ref()
         published = False
+        saved = False
+        cancellation: asyncio.CancelledError | None = None
+        unexpected_error: Exception | None = None
         try:
             if browser is not None:
                 browser.set_saving(True)
             self._visual_identity_publication_inflight = True
             user_root = get_user_data_dir()
-            try:
-                result = await asyncio.to_thread(
-                    publish_visual_identity_candidate,
-                    state.snapshot.db,
-                    state.candidate,
-                    user_data_dir=user_root,
-                )
-            except VisualIdentityPublicationError as exc:
+            outcome = await _drain_to_thread(
+                publish_visual_identity_candidate,
+                state.snapshot.db,
+                state.candidate,
+                user_data_dir=user_root,
+                task_name="personas-reaction-pack-publish",
+            )
+            cancellation = outcome.cancellation
+            error = outcome.error
+            if isinstance(error, VisualIdentityPublicationError):
+                exc = error
                 token = exc.cleanup_candidate_relpath
                 if token is not None:
-                    try:
-                        await asyncio.to_thread(
-                            cleanup_visual_identity_publication_candidate,
-                            state.snapshot.db,
-                            token,
-                            user_data_dir=user_root,
-                        )
-                    except (VisualIdentityPublicationError, sqlite3.Error, RuntimeError):
+                    cleanup = await _drain_to_thread(
+                        cleanup_visual_identity_publication_candidate,
+                        state.snapshot.db,
+                        token,
+                        user_data_dir=user_root,
+                        task_name="personas-reaction-pack-cleanup",
+                    )
+                    if cancellation is None:
+                        cancellation = cleanup.cancellation
+                    if cleanup.error is not None:
                         logger.debug(
                             "Visual Identity orphan cleanup refused "
                             "(category=cleanup_failed)."
@@ -7823,44 +7876,42 @@ class PersonasScreen(BaseAppScreen):
                     self._notify(
                         f"Reaction pack was not saved ({exc.category}).", "error"
                     )
-                return False
-            except (ValueError, sqlite3.Error):
+            elif isinstance(error, (ValueError, sqlite3.Error)):
                 if self._visual_identity_author_snapshot_is_current(state.snapshot):
                     self._notify(
                         "Reaction pack was not saved (visual_identity_save_failed).",
                         "error",
                     )
-                return False
-            published = True
-            self._visual_identity_authoring = None
-            await self._invalidate_visual_identity_publication(result)
-            if not self._visual_identity_author_snapshot_is_current(state.snapshot):
-                return True
-            editor = state.snapshot.editor_ref()
-            if editor is None:
-                return True
-            await self._configure_character_visual_identity(
-                _CharacterVisualIdentityLoadSnapshot(
-                    editor_ref=weakref.ref(editor),
-                    db=state.snapshot.db,
-                    character_id=state.snapshot.character_id,
-                    screen_generation=state.snapshot.screen_generation,
-                    editor_session_token=state.snapshot.editor_session_token,
-                )
-            )
-            return True
-        except Exception:
-            if published:
-                logger.warning(
-                    "Visual Identity publication committed but presentation failed "
-                    "(category=refresh_failed)."
-                )
-                self._notify(
-                    "Reaction pack saved, but the editor could not refresh.",
-                    "warning",
-                )
-                return True
-            raise
+            elif error is not None:
+                unexpected_error = error
+            else:
+                result = outcome.value
+                published = True
+                self._visual_identity_authoring = None
+                try:
+                    await self._invalidate_visual_identity_publication(result)
+                    if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                        editor = state.snapshot.editor_ref()
+                        if editor is not None:
+                            await self._configure_character_visual_identity(
+                                _CharacterVisualIdentityLoadSnapshot(
+                                    editor_ref=weakref.ref(editor),
+                                    db=state.snapshot.db,
+                                    character_id=state.snapshot.character_id,
+                                    screen_generation=state.snapshot.screen_generation,
+                                    editor_session_token=state.snapshot.editor_session_token,
+                                )
+                            )
+                except Exception:
+                    logger.warning(
+                        "Visual Identity publication committed but presentation "
+                        "failed (category=refresh_failed)."
+                    )
+                    self._notify(
+                        "Reaction pack saved, but the editor could not refresh.",
+                        "warning",
+                    )
+                saved = True
         finally:
             self._visual_identity_publication_inflight = False
             if browser is not None and browser.parent is not None:
@@ -7874,6 +7925,11 @@ class PersonasScreen(BaseAppScreen):
                 except QueryError:
                     pass
             self._finish_visual_identity_operation(task, browser)
+        if cancellation is not None:
+            raise cancellation
+        if unexpected_error is not None:
+            raise unexpected_error
+        return saved
 
     async def _invalidate_visual_identity_publication(
         self, result: VisualIdentityPublicationResult
@@ -10755,38 +10811,82 @@ class PersonasScreen(BaseAppScreen):
         if not self._local_character_actions_allowed():
             self._character_save_inflight = False
             return
-        try:
-
-            def persist_character() -> str:
-                if edit_mode == "create" or not selected_id:
-                    created_id = ccp_character_handler.create_character(data)
-                    if not created_id:
-                        raise RuntimeError("Character creation returned no id.")
-                    return str(created_id)
-                if not ccp_character_handler.update_character(selected_id, data):
-                    raise RuntimeError(f"Character update failed for id {selected_id}.")
-                return str(selected_id)
-
-            saved_id = await asyncio.to_thread(persist_character)
-        except Exception as exc:
-            logger.opt(exception=True).error(f"Error saving character: {exc}")
-            self._notify(f"Save failed: {exc}", "error")
-            # Allow an immediate retry - _after_character_save (the success
-            # path) resets this same flag itself.
-            self._character_save_inflight = False
-            return
-        try:
-            await self._after_character_save(saved_id, str(data.get("name") or ""))
-        except Exception:
-            logger.warning(
-                "Character persistence committed but presentation failed "
-                "(category=refresh_failed)."
+        editor = self._editor_or_none()
+        authority = (
+            _CharacterSaveAuthority(
+                editor_ref=weakref.ref(editor),
+                selected_id=selected_id,
+                edit_mode=edit_mode,
+                screen_generation=self._character_editor_generation,
+                editor_session_token=editor.visual_identity_session_token,
             )
-            self._notify(
-                "Character saved, but the editor could not refresh.", "warning"
+            if editor is not None
+            else None
+        )
+
+        def persist_character() -> str:
+            if edit_mode == "create" or not selected_id:
+                created_id = ccp_character_handler.create_character(data)
+                if not created_id:
+                    raise RuntimeError("Character creation returned no id.")
+                return str(created_id)
+            if not ccp_character_handler.update_character(selected_id, data):
+                raise RuntimeError(f"Character update failed for id {selected_id}.")
+            return str(selected_id)
+
+        outcome = await _drain_to_thread(
+            persist_character, task_name="personas-character-save-persist"
+        )
+        try:
+            current = (
+                authority is not None
+                and self._character_save_authority_is_current(authority)
             )
+            if outcome.error is not None:
+                logger.error("Character save failed (category=persistence_failed).")
+                if current:
+                    self._notify("Character save failed.", "error")
+            elif current:
+                try:
+                    await self._after_character_save(
+                        str(outcome.value), str(data.get("name") or "")
+                    )
+                except Exception:
+                    logger.warning(
+                        "Character persistence committed but presentation failed "
+                        "(category=refresh_failed)."
+                    )
+                    self._notify(
+                        "Character saved, but the editor could not refresh.",
+                        "warning",
+                    )
         finally:
             self._character_save_inflight = False
+        if outcome.cancellation is not None:
+            raise outcome.cancellation
+
+    def _character_save_authority_is_current(
+        self, authority: _CharacterSaveAuthority
+    ) -> bool:
+        """Fence post-persist presentation to the editor that initiated it."""
+
+        editor = authority.editor_ref()
+        if (
+            editor is None
+            or not self.is_mounted
+            or not self._character_editor_is_active()
+            or self._editor_or_none() is not editor
+            or self._edit_mode != authority.edit_mode
+            or self._character_editor_generation != authority.screen_generation
+            or editor.visual_identity_session_token != authority.editor_session_token
+        ):
+            return False
+        character_id = editor.expression_character_id()
+        if authority.edit_mode == "create" or authority.selected_id is None:
+            return character_id is None
+        return character_id is not None and str(character_id) == str(
+            authority.selected_id
+        )
 
     async def _after_character_save(
         self, saved_id: str, submitted_name: str = ""
