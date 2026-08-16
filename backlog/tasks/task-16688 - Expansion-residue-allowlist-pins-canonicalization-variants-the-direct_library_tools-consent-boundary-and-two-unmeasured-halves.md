@@ -3,10 +3,10 @@ id: TASK-16688
 title: >-
   Expansion residue: allowlist pins, canonicalization variants, the
   direct_library_tools consent boundary, and two unmeasured halves
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-15 20:20'
-updated_date: '2026-08-16 16:31'
+updated_date: '2026-08-16 16:59'
 labels:
   - rag
   - agents
@@ -83,25 +83,28 @@ wave, the `HARD_MAX_CHARS` cap and the >500-message conversation).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The tool's and the policy's source-type allowlists can no longer drift apart: one is derived from the other, or a test fails when they differ (finding 5); the same is done or explicitly declined, with a reason, for PROMPT_BODY_COLUMNS vs rag_service.PROMPT_DOCUMENT_COLUMNS
-- [ ] #2 A row whose raw provenance source_type is a canonicalization VARIANT (media_chunk, chat, or a plural spelling) either gets a hint and identity like its singular twin, or the deliberate exclusion is recorded with the reason and pinned by a test (finding 6)
-- [ ] #3 The relationship between expand_document's gate and [console] direct_library_tools is recorded in one place a reader will find (task trade-offs plus Docs/User_Guide/mcp.md): whether expansion defers to that toggle, and why the raw-id read is acceptable under the ask floor (finding 13)
-- [ ] #4 The conversation fetch no longer reads image BLOBs it does not render, or the cost is measured and the default is kept deliberately (finding 15)
-- [ ] #5 The window/continuation half of the contract is exercised outside unit tests at least once — a document larger than the budget, expanded and continued via next_offset — and the result recorded (finding 16)
-- [ ] #6 Any behaviour change here re-runs the gated retrieval suite and it still reads "PASSED: No regression. 105 metric(s)" with every cell at (+0.000)
+- [x] #1 The tool's and the policy's source-type allowlists can no longer drift apart: one is derived from the other, or a test fails when they differ (finding 5); the same is done or explicitly declined, with a reason, for PROMPT_BODY_COLUMNS vs rag_service.PROMPT_DOCUMENT_COLUMNS
+- [x] #2 A row whose raw provenance source_type is a canonicalization VARIANT (media_chunk, chat, or a plural spelling) either gets a hint and identity like its singular twin, or the deliberate exclusion is recorded with the reason and pinned by a test (finding 6)
+- [x] #3 The relationship between expand_document's gate and [console] direct_library_tools is recorded in one place a reader will find (task trade-offs plus Docs/User_Guide/mcp.md): whether expansion defers to that toggle, and why the raw-id read is acceptable under the ask floor (finding 13)
+- [x] #4 The conversation fetch no longer reads image BLOBs it does not render, or the cost is measured and the default is kept deliberately (finding 15)
+- [x] #5 The window/continuation half of the contract is exercised outside unit tests at least once — a document larger than the budget, expanded and continued via next_offset — and the result recorded (finding 16)
+- [x] #6 Any behaviour change here re-runs the gated retrieval suite and it still reads "PASSED: No regression. 105 metric(s)" with every cell at (+0.000)
 <!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Twin-literal equality pins (`Tests/Tools/test_expansion_twin_literals.py`), RED by mutation on BOTH sides of both pairs.
 2. Variant-exclusion pin + docstring note citing TASK-16588's measured zero; one sentence in the probe README.
 3. `include_image_data=False` in `_fetch_conversation`, RED-first behind a kwargs-recording pin.
 4. A QA continuation walk (`Docs/superpowers/qa/2026-08-16-expansion-residue/`) over a >20,000-char note, report committed.
 5. The consent-boundary recording in `Docs/User_Guide/mcp.md` + these notes.
 6. Gate re-run (a fetch path changed) + `Tests/Tools` / `Tests/Agents` / `Tests/Library` batteries + ruff.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Five 16174-review residue findings closed; every decision was pre-registered
 in `Docs/superpowers/specs/2026-08-16-expansion-residue-design.md`, so this
 was execution, not re-litigation. One behaviour change (finding 15); the
@@ -191,7 +194,12 @@ passed, `Tests/Library` 1994 passed / 1 skipped with ONE failure —
 `_SHADOWED_BUILTIN_NAMES`), which arrived on dev with `e1f3a4424`, an
 ancestor of this branch's base, and touches no file this task modifies. It
 is a dev-baseline red, not this task's, and its own message says it must not
-be accepted as a baseline — carried out as a separate finding.
+be accepted as a baseline. It is not a new finding: **TASK-13214** already
+owns this guard (filed 2026-08-10 on generate-video/stream-video), and its
+AC#3 predicted exactly this — the assertion short-circuits on the first
+uncovered subset, so fixing one gap reveals the next. The sighting, the new
+name and its introducing commit are recorded there rather than duplicated
+into a second task.
 
 **Modified/added:** `tldw_chatbook/Tools/document_expansion_tool.py`,
 `tldw_chatbook/Library/library_expand_policy.py`,
@@ -201,3 +209,4 @@ be accepted as a baseline — carried out as a separate finding.
 `Docs/User_Guide/mcp.md`,
 `Docs/superpowers/qa/2026-08-16-expansion-residue/continuation_walk.py` +
 `report.md` (new).
+<!-- SECTION:NOTES:END -->
