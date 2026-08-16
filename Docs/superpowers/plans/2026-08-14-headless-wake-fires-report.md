@@ -712,3 +712,31 @@ for this bug class* is preserved — many app lifetimes inside ONE process:
 The honest summary of the risk this leaves: a regression confined to a
 `Tests/UI` file outside the Console population and outside the battery
 would not have been caught by what completed.
+
+### 11.9 Two things this section found and deliberately did not fix
+
+1. **The codebase already knew this hazard existed** — and that is
+   corroboration, not an excuse. `chat_screen.py`'s avatar-render
+   `except` carries this comment, written before this task:
+
+   > *"Must never raise: called from `_refresh_active_character_avatar_
+   > if_scope_changed` … invoked unconditionally on every 0.2s Console
+   > sync tick (`_sync_native_console_chat_ui`) — some worker dispatch
+   > sites run with `exit_on_error=True`, so an escaping mount failure …
+   > could crash the app."*
+
+   Someone had already reasoned their way to "a raise out of this tick
+   kills the app" and defended **one** call site. The tick's own DOM work
+   was left undefended, and the wake-fires-headless landing made that
+   reachable. Recorded because it settles the production-vs-harness
+   question from a second direction entirely.
+
+2. **The shape is wider than this tick.** `chat_screen.py` has 55
+   `run_worker(` call sites and only five pass `exit_on_error=False`, so
+   any of the other fifty can take the app down on an unhandled raise.
+   Nothing here changes that, and nothing here should: a blanket
+   `exit_on_error=False` would convert this class of bug from "crashes
+   loudly" to "silently stops working", which is worse. The right
+   follow-up is a per-worker audit of which of those can run against a
+   torn-down DOM, and it is out of this task's scope. Naming it rather
+   than quietly widening the fix.
