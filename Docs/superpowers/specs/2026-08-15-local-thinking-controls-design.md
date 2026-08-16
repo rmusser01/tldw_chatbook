@@ -27,7 +27,7 @@ targets:
 
 | Stack | Level | Hard budget |
 |---|---|---|
-| llama.cpp (`--jinja`) | `chat_template_kwargs.reasoning_effort` (top-level `reasoning_effort` is not parsed) | top-level `reasoning_budget` (≥ b9982 / PR #23116) |
+| llama.cpp (`--jinja`) | `chat_template_kwargs.reasoning_effort` (top-level `reasoning_effort` is not parsed) | top-level `reasoning_budget_tokens` (≥ b9982 / PR #23116) |
 | vLLM | top-level `reasoning_effort` | none per-request |
 | mlx-lm server | to verify live (`chat_template_kwargs` suspected) | to verify live |
 
@@ -82,7 +82,7 @@ with the other provider-support constants in `Chat/console_provider_support.py`:
 
 | Execution key | Level goes to | Budget goes to |
 |---|---|---|
-| `llama_cpp`, `local_llamacpp`, `local-llm`, `local_llamafile` | `chat_template_kwargs.reasoning_effort`; `enable_thinking: false` when effort is `none` — live-verify the model's template consumes `reasoning_effort` as a kwarg | top-level `reasoning_budget` |
+| `llama_cpp`, `local_llamacpp`, `local-llm`, `local_llamafile` | `chat_template_kwargs.reasoning_effort`; `enable_thinking: false` when effort is `none` — live-verify the model's template consumes `reasoning_effort` as a kwarg | top-level `reasoning_budget_tokens` |
 | `vllm`, `local_vllm` | top-level **and** `chat_template_kwargs.reasoning_effort` (same value in both; whichever path that stack consumes wins and the other is ignored — guards against the top-level-only assumption being wrong) | dropped, debug-logged |
 | `local_mlx_lm` | `chat_template_kwargs.reasoning_effort` if live verification confirms support; otherwise dropped, debug-logged | same verification outcome |
 | `custom-openai-api`, `custom-openai-api-2` | top-level `reasoning_effort` only (no llama.cpp-specific fields — strict OpenAI proxies may reject them) | dropped |
@@ -134,7 +134,7 @@ question; veto at spec review if undesired.*
 - **Provider-aware field hints:** Thinking / Summary / Verbosity fields show
   "no effect on this provider" styling/hint when a local provider is selected.
 - **Request preview:** the modal's request preview renders the composed
-  thinking fields (`chat_template_kwargs`, `reasoning_budget`) so users see
+  thinking fields (`chat_template_kwargs`, `reasoning_budget_tokens`) so users see
   exactly what is sent — important because values pass verbatim.
 - **Readiness hint:** when a thinking control is set on a llama.cpp-family
   provider, a one-line hint notes the server requirements (`--jinja`; budget
@@ -181,10 +181,10 @@ changed.
   `llama-server` (current build, `--jinja`) serving a Qwen3.8-27B GGUF:
   - `low`/`medium`/`xhigh` observably change thinking depth (this also
     confirms the template consumes `chat_template_kwargs.reasoning_effort`);
-  - `reasoning_budget` truncates thinking, checked both with and without
+  - `reasoning_budget_tokens` truncates thinking, checked both with and without
     `--reasoning-format` (the truncation mechanism may depend on it);
   - an older-build server (pre-b9982 if available) ignores the unknown
-    `reasoning_budget` field rather than 400ing;
+    `reasoning_budget_tokens` field rather than 400ing;
   - with and without `--reasoning-format`, the visible reply contains no
     `<think>` text.
 - Live-check `mlx_lm.server` and llamafile `chat_template_kwargs` support
@@ -211,3 +211,27 @@ thinking controls, which future contributors will otherwise re-litigate
 ("why is effort inside `chat_template_kwargs` for llama.cpp but top-level
 for vLLM?"). Recorded as
 [ADR-066](../../backlog/decisions/066-local-provider-thinking-controls.md).
+
+## Errata (post live verification, 2026-08-15)
+
+Verified against a real `llama-server` (b10430, `--jinja`) serving
+Qwen3.8-27B:
+
+1. **Budget field name:** the per-request field is
+   `reasoning_budget_tokens`, not `reasoning_budget` — the latter is
+   silently ignored by llama.cpp. Live: budget 8 → 35 reasoning chars,
+   32 → 101, vs 391 natural. The wire-format table rows above are updated.
+2. **Validated templates:** Qwen3.8's chat template *validates*
+   `reasoning_effort` and raises on unknown values (effort `minimal` →
+   HTTP 500: `raise_exception` outside `('xhigh','medium','low')`).
+   `high` is aliased to `xhigh` by the template and is safe; `none` is
+   safe because it is paired with `enable_thinking: false`, which
+   short-circuits the validation block. The design assumption that
+   "unused template kwargs degrade gracefully" was wrong for validated
+   templates: non-safe efforts are now dropped from
+   `chat_template_kwargs` (debug-logged) rather than sent. vLLM and
+   Custom OpenAI top-level `reasoning_effort` stays verbatim for all
+   values.
+3. **Budget is not template-consumed:** `thinking_budget_tokens` /
+   `reasoning_budget_tokens` is a server-side mechanism only — no chat
+   template reads it.

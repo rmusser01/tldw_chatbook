@@ -124,7 +124,7 @@ _LLAMA_CPP_FAMILY_PROVIDERS = frozenset(
 )
 _LLAMACPP_THINKING_REQUIREMENTS_NOTE = (
     "Thinking controls on llama.cpp need llama-server started with --jinja; "
-    "per-request reasoning_budget needs llama.cpp b9982 or newer."
+    "per-request reasoning_budget_tokens needs llama.cpp b9982 or newer."
 )
 
 
@@ -833,9 +833,9 @@ def build_console_settings_summary_state(
                     f"{k}={v}" for k, v in sorted(template_kwargs.items())
                 )
                 wire_parts.append(f"chat_template_kwargs[{rendered}]")
-            if "reasoning_budget" in wire_fields:
+            if "reasoning_budget_tokens" in wire_fields:
                 wire_parts.append(
-                    f"reasoning_budget={wire_fields['reasoning_budget']}"
+                    f"reasoning_budget_tokens={wire_fields['reasoning_budget_tokens']}"
                 )
             if "reasoning_effort" in wire_fields:
                 wire_parts.append(

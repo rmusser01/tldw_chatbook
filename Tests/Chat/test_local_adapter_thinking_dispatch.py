@@ -88,7 +88,7 @@ def test_shared_builder_composes_llama_wire_format(monkeypatch):
 
     payload = posted["payload"]
     assert payload["chat_template_kwargs"] == {"reasoning_effort": "low"}
-    assert payload["reasoning_budget"] == 2048
+    assert payload["reasoning_budget_tokens"] == 2048
 
 
 def test_shared_builder_composes_vllm_dual_placement(monkeypatch):
@@ -138,4 +138,4 @@ def test_shared_builder_composes_vllm_dual_placement(monkeypatch):
     payload = posted["payload"]
     assert payload["reasoning_effort"] == "medium"
     assert payload["chat_template_kwargs"] == {"reasoning_effort": "medium"}
-    assert "reasoning_budget" not in payload
+    assert "reasoning_budget_tokens" not in payload

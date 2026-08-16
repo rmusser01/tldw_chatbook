@@ -16,7 +16,7 @@ class TestLlamaCppFamily:
         fields = build_local_thinking_payload_fields(
             "local_llamacpp", None, 2048
         )
-        assert fields == {"reasoning_budget": 2048}
+        assert fields == {"reasoning_budget_tokens": 2048}
 
     def test_level_and_budget_together(self):
         fields = build_local_thinking_payload_fields(
@@ -24,7 +24,7 @@ class TestLlamaCppFamily:
         )
         assert fields == {
             "chat_template_kwargs": {"reasoning_effort": "xhigh"},
-            "reasoning_budget": 4096,
+            "reasoning_budget_tokens": 4096,
         }
 
     def test_none_effort_sends_verbatim_and_disables_thinking(self):
@@ -42,7 +42,7 @@ class TestLlamaCppFamily:
         for key in ("llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"):
             assert build_local_thinking_payload_fields(key, "low", 1024) == {
                 "chat_template_kwargs": {"reasoning_effort": "low"},
-                "reasoning_budget": 1024,
+                "reasoning_budget_tokens": 1024,
             }
 
 
@@ -72,6 +72,44 @@ class TestMlx:
             "local_mlx_lm", "low", 2048
         )
         assert fields == {"chat_template_kwargs": {"reasoning_effort": "low"}}
+
+
+class TestTemplateSafeEfforts:
+    """Live-verified (llama.cpp b10430 + Qwen3.8): strict chat templates
+    validate reasoning_effort and raise on unknown values, so non-safe
+    efforts must not be forwarded via chat_template_kwargs."""
+
+    def test_minimal_effort_drops_template_kwargs_but_keeps_budget(self):
+        fields = build_local_thinking_payload_fields(
+            "llama_cpp", "minimal", 2048
+        )
+        assert fields == {"reasoning_budget_tokens": 2048}
+
+    def test_minimal_effort_drops_template_kwargs_on_mlx(self):
+        fields = build_local_thinking_payload_fields(
+            "local_mlx_lm", "minimal", None
+        )
+        assert fields == {}
+
+    def test_minimal_effort_on_vllm_keeps_top_level_verbatim(self):
+        fields = build_local_thinking_payload_fields(
+            "vllm", "minimal", None
+        )
+        assert fields == {"reasoning_effort": "minimal"}
+        assert "chat_template_kwargs" not in fields
+
+    def test_high_effort_emitted_verbatim(self):
+        # "high" is aliased to "xhigh" by the Qwen3.8 template and is safe.
+        fields = build_local_thinking_payload_fields(
+            "llama_cpp", "high", None
+        )
+        assert fields == {"chat_template_kwargs": {"reasoning_effort": "high"}}
+
+    def test_minimal_effort_on_custom_openai_stays_verbatim(self):
+        fields = build_local_thinking_payload_fields(
+            "custom-openai-api", "minimal", None
+        )
+        assert fields == {"reasoning_effort": "minimal"}
 
 
 class TestUnknownKeysAndHygiene:

@@ -878,7 +878,7 @@ def build_llamacpp_chat_payload(
             ``chat_template_kwargs.reasoning_effort`` (``none`` additionally
             sets ``enable_thinking`` false).
         thinking_budget_tokens: Optional thinking token budget sent as the
-            top-level ``reasoning_budget`` field.
+            top-level ``reasoning_budget_tokens`` field.
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
@@ -1841,7 +1841,7 @@ class ConsoleProviderGateway:
             reasoning_effort: Optional thinking level forwarded as
                 ``chat_template_kwargs.reasoning_effort``.
             thinking_budget_tokens: Optional thinking token budget sent as
-                the top-level ``reasoning_budget`` field.
+                the top-level ``reasoning_budget_tokens`` field.
 
         Yields:
             Assistant-visible content chunks.
@@ -1946,7 +1946,7 @@ class ConsoleProviderGateway:
             reasoning_effort: Optional thinking level forwarded as
                 ``chat_template_kwargs.reasoning_effort``.
             thinking_budget_tokens: Optional thinking token budget sent as
-                the top-level ``reasoning_budget`` field.
+                the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
 
@@ -2047,7 +2047,7 @@ class ConsoleProviderGateway:
                 if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                     # Thinking controls follow ADR-066: level via
                     # chat_template_kwargs, budget via top-level
-                    # reasoning_budget. Auxiliary requests inherit session
+                    # reasoning_budget_tokens. Auxiliary requests inherit session
                     # thinking settings (documented parity with cloud
                     # providers).
                     text = await self.complete_llamacpp_chat(

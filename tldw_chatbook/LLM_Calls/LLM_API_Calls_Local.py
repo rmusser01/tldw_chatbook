@@ -226,8 +226,8 @@ def _chat_with_openai_compatible_local_server(
         payload["user"] = user_identifier
 
     # ADR-066: merge the provider-specific thinking-control wire fields
-    # (chat_template_kwargs / reasoning_budget / reasoning_effort) selected
-    # by the caller's execution key.
+    # (chat_template_kwargs / reasoning_budget_tokens / reasoning_effort)
+    # selected by the caller's execution key.
     if thinking_wire_key and (
         reasoning_effort is not None or thinking_budget_tokens is not None
     ):

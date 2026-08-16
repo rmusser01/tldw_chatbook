@@ -26,7 +26,8 @@ Each local execution key composes its payload through one wire-format table
 - llama.cpp family (`llama_cpp`, `local_llamacpp`, `local-llm`,
   `local_llamafile`): level inside `chat_template_kwargs.reasoning_effort`
   (llama-server does not parse top-level `reasoning_effort`); budget as
-  top-level `reasoning_budget`, supported per-request since llama.cpp b9982
+  top-level `reasoning_budget_tokens`, supported per-request since llama.cpp
+  b9982
   and ignored by older servers.
 - vLLM family (`vllm`, `local_vllm`): the level goes both top-level and
   inside `chat_template_kwargs.reasoning_effort` with the same value —
@@ -72,9 +73,28 @@ generations emit in no-think mode.
 - Qwen3.8-27B's `low`/`medium`/`xhigh` levels and a hard thinking cap work
   from the Console against llama.cpp (≥ b9982 for the cap) and vLLM without
   new UI.
-- Servers older than b9982 silently ignore `reasoning_budget`; the Console
+- Servers older than b9982 silently ignore `reasoning_budget_tokens`; the Console
   surfaces the build requirement as a hint rather than probing.
 - The model-family warning table is a heuristic on model names and can be
   stale for new releases; it never blocks sends.
 - Auxiliary requests (title generation etc.) inherit session thinking
   settings on mapped providers, matching existing cloud behavior.
+
+
+## Errata (live verification)
+
+Live verification (2026-08-15, `llama-server` b10430 `--jinja` +
+Qwen3.8-27B) amended three points:
+
+1. The per-request budget field is `reasoning_budget_tokens`, not
+   `reasoning_budget` — the latter is silently ignored by llama.cpp
+   (live: budget 8 → 35 reasoning chars, 32 → 101, vs 391 natural).
+2. Qwen3.8's chat template validates `reasoning_effort` and raises on
+   unknown values (effort `minimal` → HTTP 500). `high` is aliased to
+   `xhigh` by the template and is safe; `none` is safe because it pairs
+   with `enable_thinking: false`, which short-circuits the validation
+   block. Non-safe efforts are dropped from `chat_template_kwargs`
+   (debug-logged) rather than sent; vLLM and Custom OpenAI top-level
+   `reasoning_effort` stays verbatim for all values.
+3. The budget is not consumed by chat templates — it is a server-side
+   mechanism only.

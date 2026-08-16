@@ -399,12 +399,12 @@ class TestLlamacppThinkingPayload:
         )
         assert payload["chat_template_kwargs"] == {"reasoning_effort": "low"}
 
-    def test_budget_composes_reasoning_budget(self):
+    def test_budget_composes_reasoning_budget_tokens(self):
         payload = build_llamacpp_chat_payload(
             model="qwen", messages=[{"role": "user", "content": "hi"}],
             stream=False, thinking_budget_tokens=2048,
         )
-        assert payload["reasoning_budget"] == 2048
+        assert payload["reasoning_budget_tokens"] == 2048
 
     def test_none_effort_disables_thinking(self):
         payload = build_llamacpp_chat_payload(
@@ -434,7 +434,7 @@ class TestLlamacppThinkingPayload:
             stream=True,
         )
         assert "chat_template_kwargs" not in payload
-        assert "reasoning_budget" not in payload
+        assert "reasoning_budget_tokens" not in payload
 
 
 @pytest.mark.asyncio
@@ -5860,7 +5860,8 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
     assert captured["url"] == "http://127.0.0.1:9099/v1/chat/completions"
     assert captured["sensitive"] is True
     # Auxiliary requests inherit session thinking settings (ADR-066): level
-    # via chat_template_kwargs, budget via top-level reasoning_budget.
+    # via chat_template_kwargs, budget via top-level
+    # reasoning_budget_tokens.
     assert captured["payload"] == {
         "model": "gpt-test",
         "messages": [
@@ -5877,7 +5878,7 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
         "presence_penalty": 0.1,
         "frequency_penalty": 0.2,
         "chat_template_kwargs": {"reasoning_effort": "high"},
-        "reasoning_budget": 2048,
+        "reasoning_budget_tokens": 2048,
     }
     await client.aclose()
 

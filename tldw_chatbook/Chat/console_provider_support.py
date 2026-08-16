@@ -107,6 +107,12 @@ _CUSTOM_OPENAI_THINKING_KEYS = frozenset(
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
 _TEMPLATE_KWARGS_THINKING_KEYS = frozenset({"local_mlx_lm"})
+# Live-verified (llama.cpp b10430 + Qwen3.8): strict chat templates such as
+# Qwen3.8's validate reasoning_effort and raise on unknown values ("minimal"
+# -> HTTP 500). "high" is aliased to "xhigh" by the template and is safe;
+# "none" is safe because we pair it with enable_thinking=false which
+# short-circuits the template's validation block.
+_TEMPLATE_SAFE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "none"})
 
 
 def build_local_thinking_payload_fields(
@@ -136,12 +142,19 @@ def build_local_thinking_payload_fields(
     fields: dict[str, Any] = {}
     if key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
         if effort is not None:
-            template_kwargs: dict[str, Any] = {"reasoning_effort": effort}
-            if effort == "none":
-                template_kwargs["enable_thinking"] = False
-            fields["chat_template_kwargs"] = template_kwargs
+            if effort in _TEMPLATE_SAFE_EFFORTS:
+                template_kwargs: dict[str, Any] = {"reasoning_effort": effort}
+                if effort == "none":
+                    template_kwargs["enable_thinking"] = False
+                fields["chat_template_kwargs"] = template_kwargs
+            else:
+                logger.debug(
+                    "reasoning effort '{}' is not consumable by strict chat "
+                    "templates; dropped from chat_template_kwargs",
+                    effort,
+                )
         if budget is not None and key in _LLAMA_CPP_THINKING_KEYS:
-            fields["reasoning_budget"] = budget
+            fields["reasoning_budget_tokens"] = budget
         if budget is not None and key in _TEMPLATE_KWARGS_THINKING_KEYS:
             logger.debug(
                 "thinking budget not supported for provider {}; dropped",
@@ -150,7 +163,14 @@ def build_local_thinking_payload_fields(
     elif key in _VLLM_THINKING_KEYS:
         if effort is not None:
             fields["reasoning_effort"] = effort
-            fields["chat_template_kwargs"] = {"reasoning_effort": effort}
+            if effort in _TEMPLATE_SAFE_EFFORTS:
+                fields["chat_template_kwargs"] = {"reasoning_effort": effort}
+            else:
+                logger.debug(
+                    "reasoning effort '{}' is not consumable by strict chat "
+                    "templates; dropped from chat_template_kwargs",
+                    effort,
+                )
         if budget is not None:
             logger.debug(
                 "thinking budget not supported for provider {}; dropped",
