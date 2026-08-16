@@ -4320,30 +4320,27 @@ class TestConsoleActions:
 
         assert observed_enabled == [True]
 
-    async def test_character_save_pushes_console_gate_before_reload(
+    async def test_character_save_updates_console_gate_without_detached_reload(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        """Save completion should expose valid Console actions before reload awaits."""
+        """Save completion owns presentation without an unfenced reload worker."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
 
-            observed_enabled: list[bool] = []
-
-            async def observe_load(_character_id):
-                observed_enabled.append(
-                    not screen.query_one("#personas-attach-to-console", Button).disabled
-                )
-
+            load_character = AsyncMock()
             monkeypatch.setattr(
-                screen.character_handler, "load_character", observe_load
+                screen.character_handler, "load_character", load_character
             )
 
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
-        assert observed_enabled == [True]
+            assert not screen.query_one(
+                "#personas-attach-to-console", Button
+            ).disabled
+            load_character.assert_not_awaited()
 
     async def test_profile_save_pushes_console_gate_before_row_render(
         self,

@@ -10974,11 +10974,9 @@ class PersonasScreen(BaseAppScreen):
             return
         # Re-read the just-persisted record (authoritative version - carries
         # the incremented optimistic-lock version) directly off the UI
-        # thread. character_handler.load_character() below only SCHEDULES a
-        # background worker and cannot be awaited for completion (see
-        # _select_character's note on the same pattern), so a direct
-        # to_thread fetch is required here to reliably decide whether the
-        # editor can stay open before the rest of this method proceeds.
+        # thread. CharacterHandler.load_character() only schedules another
+        # thread worker, so it cannot safely participate in this fenced
+        # reconciliation.
         try:
             saved_record = await asyncio.to_thread(
                 ccp_character_handler.fetch_character_by_id, saved_id
@@ -10993,9 +10991,8 @@ class PersonasScreen(BaseAppScreen):
             self._character_save_inflight = False
             return
 
-        # All state changes through load_character() are synchronous. Apply
-        # them only after detached reads complete, with no await that could
-        # let a newer editor session interleave halfway through this block.
+        # Apply state only after detached reads complete, with no await that
+        # could let a newer editor session interleave halfway through.
         self._character_editor_generation += 1
         if reconciliation_authority is not None:
             reconciliation_authority = dataclasses.replace(
@@ -11006,11 +11003,13 @@ class PersonasScreen(BaseAppScreen):
         if saved_record:
             # Keep the handler's cache in sync so other _full_character_record
             # readers (Edit-again, world-book/dictionary refreshes) see the
-            # fresh record too, ahead of load_character's own async refresh.
+            # fresh record too.
             self.character_handler.current_character_id = saved_id
             self.character_handler.current_character_data = dict(saved_record)
         else:
             saved_record = None
+            self.character_handler.current_character_id = None
+            self.character_handler.current_character_data = {}
         # ``saved_id`` was just persisted, so it is authoritative; resolve the
         # name by the re-read record or the submitted name rather than
         # scanning the now-page-only cache.
@@ -11031,10 +11030,6 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation(())
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
-        await self.character_handler.load_character(saved_id)
-        if not is_current():
-            self._character_save_inflight = False
-            return
         self._queue_character_tts_refresh()
         editor = self.query_one(PersonasCharacterEditorWidget)
         if saved_record is None:

@@ -3395,6 +3395,65 @@ async def test_character_save_reconciliation_never_repaints_new_session(
     assert not screen._character_save_inflight
 
 
+async def test_character_save_reconciliation_never_launches_detached_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    release = asyncio.Event()
+    load_calls: list[str] = []
+    late_workers: list[asyncio.Task] = []
+
+    async def launch_detached_reload(character_id):
+        load_calls.append(str(character_id))
+
+        async def overwrite_new_session():
+            await release.wait()
+            editor._input("name").value = "Stale saved session"
+
+        late_workers.append(asyncio.create_task(overwrite_new_session()))
+
+    monkeypatch.setattr(
+        screen.character_handler, "load_character", launch_detached_reload
+    )
+
+    await screen._after_character_save(str(char_id), "Saved session")
+    await screen._begin_create_character()
+    editor._input("name").value = "New session sentinel"
+    release.set()
+    if late_workers:
+        await asyncio.gather(*late_workers)
+
+    assert load_calls == []
+    assert editor._input("name").value == "New session sentinel"
+
+
+async def test_character_save_fetch_failure_clears_handler_without_detached_reload(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    screen.character_handler.current_character_id = "stale-id"
+    screen.character_handler.current_character_data = {"name": "Stale character"}
+    load_character = AsyncMock()
+    monkeypatch.setattr(screen.character_handler, "load_character", load_character)
+
+    def fail_fetch(_character_id):
+        raise RuntimeError("read failed")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        fail_fetch,
+    )
+
+    await screen._after_character_save(str(char_id), "Saved session")
+
+    load_character.assert_not_awaited()
+    assert screen.character_handler.current_character_id is None
+    assert screen.character_handler.current_character_data == {}
+    assert screen._edit_mode == "view"
+
+
 async def test_generate_all_restores_missing_canonical_asset_and_direction(
     personas_editor_with_bound_pack, monkeypatch
 ):
