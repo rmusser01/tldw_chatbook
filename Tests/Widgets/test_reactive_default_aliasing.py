@@ -1,5 +1,5 @@
 # test_reactive_default_aliasing.py
-# Description: Cross-instance leak regressions for shared mutable reactive defaults (task-15771)
+# Description: Cross-instance leak regressions for shared mutable reactive defaults (task-15771, task-16843)
 """
 task-15771: ``reactive([])`` / ``reactive({})`` with a non-callable mutable
 default installs the *same* list/dict object as the backing value on every
@@ -25,19 +25,41 @@ are callables (``reactive(list)`` / ``reactive(dict)``).
 The final test pins that the fix did not change ``recompose=True`` behavior:
 a recompose reactive with a callable default still rebuilds its children on
 reassignment.
+
+task-16843 extends the same aliasing bug to the ``reactive(SomeClass())``
+shared *instance* default shape (15771's review F2 gap — the AST guard only
+flagged ``list()``/``dict()``/``set()`` call results, not arbitrary
+constructor calls). ``test_console_context_modal_snapshots_do_not_leak_across_instances``
+covers the one site of the five found that actually carries mutable field
+values (``ConsoleContextSnapshot``'s ``current_messages: list`` /
+``next_send_payload: dict`` — the dataclass itself is ``frozen=True`` but
+that only blocks *reassigning* those fields, not mutating the list/dict
+objects they point to in place). The other four sites (``RegionLayout``,
+``TreeScope`` x3) are frozen dataclasses whose *only* field types are
+themselves immutable (``frozenset``, ``Literal`` str, ``int | None``,
+``Region`` enum) — there is no in-place mutation to demonstrate, so they are
+handled by documentation + the guard's allowlist instead of a leak test; see
+``Tests/Architecture/test_reactive_mutable_default_inventory.py``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleContextSnapshot,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.TTS.audiobook_generator import Chapter
 from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
 from tldw_chatbook.Widgets.collections_tag_window import CollectionsTagWindow
+from tldw_chatbook.Widgets.Console.console_context_modal import ConsoleContextModal
 from tldw_chatbook.Widgets.TTS.chapter_editor_widget import ChapterEditorWidget
 from tldw_chatbook.Widgets.TTS.character_voice_widget import CharacterVoiceWidget
 
@@ -177,3 +199,63 @@ async def test_recompose_reactive_still_recomposes_with_callable_default() -> No
         card = pane.query_one("#overview-total-sources", Static)
         assert "3" in str(card.renderable)
         assert not pane.query("#overview-loading").nodes
+
+
+class _ConsoleContextHarness(App[None]):
+    """Minimal host so a pushed ConsoleContextModal has a screen to sit on."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("background")
+
+
+@pytest.mark.asyncio
+async def test_console_context_modal_snapshots_do_not_leak_across_instances() -> None:
+    """Two ConsoleContextModal instances must not share the default snapshot's
+    ``current_messages``/``next_send_payload`` containers (task-16843).
+
+    ``snapshot = reactive(ConsoleContextSnapshot(current_messages=[],
+    next_send_payload={}))`` installs the *same* ``ConsoleContextSnapshot``
+    object -- and therefore the same list/dict it wraps -- on every modal
+    instance until ``_load_snapshot`` reassigns it. ``frozen=True`` on the
+    dataclass only blocks *reassigning* ``current_messages``/
+    ``next_send_payload``; it does not stop mutating the list/dict those
+    fields point to in place, which is exactly what this test does.
+
+    The snapshot factory blocks on an ``asyncio.Event`` that is never set
+    until after the assertions, so both modals stay on their class-level
+    default for the whole window under test -- the real window a user sees
+    as the loading spinner between opening the modal and the snapshot
+    arriving. Born red pre-fix: instance B observed instance A's mutation
+    (and, with a real ``ConsoleChatMessage`` list containing production
+    objects, corrupting the payload of a live in-flight modal).
+    """
+    never_ready = asyncio.Event()
+
+    async def _blocking_factory() -> ConsoleContextSnapshot:
+        await never_ready.wait()
+        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+    app = _ConsoleContextHarness()
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal_a = ConsoleContextModal(_blocking_factory)
+        modal_b = ConsoleContextModal(_blocking_factory)
+        await app.push_screen(modal_a)
+        await pilot.pause()
+
+        assert modal_a.loading, "expected modal_a still waiting on its (blocked) factory"
+        modal_a.snapshot.current_messages.append(
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="leaked-from-a")
+        )
+        modal_a.snapshot.next_send_payload["leaked_key"] = "leaked_value"
+
+        await app.push_screen(modal_b)
+        await pilot.pause()
+
+        assert modal_b.loading, "expected modal_b still waiting on its (blocked) factory"
+        assert modal_b.snapshot is not modal_a.snapshot
+        assert modal_b.snapshot.current_messages == []
+        assert modal_b.snapshot.next_send_payload == {}
+
+        # Let both blocked workers resolve so the app shuts down cleanly.
+        never_ready.set()
+        await pilot.pause()

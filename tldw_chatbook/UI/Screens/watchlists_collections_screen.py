@@ -544,6 +544,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # used to apply a moment later — see `__init__`'s own comment for why
     # this class-level default used to disagree with that call's result,
     # and the ordering guarantee against `_last_persisted_collapsed`.
+    #
+    # task-16843: this is a shared *instance* default (`reactive(RegionLayout())`
+    # installs the SAME `RegionLayout` object on every screen instance until
+    # `set_reactive` overwrites it above) -- but it is harmless: `RegionLayout`
+    # is `frozen=True` and every field is itself immutable (`frozenset`,
+    # `Region | None`), so there is no mutable container underneath to mutate
+    # in place. Allowlisted in
+    # `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST` rather than rewritten into a factory.
     region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
@@ -579,6 +588,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # changed", but a toggled region is still rebuilt). Pane-local state does
     # not survive that (see `selected_run` and the create-form draft above
     # for the same reasoning already applied elsewhere on this screen).
+    #
+    # task-16843: both are shared *instance* defaults, same shape as
+    # `region_layout` above (each reactive's own `TreeScope("all")` object is
+    # shared across every screen instance that has not reassigned it -- the
+    # two reactives get their own separate default instances, not each
+    # other's) -- and equally harmless: `TreeScope` is `frozen=True` with
+    # only immutable field types (`Literal` str, `int | None`). Allowlisted
+    # in `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST`.
     selected_scope = reactive(TreeScope(kind="all"))
     tree_scope = reactive(TreeScope(kind="all"))
 
