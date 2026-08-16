@@ -191,6 +191,7 @@ class ConsoleSelectionMenu(Vertical):
         owner: Widget | None = None,
         feedback_available: bool = False,
         run_active: bool = False,
+        selection_top: int | None = None,
     ) -> None:
         """Anchor the menu at screen coordinates.
 
@@ -212,6 +213,11 @@ class ConsoleSelectionMenu(Vertical):
             run_active: Whether a console run is currently active; when
                 False, Request changes / LGTM render disabled with the
                 no-run hint (Comment stays enabled).
+            selection_top: Screen y of the selected row's top, used ONLY by
+                the measured clamp's bottom-overflow placement (the menu
+                hops entirely above the row so its highlight strip stays
+                visible); NOT part of the anchor. ``None`` (no row, or its
+                region unmeasured) keeps the plain bottom-pinned clamp.
         """
         super().__init__(id="console-selection-menu", classes="console-selection-menu")
         self._anchor = (screen_x, screen_y)
@@ -219,6 +225,7 @@ class ConsoleSelectionMenu(Vertical):
         self._has_add_to_chat = has_add_to_chat
         self._feedback_available = feedback_available
         self._run_active = run_active
+        self._selection_top = selection_top
         #: Widget holding focus before the menu grabbed it (captured in
         #: ``on_mount`` BEFORE focusing the first button); ``None`` =
         #: nothing was focused (or the capture raced teardown), so unmount
@@ -285,6 +292,19 @@ class ConsoleSelectionMenu(Vertical):
         over the composer on bottom-of-transcript releases, live spike
         2026-08-16). Ownerless menus (bare test harnesses) fall back to the
         screen bounds.
+
+        Never cover the selection you just made (live spike 2026-08-16
+        8:48): when the menu overflows the box bottom, pinning it to the
+        box bottom lands it ON TOP of the selected row -- the reverse-video
+        highlight strip (the evidence of the selection) hides behind the
+        menu. If ``selection_top`` is known and the whole menu fits above
+        the row, place it there instead (bottom exactly at
+        ``selection_top - 1``); otherwise fall back to the bottom pin.
+        Ordering with the shrink guard below is stable: the guard fires
+        only when the menu is taller than the whole box -- in that case it
+        can never fit above the selection either (``selection_top`` is at
+        most the box bottom), so the measure -> shrink -> re-measure passes
+        never fight this placement.
         """
         if self.parent is None or not self.is_attached:
             return
@@ -315,6 +335,22 @@ class ConsoleSelectionMenu(Vertical):
         if not shift_x and not shift_y:
             return
         x, y = self._anchor
+        # Bottom overflow: hop entirely above the selected row when the
+        # whole menu fits between the box top and the row top; the row (and
+        # its highlight strip, which lives inside the row widget) stays
+        # visible. Placement: exclusive bottom at ``selection_top - 1`` --
+        # the menu's last occupied cell is one row clear of the row top
+        # (Region.bottom is exclusive; the gap keeps the highlight strip
+        # visually separated). Horizontal clamp unchanged.
+        if shift_y and self._selection_top is not None:
+            above_y = self._selection_top - 1 - region.height
+            if above_y >= bounds.y:
+                self._anchor = (
+                    max(bounds.x, x - shift_x),
+                    above_y,
+                )
+                self.absolute_offset = Offset(*self._anchor)
+                return
         self._anchor = (
             max(bounds.x, x - shift_x),
             max(bounds.y, y - shift_y),

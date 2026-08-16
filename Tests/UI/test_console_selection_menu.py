@@ -592,6 +592,126 @@ async def test_null_transcript_region_falls_back_to_screen_bounds():
 
 
 @pytest.mark.asyncio
+async def test_bottom_overflow_menu_hops_above_selected_row():
+    """Live spike 2026-08-16 8:48: keep the highlight visible.
+
+    A release near the transcript bottom makes the measured clamp pull the
+    menu up from the release point; pinning its bottom to the box bottom
+    landed it ON TOP of the just-selected row -- the reverse-video
+    highlight strip (the evidence of the selection) hid behind the menu.
+    When there is room above, the menu must hop entirely ABOVE the
+    selected row instead (and still stay inside the transcript box)."""
+    app = _ShortTranscriptWithComposerApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.scroll_end(animate=False)
+        await pilot.pause()
+        row = app.query_one("#console-message-m29", ConsoleTranscriptMessage)
+        region = transcript.region
+        # Shape pin: the selected row is the LAST visible row, with room
+        # above it for the compact menu (this is the defect screenshot's
+        # geometry).
+        assert region.bottom - 4 <= row.region.y <= region.bottom - 2
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=row.region.y,
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()  # let the post-layout clamp settle
+        menu = app.query_one(ConsoleSelectionMenu)
+        # The menu sits ENTIRELY above the selected row: its bottom is at
+        # most row.y - 1, so the row and its highlight strip stay visible.
+        assert menu.region.bottom <= row.region.y - 1
+        # ...and still inside the transcript box (never over the composer).
+        assert region.y <= menu.region.y
+        assert menu.region.bottom <= region.bottom
+        assert region.x <= menu.region.x
+        assert menu.region.right <= region.right
+
+
+@pytest.mark.asyncio
+async def test_top_row_selection_bottom_overflow_pins_to_box_bottom():
+    """Fallback edge: a selection at the very TOP of the box leaves no room
+    above -- the menu keeps today's bottom-pinned placement (contained, no
+    crash); it may cover the row because there is nowhere better to go."""
+    app = _ShortTranscriptWithComposerApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0", ConsoleTranscriptMessage)
+        region = transcript.region
+        assert row.region.y - region.y < 5  # no room for the menu above m0
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=region.bottom - 1,  # release at the box's last row
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.region.bottom <= region.bottom  # pinned inside the box
+        assert region.y <= menu.region.y
+        assert region.x <= menu.region.x
+        assert menu.region.right <= region.right
+
+
+@pytest.mark.asyncio
+async def test_null_selection_row_region_keeps_bottom_pin_no_crash():
+    """Fallback edge: when the origin row's region is NULL/unmeasured, the
+    transcript passes selection_top=None and the menu keeps the plain
+    bottom-pinned clamp -- contained, no crash."""
+    from unittest.mock import PropertyMock, patch
+
+    from textual.geometry import Region
+
+    app = _ShortTranscriptWithComposerApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m29", ConsoleTranscriptMessage)
+        region = transcript.region
+        transcript.scroll_end(animate=False)
+        await pilot.pause()
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        with patch.object(
+            ConsoleTranscriptMessage,
+            "region",
+            new_callable=PropertyMock,
+            return_value=Region(),
+        ):
+            transcript.post_message(
+                ConsoleTranscript.TranscriptTextSelected(
+                    selection=TextSelection(row.id, 0, 5),
+                    screen_x=region.x + 4,
+                    screen_y=row.region.y,
+                )
+            )
+            await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu._selection_top is None  # guard really passed None
+        assert menu.region.bottom <= region.bottom
+        assert region.y <= menu.region.y
+        assert region.x <= menu.region.x
+        assert menu.region.right <= region.right
+
+
+@pytest.mark.asyncio
 async def test_far_right_release_keeps_menu_inside_transcript():
     """Regression: a release near the transcript's right edge must not overhang.
 

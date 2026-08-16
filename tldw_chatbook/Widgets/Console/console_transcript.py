@@ -3738,6 +3738,15 @@ class ConsoleTranscript(VerticalScroll):
         # run-gated through the owning screen's status seam.
         origin_row = self._active_selection_row()
         feedback_available = self._row_supports_selection_feedback(origin_row)
+        # Live spike 2026-08-16 8:48: when the measured clamp must pull the
+        # menu up off the release point, pinning its bottom to the
+        # transcript bottom landed it ON TOP of the just-selected row --
+        # the reverse-video highlight strip (the evidence of the selection)
+        # hid behind the menu. Hand the menu the row's screen top so its
+        # clamp can hop entirely ABOVE the row when there is room (NULL /
+        # unmeasured row region passes None -> plain bottom pin).
+        origin_region = origin_row.region if origin_row is not None else None
+        selection_top = origin_region.y if origin_region else None
         # Clamp the ANCHOR POINT into the transcript's own visible box
         # (never the bare screen): the composer/status bar live below this
         # region, and the menu's measured post-layout clamp (in the menu)
@@ -3762,6 +3771,7 @@ class ConsoleTranscript(VerticalScroll):
                 owner=self,
                 feedback_available=feedback_available,
                 run_active=feedback_available and self._selection_run_active(),
+                selection_top=selection_top,
             )
         )
 
