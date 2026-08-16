@@ -163,6 +163,15 @@ class LibraryMediaContentBody(VerticalScroll):
 class LibraryMediaContentSearchControls(Vertical):
     """Maintain search controls while preserving active widget identity."""
 
+    #: Set while a query is active. The app CSS (task-15774) docks the
+    #: active controls to the top of the scrolling viewer so the match
+    #: count and Prev/Next stay painted at every terminal size -- at 80x24
+    #: the in-flow stack above them (Back, title, metadata, section
+    #: header) pushed them below the fold exactly while they were in use.
+    #: An inactive search stays in flow, so no space is reserved when
+    #: nobody is searching.
+    ACTIVE_SEARCH_CLASS = "-library-media-search-active"
+
     DEFAULT_CSS = """
     LibraryMediaContentSearchControls {
         height: auto;
@@ -183,6 +192,7 @@ class LibraryMediaContentSearchControls(Vertical):
         self.query = query
         self.matches = matches
         self.match_index = match_index
+        self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
 
     def compose(self) -> ComposeResult:
         yield Input(
@@ -238,6 +248,9 @@ class LibraryMediaContentSearchControls(Vertical):
         self.matches = matches
         self.match_index = match_index
         is_active = bool(query)
+        # Dock-on-active (task-15774): the class is on the persistent
+        # container itself, so it survives the child recompose below.
+        self.set_class(is_active, self.ACTIVE_SEARCH_CLASS)
 
         if was_active != is_active:
             self.refresh(recompose=True)

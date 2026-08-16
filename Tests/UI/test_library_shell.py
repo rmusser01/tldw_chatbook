@@ -5647,11 +5647,12 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
         await pilot.pause()
         await pilot.pause()
 
-        # At 80x24 the whole viewer scrolls (the nav row sits below the fold
-        # until focused), so this pins the model-and-focus contract rather
-        # than a painted row: identity held, focus held, status advanced, and
-        # no reparse -- the same guarantees the 170x48 chrome test proves
-        # visually.
+        # This pins the model-and-focus contract at 80x24: identity held,
+        # focus held, status advanced, and no reparse -- the same guarantees
+        # the 170x48 chrome test proves visually. (The painted-visibility
+        # side of 80x24 is pinned separately by task-15774's
+        # ..._search_chrome_paints_at_compact_size test, now that an active
+        # search docks its controls above the scrolled stack.)
         assert screen.query_one("#library-media-viewer") is viewer
         assert screen.query_one("#library-media-viewer-content-markdown") is markdown
         assert screen.query_one("#library-media-content-search-next") is next_button
@@ -5659,6 +5660,144 @@ async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_si
         assert screen.focused is next_button
         assert str(status.render()) == "Match 2 of 101 matches"
         assert len(markdown_updates) == parses_before_navigation
+
+
+def _painted_rows(screen) -> list[str]:
+    """Return the screen's compositor output as one text row per strip."""
+    return [
+        "".join(segment.text for segment in strip)
+        for strip in screen._compositor.render_strips()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size():
+    """Catch search status and Prev/Next sitting below the fold at 80x24.
+
+    task-15774: task-15458 proved the 170x48 chrome paints above the content
+    region, but at 80x24 the stack above the search controls (Back, title,
+    metadata, section header) exceeded the viewport, so the match count and
+    the Prev/Next controls were pushed below the fold exactly while the user
+    was using them. This pins the compact chrome as visibly PAINTED (real
+    compositor strips at exactly 80x24), before and after navigating, not
+    merely present in the DOM -- keyboard focus does not prove a nested
+    control is visible (TASK-15506), and a style probe is not render
+    evidence.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        await _submit_content_search_query(screen, pilot, "budget")
+        await pilot.pause()
+
+        controls = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+        status = screen.query_one("#library-media-content-search-status", Static)
+        next_button = screen.query_one("#library-media-content-search-next", Button)
+        body = screen.query_one(
+            "#library-media-viewer-content", LibraryMediaContentBody
+        )
+
+        rows = _painted_rows(screen)
+        painted = "\n".join(rows)
+        print(
+            "TASK-15774 rendered UAT (active) "
+            f"screen_size={screen.size} controls={controls.region} "
+            f"status={status.region} next={next_button.region} "
+            f"body={body.region}"
+        )
+        for index, row in enumerate(rows):
+            print(f"TASK-15774 row {index:02d} |{row.rstrip()}")
+
+        assert len(rows) == 24
+        assert "Match 1 of 101 matches" in painted
+        assert "◀ Prev" in painted
+        assert "Next ▶" in painted
+        # The chrome and the content region never overlap (the 170x48
+        # non-overlap contract, held at the compact size too).
+        assert controls.region.bottom <= body.region.y
+        assert status.region.bottom <= body.region.y
+
+        # ...and the chrome STAYS painted while it is being used: advancing a
+        # match must keep the updated count and both controls on screen.
+        next_button.press()
+        await pilot.pause()
+        await pilot.pause()
+        painted_after_navigation = "\n".join(_painted_rows(screen))
+        assert "Match 2 of 101 matches" in painted_after_navigation
+        assert "◀ Prev" in painted_after_navigation
+        assert "Next ▶" in painted_after_navigation
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_search_chrome_undocks_when_inactive():
+    """Catch the active-search dock stealing layout with no search active.
+
+    task-15774's docked find bar must be scoped to an ACTIVE search: with no
+    query submitted, the search box stays in its normal flow position inside
+    the Content section (below the Back control), no status/Prev/Next chrome
+    exists, and clearing an active query returns to exactly that state.
+    Spot-checked at 120x40 per the task's larger-size non-regression note.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        controls = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+        back_button = screen.query_one("#library-media-back", Button)
+
+        # Inactive: in-flow order holds (Back paints above the search box)
+        # and no navigation chrome is painted anywhere.
+        painted_inactive = "\n".join(_painted_rows(screen))
+        assert back_button.region.y < controls.region.y
+        assert "◀ Prev" not in painted_inactive
+        assert "Next ▶" not in painted_inactive
+
+        # Active: the controls dock above the scrolled stack; exactly one
+        # search box is painted (docking must not duplicate chrome).
+        await _submit_content_search_query(screen, pilot, "budget")
+        await pilot.pause()
+        controls_active = screen.query_one(
+            "#library-media-content-search-controls",
+            LibraryMediaContentSearchControls,
+        )
+        assert controls_active.region.y <= back_button.region.y
+        assert len(screen.query("#library-media-content-search")) == 1
+        assert "Match 1 of 101 matches" in "\n".join(_painted_rows(screen))
+
+        # Cleared: the dock releases and the flow order returns.
+        search_input = screen.query_one("#library-media-content-search", Input)
+        search_input.value = ""
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        painted_cleared = "\n".join(_painted_rows(screen))
+        assert "◀ Prev" not in painted_cleared
+        assert "Next ▶" not in painted_cleared
+        assert (
+            back_button.region.y
+            < screen.query_one(
+                "#library-media-content-search-controls",
+                LibraryMediaContentSearchControls,
+            ).region.y
+        )
 
 
 @pytest.mark.asyncio
