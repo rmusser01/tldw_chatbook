@@ -114,6 +114,27 @@ def _expandable_source_type(provenance: Any) -> str:
     return source_type if source_type in EXPANDABLE_SOURCE_TYPES else ""
 
 
+def _chunk_start(provenance: Any) -> int | None:
+    """The matched chunk's character start, when it is one the tool acts on.
+
+    ``expand_document``'s window is centred only for ``anchor > 0``
+    (``_window_bounds``), so a head anchor (``0``, what chunk 0 carries), a
+    negative, a boolean or anything unparseable is dropped rather than
+    emitted: a key that changes nothing is bytes spent in a SEALED payload
+    for no behaviour, which is the inert surface this arc removes elsewhere.
+    """
+    if not isinstance(provenance, Mapping):
+        return None
+    raw = provenance.get("chunk_start")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _error_result(error: LibraryToolError) -> ToolResult:
     return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
@@ -312,8 +333,13 @@ class LibraryRagToolProvider:
           (``expandable``/``reason`` only). Without it, 54% of the rows an
           agent is fed are label-only snippets it has no way to recognize as
           labels.
-        - ``source_type``/``source_id`` (+ ``chunk_id`` when non-empty): the
-          identity ``expand_document`` REQUIRES. Task 3 shipped the hint
+        - ``source_type``/``source_id`` (+ ``chunk_id`` when non-empty, and
+          ``chunk_start`` when the provenance carries a usable anchor): the
+          identity ``expand_document`` REQUIRES, plus the one field that
+          moves its window. ``chunk_id`` is an INDEX and the tool ignores it
+          (it is not even a parameter); ``chunk_start`` is what turns a
+          chunked hit's expansion from a document-HEAD window into one
+          around the match. Task 3 shipped the hint
           alone, which left the loop closable only by inference -- a
           label-only row's ``result_id`` merely HAPPENS to equal its
           ``source_id``, and the seam was readable only from label prose. A
@@ -361,6 +387,9 @@ class LibraryRagToolProvider:
             projected["source_id"] = source_id
             if chunk_id:
                 projected["chunk_id"] = chunk_id
+            chunk_start = _chunk_start(provenance)
+            if chunk_start is not None:
+                projected["chunk_start"] = chunk_start
         return projected
 
 

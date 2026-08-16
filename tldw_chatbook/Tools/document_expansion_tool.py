@@ -16,9 +16,13 @@ produced them, and presumes nothing about TASK-3502's unimplemented
 `cross_encoder`.
 
 **The contract works from exactly what a row carries.** `source_type` +
-`source_id` is enough (that is all a label-only row has); `chunk_id` and
-`chunk_start` refine the window when the row is a semantic hit; `offset`
-walks a long document without re-querying.
+`source_id` is enough (that is all a label-only row has); `chunk_start`
+refines the window when the row is a semantic hit; `offset` walks a long
+document without re-querying. `chunk_id` is NOT a parameter: it is an INDEX
+(`f"{doc_id}_chunk_{i}"`), not a character offset, so it could never anchor
+a window -- it is swallowed by `**_provenance` so a pasted row still works,
+and shipping it as agent-facing schema would be the same dead knob this
+arc's Phase K retired one layer down.
 
 **Identity, and why the fallbacks exist.** A semantic row's `source_id` is
 `metadata["source_id"] || metadata["document_id"] || the chroma point id`
@@ -33,7 +37,7 @@ the indexer's PREFIXED document id (`f"note_{id}"`, `f"media_{id}"`,
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 from loguru import logger
 
@@ -60,6 +64,16 @@ SUPPORTED_SOURCE_TYPES: Tuple[str, ...] = ("note", "media", "conversation", "pro
 #: character budget then bounds what is returned.
 MAX_TRANSCRIPT_MESSAGES = 500
 
+#: Said out loud when a conversation is longer than that ceiling. Without
+#: it the payload's `total_size` -- the length of the RENDERED PREFIX -- is
+#: read as the whole document's size, and a partial read is indistinguishable
+#: from a complete one.
+MESSAGE_CAP_NOTE = (
+    f"Only the first {MAX_TRANSCRIPT_MESSAGES} messages of this conversation "
+    f"were read; total_size, the window and next_offset describe that prefix, "
+    f"not the whole conversation."
+)
+
 #: Mirrors `RAG_Search.simplified.rag_service.PROMPT_DOCUMENT_COLUMNS` (the
 #: three BODY columns the prompts sub-leg renders as a row's document, in
 #: that order) WITHOUT importing it: `rag_service` pulls in the embeddings/
@@ -71,6 +85,22 @@ PROMPT_BODY_COLUMNS: Tuple[str, ...] = ("details", "system_prompt", "user_prompt
 
 class ExpansionUnavailableError(RuntimeError):
     """A database this expansion needs could not be opened."""
+
+
+class _Document(NamedTuple):
+    """One fetched document, plus how completely it could be read.
+
+    `note` is empty for the ordinary case. It is non-empty only when the
+    FETCH itself was capped (today: a conversation longer than
+    `MAX_TRANSCRIPT_MESSAGES`), in which case `text` is a prefix of the real
+    document and `total_size` describes only that prefix -- so the payload
+    must report `truncated` even when the character window covers everything
+    that was read.
+    """
+
+    title: str
+    text: str
+    note: str = ""
 
 
 def _normalize_candidate(source_type: str, value: Any) -> list[str]:
@@ -135,17 +165,17 @@ def _require(db: Any, label: str) -> Any:
     return db
 
 
-def _fetch_note(note_id: str) -> Optional[Tuple[str, str]]:
+def _fetch_note(note_id: str) -> Optional[_Document]:
     from ..config import get_chachanotes_db_lazy
 
     db = _require(get_chachanotes_db_lazy(), "notes")
     row = db.get_note_by_id(note_id)
     if not row:
         return None
-    return str(row.get("title") or ""), str(row.get("content") or "")
+    return _Document(str(row.get("title") or ""), str(row.get("content") or ""))
 
 
-def _fetch_media(media_id: str) -> Optional[Tuple[str, str]]:
+def _fetch_media(media_id: str) -> Optional[_Document]:
     from ..config import get_media_db_lazy
 
     numeric = _as_int_id(media_id)
@@ -155,16 +185,21 @@ def _fetch_media(media_id: str) -> Optional[Tuple[str, str]]:
     row = db.get_media_by_id(numeric)
     if not row:
         return None
-    return str(row.get("title") or ""), str(row.get("content") or "")
+    return _Document(str(row.get("title") or ""), str(row.get("content") or ""))
 
 
-def _fetch_conversation(conversation_id: str) -> Optional[Tuple[str, str]]:
+def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
     """Render a conversation as the role-prefixed transcript.
 
     `f"{sender}: {content}"`, joined by newlines -- byte-identical to
     `ingestion_indexing.conversation_document`, so what the agent reads
     back is the text that was chunked and indexed, not a second rendering
     that happens to differ.
+
+    Reads ONE message past `MAX_TRANSCRIPT_MESSAGES` purely to tell "exactly
+    at the cap" (a complete read) from "over it" (a partial one). A partial
+    read comes back carrying a note, because reporting it as complete would
+    be indistinguishable from a whole-document read.
     """
     from ..config import get_chachanotes_db_lazy
 
@@ -172,21 +207,26 @@ def _fetch_conversation(conversation_id: str) -> Optional[Tuple[str, str]]:
     conversation = db.get_conversation_by_id(conversation_id)
     if not conversation:
         return None
-    messages = db.get_messages_for_conversation(
-        conversation_id, limit=MAX_TRANSCRIPT_MESSAGES
+    messages = list(
+        db.get_messages_for_conversation(
+            conversation_id, limit=MAX_TRANSCRIPT_MESSAGES + 1
+        )
+        or ()
     )
+    capped = len(messages) > MAX_TRANSCRIPT_MESSAGES
     lines: list[str] = []
-    for message in messages or ():
+    for message in messages[:MAX_TRANSCRIPT_MESSAGES]:
         content = (message or {}).get("content")
         if not content or not str(content).strip():
             continue
         sender = message.get("sender") or message.get("role") or "unknown"
         lines.append(f"{sender}: {content}")
     title = conversation.get("title") or f"Conversation {conversation_id}"
-    return str(title), "\n".join(lines)
+    note = MESSAGE_CAP_NOTE if capped else ""
+    return _Document(str(title), "\n".join(lines), note)
 
 
-def _fetch_prompt(prompt_id: str) -> Optional[Tuple[str, str]]:
+def _fetch_prompt(prompt_id: str) -> Optional[_Document]:
     from ..config import get_prompts_db_lazy
 
     numeric = _as_int_id(prompt_id)
@@ -201,7 +241,7 @@ def _fetch_prompt(prompt_id: str) -> Optional[Tuple[str, str]]:
         for column in PROMPT_BODY_COLUMNS
         if row.get(column) and str(row[column]).strip()
     ]
-    return str(row.get("name") or ""), "\n\n".join(parts)
+    return _Document(str(row.get("name") or ""), "\n\n".join(parts))
 
 
 _FETCHERS = {
@@ -298,8 +338,12 @@ class ExpandDocumentTool(Tool):
             "snippet is truncated and the answer needs the content. "
             "Re-query instead if the hit itself looks irrelevant. Never "
             "expand the same source twice — reuse the earlier result. "
+            "Stop expanding once your remaining context budget is short — a "
+            "window you cannot afford to read is spent for nothing. "
             "Returns a bounded window of the document text plus total_size "
-            "and, when more remains, next_offset to continue from."
+            "and, when more remains, next_offset to continue from; pass the "
+            "row's chunk_start to centre that window on the matched chunk "
+            "instead of the document head."
         )
 
     @property
@@ -315,13 +359,6 @@ class ExpandDocumentTool(Tool):
                 "source_id": {
                     "type": "string",
                     "description": "The row's source_id.",
-                },
-                "chunk_id": {
-                    "type": "string",
-                    "description": (
-                        "The row's chunk_id, when it has one. Label-only "
-                        "media/conversation rows ship an empty string."
-                    ),
                 },
                 "chunk_start": {
                     "type": "integer",
@@ -377,7 +414,6 @@ class ExpandDocumentTool(Tool):
         self,
         source_type: str = "",
         source_id: str = "",
-        chunk_id: str = "",
         offset: int = 0,
         max_chars: Optional[int] = None,
         chunk_start: Optional[int] = None,
@@ -390,12 +426,14 @@ class ExpandDocumentTool(Tool):
 
         Extra keyword arguments are accepted and ignored so an agent can
         paste a row's whole `provenance` mapping without a TypeError
-        (`chunk_index`, `media_type`, `uuid`, ... all ride along there).
+        (`chunk_id`, `chunk_index`, `media_type`, `uuid`, ... all ride along
+        there). `chunk_id` is deliberately among them rather than a declared
+        parameter: it is an index, nothing here reads it, and a knob wired to
+        nothing must not ship as agent-facing surface.
 
         Args:
             source_type: One of `SUPPORTED_SOURCE_TYPES`.
             source_id: The row's `source_id`.
-            chunk_id: The row's `chunk_id`, or `""` for a label-only row.
             offset: Continuation offset from a previous call's
                 `next_offset`.
             max_chars: Character budget; defaults to `DEFAULT_MAX_CHARS`
@@ -413,7 +451,10 @@ class ExpandDocumentTool(Tool):
             `total_size`, `window` (`{"start", "end"}`), `truncated` and
             `next_offset` (`None` when the window reaches the end). An
             `"error"` status additionally carries an `error` key, which is
-            what makes the provider report the call as failed.
+            what makes the provider report the call as failed; a read the
+            SOURCE itself capped (a conversation past
+            `MAX_TRANSCRIPT_MESSAGES`) additionally carries a `note` saying
+            so, and is always reported `truncated`.
         """
         requested_type = str(source_type or "").strip().lower()
         requested_id = str(source_id or "").strip()
@@ -425,7 +466,7 @@ class ExpandDocumentTool(Tool):
         try:
             fetch = _FETCHERS[requested_type]
             resolved_id = ""
-            document: Optional[Tuple[str, str]] = None
+            document: Optional[_Document] = None
             for candidate in _candidate_ids(
                 requested_type, requested_id, note_id, media_id, doc_id
             ):
@@ -437,7 +478,7 @@ class ExpandDocumentTool(Tool):
             if document is None:
                 return _empty_result("not_found", requested_type, requested_id)
 
-            title, text = document
+            title, text, note = document
             total = len(text)
             budget = _resolve_budget(max_chars)
             start, end = _window_bounds(
@@ -446,7 +487,7 @@ class ExpandDocumentTool(Tool):
                 _as_int_id(str(chunk_start)) if chunk_start is not None else None,
                 budget,
             )
-            return {
+            result: Dict[str, Any] = {
                 "status": "ok",
                 "source_type": requested_type,
                 "source_id": resolved_id,
@@ -454,9 +495,15 @@ class ExpandDocumentTool(Tool):
                 "text": text[start:end],
                 "total_size": total,
                 "window": {"start": start, "end": end},
-                "truncated": start > 0 or end < total,
+                # A source-capped read is truncated even when the window
+                # covers every character that was read: `total` describes
+                # the prefix, not the document.
+                "truncated": bool(note) or start > 0 or end < total,
                 "next_offset": end if end < total else None,
             }
+            if note:
+                result["note"] = note
+            return result
         except Exception as exc:  # noqa: BLE001 -- a tool must not crash the loop
             logger.opt(exception=True).error(
                 f"expand_document failed for {requested_type}:{requested_id}: {exc}"

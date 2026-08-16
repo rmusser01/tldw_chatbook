@@ -27,6 +27,7 @@ PROMPT_DETAILS = "Use for structured extraction."
 PROMPT_SYSTEM = "You are a careful extraction assistant."
 HEAD_MARKER = "HEADSTART-ONLY-TOKEN"
 DEEP_MARKER = "DEEPBODY-ONLY-TOKEN"
+TAIL_MARKER = "TAILMESSAGE-ONLY-TOKEN"
 
 
 def _long_body() -> str:
@@ -227,12 +228,14 @@ async def test_over_budget_returns_window_and_next_offset(dbs):
     assert result["next_offset"] == 1000
 
 
-async def test_chunk_centred_window_when_chunk_id_known(dbs):
-    """A semantic row carries chunk lineage; the window follows it.
+async def test_chunk_start_centres_the_window(dbs):
+    """A semantic row carries chunk lineage; the window follows `chunk_start`.
 
     The row's `provenance` carries `chunk_start` (written by the indexer at
-    `rag_service.py`'s chunk-metadata build) alongside `chunk_id`. The agent
-    pastes them verbatim and gets the matched region, NOT the document head.
+    `rag_service.py`'s chunk-metadata build). The agent pastes it verbatim and
+    gets the matched region, NOT the document head. `chunk_id` is deliberately
+    absent from this call: it is an INDEX, it anchors nothing, and the fix
+    wave retired it from the schema for exactly that reason.
     """
     body = _long_body()
     note_id = _seed_note(dbs, body=body)
@@ -241,7 +244,6 @@ async def test_chunk_centred_window_when_chunk_id_known(dbs):
     result = await _tool().execute(
         source_type="note",
         source_id=note_id,
-        chunk_id=f"note_{note_id}_chunk_9",
         chunk_start=anchor,
         max_chars=1000,
     )
@@ -275,6 +277,160 @@ async def test_offset_continuation_walks_the_document(dbs):
     assert second["text"] == body[1000:2000]
     assert second["text"] != first["text"]
     assert second["next_offset"] == 2000
+
+
+async def test_chunk_id_is_accepted_but_is_not_agent_facing_surface(dbs):
+    """`chunk_id` is retired from the schema: nothing in `execute` reads it.
+
+    An agent pasting a row's whole provenance still works -- `chunk_id` rides
+    the `**_provenance` swallow -- and the window it gets is the document
+    HEAD, which is the proof the index never anchored anything. Shipping a
+    knob wired to nothing is the exact surface this arc's Phase K retired.
+    """
+    tool = _tool()
+    assert "chunk_id" not in tool.parameters["properties"]
+    assert "chunk_id" not in tool.parameters["required"]
+
+    body = _long_body()
+    note_id = _seed_note(dbs, body=body)
+
+    result = await tool.execute(
+        source_type="note",
+        source_id=note_id,
+        chunk_id=f"note_{note_id}_chunk_9",
+        chunk_index=9,
+        media_type="document",
+        max_chars=1000,
+    )
+
+    _assert_shape(result)
+    assert result["status"] == "ok"
+    assert result["window"] == {"start": 0, "end": 1000}
+    assert HEAD_MARKER in result["text"]
+    assert DEEP_MARKER not in result["text"]
+
+
+def test_tool_description_names_chunk_start_as_the_window_anchor():
+    """The retirement must reach the prose too: the description tells the
+    agent to pass `chunk_start` -- the field the code actually consumes --
+    and never mentions the parameter that was removed."""
+    description = " ".join(_tool().description.split())
+
+    assert (
+        "pass the row's chunk_start to centre that window on the matched "
+        "chunk instead of the document head"
+    ) in description
+    assert "chunk_id" not in description
+
+
+# --- the budget promise -----------------------------------------------------
+
+
+async def test_absurd_budget_is_capped_at_the_hard_max(dbs):
+    """"the tool never returns more than the budget regardless of what is
+    asked" (spec) -- `HARD_MAX_CHARS` is that promise, and it was untested."""
+    from tldw_chatbook.Tools.document_expansion_tool import HARD_MAX_CHARS
+
+    body = "z" * (HARD_MAX_CHARS + 5000)
+    note_id = _seed_note(dbs, body=body)
+
+    result = await _tool().execute(
+        source_type="note", source_id=note_id, max_chars=10**9
+    )
+
+    _assert_shape(result)
+    assert result["status"] == "ok"
+    assert len(result["text"]) == HARD_MAX_CHARS
+    assert result["window"] == {"start": 0, "end": HARD_MAX_CHARS}
+    assert result["total_size"] == len(body)
+    assert result["truncated"] is True
+    assert result["next_offset"] == HARD_MAX_CHARS
+
+
+@pytest.mark.parametrize("budget", [0, -5, "x", None])
+async def test_useless_budget_falls_back_to_the_default(dbs, budget):
+    """A non-positive or unparseable budget is floored to the default rather
+    than returning zero characters (or raising) -- the other half of
+    `_resolve_budget`, likewise untested until the fix wave."""
+    from tldw_chatbook.Tools.document_expansion_tool import DEFAULT_MAX_CHARS
+
+    body = "z" * (DEFAULT_MAX_CHARS + 2000)
+    note_id = _seed_note(dbs, body=body)
+
+    result = await _tool().execute(
+        source_type="note", source_id=note_id, max_chars=budget
+    )
+
+    _assert_shape(result)
+    assert result["status"] == "ok"
+    assert len(result["text"]) == DEFAULT_MAX_CHARS
+    assert result["window"] == {"start": 0, "end": DEFAULT_MAX_CHARS}
+    assert result["next_offset"] == DEFAULT_MAX_CHARS
+
+
+# --- the conversation message cap is a PARTIAL read, and says so ------------
+
+
+async def test_conversation_over_the_message_cap_reports_itself_truncated(dbs):
+    """A >500-message conversation must not be reported as a complete read.
+
+    `MAX_TRANSCRIPT_MESSAGES` bounds the DB work, so `total_size` describes
+    only the prefix that was read. Returning `truncated: False` and
+    `next_offset: None` there asserts a completeness the payload does not
+    have -- and does it invisibly, since it looks exactly like a successful
+    whole-document read.
+    """
+    from tldw_chatbook.Tools.document_expansion_tool import MAX_TRANSCRIPT_MESSAGES
+
+    conversation_id = dbs.chacha.add_conversation({"title": "Very long chat"})
+    assert conversation_id, "precondition: the conversation writer returned an id"
+    for index in range(MAX_TRANSCRIPT_MESSAGES + 1):
+        content = (
+            f"{TAIL_MARKER} last"
+            if index == MAX_TRANSCRIPT_MESSAGES
+            else f"message {index}"
+        )
+        dbs.chacha.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "content": content,
+                "timestamp": (
+                    f"2026-01-01T{index // 3600:02d}:"
+                    f"{(index // 60) % 60:02d}:{index % 60:02d}Z"
+                ),
+            }
+        )
+
+    result = await _tool().execute(
+        source_type="conversation",
+        source_id=str(conversation_id),
+        max_chars=32000,
+    )
+
+    _assert_shape(result)
+    assert result["status"] == "ok"
+    assert TAIL_MARKER not in result["text"], "the 501st message was never read"
+    assert result["window"] == {"start": 0, "end": result["total_size"]}
+    assert result["truncated"] is True, "a partial read must say it is partial"
+    assert result["next_offset"] is None, "character offsets cannot reach message 501"
+    note = result.get("note", "")
+    assert str(MAX_TRANSCRIPT_MESSAGES) in note and "message" in note.lower(), (
+        "the payload says WHICH boundary it hit, not merely that it hit one"
+    )
+
+
+async def test_a_short_conversation_carries_no_truncation_note(dbs):
+    """The note is emitted on exactly the partial reads -- a two-message
+    transcript is complete and says nothing."""
+    conversation_id = _seed_conversation(dbs)
+
+    result = await _tool().execute(
+        source_type="conversation", source_id=conversation_id
+    )
+
+    assert result["truncated"] is False
+    assert "note" not in result
 
 
 # --- misses and identity ----------------------------------------------------

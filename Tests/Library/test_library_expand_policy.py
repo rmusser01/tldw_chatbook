@@ -203,3 +203,27 @@ def test_tool_description_states_the_policy_verbatim():
         "the hit itself looks irrelevant. Never expand the same source "
         "twice — reuse the earlier result."
     ) in " ".join(ExpandDocumentTool().description.split())
+
+
+def test_description_carries_the_two_branches_no_code_enforces():
+    """The spec named FOUR policy branches; the helper implements two.
+
+    "budget exhausted -> no" and "repeat expansion of the same source -> no"
+    need per-conversation agent-loop state (what has already been expanded,
+    what context budget is left) that a stateless per-call tool does not
+    have. They therefore ship as INSTRUCTION in the description and nothing
+    enforces or measures them -- disclosed in TASK-16174's AC#3 rather than
+    silently narrowed. This test is the only thing keeping them from
+    evaporating entirely, so it pins both sentences verbatim.
+    """
+    from tldw_chatbook.Tools.document_expansion_tool import ExpandDocumentTool
+
+    description = " ".join(ExpandDocumentTool().description.split())
+
+    assert (
+        "Never expand the same source twice — reuse the earlier result."
+    ) in description
+    assert (
+        "Stop expanding once your remaining context budget is short — a "
+        "window you cannot afford to read is spent for nothing."
+    ) in description

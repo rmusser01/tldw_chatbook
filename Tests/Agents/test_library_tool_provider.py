@@ -266,7 +266,13 @@ def test_rag_invoke_success_projects_bounded_rows():
         "Evidence 2",
     ]
     for row in payload["results"]:
-        # Raw backing identities and provenance never leave the adapter.
+        # Raw backing identities and the provenance mapping never leave the
+        # adapter FOR A ROW WITH NOTHING TO EXPAND -- which is what this
+        # fixture's rows are (no provenance at all). TASK-16174/3b made the
+        # identity conditional, not absent: see `_project_row` and
+        # `test_row_with_nothing_to_expand_carries_no_identity` for the
+        # precondition, and the identity tests below for the other side of
+        # it. The provenance MAPPING itself never leaves on any branch.
         assert set(row) <= {"result_id", "title", "snippet", "score", "runtime_backend"}
     assert service.calls == [
         ("quarterly plan", SUPPORTED_RAG_SOURCE_TYPES, "rag", {"top_k": 2, "include_citations": True})
@@ -451,6 +457,7 @@ def test_provider_rows_carry_expand_hint():
             "source_type",
             "source_id",
             "chunk_id",
+            "chunk_start",
         }
         assert "provenance" not in row
         assert "citations" not in row
@@ -632,6 +639,70 @@ def test_sealed_payload_survives_identity_keys():
     )
     assert [row.get("chunk_id", "") for row in payload["results"]] == (
         [""] * 5 + [f"note_{index}_chunk_3" for index in range(5, 10)]
+    )
+
+
+def test_chunked_row_carries_the_chunk_start_window_anchor():
+    """`chunk_start` is the ONLY thing that moves `expand_document`'s window.
+
+    `chunk_id` is an INDEX (`f"{doc_id}_chunk_{i}"`) and, since the fix wave,
+    is not even a tool parameter. `_semantic_row` copies `chunk_start` out of
+    the chunk metadata into `provenance`; without it in the payload a chunked
+    hit expands from the document HEAD while reporting `status: "ok"` -- a
+    wrong window that looks like a right one.
+    """
+    rows = [_chunked_row(4), _label_row("media", 1)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    chunked, label = json.loads(result.content)["results"]
+    assert chunked["chunk_start"] == 1200
+    assert "chunk_start" not in label, "a label-only row has no matched chunk"
+
+
+@pytest.mark.parametrize(
+    "provenance_anchor",
+    [None, 0, -1, "", "not-a-number", True],
+    ids=["absent", "head", "negative", "empty", "garbage", "bool"],
+)
+def test_chunk_start_is_omitted_when_it_would_move_nothing(provenance_anchor):
+    """Only an anchor the tool acts on is worth its bytes.
+
+    `_window_bounds` centres the window only for `anchor > 0`, so a head
+    anchor, a garbage value or an absent key must produce no key at all --
+    otherwise the payload grows to carry a field that changes nothing, which
+    is the inert surface this arc exists to remove.
+    """
+    row = _chunked_row(4)
+    if provenance_anchor is None:
+        row["provenance"].pop("chunk_start")
+    else:
+        row["provenance"]["chunk_start"] = provenance_anchor
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "chunk_start" not in projected
+    assert projected["source_id"] == "note_4", "the rest of the identity is intact"
+
+
+def test_sealed_payload_survives_the_chunk_start_anchor():
+    """The ceiling re-check every payload ADDITION on this seam owes: ten
+    rows, five of them anchored, all kept under 32 KiB with the anchor."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_chunked_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    assert payload["returned"] == 10
+    assert [row.get("chunk_start") for row in payload["results"]] == (
+        [None] * 5 + [1200] * 5
     )
 
 
