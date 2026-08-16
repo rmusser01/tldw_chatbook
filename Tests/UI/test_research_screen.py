@@ -759,3 +759,33 @@ def test_window_policy_persists_in_state():
     window2.restore_state(state)
     assert window2.source_policy == "web_first"
     assert window2.providers_text == "pubmed"
+
+
+# --- Qodo remediation on PR 1722 ---------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_run_reads_limits_and_providers_from_inputs(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+
+    # Simulate what compose() + typing produces: the widgets' values must
+    # reach the payload even when only the attributes were never set.
+    window.limits_text = "max_searches=3"
+    window.providers_text = "pubmed, arxiv, typo_lane"
+    await window.create_run({"query": "Inputs question"})
+
+    create_call = [c for c in service.calls if c[0] == "create_run"][0]
+    payload = create_call[2]
+    assert payload["provider_overrides"]["academic_providers"] == ["pubmed", "arxiv"]
+    assert payload["limits_json"] == {"max_searches": 3}
+
+
+def test_parse_provider_tokens_validates_and_dedupes():
+    from tldw_chatbook.UI.Research_Window import _parse_provider_tokens
+
+    assert _parse_provider_tokens("pubmed, arxiv, pubmed") == ["pubmed", "arxiv"]
+    assert _parse_provider_tokens("  ARXIV ,, biorxiv ") == ["arxiv", "biorxiv"]
+    # Dangerous input fails validation -> empty list (caller warns).
+    assert _parse_provider_tokens("pubmed, <script>x") == []

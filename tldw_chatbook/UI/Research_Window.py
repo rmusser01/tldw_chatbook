@@ -28,6 +28,30 @@ from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
 )
 
 
+_KNOWN_ACADEMIC_PROVIDERS = {
+    "arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed",
+}
+
+
+def _parse_provider_tokens(text: str | None) -> list[str]:
+    """Parse and validate the providers input (task-16791/Qodo): the raw
+    text goes through the shared input validator (dangerous-pattern and
+    length checks), tokens are lowercased and deduplicated in order, and
+    anything unknown is dropped -- a typo must not silently widen or
+    misroute the provider set. Returns [] when the input is invalid."""
+    from tldw_chatbook.Utils.input_validation import validate_text_input
+
+    raw = str(text or "")
+    if not validate_text_input(raw, max_length=200):
+        return []
+    seen: list[str] = []
+    for part in raw.split(","):
+        token = part.strip().lower()
+        if token and token in _KNOWN_ACADEMIC_PROVIDERS and token not in seen:
+            seen.append(token)
+    return seen
+
+
 def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
     """Parse a limits input like "max_searches=5, max_runtime_seconds=120"
     into a limits_json dict (task-16334). Invalid pairs are excluded and
@@ -282,6 +306,14 @@ class ResearchWindow(Vertical):
         self._set_status(f"Follow-up {result.get('status')}.")
         return result
 
+    @on(Input.Changed, "#research-limits-input")
+    def _on_limits_input_changed(self, event: Input.Changed) -> None:
+        self.limits_text = event.value
+
+    @on(Input.Changed, "#research-providers-input")
+    def _on_providers_input_changed(self, event: Input.Changed) -> None:
+        self.providers_text = event.value
+
     @on(Select.Changed, "#research-policy-select")
     def _on_policy_changed(self, event: Select.Changed) -> None:
         self.source_policy = str(event.value or "balanced")
@@ -319,6 +351,18 @@ class ResearchWindow(Vertical):
         return self.runs
 
     async def create_run(self, payload: dict[str, Any]) -> Any:
+        # Qodo (PR 1722): read the inputs live -- restore_state seeds the
+        # attributes, but typing in the widgets must reach the payload.
+        try:
+            self.limits_text = self.query_one("#research-limits-input", Input).value
+        except Exception:
+            pass
+        try:
+            self.providers_text = self.query_one(
+                "#research-providers-input", Input
+            ).value
+        except Exception:
+            pass
         limits, warnings = _parse_limits_text(self.limits_text)
         if warnings:
             self._set_status("Limits: " + "; ".join(warnings))
@@ -326,11 +370,9 @@ class ResearchWindow(Vertical):
             payload = {**payload, "limits_json": limits}
         # task-16791: lane routing + provider selection ride the run record.
         payload = {**payload, "source_policy": self.source_policy}
-        providers = [
-            part.strip().lower()
-            for part in self.providers_text.split(",")
-            if part.strip()
-        ]
+        providers = _parse_provider_tokens(self.providers_text)
+        if self.providers_text.strip() and not providers:
+            self._set_status("Providers input invalid or all-unknown; ignored.")
         if providers:
             payload = {**payload, "provider_overrides": {
                 "academic_providers": providers,

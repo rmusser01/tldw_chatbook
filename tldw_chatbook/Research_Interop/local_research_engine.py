@@ -229,6 +229,26 @@ class LocalResearchEngine:
             "web_only", "academic_only", "web_first", "academic_first", "balanced",
         } else "balanced"
 
+    def _paper_fn_accepts_providers(self) -> bool:
+        """Whether the injected paper callable takes a ``providers`` kwarg
+        (Qodo PR 1722: decided by signature inspection UP FRONT -- a broad
+        except-TypeError retry masked real TypeErrors raised from inside
+        provider implementations)."""
+        cached = getattr(self, "_paper_fn_accepts_providers_cache", None)
+        if cached is not None:
+            return cached
+        try:
+            parameters = inspect.signature(self.paper_search_fn).parameters
+            accepts = any(
+                param.kind is inspect.Parameter.VAR_KEYWORD
+                or param.name == "providers"
+                for param in parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts = False
+        self._paper_fn_accepts_providers_cache = accepts
+        return accepts
+
     def _is_checkpointed(self, run: dict[str, Any]) -> bool:
         return str(run.get("autonomy_mode") or "") == "checkpointed"
 
@@ -503,21 +523,15 @@ class LocalResearchEngine:
                 # rounds (task-16326). A provider error is a warning, not a
                 # run failure -- the other lane already collected.
                 providers_filter = self._active_academic_providers
+                accepts_providers = self._paper_fn_accepts_providers()
                 for query in round_queries:
                     try:
-                        if providers_filter is not None:
+                        if providers_filter is not None and accepts_providers:
                             papers = await self._maybe_await(
                                 self.paper_search_fn(query, providers=providers_filter)
                             )
                         else:
                             papers = await self._maybe_await(self.paper_search_fn(query))
-                    except TypeError:
-                        # Callable without a providers kwarg: call it plain.
-                        try:
-                            papers = await self._maybe_await(self.paper_search_fn(query))
-                        except Exception as exc:  # noqa: BLE001 - lane degrades
-                            merged_warnings.append(f"academic search failed: {exc}")
-                            continue
                     except Exception as exc:  # noqa: BLE001 - lane degrades
                         merged_warnings.append(f"academic search failed: {exc}")
                         continue

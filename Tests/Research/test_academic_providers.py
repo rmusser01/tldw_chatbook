@@ -525,3 +525,24 @@ def test_default_academic_providers_from_config(monkeypatch):
         ap, "get_cli_setting", lambda section, key, default=None: default
     )
     assert ap._default_academic_providers() == ["arxiv", "semantic_scholar"]
+
+
+def test_search_papers_dedupes_and_warns_on_unknown_defaults(monkeypatch, caplog):
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    calls = []
+
+    def fake_arxiv(**kw):
+        calls.append("arxiv")
+        return {"items": []}
+
+    monkeypatch.setattr(ap, "search_arxiv", fake_arxiv)
+    monkeypatch.setattr(
+        ap, "_default_academic_providers",
+        lambda: ["arxiv", "arxiv", "not_a_provider"],
+    )
+
+    papers = asyncio.run(ap.search_papers("q"))
+
+    assert calls == ["arxiv"]  # deduped: one call despite the duplicate
+    assert papers == []

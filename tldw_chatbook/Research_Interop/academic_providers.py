@@ -463,16 +463,17 @@ def search_biorxiv(
         f, t = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
     url = f"{BIORXIV_API_BASE}/details/{server_norm}/{f}/{t}/0"
-    owned_client = client is None
-    http = client or httpx.Client()
-    try:
+    if client is not None:
         response = _request_with_retries(
-            http, "GET", url, timeout=timeout, max_retries=max_retries
+            client, "GET", url, timeout=timeout, max_retries=max_retries
         )
         data = json.loads(response.text)
-    finally:
-        if owned_client:
-            http.close()
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries(
+                http, "GET", url, timeout=timeout, max_retries=max_retries
+            )
+            data = json.loads(response.text)
 
     total = 0
     messages = data.get("messages") or []
@@ -568,29 +569,31 @@ def search_pubmed(
         ty = int(to_year or from_year)
         esearch_params.update({"datetype": "pdat", "mindate": str(fy), "maxdate": str(ty)})
 
-    owned_client = client is None
-    http = client or httpx.Client()
-    try:
+    def _run(http: Any) -> tuple[list[str], int, dict[str, Any]]:
         esearch = _request_with_retries(
             http, "GET", f"{PUBMED_EUTILS_BASE}/esearch.fcgi",
             timeout=timeout, max_retries=max_retries, params=esearch_params,
         )
         esr = json.loads(esearch.text).get("esearchresult") or {}
-        idlist = [str(i) for i in (esr.get("idlist") or [])]
-        total = int(esr.get("count") or 0)
-        if not idlist:
-            return {"query_echo": {"query": query}, "items": [],
-                    "total_results": total, "results_per_page": results_per_page}
-
+        ids = [str(i) for i in (esr.get("idlist") or [])]
+        count = int(esr.get("count") or 0)
+        if not ids:
+            return ids, count, {}
         esummary = _request_with_retries(
             http, "GET", f"{PUBMED_EUTILS_BASE}/esummary.fcgi",
             timeout=timeout, max_retries=max_retries,
-            params={"db": "pubmed", "id": ",".join(idlist), "retmode": "json"},
+            params={"db": "pubmed", "id": ",".join(ids), "retmode": "json"},
         )
-        result = json.loads(esummary.text).get("result") or {}
-    finally:
-        if owned_client:
-            http.close()
+        return ids, count, json.loads(esummary.text).get("result") or {}
+
+    if client is not None:
+        idlist, total, result = _run(client)
+    else:
+        with httpx.Client() as http:
+            idlist, total, result = _run(http)
+    if not idlist:
+        return {"query_echo": {"query": query}, "items": [],
+                "total_results": total, "results_per_page": results_per_page}
 
     items: list[dict[str, Any]] = []
     for uid in result.get("uids") or idlist:
@@ -756,15 +759,17 @@ async def search_papers(
         "medrxiv": _medrxiv_lane,
         "pubmed": _pubmed_lane,
     }
-    selected = [
-        name for name in (providers if providers is not None else _default_academic_providers())
-        if name in lanes
-    ]
-    dropped = [
-        name for name in (providers or [])
-        if name not in lanes
-    ]
+    requested = (
+        providers if providers is not None else _default_academic_providers()
+    )
+    selected: list[str] = []
+    for name in requested:
+        if name in lanes and name not in selected:  # order-preserving dedupe
+            selected.append(name)
+    dropped = [name for name in requested if name not in lanes]
     if dropped:
+        # Warns for BOTH explicit lists and config-driven defaults: a typo
+        # in [SearchSettings] must be as visible as one in the window.
         logger.warning(f"search_papers ignoring unknown providers: {dropped}")
 
     async def _lane_runner(name: str, lane: Any) -> Any:
