@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
@@ -24,6 +25,7 @@ from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
+from textual_diff_view import DiffView
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -1693,6 +1695,16 @@ class ConsoleToolDiffRow(Vertical):
     render-derived view state -- it exists only while its marker message is
     expanded via the full-output toggle, and disappears with it (or when
     the message leaves the view window).
+
+    Text selection (console selection phase 3, task 1): implements the same
+    four-method row protocol as the other rows at LINE granularity -- the
+    domain is the deterministic unified-diff projection
+    (``_tool_diff_display_text``), ranges snap outward to whole diff lines,
+    and the highlight is a reverse-video ``Static`` strip below the DiffView
+    instead of restyling the DiffView's internals. Diff content is
+    immutable (fixed at append time), so unlike the plain/markdown rows
+    there is no streaming clamp; row removal rides the existing
+    reconciliation guard.
     """
 
     can_focus = False
@@ -1700,10 +1712,29 @@ class ConsoleToolDiffRow(Vertical):
     def __init__(self, message_id: str, diff: tuple[str, str, str]) -> None:
         self.message_id = message_id
         self._diff = diff
+        # Text-selection range over the unified-diff projection at LINE
+        # granularity (phase 3, task 1). Offsets are always whole-line
+        # bounds. None = no highlight.
+        self._selection_range: tuple[int, int] | None = None
+        self._display_text: str | None = None
         super().__init__(
             id=f"console-tool-diff-{message_id}",
             classes="console-transcript-tool-diff",
         )
+
+    def compose(self) -> ComposeResult:
+        # Selection highlight strip (phase 3, task 1): composed once and
+        # toggled via ``display`` (same lifecycle rationale as the markdown
+        # row's strip -- selection updates never mount/remove widgets). The
+        # DiffView mounts BEFORE it in ``_prepare_and_mount`` so the strip
+        # always sits below the diff.
+        selection_strip = Static(
+            "",
+            classes="console-tool-diff-selection-strip",
+            markup=False,
+        )
+        selection_strip.display = False
+        yield selection_strip
 
     def on_mount(self) -> None:
         path, old_content, new_content = self._diff
@@ -1724,11 +1755,85 @@ class ConsoleToolDiffRow(Vertical):
                 # Row was unmounted (collapse/prune/session swap) while the
                 # diff prepared off-thread.
                 return
-            await self.mount(diff_view)
+            try:
+                strip = self.query_one(".console-tool-diff-selection-strip", Static)
+            except NoMatches:
+                strip = None
+            if strip is None:
+                await self.mount(diff_view)
+            else:
+                await self.mount(diff_view, before=strip)
         except Exception as exc:  # noqa: BLE001 — a render failure never breaks the transcript
             logger.opt(exception=True).error(
                 f"Failed to render console tool diff for {path}: {exc}"
             )
+
+    # -- Text-selection protocol (console selection phase 3, task 1) ------
+
+    def get_display_text(self) -> str:
+        """Return the unified-diff projection this row renders (selection domain)."""
+        if self._display_text is None:
+            # Immutable contents: compute once and cache forever.
+            self._display_text = _tool_diff_display_text(self._diff)
+        return self._display_text
+
+    def get_selection_text(self) -> str:
+        """Return the selected whole diff lines, capped for quoting."""
+        if self._selection_range is None:
+            return ""
+        start, end = self._selection_range
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight ``[start, end)`` of the projection, snapped to whole lines.
+
+        Diff-row granularity is the whole diff line (spec phase 3): the
+        character range grows to cover every projection line it touches,
+        so a coarse cell-to-offset map still yields whole-line quotes.
+        """
+        start, end = sorted((start, end))
+        if end <= start:
+            self.clear_selection()
+            return
+        text = self.get_display_text()
+        start, end = _snap_to_line_bounds(text, start, end)
+        if end <= start:
+            self.clear_selection()
+            return
+        self._selection_range = (start, end)
+        self._refresh_selection_strip()
+
+    def clear_selection(self) -> None:
+        """Hide the highlight strip."""
+        if self._selection_range is None:
+            return
+        self._selection_range = None
+        self._refresh_selection_strip()
+
+    def _refresh_selection_strip(self) -> None:
+        """Show/hide the reverse-video strip of selected diff lines.
+
+        Same carrier as the markdown row's strip: the DiffView owns its
+        block layout and is left untouched, while the strip spells the
+        selected diff lines out below it in reverse video. The strip
+        content is capped exactly like the quote (``cap_quote``) so
+        select-all on a huge diff cannot duplicate the whole diff below
+        itself.
+        """
+        try:
+            strip = self.query_one(".console-tool-diff-selection-strip", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_range is None:
+            strip.display = False
+            return
+        start, end = self._selection_range
+        text = self.get_display_text()
+        selected = cap_quote(text[max(0, start) : min(end, len(text))])
+        strip.update(Text(selected, style="reverse"))
+        strip.display = bool(selected)
 
 
 class ConsoleTranscriptActionButton(Button):
@@ -2076,6 +2181,60 @@ def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -
         line_index = min(int(cell_y * len(lines) / height), len(lines) - 1)
     line_start = sum(len(line) + 1 for line in lines[:line_index])
     return line_start + offset_for_cell(lines[line_index], cell_x)
+
+
+def _tool_diff_display_text(diff: tuple[str, str, str]) -> str:
+    """Deterministic plain-text projection of a tool diff (selection domain).
+
+    Console selection phase 3, task 1. The selection domain of a
+    ``ConsoleToolDiffRow`` is the unified diff of its immutable
+    ``(path, old, new)`` contents, built with ``keepends=True`` so offsets
+    are line-anchored, and ``fromfile=tofile=path`` so the header names the
+    file. Pure function on the tuple -- unit-testable without a widget.
+
+    Args:
+        diff: ``(file_path, old_content, new_content)`` as captured at the
+            provider's strip seam.
+
+    Returns:
+        The joined unified-diff text (the row's selection domain).
+    """
+    path, old_content, new_content = diff
+    return "".join(
+        difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+        )
+    )
+
+
+def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a DiffView-local cell to a diff-projection character offset.
+
+    Console selection phase 3, task 1. ``DiffView`` renders line-number
+    gutters, hunk headers, and (in split mode) paired +/- columns, so its
+    rows do not map 1:1 onto any exposed text -- exactly like the Markdown
+    rows (task G), the body-local ``cell_y`` is distributed evenly across
+    the projection's lines and clamped to the nearest line, and
+    ``set_selection_range`` then snaps outward to whole diff lines, which
+    bounds the damage of a coarse y map: the quoted text is always whole
+    diff lines regardless. ``wrap=False`` (the diff-widgets default) keeps
+    long diff lines unwrapped (they scroll horizontally), so ``cell_x``
+    maps monotonically within the target line.
+
+    Args:
+        text: The row's unified-diff projection -- the selection domain.
+        height: The DiffView's rendered height (cells).
+        cell_x: Diff-view-local column of the pointer.
+        cell_y: Diff-view-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    return _markdown_cell_to_offset(text, height, cell_x, cell_y)
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -3298,12 +3457,13 @@ class ConsoleTranscript(VerticalScroll):
 
     def _selection_row_for(
         self, widget: Widget | None
-    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | None:
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None:
         """Return the selectable message row for a pressed widget, if any.
 
         Console selection phase 1. Walks parents from the event control to
         the nearest selection-protocol row: plain rows (character
-        granularity) and markdown rows (line granularity, task G).
+        granularity), markdown rows (line granularity, task G), and tool
+        diff rows (whole-diff-line granularity, phase 3 task 1).
         Protected controls (``PROTECTED_CLICK_CLASSES`` -- action rows,
         speech controls, rules, banners, scrollbars) never start a
         selection.
@@ -3319,14 +3479,16 @@ class ConsoleTranscript(VerticalScroll):
         while node is not None:
             if node is self:
                 return None
-            if isinstance(node, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+            if isinstance(
+                node, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+            ):
                 return node
             node = node.parent
         return None
 
     def _selection_offset_for(
         self,
-        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage,
+        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow,
         screen_x: int,
         screen_y: int,
     ) -> int:
@@ -3335,12 +3497,16 @@ class ConsoleTranscript(VerticalScroll):
         Plain rows resolve body-local cells wrap-aware through
         ``_body_cell_to_offset``. Markdown rows (task G) resolve against the
         Markdown widget's region at line granularity through
-        ``_markdown_cell_to_offset``. Cells outside the body clamp to the
-        text bounds (above -> 0, below -> end), which is the single-row clamp
-        rule for drags that leave the row.
+        ``_markdown_cell_to_offset``. Diff rows (phase 3, task 1) resolve
+        against the DiffView's region through ``_diff_cell_to_offset``.
+        Cells outside the body clamp to the text bounds (above -> 0, below
+        -> end), which is the single-row clamp rule for drags that leave
+        the row.
         """
         if isinstance(row, ConsoleMarkdownMessage):
             return self._markdown_selection_offset_for(row, screen_x, screen_y)
+        if isinstance(row, ConsoleToolDiffRow):
+            return self._diff_selection_offset_for(row, screen_x, screen_y)
         text = row.get_display_text()
         try:
             body = row.query_one(".console-transcript-message-body", Static)
@@ -3369,6 +3535,24 @@ class ConsoleTranscript(VerticalScroll):
         if region.height <= 0:
             return offset_for_cell(text, screen_x - region.x)
         return _markdown_cell_to_offset(
+            text, region.height, screen_x - region.x, screen_y - region.y
+        )
+
+    def _diff_selection_offset_for(
+        self, row: ConsoleToolDiffRow, screen_x: int, screen_y: int
+    ) -> int:
+        """Map a screen cell to a diff row's projection-line offset (task 1)."""
+        text = row.get_display_text()
+        try:
+            diff_view = row.query_one(DiffView)
+        except NoMatches:
+            return 0  # diff not prepared/mounted yet; anchor at the start
+        region = diff_view.region
+        # The DiffView child carries the rendered body box; height <= 0
+        # means not laid out (or the async prepare has not mounted it).
+        if region.height <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _diff_cell_to_offset(
             text, region.height, screen_x - region.x, screen_y - region.y
         )
 
@@ -3457,7 +3641,10 @@ class ConsoleTranscript(VerticalScroll):
             return
         for other in self._row_widgets.values():
             if (
-                isinstance(other, (ConsoleTranscriptMessage, ConsoleMarkdownMessage))
+                isinstance(
+                    other,
+                    (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
+                )
                 and other.id != row.id
             ):
                 other.clear_selection()
@@ -3607,19 +3794,21 @@ class ConsoleTranscript(VerticalScroll):
 
     def _active_selection_row(
         self,
-    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | None:
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None:
         """Resolve the row widget holding the active selection, if any."""
         sel = self.selection_manager.state.selection
         if sel is None:
             return None
         # Query by id without a type expectation: the selected row may be
-        # a plain OR a markdown row (task G), and a typed query_one would
-        # raise WrongType on the other kind.
+        # a plain, markdown (task G), or tool diff (phase 3, task 1) row,
+        # and a typed query_one would raise WrongType on the other kinds.
         try:
             widget = self.query_one(f"#{sel.row_key}")
         except NoMatches:
             return None
-        if isinstance(widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+        if isinstance(
+            widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+        ):
             return widget
         return None
 
@@ -3942,7 +4131,8 @@ class ConsoleTranscript(VerticalScroll):
         selection = self.selection_manager.state.selection
         if (
             isinstance(
-                widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)
+                widget,
+                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
             )
             and selection is not None
             and selection.row_key == widget.id
