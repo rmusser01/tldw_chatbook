@@ -11233,6 +11233,7 @@ class LibraryScreen(BaseAppScreen):
         def restore_focus() -> None:
             if not self._library_entry_reconcile_is_current(generation, route_key):
                 return
+            self._sync_library_prompt_stale_actions()
             if result.status == "loading" or restore_identity is not None:
                 self._restore_library_prompts_focus(
                     restore_identity,
@@ -16625,7 +16626,10 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompts_select(self, event: Button.Pressed) -> None:
         """Enter Prompt selection mode without changing the settled page."""
         event.stop()
-        if self._library_prompts_mutation_in_flight:
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
+        ):
             return
         state = self._build_library_prompts_state()
         if (
@@ -16640,7 +16644,10 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompts_select_page(self, event: Button.Pressed) -> None:
         """Add every valid row from the currently settled Prompt page."""
         event.stop()
-        if self._library_prompts_mutation_in_flight:
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
+        ):
             return
         result = self._library_prompt_browse_controller.result
         if not self._library_prompt_select_mode or result.status != "ready":
@@ -20010,7 +20017,10 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a prompt row button.
         """
         event.stop()
-        if self._library_prompts_mutation_in_flight:
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
+        ):
             return
         prompt_id = getattr(event.button, "prompt_id", None)
         if self._library_prompt_select_mode:
@@ -22346,6 +22356,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if (
             self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
             or self._library_prompts_view != "list"
             or not self._library_prompt_select_mode
@@ -22479,6 +22490,8 @@ class LibraryScreen(BaseAppScreen):
             if selection_generation is not None
             else None
         )
+        controller = self._library_prompt_browse_controller
+        controller.invalidate(controller.mutation_refresh_scope)
         self._library_prompt_mutation_status = ""
         self._library_prompts_mutation_in_flight = True
         self._library_prompt_delete_inflight_fingerprint = pending
@@ -22506,6 +22519,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Atomically delete one editor target or the selected batch."""
         selected_batch = selection_generation is not None
+        committed = False
         try:
             service = getattr(self.app_instance, "prompt_scope_service", None)
             delete_prompts = getattr(service, "delete_prompts", None)
@@ -22582,17 +22596,30 @@ class LibraryScreen(BaseAppScreen):
                 self._clear_library_prompt_selection(announce=False)
             else:
                 self._reset_library_prompt_editor_state()
-            self._request_library_prompts_browse(
-                dataclasses.replace(
-                    self._library_prompt_browse_controller.scope,
-                    page=1,
+            controller = self._library_prompt_browse_controller
+            deleted_ids = frozenset(expected_ids)
+            controller.retain_stale_items(
+                tuple(
+                    item
+                    for item in controller.retained_items
+                    if item["local_id"] not in deleted_ids
                 ),
+                stale_copy="List may be out of date",
+            )
+            committed = True
+            self._request_library_prompts_browse(
+                controller.mutation_refresh_scope,
                 focus_identity=focus_identity,
             )
             self._refresh_local_source_snapshot()
         finally:
             token = str(mutation_token)
             if self._library_prompt_delete_inflight_fingerprint == token:
+                if not committed:
+                    self._request_library_prompts_browse(
+                        self._library_prompt_browse_controller.mutation_refresh_scope,
+                        focus_identity=focus_identity,
+                    )
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:
@@ -22601,10 +22628,13 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         self._library_prompt_mutation_disabled_states.clear()
                         self.refresh(recompose=True)
-                        self.call_after_refresh(
-                            self._restore_library_prompts_focus,
-                            focus_identity or "library-prompts-select",
-                        )
+                        def restore_list_focus() -> None:
+                            self._sync_library_prompt_stale_actions()
+                            self._restore_library_prompts_focus(
+                                focus_identity or "library-prompts-select"
+                            )
+
+                        self.call_after_refresh(restore_list_focus)
                 else:
                     self._library_prompt_mutation_disabled_states.clear()
 
@@ -22690,6 +22720,26 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 before=back,
             )
+
+    def _sync_library_prompt_stale_actions(self) -> None:
+        """Keep retained mutation rows visible but read-only until refreshed."""
+        if self._library_prompt_browse_controller.freshness != "stale":
+            return
+        stale_copy = "List may be out of date. Retry or change the scope."
+        for selector in (
+            ".library-prompt-row",
+            "#library-prompts-select",
+            "#library-prompts-select-page",
+            "#library-prompts-export",
+            "#library-prompts-export-selected",
+            "#library-prompts-delete-selected",
+        ):
+            for button in self.query(selector).nodes:
+                if not isinstance(button, Button):
+                    continue
+                button.disabled = True
+                button.tooltip = stale_copy
+                _patch_library_disabled_marker_label(button)
 
     def _library_prompt_nearest_survivor_focus(
         self, targets: tuple[PromptBatchTarget, ...]
@@ -22796,6 +22846,8 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_prompt_mutation_generation += 1
         mutation_token = self._library_prompt_mutation_generation
+        controller = self._library_prompt_browse_controller
+        controller.invalidate(controller.mutation_refresh_scope)
         self._library_prompts_mutation_in_flight = True
         self._library_prompt_delete_inflight_fingerprint = str(mutation_token)
         self._library_prompt_mutation_status = ""
@@ -22830,6 +22882,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Atomically restore the complete typed deletion receipt."""
         restored = False
+        committed = False
         try:
             service = getattr(self.app_instance, "prompt_scope_service", None)
             restore_prompts = getattr(service, "restore_deleted_prompts", None)
@@ -22864,11 +22917,24 @@ class LibraryScreen(BaseAppScreen):
                 self._local_source_counts.get("prompts", 0) + len(receipt.entries)
             )
             restored = True
-            self._request_library_prompts_browse(
-                dataclasses.replace(
-                    self._library_prompt_browse_controller.scope,
-                    page=1,
+            controller = self._library_prompt_browse_controller
+            restored_versions = {
+                entry.local_id: entry.restored_version for entry in result.entries
+            }
+            controller.retain_stale_items(
+                tuple(
+                    (
+                        {**item, "version": restored_versions[item["local_id"]]}
+                        if item["local_id"] in restored_versions
+                        else item
+                    )
+                    for item in controller.retained_items
                 ),
+                stale_copy="List may be out of date",
+            )
+            committed = True
+            self._request_library_prompts_browse(
+                controller.mutation_refresh_scope,
                 focus_identity=f"library-prompt-row-{receipt.entries[0].local_id}",
             )
             self._refresh_local_source_snapshot()
@@ -22884,14 +22950,22 @@ class LibraryScreen(BaseAppScreen):
                 )
         finally:
             if self._library_prompt_delete_inflight_fingerprint == str(mutation_token):
+                if not committed:
+                    self._request_library_prompts_browse(
+                        self._library_prompt_browse_controller.mutation_refresh_scope,
+                        focus_identity="library-prompts-delete-undo",
+                    )
                 self._library_prompt_delete_inflight_fingerprint = None
                 self._library_prompts_mutation_in_flight = False
                 if self.is_mounted:
                     self.refresh(recompose=True)
-                    self.call_after_refresh(
-                        self._restore_library_prompts_focus,
-                        None if restored else "library-prompts-delete-undo",
-                    )
+                    def restore_undo_focus() -> None:
+                        self._sync_library_prompt_stale_actions()
+                        self._restore_library_prompts_focus(
+                            None if restored else "library-prompts-delete-undo"
+                        )
+
+                    self.call_after_refresh(restore_undo_focus)
 
     @on(Button.Pressed, "#library-prompt-open-existing")
     def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
@@ -26779,7 +26853,10 @@ class LibraryScreen(BaseAppScreen):
                 ``Export…`` action.
         """
         event.stop()
-        if self._library_prompts_mutation_in_flight:
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
+        ):
             return
         await self._open_library_export_canvas(ExportScope(kind="prompts"))
 
@@ -26789,7 +26866,10 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Open existing Export with the basket's canonical Prompt IDs."""
         event.stop()
-        if self._library_prompts_mutation_in_flight:
+        if (
+            self._library_prompts_mutation_in_flight
+            or self._library_prompt_browse_controller.freshness == "stale"
+        ):
             return
         entries = self._library_prompt_selection.canonical_entries
         if not entries:

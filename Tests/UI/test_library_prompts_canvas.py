@@ -5078,6 +5078,314 @@ async def test_library_prompt_bulk_delete_focus_and_refresh_are_exactly_once(
 
 
 @pytest.mark.asyncio
+async def test_library_prompt_delete_refreshes_applied_final_page_once_and_clamps(
+    tmp_path,
+):
+    """A final-page delete asks for that page once and accepts its clamp."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    for index in range(1, 22):
+        db.add_prompt(
+            name=f"Clamp {index:02d}",
+            author="A",
+            details=f"clamp-{index:02d}",
+            user_prompt=str(index),
+        )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        page_two = PromptBrowseScope(
+            sort_by="name",
+            sort_order="asc",
+            page=2,
+        )
+        screen._request_library_prompts_browse(page_two)
+        await _wait_for_prompt_browse_scope(screen, pilot, page_two)
+        controller = screen._library_prompt_browse_controller
+        assert controller.applied_result is not None
+        assert controller.applied_result.page == 2
+        assert len(controller.retained_items) == 1
+
+        browse_pages: list[int] = []
+        mutation_order: list[str] = []
+        pre_mutation_token = controller.result.request_token
+        original_browse = service.browse_prompts
+        original_delete = service.delete_prompts
+
+        async def recording_browse(**kwargs: Any):
+            browse_pages.append(kwargs["page"])
+            return await original_browse(**kwargs)
+
+        async def recording_delete(**kwargs: Any):
+            assert controller.result.status == "loading"
+            assert controller.result.request_token > pre_mutation_token
+            mutation_order.append("durable-write")
+            return await original_delete(**kwargs)
+
+        service.browse_prompts = recording_browse
+        service.delete_prompts = recording_delete
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        screen.query(".library-prompt-row").first().press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-prompts-delete-selected", Button
+            ).disabled,
+            message="Selected final-page Prompt never enabled Delete selected.",
+        )
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_prompts_mutation_in_flight
+                and controller.freshness == "fresh"
+                and controller.applied_result is not None
+                and controller.applied_result.page == 1
+            ),
+            message="Final-page Prompt delete never settled through one clamp.",
+        )
+
+        assert mutation_order == ["durable-write"]
+        assert browse_pages == [2]
+        assert controller.mutation_refresh_scope == replace(page_two, page=1)
+        assert controller.applied_result.total_items == 20
+        assert len(controller.retained_items) == 20
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_only(
+    tmp_path,
+):
+    """Committed delete rows stay truthful and inert until a fresh read."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    for index in range(1, 23):
+        db.add_prompt(
+            name=f"Stale {index:02d}",
+            author="A",
+            details=f"stale-{index:02d}",
+            user_prompt=str(index),
+        )
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        page_two = PromptBrowseScope(
+            sort_by="name",
+            sort_order="asc",
+            page=2,
+        )
+        screen._request_library_prompts_browse(page_two)
+        await _wait_for_prompt_browse_scope(screen, pilot, page_two)
+        controller = screen._library_prompt_browse_controller
+        applied_before = controller.applied_result
+        assert applied_before is not None
+        assert len(controller.retained_items) == 2
+        deleted_id = controller.retained_items[0]["local_id"]
+        survivor_id = controller.retained_items[1]["local_id"]
+        survivor_version = controller.retained_items[1]["version"]
+
+        original_browse = service.browse_prompts
+        refresh_pages: list[int] = []
+        fail_refresh = True
+
+        async def fail_once_after_commit(**kwargs: Any):
+            nonlocal fail_refresh
+            refresh_pages.append(kwargs["page"])
+            if fail_refresh:
+                fail_refresh = False
+                raise RuntimeError("injected committed refresh failure")
+            return await original_browse(**kwargs)
+
+        service.browse_prompts = fail_once_after_commit
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        screen.query_one(f"#library-prompt-row-{deleted_id}", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query_one(
+                "#library-prompts-delete-selected", Button
+            ).disabled,
+            message="Selected Prompt never enabled Delete selected.",
+        )
+        screen.query_one("#library-prompts-delete-selected", Button).press()
+        await pilot.pause()
+        host.screen.query_one("#prompt-delete-confirm", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_prompts_mutation_in_flight
+                and controller.result.status == "error"
+                and controller.freshness == "stale"
+                and len(screen.query("#library-prompts-retry")) == 1
+            ),
+            message="Committed Prompt delete never entered retained stale state.",
+        )
+
+        assert controller.applied_result is applied_before
+        assert controller.applied_result.total_items == 22
+        assert tuple(item["local_id"] for item in controller.retained_items) == (
+            survivor_id,
+        )
+        assert controller.retained_items[0]["version"] == survivor_version
+        assert controller.pager.title_count is None
+        assert controller.pager.range_copy == "List may be out of date"
+        assert controller.pager.page_copy == ""
+        assert controller.pager.status_copy == "List may be out of date"
+        assert controller.pager.previous_disabled is True
+        assert controller.pager.next_disabled is True
+        assert str(screen.query_one("#library-prompts-header").renderable) == "Prompts"
+        assert screen.query_one(
+            f"#library-prompt-row-{survivor_id}", Button
+        ).disabled is True
+        assert screen.query_one("#library-prompts-select", Button).disabled is True
+        assert screen.query_one("#library-prompts-export", Button).disabled is True
+        assert screen.query_one("#library-prompts-retry", Button).disabled is False
+        assert screen.query_one("#library-prompts-filter", Input).disabled is False
+
+        screen.query_one(f"#library-prompt-row-{survivor_id}", Button).press()
+        await pilot.pause()
+        assert screen._library_prompts_view == "list"
+
+        filter_input = screen.query_one("#library-prompts-filter", Input)
+        filter_input.focus()
+        filter_input.value = "Stale"
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.freshness == "fresh"
+            and controller.result.status == "ready"
+            and controller.applied_result is not None
+            and controller.applied_result.scope.query == "Stale"
+            and controller.applied_result.page == 1,
+            message="A page-one scope change never replaced stale Prompt rows.",
+        )
+        assert refresh_pages == [2, 1]
+        assert controller.applied_result is not applied_before
+        assert controller.applied_result is not None
+        assert controller.applied_result.total_items == 21
+        assert controller.applied_result.page == 1
+        assert all(not row.disabled for row in screen.query(".library-prompt-row"))
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_undo_refreshes_applied_page_and_preserves_basket(
+    tmp_path,
+):
+    """Undo retains the applied page/basket while its authoritative read fails."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_ids: list[int] = []
+    for index in range(1, 23):
+        local_id, _uuid, _message = db.add_prompt(
+            name=f"Undo page {index:02d}",
+            author="A",
+            details=f"undo-page-{index:02d}",
+            user_prompt=str(index),
+        )
+        prompt_ids.append(local_id)
+    restored_id = prompt_ids[-1]
+    receipt = db.soft_delete_prompts((PromptBatchTarget(restored_id, 1),))
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_prompts_list(screen, pilot)
+        page_two = PromptBrowseScope(
+            sort_by="name",
+            sort_order="asc",
+            page=2,
+        )
+        screen._request_library_prompts_browse(page_two)
+        await _wait_for_prompt_browse_scope(screen, pilot, page_two)
+        controller = screen._library_prompt_browse_controller
+        survivor_id = controller.retained_items[0]["local_id"]
+        screen.query_one("#library-prompts-select", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-selected")
+        screen.query_one(f"#library-prompt-row-{survivor_id}", Button).press()
+        captured_basket = screen._library_prompt_selection
+        screen._library_prompt_delete_receipt = receipt
+        screen.refresh(recompose=True)
+        await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
+
+        pre_mutation_token = controller.result.request_token
+        original_restore = service.restore_deleted_prompts
+        original_browse = service.browse_prompts
+        mutation_order: list[str] = []
+        refresh_pages: list[int] = []
+        fail_refresh = True
+
+        async def recording_restore(**kwargs: Any):
+            assert controller.result.status == "loading"
+            assert controller.result.request_token > pre_mutation_token
+            mutation_order.append("durable-write")
+            return await original_restore(**kwargs)
+
+        async def fail_once_after_restore(**kwargs: Any):
+            nonlocal fail_refresh
+            refresh_pages.append(kwargs["page"])
+            if fail_refresh:
+                fail_refresh = False
+                raise RuntimeError("injected undo refresh failure")
+            return await original_browse(**kwargs)
+
+        service.restore_deleted_prompts = recording_restore
+        service.browse_prompts = fail_once_after_restore
+        screen.query_one("#library-prompts-delete-undo", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not screen._library_prompts_mutation_in_flight
+                and controller.result.status == "error"
+                and controller.freshness == "stale"
+            ),
+            message="Committed Prompt undo never retained its applied page.",
+        )
+
+        assert mutation_order == ["durable-write"]
+        assert refresh_pages == [2]
+        assert controller.scope == page_two
+        assert tuple(item["local_id"] for item in controller.retained_items) == (
+            survivor_id,
+        )
+        assert screen._library_prompt_selection == captured_basket
+        assert screen._library_prompt_delete_receipt is None
+        assert db.fetch_prompt_details(restored_id)["version"] == 3
+
+        retry = await _wait_for_selector(screen, pilot, "#library-prompts-retry")
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.freshness == "fresh"
+            and len(screen.query(f"#library-prompt-row-{restored_id}")) == 1,
+            message="Prompt undo Retry never applied the restored row.",
+        )
+        assert refresh_pages == [2, 2]
+        assert screen._library_prompt_selection == captured_basket
+        restored_row = screen.query_one(
+            f"#library-prompt-row-{restored_id}", Button
+        )
+        assert restored_row.prompt_version == 3
+
+
+@pytest.mark.asyncio
 async def test_library_prompt_bulk_delete_stale_batch_preserves_selection_and_receipt(
     tmp_path,
 ):
@@ -8675,16 +8983,19 @@ async def test_library_prompt_delete_receipt_undo_restores_row_and_count(tmp_pat
         assert "✓ deleted · Prompt · Eta" in str(receipt.renderable)
 
         screen.query_one("#library-prompts-delete-undo", Button).press()
-        for _ in range(150):
-            rail_rows = screen.query("#library-row-browse-prompts")
-            rail_label = str(rail_rows.first().label) if rail_rows else ""
-            if (
-                "(2)" in rail_label
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "(2)"
+                in str(screen.query_one("#library-row-browse-prompts", Button).label)
                 and len(screen.query(f"#library-prompt-row-{eta_id}")) == 1
                 and not screen.query("#library-prompts-delete-receipt-copy")
-            ):
-                break
-            await pilot.pause(0.02)
+            ),
+            message="Prompt Undo never restored its row, receipt, and rail count.",
+        )
+        rail_label = str(
+            screen.query_one("#library-row-browse-prompts", Button).label
+        )
 
         assert "(2)" in rail_label
         assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 1
