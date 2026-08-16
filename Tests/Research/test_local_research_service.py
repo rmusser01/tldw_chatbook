@@ -263,7 +263,7 @@ def test_approve_requires_pending_checkpoint(tmp_path):
         service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])
 
 
-# --- external-DB transaction (task-16789) ------------------------------------------
+# --- external-DB transaction (task-16814) ------------------------------------------
 
 class FakeExternalResearchDB:
     """Minimal external-DB double: transaction() yields a real sqlite conn

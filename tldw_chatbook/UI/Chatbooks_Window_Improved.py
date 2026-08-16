@@ -229,11 +229,6 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
     ]
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-input-focus-accent: $primary;
-    $ds-input-focus-bg: $surface;
-    $ds-input-focus-border: $primary;
-    $ds-text-primary: $text;
 
     ChatbooksWindowImproved {
         layout: vertical;
@@ -311,12 +306,10 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         padding: 0 1;
     }
 
-    .search-input:focus {
-        border: solid $ds-input-focus-border;
-        border-bottom: solid $ds-input-focus-accent;
-        background: $ds-input-focus-bg;
-        color: $ds-text-primary;
-    }
+    /* .search-input:focus styling lives in css/components/_widgets.tcss,
+       scoped to this window (needs the bundle's $ds-input-focus-* tokens;
+       TASK-16811). NOTE: css/features/_chatbooks_improved.tcss carries a
+       diverged copy of these styles but is NOT in the build manifest. */
     
     .content-area {
         height: 1fr;

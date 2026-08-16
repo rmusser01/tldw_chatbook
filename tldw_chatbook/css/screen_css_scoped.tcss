@@ -303,9 +303,6 @@
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    
-    
 
 
     EmojiPickerScreen #dialog { 
@@ -357,11 +354,8 @@
     EmojiPickerScreen EmojiButton.emoji_button:hover { 
         background: $primary-background; 
     }
-    EmojiPickerScreen EmojiButton.emoji_button:focus { 
-        background: $surface;
-        color: $text;
-        text-style: bold underline;
-    }
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
     EmojiPickerScreen .no_emojis_message { 
         width: 100%; 
         content-align: center middle; 

@@ -6,6 +6,8 @@ import json
 from typing import Any
 
 from textual import on
+
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
@@ -28,27 +30,37 @@ from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
 )
 
 
-_KNOWN_ACADEMIC_PROVIDERS = {
-    "arxiv", "semantic_scholar", "biorxiv", "medrxiv", "pubmed",
-}
-
-
 def _parse_provider_tokens(text: str | None) -> list[str]:
-    """Parse and validate the providers input (task-16791/Qodo): the raw
-    text goes through the shared input validator (dangerous-pattern and
-    length checks), tokens are lowercased and deduplicated in order, and
-    anything unknown is dropped -- a typo must not silently widen or
-    misroute the provider set. Returns [] when the input is invalid."""
+    """Parse and validate the providers input (task-16791/Qodo +
+    task-16792): the raw text goes through the shared input validator, then
+    tokens -- source ids ("pubmed") OR category names ("biomedical",
+    "repositories", ...) -- are validated against the catalog and
+    deduplicated in order. Unknown tokens drop to a warning rather than
+    silently narrowing; invalid input drops the whole list."""
     from tldw_chatbook.Utils.input_validation import validate_text_input
+
+    from ..Research_Interop.research_source_catalog import (
+        CATEGORIES,
+        catalog_entries,
+    )
 
     raw = str(text or "")
     if not validate_text_input(raw, max_length=200):
         return []
+    known = {e.source_id for e in catalog_entries()} | set(CATEGORIES)
     seen: list[str] = []
+    unknown: list[str] = []
     for part in raw.split(","):
         token = part.strip().lower()
-        if token and token in _KNOWN_ACADEMIC_PROVIDERS and token not in seen:
-            seen.append(token)
+        if not token:
+            continue
+        if token in known:
+            if token not in seen:
+                seen.append(token)
+        else:
+            unknown.append(token)
+    if unknown:
+        logger.warning(f"providers input ignored unknown tokens: {unknown}")
     return seen
 
 
@@ -79,7 +91,7 @@ def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
 
 def _parse_config_bool(value: Any) -> bool:
     """Parse a config bool that may arrive as an actual bool or a string
-    (task-16789: ``bool("false")`` is True -- truthy strings must not
+    (task-16814: ``bool("false")`` is True -- truthy strings must not
     enable the network-costing lane)."""
     if isinstance(value, bool):
         return value
@@ -421,7 +433,7 @@ class ResearchWindow(Vertical):
             try:
                 await engine.execute_run(run_id)
             except Exception as exc:  # noqa: BLE001 - worker must not crash the app
-                # task-16789: dispatch through the UI message pump rather
+                # task-16814: dispatch through the UI message pump rather
                 # than mutating widgets from worker context (async workers
                 # run on the loop, but deferring is correct for either).
                 try:

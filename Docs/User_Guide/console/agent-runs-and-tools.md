@@ -202,6 +202,44 @@ already streaming.
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
 
+### Change review — reviewing a turn's file changes
+
+When an agent turn edits files, the transcript shows a **turn file card**
+directly under that turn instead of a plain summary line: a header with the
+counts ("✎ Edited 3 files  +92 −468"), then one row per changed file. Press
+**Enter** or click a row to expand its diff in place — expanding is
+per-row and the diff loads (and is cached) the first time you open it, so
+collapsing and reopening a row is instant. The card never mutates
+anything; there is no undo or revert control on it.
+
+**`v`** still opens the full **Review** screen for that turn — the same
+key as before the card shipped. Reach it from the selected transcript row
+or the run inspector's **Review changes** action. Revert-all and the other
+destructive actions live only on that screen, behind a confirm, never as a
+one-keystroke action in the transcript.
+
+If change tracking failed for one of a turn's roots, that failure shows up
+as its own plain-text disclosure row next to the card, not inside it — the
+same row the transcript rendered before the card shipped. When *every*
+root in a turn failed to track, there is nothing left to count, so the
+turn gets no card and no summary row at all — only the per-root failure
+disclosures. And if a change spans a nested repository the tracker
+excluded, the card and the marker row are both silent about it; that
+exclusion is visible only in the full **Review** screen (`v`), which reads
+it from the stored snapshot.
+
+**`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
+presentation kill switch: set it to `false` to fall back to the original
+plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
+byte-identical to the pre-card behavior). `v` and the inspector's Review
+changes action work identically either way.
+
+The "✎ A sub-agent edited N files after this turn" row (see [Parallel
+sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
+by design it covers the same run's full set of tracked changes — turn and
+post-turn windows alike — the same union the `v` Review screen shows for
+that run.
+
 ### Parallel sub-agents (the fleet)
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
@@ -725,6 +763,11 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   above.
 - **Settings > Agents** — create and manage the named agent definitions the
   supervisor can delegate to; see [Named agents](#named-agents) above.
+- **`[console] turn_file_cards`** in `config.toml` — whether a turn's file
+  changes render as the expandable card described in [Change
+  review](#change-review--reviewing-a-turns-file-changes) above, or the
+  original plain-text marker row (default `true`, card on). No Settings UI
+  switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
@@ -835,4 +878,16 @@ and the bullet had described that leak as intended behavior. Navigation
 now unmounts the outgoing screen, so leaving Console stages. Pinned by
 `Tests/UI/test_screen_residency.py`; the live off-view evidence above is
 unaffected — it was gathered with a palette covering an open Console and
-a different session tab active, not by navigating away.)*
+a different session tab active, not by navigating away.) The "Change
+review" section added @ 6fc069cc0 — 2026-08-15 (turn file card feature:
+docs-only pass against shipped code and the whole-module test run —
+`Tests/Chat/test_console_turn_file_entries.py`,
+`Tests/UI/test_console_turn_file_card.py`,
+`Tests/UI/test_console_turn_file_card_factory.py`,
+`Tests/UI/test_console_native_chat_flow.py`, and
+`Tests/UI/test_console_internals_decomposition.py`, 457 passed — not an
+interactive live-tmux walkthrough of the card itself. The card is a pure
+presentation layer over TASK-1972's existing change-review subsystem; the
+`[console] turn_file_cards` kill switch reverts to the pre-card plain-text
+marker row byte-for-byte, confirmed by
+`test_summary_row_stays_plain_marker_when_disabled`.)*

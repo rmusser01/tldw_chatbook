@@ -2,7 +2,7 @@
 
 Exercises OUR code (build_llamacpp_chat_payload, complete_llamacpp_chat,
 stream_llamacpp_chat via ConsoleProviderGateway) plus raw wire probes for
-observable thinking-depth evidence. TASK-16319 Task 7 Step 2.
+observable thinking-depth evidence. TASK-16812 Task 7 Step 2.
 """
 
 from __future__ import annotations

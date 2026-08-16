@@ -315,6 +315,17 @@ LIVE_RESPONSE = { ... }                                    # pasted from the wir
 
 A fake can agree with a wrong assumption; `inspect.signature` cannot.
 
+**Sharpest variant (task-16847, 2026-08-16).** A double can stand in for an attribute
+that does not exist at all. `a8082fe85`'s launch test set
+`instance.call_from_thread = ...` and `instance.push_screen = ...` on a
+`ChatScreen.__new__` instance — but `Screen` defines *neither* (both are App-only in
+Textual 8), so pressing `y` in the real app raised `AttributeError` inside the thread
+worker while the test stayed green, and the repo-wide guard
+(`Tests/test_call_from_thread_guard.py`) sat red on dev for two days. When a unit test
+must fake threading/navigation seams, patch the **collaborator** (`app`) — never spell
+a new attribute onto the class under test; an instance monkeypatch is also an
+existence claim, and nothing checks it.
+
 ---
 
 ## Mutation-test every guard you add
@@ -4584,3 +4595,19 @@ Trap-detection note: neutralising the method's BODY does not restore the tests
 (the mock never calls it), so the usual "mutate the fix off and compare" check
 reports "identical failure sets, not mine" — the only honest discriminator is a
 real pre-fix baseline worktree.
+## A parity test that passes against the pre-fix tree proves nothing (TASK-16811, 2026-08-16)
+
+The first version of `test_focus_token_parity.py` asserted a selected
+NavigationButton's resolved background equals the transcript's selected-row
+colour — and passed both post-fix AND against the unfixed tree. Two masks
+stacked: `run_test()` auto-focuses the first focusable widget, and the app
+bundle's generic `Button:focus { background: $ds-focus-bg }` rule (app tier
+beats any DEFAULT_CSS rule) painted the canonical colour over the shadowed
+`.active` rule the test meant to probe. The divergence only exists on the
+UNFOCUSED active state. The test became meaningful only after blurring
+(`app.set_focus(None)`, plus asserting `focus` absent from the pseudo-class
+set) — verified by running the corrected test in a throwaway worktree at the
+pre-fix commit, where it finally failed. Rules: (1) a regression test for a
+visual fix is only evidence once it has been RUN against the pre-fix tree
+and observed red there; (2) any style probe on a widget mounted first in a
+test App is probing the focused state whether you meant it or not.

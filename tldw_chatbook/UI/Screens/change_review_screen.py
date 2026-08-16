@@ -149,21 +149,56 @@ class AgentRunsChangeReviewProvider:
                 by_run[run_id] = []
                 order.append(run_id)
             by_run[run_id].append(row)
-        turns: list[ReviewTurn] = []
-        for run_id in reversed(order):
-            rows = by_run[run_id]
-            files = sum(int(r["files_changed"] or 0) for r in rows)
-            adds = sum(int(r["adds"] or 0) for r in rows)
-            dels = sum(int(r["dels"] or 0) for r in rows)
-            stamp = str(rows[0].get("created_at", ""))[:19].replace("T", " ")
-            turns.append(
-                ReviewTurn(
-                    run_id=run_id,
-                    label=f"{stamp} · {files} files +{adds} −{dels}",
-                    rows=tuple(rows),
-                )
-            )
-        return turns
+        return [
+            self._build_review_turn(run_id, by_run[run_id])
+            for run_id in reversed(order)
+        ]
+
+    def turn_for_run(self, run_id: str) -> "ReviewTurn | None":
+        """One run's :class:`ReviewTurn`, read run-scoped (no history scan).
+
+        The turn file card renders exactly one run per card, and a
+        transcript can hold many cards -- resolving each through
+        :meth:`turns` would scan and group the whole conversation's
+        snapshot history per card (Qodo, PR #1728). This reads only the
+        run's own rows and builds the identical ``ReviewTurn`` the scan
+        would have produced.
+
+        Args:
+            run_id: The agent run to load.
+
+        Returns:
+            The run's ``ReviewTurn``, or ``None`` when it has no
+            snapshot rows.
+        """
+        rows = self._db.change_snapshots_for_run_review(run_id)
+        if not rows:
+            return None
+        return self._build_review_turn(str(run_id), rows)
+
+    @staticmethod
+    def _build_review_turn(run_id: str, rows: list[dict]) -> ReviewTurn:
+        """Assemble a :class:`ReviewTurn` from a run's snapshot rows.
+
+        Shared by :meth:`turns` and :meth:`turn_for_run` so the two paths
+        can never disagree about label or row order.
+
+        Args:
+            run_id: The agent run the rows belong to.
+            rows: The run's ``change_snapshots`` rows, oldest first.
+
+        Returns:
+            The assembled turn.
+        """
+        files = sum(int(r["files_changed"] or 0) for r in rows)
+        adds = sum(int(r["adds"] or 0) for r in rows)
+        dels = sum(int(r["dels"] or 0) for r in rows)
+        stamp = str(rows[0].get("created_at", ""))[:19].replace("T", " ")
+        return ReviewTurn(
+            run_id=run_id,
+            label=f"{stamp} · {files} files +{adds} −{dels}",
+            rows=tuple(rows),
+        )
 
     def tool_touched_relpaths(self, row: dict) -> "set[str] | None":
         """Root-relative paths the run's recorded WRITE tools touched.

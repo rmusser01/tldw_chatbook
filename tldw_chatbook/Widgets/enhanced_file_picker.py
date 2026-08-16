@@ -262,9 +262,6 @@ class PathBreadcrumbs(Horizontal):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     PathBreadcrumbs {
         height: 3;
@@ -290,11 +287,8 @@ class PathBreadcrumbs(Horizontal):
         text-style: underline;
     }
 
-    PathBreadcrumbs .breadcrumb-button:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* .breadcrumb-button:focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
     PathBreadcrumbs .breadcrumb-separator {
         margin: 0;

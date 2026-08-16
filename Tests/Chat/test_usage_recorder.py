@@ -278,7 +278,7 @@ def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
     assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (8, 9)
 
 
-# --- Qodo remediation (task-16789) ------------------------------------------------
+# --- Qodo remediation (task-16814) ------------------------------------------------
 
 def test_estimate_includes_system_message():
     handler = _fake_handler("answer")

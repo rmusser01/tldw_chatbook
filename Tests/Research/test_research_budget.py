@@ -161,7 +161,7 @@ def test_snapshot_marks_tokens_as_estimates():
     assert ledger.snapshot()["tokens_settled"] == 20
 
 
-# --- Qodo remediation (task-16789) ------------------------------------------------
+# --- Qodo remediation (task-16814) ------------------------------------------------
 
 def test_allot_docs_zero_batch_returns_zero_even_with_exhausted_budget():
     ledger = BudgetLedger.from_limits({"max_fetched_docs": 0})

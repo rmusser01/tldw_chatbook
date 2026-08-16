@@ -183,7 +183,7 @@ class LocalResearchEngine:
             result = await self._maybe_await(make_call())
         if ledger is not None:
             # Exact when every settled token came from provider-reported
-            # usage rather than the estimate path (task-16789).
+            # usage rather than the estimate path (task-16814).
             ledger.settle_tokens(
                 recorder.total_tokens(),
                 exact=recorder.total_tokens() > 0
@@ -400,7 +400,7 @@ class LocalResearchEngine:
                 r for r in (wsr or {}).get("results") or [] if isinstance(r, dict)
             )
             warnings.extend(w for w in (wsr or {}).get("warnings") or [])
-            # task-16789: settle EXECUTED searches, not the reserved cap --
+            # task-16814: settle EXECUTED searches, not the reserved cap --
             # the pipeline can stop its fan-out early (phase-1 deadline), and
             # reservations for never-executed searches must be released or
             # the budget exhausts prematurely. The pipeline's own warning

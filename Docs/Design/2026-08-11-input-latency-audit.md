@@ -184,3 +184,31 @@ tracked as task-3070).
 - **task-15780** — Verify-then-retire `CCPDictionaryEditorWidget`/`CCPPromptEditorWidget` (zero production callers; the CCP `__init__` docstring already says the chrome was retired).
 - **task-15781** — Verify-then-trim `NotesSyncService`'s `SyncProfile` CRUD surface (zero production callers beyond `sync_folder`).
 - **task-15782** — Repair `test_options_persist_to_config`'s stale hardcoded expectation (found by task-15470, unmasked once its `run_worker` crash fix stopped swallowing it).
+
+## Second-wave follow-ups (2026-08-16)
+
+Filed at the close of the follow-up burn-down (the 34 tasks above all merged). Each
+candidate was re-verified live against dev `ee741cf10` before filing; three candidates
+from the reviews' filing queue were dropped as already resolved or already tracked
+(the stale `test_current_schema_version_is_37` contract red — fixed by `4a2d48046`;
+the ChatScreen `_wait_for_production_chat_screen` gate cluster — 141/141 green at HEAD;
+the Library note capability-matrix reds — already tracked as task-16480).
+
+- **task-16835** — Wire or retire the multi-item review batch-analysis path (`app.llm_api_client` never assigned; `BatchAnalysisStartEvent` has no poster since the widget's deletion).
+- **task-16836** — TTS export claims: key by path and honour them in `_discard_tts_artifact` (16199 review F2+F3, merged: one path-keyed redesign covers both).
+- **task-16837** — Wire or retire the TTS export feature (`TTSExportEvent` never posted; handler is not a MessagePump; F6/F4 residuals become live if wired).
+- **task-16838** — Watchlists: per-(subscription,url) in-flight guard against scheduled+manual double-reporting (15764 review finding 1).
+- **task-16839** — Fix and bound `calculate_change_percentage` (autojunk-degenerate pct=1.0 on large Latin pages; quadratic to ~7 min at the 10 MB cap; 15764 review finding 5, merged as one entangled redesign).
+- **task-16840** — Replace the ChaChaNotes rollback registry with bootstrap-under-patched-`_CURRENT_SCHEMA_VERSION` fixtures (15765 review F3; registry has already grown v38/v39 entries).
+- **task-16841** — SiteConfigSettings `#auth-type-select` is backwards (6th instance of the class) + repo-wide backwards-Select AST sweep and permanent guard.
+- **task-16842** — `stts_profile_library` flake family: five timing-sensitive focus-assertion tests, one reproducing standalone.
+- **task-16843** — Extend the reactive-default guard to shared mutable instance defaults (`reactive(SomeClass())`, 5 sites confirmed at HEAD; 15771 review F2).
+- **task-16844** — `FileListItemEnhanced.compose` passes `tooltip=` to `Static`: any non-empty `FileListEnhanced` crashes on compose (15771 review, live traceback).
+- **task-16845** — Study: wire or remove the four undispatched buttons (add-child / create-course / generate-guide / add-milestone) and the placeholder Structured Learning pane (16195/16196 residuals).
+- **task-16846** — Wire up or retire `ScraperBuilderWindow` (ADR-020 Accepted, nav-unreachable; now composes fine after task-15991).
+- **task-16847** — `chat_screen.py:3054` bare `self.call_from_thread(` keeps the repo-wide TASK-929 guard red on dev.
+- **task-16848** — Rewrite the stale `Docs/Features/notes_bidirectional_sync.md` (removed SyncProfile surface; two nonexistent widget files; 15781 residual).
+- **task-16849** — Chapter editor in-place edits (add/split/merge/delete) never refresh the now-truthful chapter table (15773 review residual 4).
+- **task-16850** — `ChapterDetector` emits an empty placeholder chapter per titled heading, ~2x rows (15773 review residual 5).
+- **task-16851** — Console transcript: a head-pinned selection disables the prune while tailward hydration reveals — unbounded mount (15777 round-3 finding, plus the one-frame End-during-prune race).
+- **task-16852** — Watchlists artifacts: script selection still rebuilds the scripts table inside the detail region (15779's disclosed one-level-down residual).

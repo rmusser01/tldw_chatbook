@@ -84,6 +84,31 @@ model can exhaust the default 4096 `max_tokens` on reasoning alone and
 return an empty completion -- the baseline script now primes 16384 for
 local endpoints.
 
+## Biomedical-lane live baseline (2026-08-16, task-16794)
+
+Same runner, `--providers biomedical` (PubMed lane) over the default
+question set — local llama.cpp Qwen3.8-27B at `127.0.0.1:9191`, duckduckgo
+web lane, bounded as above:
+
+Command:
+`python3 Helper_Scripts/Benchmarks/record_research_baseline.py --questions 3 --engine duckduckgo --academic --providers biomedical --llm-base-url http://127.0.0.1:9191/v1`
+
+| Metric | Academic lane (n=3) | Biomedical lane (n=3) |
+|---|---|---|
+| `citation_accuracy` | 1.00 (49/49 markers) | **1.00 (36/36 markers)** |
+| `claim_support_rate` | 1.00 | 1.00 |
+| `gate_pass_rate` | 0.93 | **0.93** |
+| `cited_sentence_ratio` | 0.63 | 0.51 |
+| `quote_grounding` | 0.67 | 0.00 (no quotes emitted) |
+
+Citation integrity holds on the biomedical lane: every marker resolved
+across all three runs. The noted failure mode from the academic-lane runs
+repeats (thinking model + question-shaped topics): one run's evidence mix
+drove cited_sentence_ratio down, and no quotes were emitted (quote
+grounding untested, not failing). En route the script gained the
+`autonomy_mode="autonomous"` fix — checkpointed (the service default since
+task-16482) would park every run at plan review and produce no report.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,

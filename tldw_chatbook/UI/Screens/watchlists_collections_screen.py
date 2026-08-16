@@ -2259,12 +2259,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Seeded from screen state for the same reason every sibling
             # above is -- this is a factory the workbench calls on every
             # region rebuild, so a fresh pane's reactives start at their
-            # class defaults. Every reactive this branch seeds is
-            # `recompose=True`, so every one goes through `set_reactive`
-            # (task-15778; the pane's two seeded-reactive watchers,
-            # `watch_selected_briefing`/`watch_selected_script`, are both
-            # pre-mount no-ops -- the former even guards specifically
-            # against wiping this very seeding).
+            # class defaults. Every reactive goes through `set_reactive`
+            # (task-15778): most are `recompose=True`, and the six
+            # selection-derived ones task-15779 flipped to plain reactives
+            # carry watchers with mounted-only side effects (a
+            # `BriefingSelected`/`ScriptSelected` post, an in-place table
+            # patch, a detail-region refresh) that a seeding assignment
+            # must not fire -- `watch_selected_briefing` even guards
+            # specifically against wiping this very seeding.
             artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
             seed = artifacts_pane.set_reactive
             seed(ArtifactsPane.briefings, self._loaded_briefings)
@@ -6668,9 +6670,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # task-15461: the PANE's own copies are cleared by
         # `ArtifactsPane._clear_selection_derived_state`, inside the same
         # synchronous instant the selection moves, so the clearing rides the
-        # recompose that selection already queued instead of adding a second
-        # one. The screen-side mirrors above still have to be cleared here --
-        # they are what `handle_citation_activated` and a later rebuild read.
+        # one rebuild that selection already scheduled instead of adding a
+        # second (since task-15779 that is the pane's `BriefingDetailRegion`
+        # refresh -- the briefings table itself is no longer rebuilt by a
+        # selection at all). The screen-side mirrors above still have to be
+        # cleared here -- they are what `handle_citation_activated` and a
+        # later rebuild read.
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )

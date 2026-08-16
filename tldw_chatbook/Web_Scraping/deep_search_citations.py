@@ -192,7 +192,7 @@ def verify_citations(
         if match_quote_in_sources(span, source_texts)["matched"]:
             quotes_verified += 1
 
-    # Uncited counting runs on the ORIGINAL answer (task-16789): the
+    # Uncited counting runs on the ORIGINAL answer (task-16814): the
     # annotated form rewrites unknown markers to "[n?]", which the numeric
     # marker regex cannot see -- those sentences ATTEMPTED citations and
     # must not be miscounted as uncited.

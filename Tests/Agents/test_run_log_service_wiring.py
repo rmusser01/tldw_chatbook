@@ -374,3 +374,138 @@ def test_tool_is_not_offered_when_nothing_else_is_disclosed(wired, monkeypatch):
         "a deliberately tool-less run must never gain search_run_log as its "
         f"sole disclosed tool; got kwargs {offered[0]!r}"
     )
+
+
+# -- TASK-16788: the allow-list governs the CATALOG, not the runtime layer ---
+#
+# Recorded decision (Docs/superpowers/specs/2026-08-16-expansion-residue-
+# design.md): the run-log tools are the same family as spawn_subagent /
+# find_tools / load_tools / skill_file, ALL of which are appended to
+# `runtime_schemas` after `_run_one`'s allow-list filter and dispatched by
+# `run_agent_loop` in dedicated branches before `invoke_tool` can apply that
+# filter. Filtering only the run-log tools would make one runtime tool
+# behave unlike its family; filtering the whole family would break skills
+# and sub-agents. So the behaviour is DOCUMENTED (on
+# `AgentConfig.allowed_tools`) and pinned here, red if someone later
+# "fixes" it silently. The confound this cost a real experiment is recorded
+# in Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/report.md.
+
+
+def test_run_log_tools_are_offered_under_an_empty_allow_list(wired):
+    """An EMPTY `allowed_tools` still gets the run-log tools.
+
+    The two halves are asserted in the same run, so the test cannot pass by
+    the allow-list silently having no effect at all: every offered name must
+    be a RUNTIME tool (nothing from the catalog survived the filter -- see
+    `test_tool_is_offered_to_the_primary_agent_only` for the same harness
+    with `calculator` allow-listed and offered), AND all three run-log
+    schemas must be present.
+
+    `log_active` is satisfied the ordinary way: primary agent, an active
+    writer (the `wired` fixture points `resolve_log_root` at tmp_path), and
+    a non-empty `runtime_schemas` -- here the spawn schema, which the
+    default `max_subagents` admits regardless of the allow-list too.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        RUN_LOG_SLICE_TOOL_NAME,
+        RUN_LOG_STATS_TOOL_NAME,
+        RUNTIME_TOOL_NAMES,
+        SEARCH_RUN_LOG_TOOL_NAME,
+    )
+
+    db, registry, _root = wired
+    offered = []
+
+    def capture(**kwargs):
+        offered.append([t["function"]["name"] for t in kwargs.get("tools", [])])
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    service = AgentService(db, registry, chat_call=capture)
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=(),  # nothing from the catalog is permitted
+            budget=RunBudget(),
+        ),
+        api_endpoint="openai",  # native: the offered set IS the tools= kwarg
+    )
+    assert len(offered) == 1
+    names = offered[0]
+    assert set(names) <= RUNTIME_TOOL_NAMES, (
+        "an empty allow-list must leave the catalog half empty; offered "
+        f"{sorted(set(names) - RUNTIME_TOOL_NAMES)} anyway"
+    )
+    assert SEARCH_RUN_LOG_TOOL_NAME in names
+    assert RUN_LOG_STATS_TOOL_NAME in names
+    assert RUN_LOG_SLICE_TOOL_NAME in names
+
+
+def test_a_run_log_call_dispatches_although_the_allow_list_is_empty():
+    """The other half of the contract: the CALL is not caught later either.
+
+    `invoke_tool` refuses any name outside `config.allowed_tools`, but a
+    run-log call never reaches it -- `run_agent_loop` has a dedicated branch
+    for each run-log name ahead of the generic fallback. Pinned with an
+    explicit empty allow-list and an `invoke_tool` that records every call
+    it is handed: the injected handler must run and `invoke_tool` must stay
+    untouched.
+    """
+    from tldw_chatbook.Agents.agent_models import (
+        SEARCH_RUN_LOG_TOOL_NAME,
+        ModelTurn,
+        ToolCall,
+        ToolResult,
+    )
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+
+    from Tests.Agents.test_agent_runtime import make_deps
+
+    handled = []
+    fell_through = []
+
+    def handler(args):
+        handled.append(dict(args))
+        return ToolResult(ok=True, content="record 000412 [model]")
+
+    def invoke(call):
+        fell_through.append(call.name)
+        return ToolResult(ok=False, error=f"Tool not permitted: {call.name}")
+
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=SEARCH_RUN_LOG_TOOL_NAME,
+                        args={"contains": "refused"},
+                        call_id="c1",
+                    ),
+                ),
+                assistant_message={"role": "assistant", "content": ""},
+            ),
+            ModelTurn(text="answered"),
+        ],
+        invoke=invoke,
+    )
+    deps.search_run_log = handler
+    outcome = run_agent_loop(
+        AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=(),  # explicitly empty, not merely defaulted
+            budget=RunBudget(max_steps=8, max_model_turns=8),
+        ),
+        [{"role": "user", "content": "go"}],
+        [],
+        deps,
+    )
+    assert handled == [{"contains": "refused"}]
+    assert fell_through == [], (
+        "a run-log call must dispatch in its own branch, never through "
+        f"invoke_tool's allow-list check; got {fell_through}"
+    )
+    assert outcome.final_text == "answered"

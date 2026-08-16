@@ -6,6 +6,7 @@ import inspect
 from typing import Any, Callable
 
 from ..runtime_policy.types import PolicyDeniedError
+from .research_source_catalog import catalog_entries
 
 
 LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
@@ -21,7 +22,9 @@ LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
     "tavily",
     "yandex",
 }
-LOCAL_SUPPORTED_PAPER_PROVIDERS = ("arxiv", "semantic_scholar")
+# task-16792: the paper-provider listing IS the catalog (one source of
+# truth -- a hardcoded tuple here drifted from the runnable lanes).
+LOCAL_SUPPORTED_PAPER_PROVIDERS = tuple(e.source_id for e in catalog_entries())
 
 
 class LocalResearchSearchService:

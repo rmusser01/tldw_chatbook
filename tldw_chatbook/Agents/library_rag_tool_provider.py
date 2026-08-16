@@ -7,9 +7,11 @@ retrieval method. It is a bounded adapter over the app-owned
 stays under the shared 32 KiB ceiling, citations and the provenance mapping
 never leave the adapter, and unavailable/setup conditions map to
 ``index_unavailable`` -- the provider never falls back to direct lexical
-reads. The one identity a row may carry is the ``source_type``/``source_id``
-(+ ``chunk_id``) pair ``expand_document`` requires, emitted only for rows that
-tool can actually fetch (TASK-16174); see ``_project_row``.
+reads. The only identity a row may carry is what ``expand_document`` acts on
+-- the ``source_type``/``source_id`` pair (+ ``chunk_id``/``chunk_start``,
+TASK-16174) plus the ``note_id``/``doc_id`` fallbacks a semantic row's real
+document identity may hide in (TASK-16588) -- emitted only for rows that tool
+can actually fetch; see ``_project_row``.
 
 Synchronous to satisfy the ``ToolProvider`` protocol; it runs on the agent
 worker thread, where bridging the async retrieval service with
@@ -58,6 +60,10 @@ _MAX_SNIPPET_CHARS = 1200
 _MAX_RESULT_ID_CHARS = 2000
 _MAX_TITLE_CHARS = 1000
 _MAX_RUNTIME_BACKEND_CHARS = 1000
+#: Provenance keys `expand_document` accepts as identity fallbacks and that
+#: an indexing builder actually writes (TASK-16588). `media_id` is accepted
+#: by the tool but written by no builder, so it is not projected.
+_IDENTITY_FALLBACK_KEYS: tuple[str, ...] = ("note_id", "doc_id")
 
 _RAG_TOOL_DESCRIPTION = (
     "Search your Library's retrieval index (notes, media, and conversations) "
@@ -133,6 +139,39 @@ def _chunk_start(provenance: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _identity_fallbacks(provenance: Any) -> dict[str, str]:
+    """The provenance identity keys ``expand_document`` accepts as fallbacks.
+
+    ``_semantic_row`` resolves ``source_id`` as ``metadata["source_id"] ||
+    metadata["document_id"] || the vector-store point id``, so on a legacy or
+    non-canonically-built index the id that surfaces names nothing the tool
+    can fetch while the real identity rides in the provenance extras. The
+    tool already takes ``note_id``/``doc_id`` (and strips the indexer's
+    ``note_``/``media_`` prefix), so carrying them costs one string each and
+    turns a row the hint declares expandable from a possible ``not_found``
+    into a fetch.
+
+    ``media_id`` is deliberately NOT emitted: the tool accepts it, but no
+    indexing builder writes it, so it would be bytes spent in a sealed
+    payload on a key that cannot occur.
+
+    Values are string-coerced (an id may arrive as an int) and empty or
+    whitespace-only ones are dropped, the same shape ``_chunk_start`` uses:
+    a fallback that resolves nothing is a key that changes nothing.
+    """
+    if not isinstance(provenance, Mapping):
+        return {}
+    fallbacks: dict[str, str] = {}
+    for key in _IDENTITY_FALLBACK_KEYS:
+        raw = provenance.get(key)
+        if raw is None:
+            continue
+        value = str(raw).strip()[:_MAX_RESULT_ID_CHARS]
+        if value:
+            fallbacks[key] = value
+    return fallbacks
 
 
 def _error_result(error: LibraryToolError) -> ToolResult:
@@ -323,9 +362,9 @@ class LibraryRagToolProvider:
         """Project one evidence row to agent-safe fields (never citations, and
         never the provenance mapping itself).
 
-        Two provenance-DERIVED additions exist, both TASK-16174 and both
-        emitted under exactly one precondition -- the row is something
-        ``expand_document`` can actually fetch:
+        Three provenance-DERIVED additions exist, all emitted under exactly
+        one precondition -- the row is something ``expand_document`` can
+        actually fetch:
 
         - ``expand_hint``: the verdict on whether following this row into its
           document would add anything, from the pure
@@ -344,6 +383,14 @@ class LibraryRagToolProvider:
           label-only row's ``result_id`` merely HAPPENS to equal its
           ``source_id``, and the seam was readable only from label prose. A
           policy the agent can act on only by guessing measures its guessing.
+        - ``note_id``/``doc_id`` (TASK-16588): the identity FALLBACKS the tool
+          accepts, emitted when provenance carries them. A semantic row's
+          ``source_id`` can be the vector store's point id (``_semantic_row``
+          falls through to it when the indexed metadata carries no
+          ``source_id``/``document_id``), which names nothing fetchable --
+          so without these a row the hint declares expandable can still come
+          back ``not_found``. ``media_id`` is accepted by the tool but written
+          by no builder, so it is never projected.
 
         The precondition is the hint's own (``expand_hint`` returns ``None``
         for an absent/unsupported seam or an empty ``source_id``), so identity
@@ -364,8 +411,19 @@ class LibraryRagToolProvider:
                 :_MAX_RUNTIME_BACKEND_CHARS
             ],
         }
-        source_id = str(getattr(row, "source_id", "") or "").strip()
-        chunk_id = str(getattr(row, "chunk_id", "") or "").strip()
+        # Identity strings are deliberately OUTSIDE the sealing loop's shrink
+        # order (truncating an id mid-flight yields a corrupt fetch key), so
+        # they must be bounded HERE or an untrusted oversized provenance value
+        # forces the loop to drop the whole row (Qodo PR-1729 finding 3 --
+        # demonstrated: a 50k-char id returned a 0-row payload). An id past
+        # _MAX_RESULT_ID_CHARS names nothing fetchable anyway; production ids
+        # are <= 1000 chars.
+        source_id = str(getattr(row, "source_id", "") or "").strip()[
+            :_MAX_RESULT_ID_CHARS
+        ]
+        chunk_id = str(getattr(row, "chunk_id", "") or "").strip()[
+            :_MAX_RESULT_ID_CHARS
+        ]
         provenance = getattr(row, "provenance", None)
         # Computed from the UNPROJECTED snippet against this adapter's own
         # cap, so a snippet the projection above cuts is reported as
@@ -390,6 +448,7 @@ class LibraryRagToolProvider:
             chunk_start = _chunk_start(provenance)
             if chunk_start is not None:
                 projected["chunk_start"] = chunk_start
+            projected.update(_identity_fallbacks(provenance))
         return projected
 
 

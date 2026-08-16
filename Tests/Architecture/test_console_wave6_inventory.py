@@ -18,6 +18,7 @@ BASELINE_METHODS = 705
 POST_IMAGE_IMPLEMENTATION_BASE = "8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0"
 POST_IMAGE_BASELINE_LINES = 22_172
 POST_IMAGE_BASELINE_METHODS = 712
+TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
@@ -274,11 +275,11 @@ WAVE6_GROUPS = {
                 "_current_console_rail_character_id",
                 "_current_console_rail_character_name",
                 "_fetch_character_card_for_avatar",
-                "_fetch_expression_image_bytes",
                 "_apply_console_character_choice_async",
                 "_refresh_active_character_avatar_if_scope_changed",
             }
         ),
+        deleted=frozenset({"_fetch_expression_image_bytes"}),
         raw_lines=281,
     ),
     "fleet": Wave6Group(
@@ -1078,6 +1079,7 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
     assert len(screen_source.splitlines()) <= POST_IMAGE_BASELINE_LINES, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
+    assert len(screen_source.splitlines()) <= TASK10_SCREEN_LINE_CEILING
     assert _method_count(screen_class) <= POST_IMAGE_BASELINE_METHODS, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
@@ -1364,6 +1366,32 @@ def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
 
         for state_name in names:
             _assert_descriptor_contract(ChatScreen, owner_name, state_name)
+
+
+@pytest.mark.unit
+def test_character_controller_has_only_named_non_dom_dependencies() -> None:
+    """Lock Task10 orchestration behind the approved controller boundary."""
+
+    path = _REPO_ROOT / "tldw_chatbook/UI/Console_Modules/character.py"
+    _, controller = _class_node(path, "ConsoleCharacterController")
+    methods = _methods_from_class(controller)
+    init = methods["__init__"]
+    assert isinstance(init, ast.FunctionDef)
+    assert [argument.arg for argument in init.args.args] == ["self"]
+    assert {argument.arg for argument in init.args.kwonlyargs} == {
+        "app_config_accessor",
+        "chat_store_accessor",
+        "actor_scope_accessor",
+        "character_name_accessor",
+        "manual_reaction_key",
+        "resolve_visual_identity",
+        "ensure_console_image_view",
+        "console_image_default_mode",
+        "is_mounted",
+        "render_character_avatar",
+    }
+    assert "_screen" not in _self_assignments(controller)
+    _assert_no_dom_access(methods.values())
 
 
 @pytest.mark.unit

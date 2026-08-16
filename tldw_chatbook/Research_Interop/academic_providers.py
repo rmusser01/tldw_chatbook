@@ -25,6 +25,8 @@ from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting
 
+from .research_source_catalog import expand_source_selection
+
 __all__ = [
     "ARXIV_API_ENDPOINT",
     "BIORXIV_API_BASE",
@@ -42,6 +44,11 @@ ARXIV_API_ENDPOINT = "https://export.arxiv.org/api/query"
 SEMANTIC_SCHOLAR_API_ENDPOINT = "https://api.semanticscholar.org/graph/v1/paper/search"
 BIORXIV_API_BASE = "https://api.biorxiv.org"
 PUBMED_EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+OPENALEX_API_BASE = "https://api.openalex.org"
+CROSSREF_API_BASE = "https://api.crossref.org"
+ZENODO_API_BASE = "https://zenodo.org/api/records"
+FIGSHARE_API_BASE = "https://api.figshare.com/v2/articles/search"
+OSF_API_BASE = "https://api.osf.io/v2/preprints"
 
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_MAX_RETRIES = 2
@@ -58,6 +65,41 @@ _ARXIV_ID_RE = re.compile(r"arxiv\.org/abs/([^v/\s]+)", re.IGNORECASE)
 class AcademicProviderError(Exception):
     """A provider request failed after exhausting retries (or hit a
     non-retryable HTTP error)."""
+
+
+def _request_with_retries_json(
+    client: Any,
+    method: str,
+    url: str,
+    *,
+    timeout: Any,
+    max_retries: int,
+    body: dict[str, Any],
+) -> Any:
+    """JSON-body variant of the retry ladder (Figshare's POST search)."""
+    last_failure: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.request(
+                method, url, json=body, timeout=timeout
+            )
+            status = int(getattr(response, "status_code", 0) or 0)
+            if status in _RETRYABLE_STATUS:
+                last_failure = AcademicProviderError(f"http {status} from {url}")
+                if attempt < max_retries:
+                    _sleep_backoff(attempt)
+                    continue
+                raise last_failure
+            if status >= 400:
+                raise AcademicProviderError(f"http {status} from {url}")
+            return response
+        except httpx.TransportError as exc:
+            last_failure = exc
+            if attempt < max_retries:
+                _sleep_backoff(attempt)
+                continue
+            raise AcademicProviderError(f"{url} failed after {max_retries + 1} attempt(s): {exc}") from exc
+    raise AcademicProviderError(f"{url} failed: {last_failure}")
 
 
 def _sleep_backoff(attempt: int) -> None:
@@ -407,6 +449,405 @@ def merge_evidence_pools(
     return merged
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_tags(text: str | None) -> str | None:
+    """Strip HTML/JATS tags and collapse whitespace (Crossref abstracts,
+    Zenodo/Figshare descriptions)."""
+    if not text:
+        return None
+    return " ".join(_TAG_RE.sub("", text).split()) or None
+
+
+def _clean_doi(raw: str | None) -> str | None:
+    """Normalize a DOI to its bare form (OpenAlex prefixes https://doi.org/)."""
+    if not raw:
+        return None
+    return raw.removeprefix("https://doi.org/").removeprefix("doi:") or None
+
+
+def _invert_abstract(index: dict[str, list[int]] | None) -> str | None:
+    """Reconstruct an abstract from OpenAlex's inverted index."""
+    if not isinstance(index, dict):
+        return None
+    words: dict[int, str] = {}
+    for word, positions in index.items():
+        for position in positions or []:
+            words[int(position)] = word
+    return " ".join(words[i] for i in sorted(words)) or None
+
+
+def search_openalex(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    client: Any = None,
+    timeout: Any = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Search OpenAlex works (task-16792; server catalog parity).
+
+    Args:
+        query: The search term.
+        results_per_page: Page size (per-page).
+        client: Injectable httpx-like client for tests.
+        timeout: Per-request timeout.
+        max_retries: Retry budget.
+
+    Returns:
+        The runner dict shape (abstracts reconstructed from the inverted
+        index; DOIs normalized; ``source`` set to ``"openalex"``).
+
+    Raises:
+        AcademicProviderError: After exhausting retries or on a hard error.
+    """
+    params = {
+        "search": query,
+        "per-page": max(1, results_per_page),
+        "page": 1,
+    }
+    if client is not None:
+        response = _request_with_retries(
+            client, "GET", f"{OPENALEX_API_BASE}/works",
+            timeout=timeout, max_retries=max_retries, params=params,
+        )
+        data = json.loads(response.text)
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries(
+                http, "GET", f"{OPENALEX_API_BASE}/works",
+                timeout=timeout, max_retries=max_retries, params=params,
+            )
+            data = json.loads(response.text)
+
+    items: list[dict[str, Any]] = []
+    for raw in data.get("results") or []:
+        if not isinstance(raw, dict):
+            continue
+        location = raw.get("primary_location") or {}
+        doi = _clean_doi(raw.get("doi"))
+        items.append(
+            {
+                "id": raw.get("id"),
+                "doi": doi,
+                "title": raw.get("title"),
+                "authors": ", ".join(
+                    str((a.get("author") or {}).get("display_name"))
+                    for a in (raw.get("authorships") or [])
+                    if isinstance(a, dict) and (a.get("author") or {}).get("display_name")
+                ) or None,
+                "published_date": str(raw.get("publication_year") or "") or None,
+                "abstract": _invert_abstract(raw.get("abstract_inverted_index")),
+                "url": location.get("landing_page_url") or (
+                    f"https://doi.org/{doi}" if doi else None
+                ),
+                "pdf_url": location.get("pdf_url"),
+                "source": "openalex",
+            }
+        )
+
+    return {
+        "query_echo": {"query": query},
+        "items": items,
+        "total_results": int((data.get("meta") or {}).get("count") or 0),
+        "results_per_page": results_per_page,
+    }
+
+
+def search_crossref(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    client: Any = None,
+    timeout: Any = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Search Crossref works (task-16792; server catalog parity).
+
+    Args:
+        query: The search term.
+        results_per_page: Page size (rows).
+        client: Injectable httpx-like client for tests.
+        timeout: Per-request timeout.
+        max_retries: Retry budget.
+
+    Returns:
+        The runner dict shape (JATS stripped from abstracts; ``source``
+        set to ``"crossref"``).
+
+    Raises:
+        AcademicProviderError: After exhausting retries or on a hard error.
+    """
+    params = {"query": query, "rows": max(1, results_per_page), "offset": 0}
+    if client is not None:
+        response = _request_with_retries(
+            client, "GET", f"{CROSSREF_API_BASE}/works",
+            timeout=timeout, max_retries=max_retries, params=params,
+        )
+        data = json.loads(response.text)
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries(
+                http, "GET", f"{CROSSREF_API_BASE}/works",
+                timeout=timeout, max_retries=max_retries, params=params,
+            )
+            data = json.loads(response.text)
+
+    message = data.get("message") or {}
+    items: list[dict[str, Any]] = []
+    for raw in message.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        authors = ", ".join(
+            f"{a.get('given', '').strip()} {a.get('family', '').strip()}".strip()
+            for a in (raw.get("author") or [])
+            if isinstance(a, dict)
+        ).strip() or None
+        issued = raw.get("issued") or {}
+        date_parts = (issued.get("date-parts") or [[None]])[0]
+        items.append(
+            {
+                "id": raw.get("DOI"),
+                "doi": _clean_doi(raw.get("DOI")),
+                "title": (raw.get("title") or [None])[0],
+                "authors": authors,
+                "published_date": str(date_parts[0]) if date_parts and date_parts[0] else None,
+                "abstract": _strip_tags(raw.get("abstract")),
+                "url": f"https://doi.org/{raw['DOI']}" if raw.get("DOI") else None,
+                "pdf_url": None,
+                "source": "crossref",
+            }
+        )
+
+    return {
+        "query_echo": {"query": query},
+        "items": items,
+        "total_results": int(message.get("total-results") or 0),
+        "results_per_page": results_per_page,
+    }
+
+
+def search_zenodo(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    client: Any = None,
+    timeout: Any = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Search Zenodo records (task-16792; server catalog parity).
+
+    Args:
+        query: The search term.
+        results_per_page: Page size.
+        client: Injectable httpx-like client for tests.
+        timeout: Per-request timeout.
+        max_retries: Retry budget.
+
+    Returns:
+        The runner dict shape (HTML stripped from descriptions;
+        ``source`` set to ``"zenodo"``).
+
+    Raises:
+        AcademicProviderError: After exhausting retries or on a hard error.
+    """
+    params = {"q": query, "size": max(1, results_per_page), "page": 1}
+    if client is not None:
+        response = _request_with_retries(
+            client, "GET", ZENODO_API_BASE,
+            timeout=timeout, max_retries=max_retries, params=params,
+        )
+        data = json.loads(response.text)
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries(
+                http, "GET", ZENODO_API_BASE,
+                timeout=timeout, max_retries=max_retries, params=params,
+            )
+            data = json.loads(response.text)
+
+    hits = (data.get("hits") or {})
+    items: list[dict[str, Any]] = []
+    for raw in hits.get("hits") or []:
+        if not isinstance(raw, dict):
+            continue
+        metadata = raw.get("metadata") or {}
+        record_id = raw.get("id")
+        items.append(
+            {
+                "id": str(record_id) if record_id is not None else None,
+                "doi": _clean_doi(raw.get("doi")),
+                "title": metadata.get("title"),
+                "authors": ", ".join(
+                    str(c.get("name"))
+                    for c in (metadata.get("creators") or [])
+                    if isinstance(c, dict) and c.get("name")
+                ) or None,
+                "published_date": metadata.get("publication_date"),
+                "abstract": _strip_tags(metadata.get("description")),
+                "url": f"https://zenodo.org/records/{record_id}" if record_id is not None else None,
+                "pdf_url": None,
+                "source": "zenodo",
+            }
+        )
+
+    return {
+        "query_echo": {"query": query},
+        "items": items,
+        "total_results": int(hits.get("total") or 0),
+        "results_per_page": results_per_page,
+    }
+
+
+def search_figshare(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    client: Any = None,
+    timeout: Any = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Search Figshare articles (task-16792; server catalog parity --
+    POST search, matching the server's adapter).
+
+    Args:
+        query: The search term.
+        results_per_page: Page size.
+        client: Injectable httpx-like client for tests.
+        timeout: Per-request timeout.
+        max_retries: Retry budget.
+
+    Returns:
+        The runner dict shape (HTML stripped from descriptions;
+        ``source`` set to ``"figshare"``).
+
+    Raises:
+        AcademicProviderError: After exhausting retries or on a hard error.
+    """
+    body = {"search_for": query, "page": 1, "page_size": max(1, results_per_page)}
+    if client is not None:
+        response = _request_with_retries_json(
+            client, "POST", FIGSHARE_API_BASE, timeout=timeout,
+            max_retries=max_retries, body=body,
+        )
+        data = json.loads(response.text)
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries_json(
+                http, "POST", FIGSHARE_API_BASE, timeout=timeout,
+                max_retries=max_retries, body=body,
+            )
+            data = json.loads(response.text)
+
+    items: list[dict[str, Any]] = []
+    for raw in data if isinstance(data, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        article_id = raw.get("id")
+        items.append(
+            {
+                "id": str(article_id) if article_id is not None else None,
+                "doi": _clean_doi(raw.get("doi")),
+                "title": raw.get("title"),
+                "authors": ", ".join(
+                    str(a.get("full_name"))
+                    for a in (raw.get("authors") or [])
+                    if isinstance(a, dict) and a.get("full_name")
+                ) or None,
+                "published_date": str(raw.get("published_date") or "") or None,
+                "abstract": _strip_tags(raw.get("description")),
+                "url": raw.get("url_publication") or raw.get("url") or (
+                    f"https://figshare.com/articles/_{article_id}" if article_id is not None else None
+                ),
+                "pdf_url": raw.get("download_url"),
+                "source": "figshare",
+            }
+        )
+
+    return {
+        "query_echo": {"query": query},
+        "items": items,
+        "total_results": len(items),
+        "results_per_page": results_per_page,
+    }
+
+
+def search_osf(
+    query: str,
+    *,
+    results_per_page: int = 5,
+    client: Any = None,
+    timeout: Any = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Search OSF preprints (task-16792; server catalog parity).
+
+    Args:
+        query: The search term.
+        results_per_page: Page size (page[size], capped at the API's 100).
+        client: Injectable httpx-like client for tests.
+        timeout: Per-request timeout.
+        max_retries: Retry budget.
+
+    Returns:
+        The runner dict shape (``source`` set to ``"osf"``; dates truncated
+        to ``YYYY-MM-DD``).
+
+    Raises:
+        AcademicProviderError: After exhausting retries or on a hard error.
+    """
+    params = {
+        "q": query,
+        "page[size]": max(1, min(results_per_page, 100)),
+        "page[number]": 1,
+    }
+    if client is not None:
+        response = _request_with_retries(
+            client, "GET", OSF_API_BASE,
+            timeout=timeout, max_retries=max_retries, params=params,
+        )
+        data = json.loads(response.text)
+    else:
+        with httpx.Client() as http:
+            response = _request_with_retries(
+                http, "GET", OSF_API_BASE,
+                timeout=timeout, max_retries=max_retries, params=params,
+            )
+            data = json.loads(response.text)
+
+    items: list[dict[str, Any]] = []
+    for raw in data.get("data") or []:
+        if not isinstance(raw, dict):
+            continue
+        attributes = raw.get("attributes") or {}
+        links = raw.get("links") or {}
+        osf_id = raw.get("id")
+        created = str(attributes.get("date_created") or "")
+        items.append(
+            {
+                "id": osf_id,
+                "doi": _clean_doi(attributes.get("doi")),
+                "title": attributes.get("title"),
+                "authors": None,
+                "published_date": created[:10] if created else None,
+                "abstract": _strip_tags(attributes.get("description")),
+                "url": links.get("html") or (
+                    f"https://osf.io/preprints/{osf_id}" if osf_id else None
+                ),
+                "pdf_url": None,
+                "source": "osf",
+            }
+        )
+
+    return {
+        "query_echo": {"query": query},
+        "items": items,
+        "total_results": len(items),
+        "results_per_page": results_per_page,
+    }
+
+
 def search_biorxiv(
     query: str,
     *,
@@ -752,15 +1193,40 @@ async def search_papers(
     def _pubmed_lane() -> Any:
         return search_pubmed(query=topic_query, results_per_page=results_per_page)
 
+    def _openalex_lane() -> Any:
+        return search_openalex(query=topic_query, results_per_page=results_per_page)
+
+    def _crossref_lane() -> Any:
+        return search_crossref(query=topic_query, results_per_page=results_per_page)
+
+    def _zenodo_lane() -> Any:
+        return search_zenodo(query=topic_query, results_per_page=results_per_page)
+
+    def _figshare_lane() -> Any:
+        return search_figshare(query=topic_query, results_per_page=results_per_page)
+
+    def _osf_lane() -> Any:
+        return search_osf(query=topic_query, results_per_page=results_per_page)
+
     lanes: dict[str, Any] = {
         "arxiv": _arxiv_lane,
         "semantic_scholar": _s2_lane,
         "biorxiv": _biorxiv_lane,
         "medrxiv": _medrxiv_lane,
         "pubmed": _pubmed_lane,
+        "openalex": _openalex_lane,
+        "crossref": _crossref_lane,
+        "zenodo": _zenodo_lane,
+        "figshare": _figshare_lane,
+        "osf": _osf_lane,
     }
-    requested = (
-        providers if providers is not None else _default_academic_providers()
+    # task-16792: tokens may be source ids OR category names ("biomedical",
+    # "repositories", ...); unknown names raise instead of silently
+    # narrowing the search.
+    requested = expand_source_selection(
+        list(providers)
+        if providers is not None
+        else _default_academic_providers()
     )
     selected: list[str] = []
     for name in requested:
@@ -768,8 +1234,8 @@ async def search_papers(
             selected.append(name)
     dropped = [name for name in requested if name not in lanes]
     if dropped:
-        # Warns for BOTH explicit lists and config-driven defaults: a typo
-        # in [SearchSettings] must be as visible as one in the window.
+        # Defense in depth: expand_source_selection already rejects unknown
+        # tokens, but a future lane rename must not silently narrow.
         logger.warning(f"search_papers ignoring unknown providers: {dropped}")
 
     async def _lane_runner(name: str, lane: Any) -> Any:
@@ -780,7 +1246,7 @@ async def search_papers(
             logger.warning(f"search_papers {name} lane failed: {exc}")
             return None
 
-    # task-16789: all selected providers run CONCURRENTLY (serial execution
+    # task-16814: all selected providers run CONCURRENTLY (serial execution
     # added avoidable latency); per-provider degradation lives in each lane.
     outcomes = await asyncio.gather(
         *(_lane_runner(name, lanes[name]) for name in selected)

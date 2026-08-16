@@ -237,6 +237,10 @@ class PromptBlockEditor(Vertical):
     """Edit two canonical lanes while preserving unaffected native editor state."""
 
     DEFAULT_CSS = """
+    /* INTENTIONAL widget-local palette (TASK-16811 audit): these are this
+       editor's own design values, not parse fallbacks. They deliberately
+       shadow the app tokens for this source ($ds-focus-bg: $accent 12%,
+       $ds-action-focus: $accent), and $ds-surface-field exists only here. */
     $ds-surface-panel: $panel;
     $ds-surface-raised: $surface;
     $ds-surface-field: $surface-darken-1;

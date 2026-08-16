@@ -216,7 +216,11 @@ def test_v36_to_v37_preserves_messages_schema_objects_and_fts(
         for name, sql in before_triggers.items()
         if name not in MESSAGE_SYNC_TRIGGERS
     }
-    assert _schema_objects(connection, "index") == before["indexes"]
+    assert {
+        name: sql
+        for name, sql in _schema_objects(connection, "index").items()
+        if not name.startswith("idx_visual_identity_")
+    } == before["indexes"]
     assert [
         row[0]
         for row in connection.execute(

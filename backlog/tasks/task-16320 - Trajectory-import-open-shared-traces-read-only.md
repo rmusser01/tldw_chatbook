@@ -9,14 +9,14 @@ labels:
   - trajectory
   - import
 dependencies:
-  - TASK-16319
+  - TASK-16813
 priority: high
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Import a trajectory export file (task-16319 format) and render it in the existing TrajectoryScreen as a detached, read-only view. Imported traces must never write into the local conversations/messages/sidecar tables -- they exist only as an ephemeral snapshot for viewing, preserving sync integrity. Malformed or wrong-version files are rejected with actionable errors. ADR: extend the task-16319 export-format ADR rather than creating a new one.
+Import a trajectory export file (task-16813 format) and render it in the existing TrajectoryScreen as a detached, read-only view. Imported traces must never write into the local conversations/messages/sidecar tables -- they exist only as an ephemeral snapshot for viewing, preserving sync integrity. Malformed or wrong-version files are rejected with actionable errors. ADR: extend the task-16813 export-format ADR rather than creating a new one.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

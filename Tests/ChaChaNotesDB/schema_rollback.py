@@ -160,6 +160,14 @@ POST_VERSION_SCHEMA_REMOVALS: dict[int, tuple[str, ...]] = {
     # V37->V38: local-only trajectory sidecar (IF NOT EXISTS, but removed so
     # replay genuinely creates it). Its indexes drop with the table.
     38: ("DROP TABLE IF EXISTS message_trajectory_metadata",),
+    # V38->V39: local Visual Identity tables. Children must be removed before
+    # their referenced pack/version parents.
+    39: (
+        "DROP TABLE IF EXISTS visual_identity_bindings",
+        "DROP TABLE IF EXISTS visual_identity_assets",
+        "DROP TABLE IF EXISTS visual_identity_pack_versions",
+        "DROP TABLE IF EXISTS visual_identity_packs",
+    ),
 }
 
 

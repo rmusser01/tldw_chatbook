@@ -98,7 +98,7 @@ class BudgetLedger:
         self.searches_reserved += max(0, int(count))
 
     def release_searches(self, count: int) -> None:
-        """Return unused reservations (task-16789): when the pipeline stops
+        """Return unused reservations (task-16814): when the pipeline stops
         its fan-out early (e.g. the phase-1 deadline), reserved-but-never-
         executed searches must not keep counting against the budget."""
         self.searches_reserved -= min(max(0, int(count)), self.searches_reserved)
@@ -124,7 +124,7 @@ class BudgetLedger:
         """Cap a batch of fetched docs at the remaining budget (the cap
         happens BEFORE the docs are processed onward); a zero remaining
         budget is an exhaustion error, not a silent empty batch -- unless
-        the batch itself is empty, which consumes no budget (task-16789:
+        the batch itself is empty, which consumes no budget (task-16814:
         ``allot_docs(0)`` must return 0 even on an exhausted budget)."""
         count = int(count)
         if count <= 0:
@@ -158,7 +158,7 @@ class BudgetLedger:
     def settle_tokens(self, count: int, *, exact: bool = False) -> None:
         """Record settled token usage; ``exact`` marks whether the counts
         came from provider-reported usage rather than estimates
-        (task-16789: the snapshot flag must reflect reality)."""
+        (task-16814: the snapshot flag must reflect reality)."""
         count = max(0, int(count))
         self.tokens_settled += count
         if exact:
@@ -208,7 +208,7 @@ class BudgetLedger:
             "tokens_reserved": self.tokens_reserved,
             "tokens_settled": self.tokens_settled,
             # True when any settled usage was estimated rather than
-            # provider-reported (task-16789).
+            # provider-reported (task-16814).
             "tokens_estimated": self.tokens_settled_exact < self.tokens_settled,
             "runtime_elapsed_s": round(self.elapsed_seconds(), 3),
         }

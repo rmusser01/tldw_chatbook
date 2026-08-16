@@ -62,10 +62,6 @@ class BaseTamagotchi(Static):
     ]
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-accent: $primary;
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     BaseTamagotchi {
         width: auto;
@@ -91,12 +87,8 @@ class BaseTamagotchi(Static):
         border: round $surface-lighten-2;
     }
 
-    BaseTamagotchi:focus {
-        border: round $ds-focus-accent;
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* :focus styling lives in css/components/_widgets.tcss (needs the
+       bundle's $ds-focus-* tokens; TASK-16811). */
 
     BaseTamagotchi.compact {
         height: 1;

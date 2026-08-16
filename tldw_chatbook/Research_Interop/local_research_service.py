@@ -678,7 +678,7 @@ class LocalResearchService:
         return self._update_run_state(run_id, "failed", **fields)
 
     # Hardcoded assignment fragments for update_run_progress's external-DB
-    # branch (task-16789): the ONLY source of SQL text for those columns.
+    # branch (task-16814): the ONLY source of SQL text for those columns.
     _RUN_PROGRESS_FIELD_SQL = {
         "phase": "phase = ?",
         "progress_percent": "progress_percent = ?",
@@ -853,7 +853,7 @@ class LocalResearchService:
         notifications because it never sets a terminal status.
         """
         if self._uses_external_db:
-            # delete_run's precedent (task-16789): raw statement inside the
+            # delete_run's precedent (task-16814): raw statement inside the
             # db's own transaction() context, per the standardized
             # transaction-handling rule.
             fields: dict[str, Any] = {}

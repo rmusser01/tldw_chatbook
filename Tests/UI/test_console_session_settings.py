@@ -5493,10 +5493,28 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
 
 @pytest.mark.asyncio
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume():
-    class RecordingPersistence:
+    class HungFirstWritePersistence:
+        """One shared-store double: the FIRST system-prompt write blocks.
+
+        task-16815 fixture correction: the Console runtime/store became
+        app-owned (task-15860), so two co-mounted ChatScreens share ONE
+        store -- the original per-screen persistence pair aliased to a
+        single store and the repair write bound to the hung double
+        (stack-verified 2026-08-16). One double now serves both roles:
+        the hung screen's refresh write blocks until released; every
+        later write (the app-level repair force-persist) records. The
+        contract under test is unchanged: unmount bounds a stuck writer,
+        and the repair persists the latest identity even while the
+        original write is still blocked.
+        """
+
         def __init__(self) -> None:
             self.durable_system = "Speak with Alpha."
             self.durable_greeting = "Hello Alpha."
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.finished = threading.Event()
+            self.first_system_write_seen = False
 
         def create_message(self, **kwargs):
             self.durable_greeting = kwargs["content"]
@@ -5506,6 +5524,20 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             return True
 
         def update_conversation_system_prompt(self, **kwargs):
+            first_write = not self.first_system_write_seen
+            self.first_system_write_seen = True
+            if first_write:
+                self.started.set()
+                try:
+                    assert self.release.wait(10)
+                    # The released write still applies its side effect, as
+                    # the original HungPersistence did via super() -- a
+                    # completed write must persist what it carried (Qodo
+                    # review, PR #1726).
+                    self.durable_system = kwargs["system_prompt"]
+                    return True
+                finally:
+                    self.finished.set()
             self.durable_system = kwargs["system_prompt"]
             return True
 
@@ -5513,39 +5545,17 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             self.durable_greeting = kwargs["content"]
             return True
 
-    class HungPersistence(RecordingPersistence):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-            self.finished = threading.Event()
-
-        def create_message(self, **kwargs):
-            self.durable_greeting = kwargs["content"]
-            return "msg-hung"
-
-        def update_conversation_system_prompt(self, **kwargs):
-            self.started.set()
-            try:
-                assert self.release.wait(10)
-                return super().update_conversation_system_prompt(**kwargs)
-            finally:
-                self.finished.set()
-
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
-    app.app_config.setdefault("console", {})[
-        "roleplay_refresh_teardown_timeout_seconds"
-    ] = 0.05
+    app.app_config.setdefault("console", {})["roleplay_refresh_teardown_timeout_seconds"] = 0.05
     host = ConsoleHarness(app)
-    repair_persistence = RecordingPersistence()
-    hung_persistence = HungPersistence()
+    hung_persistence = HungFirstWritePersistence()
 
     async with host.run_test(size=(160, 48)) as pilot:
         resumed = host.screen_stack[-1]
         await _wait_for_selector(resumed, pilot, "#console-settings-summary")
         resumed_store = resumed._ensure_console_chat_store()
-        resumed_store.persistence = repair_persistence
+        resumed_store.persistence = hung_persistence
         resumed_session = resumed_store.ensure_session()
         resumed_session.settings = ConsoleSessionSettings(
             provider="llama_cpp", system_prompt="Speak with Alpha."
@@ -5564,7 +5574,6 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         await host.push_screen(hung)
         await _wait_for_selector(hung, pilot, "#console-settings-summary")
         hung_store = hung._ensure_console_chat_store()
-        hung_store.persistence = hung_persistence
         hung_session = hung_store.ensure_session()
         hung_session.settings = ConsoleSessionSettings(
             provider="llama_cpp", system_prompt="Speak with Alpha."
@@ -5608,15 +5617,15 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
                         0,
                     )
                     == 1
-                    and repair_persistence.durable_system == "Speak with Cecelia."
-                    and repair_persistence.durable_greeting == "Hello Cecelia."
+                    and hung_persistence.durable_system == "Speak with Cecelia."
+                    and hung_persistence.durable_greeting == "Hello Cecelia."
                 ):
                     break
                 await pilot.pause(0.01)
             assert app._console_roleplay_repair_consumed_generation == 1
             assert host.screen_stack[-1] is resumed
-            assert repair_persistence.durable_system == "Speak with Cecelia."
-            assert repair_persistence.durable_greeting == "Hello Cecelia."
+            assert hung_persistence.durable_system == "Speak with Cecelia."
+            assert hung_persistence.durable_greeting == "Hello Cecelia."
 
             del hung, hung_store, hung_session
             for _ in range(50):

@@ -323,17 +323,12 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
     console_setup_staged_receipt,
 )
-from ...Chat.console_expression_state import (
-    EXPRESSION_IMAGE_STATES,
-    resolve_console_expression_state,
-)
 from ...Chat.console_command_suggestions import suggestions_for_draft
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageViewState,
     fit_image_cell_size,
     resolve_default_mode,
-    resolve_react_character_expressions,
     resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
@@ -658,12 +653,6 @@ CHARACTER_AVATAR_MAX_LINES = 22
 # fetched body is capped well below the render cache's decode ceiling.
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
-# P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
-# long session visiting many characters/states doesn't retain unbounded PIL
-# image references (the spec dicts hold their own `PILImage.Image`, so the
-# `_console_image_cache` LRU cap below does not protect this cache). Matches
-# the render cache's bound.
-_EXPRESSION_SPEC_CACHE_MAX = 16
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -1784,6 +1773,18 @@ class ChatScreen(BaseAppScreen):
     _console_conversation_browser_error = _ControllerState(
         "_workspace", "_console_conversation_browser_error"
     )
+    _active_character_avatar = _ControllerState(
+        "_character", "_active_character_avatar"
+    )
+    _active_character_avatar_name = _ControllerState(
+        "_character", "_active_character_avatar_name"
+    )
+    _last_console_avatar_scope = _ControllerState(
+        "_character", "_last_console_avatar_scope"
+    )
+    _console_expression_spec_cache = _ControllerState(
+        "_character", "_console_expression_spec_cache"
+    )
 
     # TASK-352: Textual docks notification toasts bottom-right by default —
     # directly over the Console composer's Send/Attach/Save cluster and the
@@ -2071,6 +2072,13 @@ class ChatScreen(BaseAppScreen):
         here unchanged: they reach beyond the rail's own DOM.
         """
         self._toggle_console_rail_section(message.section_id)
+
+    @on(ConsoleLeftRail.ReactionPickerRequested)
+    async def _console_reaction_picker_requested(
+        self, message: ConsoleLeftRail.ReactionPickerRequested
+    ) -> None:
+        message.stop()
+        await self._session._open_console_reaction_picker()
 
     @on(ConsoleInspectorSection.RowActivated)
     def on_console_agent_fleet_row_activated(
@@ -3062,8 +3070,12 @@ class ChatScreen(BaseAppScreen):
         def build() -> TrajectorySnapshot:
             return _build_trajectory_snapshot(store, conv_id)
 
+        # task-16847: `Screen` defines NEITHER `call_from_thread` NOR
+        # `push_screen` (both are App-only in Textual 8) -- the original
+        # bare `self.` spelling of each raised AttributeError inside the
+        # thread worker, so pressing `y` never presented anything.
         def present(snapshot: TrajectorySnapshot) -> None:
-            self.push_screen(
+            self.app.push_screen(
                 TrajectoryScreen(
                     snapshot,
                     screen_title=screen_title,
@@ -3075,7 +3087,7 @@ class ChatScreen(BaseAppScreen):
 
         def build_worker() -> None:
             snapshot = build()
-            self.call_from_thread(present, snapshot)
+            self.app.call_from_thread(present, snapshot)
 
         self.notify("Building trajectory…")
         self.run_worker(
@@ -3696,20 +3708,6 @@ class ChatScreen(BaseAppScreen):
         # P2g-2 Task 4: same double-open guard, for the World Books
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
-        # P3c: cached avatar spec (dict | None) for the active character in
-        # the "Character" rail section, plus its display name and the
-        # scope (conversation/character) it was last computed for. Mirrors
-        # the dictionaries/world-books caches above -- the compose path
-        # reads only this cache, never doing I/O on recompose. T3 fills
-        # `_active_character_avatar`; this task only seeds the empty state.
-        self._active_character_avatar: dict | None = None
-        self._active_character_avatar_name: str | None = None
-        self._last_console_avatar_scope: Any | None = None
-        # P3d-1: per-(character_id, state) decode cache so revisiting an
-        # expression state already seen this session is served instantly
-        # (no re-fetch/re-decode). Keyed on the full scope tuple, mirroring
-        # `_last_console_avatar_scope`.
-        self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
         # task-15470: debounce state for `watch_sidebar_state` -- see
@@ -9986,7 +9984,7 @@ class ChatScreen(BaseAppScreen):
         # cubic PR #1153 P2: this refresher is async -- calling it without
         # awaiting produced a never-run coroutine (and a RuntimeWarning).
         await self._sync_native_console_chat_ui()
-        await self._refresh_active_character_avatar_if_scope_changed()
+        await self._character._refresh_active_character_avatar_if_scope_changed()
 
     @on(ConsoleScopeChip.OpenRequested)
     async def _console_scope_chip_activated(
@@ -10000,6 +9998,18 @@ class ChatScreen(BaseAppScreen):
         """
         event.stop()
         await self._open_console_retrieval_scope_picker()
+
+    def _current_console_conversation_id(self) -> Optional[str]:
+        """Return the active native Console session's persisted conversation id.
+
+        One-line delegation to the session controller (task-16815): the
+        browser consolidation (520b1ec12) and the ``/research`` delivery
+        (e1f3a4424) both call this name on the screen, but the method only
+        existed on ``ConsoleSessionController`` -- every Ctrl+K switcher
+        open and ``/research <question>`` dispatch raised ``AttributeError``
+        until this seam existed.
+        """
+        return self._session._current_console_conversation_id()
 
     def _current_console_rail_conversation_id(self) -> Optional[str]:
         """Return the conversation scope used only for Console rail persistence."""
@@ -10049,141 +10059,14 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug("avatar: character fetch failed")
             return None
 
-    def _fetch_expression_image_bytes(
-        self, character_id: int, state: str
-    ) -> bytes | None:
-        """Return the image bytes for (character, state): the expression-table
-        image for a non-idle state, else the character's idle avatar. Runs
-        off-thread (called via asyncio.to_thread). Never raises -> None on any error."""
-        try:
-            db = getattr(self.app_instance, "chachanotes_db", None)
-            if db is None:
-                return None
-            if state in EXPRESSION_IMAGE_STATES:
-                img = db.get_character_expression_image(character_id, state)
-                if img:
-                    return img
-            card = self._fetch_character_card_for_avatar(character_id)  # idle fallback
-            image = (card or {}).get("image")
-            return (
-                bytes(image)
-                if isinstance(image, (bytes, bytearray)) and image
-                else None
-            )
-        except Exception:
-            logger.opt(exception=True).debug("avatar: expression fetch failed")
-            return None
-
-    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
-        """Refresh the cached character avatar only when the active
-        (character, expression state) scope changed.
-
-        P3d-1: widens the P3c `(character_id,)` scope to `(character_id,
-        state)` so the avatar reacts to the character thinking/speaking, via
-        `resolve_console_expression_state` (pure, DB-free, reads only the
-        active native Console session's live message statuses).
-        """
-        if not resolve_show_character_avatar(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        ):
-            # Feature is config-off: the rail section isn't composed, so
-            # skip the off-thread DB fetch + PIL decode below entirely and
-            # keep the cache empty for when the section is next shown.
-            self._active_character_avatar = None
-            self._active_character_avatar_name = None
-            # Invalidate the scope guard too: otherwise, if the feature is
-            # re-enabled while character_id is unchanged, the equality check
-            # below would early-return and the section would stay stuck in
-            # the empty state (Qodo #782-3). Resetting forces a repopulate on
-            # the next config-on tick.
-            self._last_console_avatar_scope = None
-            return
-        character_id = self._current_console_rail_character_id()
-        controller = getattr(self, "_console_chat_controller", None)
-        store = getattr(controller, "store", None) if controller is not None else None
-        active_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
-        react = resolve_react_character_expressions(
-            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
-        )
-        state = resolve_console_expression_state(
-            store, active_session_id, react_enabled=react
-        )
-        scope = (character_id, state)
-        if scope == self._last_console_avatar_scope:
-            return
-        self._last_console_avatar_scope = scope
-        name = self._current_console_rail_character_name()
-        self._active_character_avatar_name = name
-        if character_id is None:
-            self._active_character_avatar = None
-            await self._render_character_avatar_into_section()
-            return
-        # Serve from the per-state cache when this (character, state) scope
-        # was already decoded this session -- no re-fetch/re-decode.
-        cached = self._console_expression_spec_cache.get((character_id, state))
-        if cached is not None:
-            self._active_character_avatar = cached
-            await self._render_character_avatar_into_section()
-            return
-        _, cache = self._ensure_console_image_view()
-        mode = getattr(self, "_console_image_default_mode", "pixels")
-        key = f"character:{character_id}:{state}"
-        spec = {
-            "character_id": character_id,
-            "state": state,
-            "name": name,
-            "mode": mode,
-            "pil": None,
-            "pixels": None,
-        }
-        try:
-            image = await asyncio.to_thread(
-                self._fetch_expression_image_bytes, character_id, state
-            )
-            if image:
-                ok = await asyncio.to_thread(cache.prepare, key, image)
-                if ok:
-                    # Always carry the PIL, never the cache's pre-baked Pixels.
-                    # `cache.get_pixels` bakes at the TRANSCRIPT box
-                    # (PIXELS_MAX_COLS x PIXELS_MAX_LINES = 80x40 cells); the
-                    # avatar rail is 16x8, and Rich clips an oversized Pixels
-                    # renderable rather than scaling it -- which showed the
-                    # user only the top-left corner of their character's
-                    # portrait. The render path scales the PIL to the avatar
-                    # box before building Pixels.
-                    spec["pil"] = cache.get_pil(key)
-        except Exception:
-            logger.opt(exception=True).debug("avatar: expression decode failed")
-        # Post-await staleness re-check on the FULL (character_id, state)
-        # scope: the state can flip mid-decode while streaming, so recompute
-        # it live -- both the session id and the state -- rather than reusing
-        # the `active_session_id` captured before the await, so two tabs
-        # sharing one character can't paint a stale render.
-        current_session_id = (
-            getattr(store, "active_session_id", None) if store is not None else None
-        )
-        current_state = resolve_console_expression_state(
-            store, current_session_id, react_enabled=react
-        )
-        if (
-            self._current_console_rail_character_id(),
-            current_state,
-        ) != scope or not self.is_mounted:
-            return
-        self._console_expression_spec_cache[(character_id, state)] = spec
-        # Bound the cache: evict oldest insertion-ordered entries (dicts
-        # preserve insertion order) so a long session visiting many
-        # characters/states doesn't retain unbounded PIL image references.
-        while len(self._console_expression_spec_cache) > _EXPRESSION_SPEC_CACHE_MAX:
-            del self._console_expression_spec_cache[
-                next(iter(self._console_expression_spec_cache))
-            ]
-        self._active_character_avatar = spec
-        await self._render_character_avatar_into_section()
-
-    async def _render_character_avatar_into_section(self) -> None:
+    async def _render_character_avatar_into_section(
+        self,
+        *,
+        spec: dict | None,
+        name: str | None,
+        manual_label: str | None,
+        is_current: Callable[[], bool],
+    ) -> None:
         """Re-mount the avatar widget + name into the (already-composed) section.
 
         Async because Textual `Widget.mount()` returns an `AwaitMount` that
@@ -10192,24 +10075,51 @@ class ChatScreen(BaseAppScreen):
         DOM state (not just the cached spec dict) right after the refresh
         awaits this.
         """
+        if not is_current():
+            return
         try:
             holder = self.query_one("#console-character-avatar", Container)
         except QueryError:
             return  # section not composed (config off / not mounted)
         try:
+            if not is_current():
+                return
             await holder.remove_children()
-            await holder.mount(
-                self._build_character_avatar_widget(self._active_character_avatar)
-            )
+            if not is_current():
+                return
+            avatar_widget = self._build_character_avatar_widget(spec)
+            if not is_current():
+                return
+            await holder.mount(avatar_widget)
+            if not is_current():
+                if avatar_widget.parent is holder:
+                    await avatar_widget.remove()
+                return
             try:
-                self.query_one("#console-character-name", Static).update(
+                name_widget = self.query_one("#console-character-name", Static)
+                if not is_current():
+                    return
+                name_widget.update(
                     Text(
                         sanitize_character_display_label(
-                            self._active_character_avatar_name,
+                            name,
                             max_characters=180,
                         )
                         or "No character in this chat"
                     )
+                )
+            except QueryError:
+                pass
+            try:
+                reaction_widget = self.query_one(
+                    "#console-character-reaction-state", Static
+                )
+                if not is_current():
+                    return
+                reaction_widget.update(
+                    f"Reaction: {manual_label} (manual)"
+                    if manual_label
+                    else "Reaction: Automatic"
                 )
             except QueryError:
                 pass
@@ -11319,7 +11229,7 @@ class ChatScreen(BaseAppScreen):
             # task-1661 fixed for a different trigger. Clearing the scope
             # guard makes the next sync tick re-measure the now-visible body
             # and repaint at the rail's real width.
-            self._last_console_avatar_scope = None
+            self._character.invalidate_refresh_scope()
 
     def _sync_console_workspace_context(self) -> None:
         try:
@@ -13947,6 +13857,9 @@ class ChatScreen(BaseAppScreen):
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    manual_reaction_label=(
+                        self._session._manual_reaction_label_for_current_actor()
+                    ),
                 )
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
@@ -15588,6 +15501,12 @@ class ChatScreen(BaseAppScreen):
             region.sync_recovery()
         if transcript is not None:
             transcript.set_presentation_context(self._console_presentation_context())
+            # Turn file card spec: keeps the mounted transcript's provider
+            # factory current every tick -- late-bound so a session switch
+            # or a bridge becoming available never needs a fresh instance.
+            transcript.set_change_review_provider_factory(
+                self._console_change_review_provider
+            )
             self._sync_console_citation_count_discovery(messages)
             message_ids = {message.id for message in messages}
             controller = self._console_chat_controller
@@ -15876,7 +15795,7 @@ class ChatScreen(BaseAppScreen):
             # (no-op when the active character hasn't changed) and never
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
-            await self._refresh_active_character_avatar_if_scope_changed()
+            await self._character._refresh_active_character_avatar_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
@@ -16959,12 +16878,20 @@ class ChatScreen(BaseAppScreen):
         message on completion, and the existing terminal-run notification
         remains the fallback when insertion is impossible.
         """
-        question = (parse.args or "").strip()
-        if not question:
+        from tldw_chatbook.UI.Console_Modules.research_command import (
+            parse_research_command,
+        )
+
+        try:
+            intent = parse_research_command(parse.args or "")
+        except ValueError as usage_error:
             await self._append_native_console_system_message(
-                "Usage: /research <question>"
+                f"/research: {usage_error}"
             )
             return
+        question = intent.question
+        source_policy = intent.source_policy
+        provider_overrides = intent.provider_overrides()
         conversation_id = self._current_console_conversation_id()
         if not conversation_id:
             await self._append_native_console_system_message(
@@ -17005,10 +16932,14 @@ class ChatScreen(BaseAppScreen):
         db = getattr(app, "chachanotes_db", None)
 
         async def _run_research() -> None:
-            run = local_service.launch_run(
-                query=question,
-                chat_handoff={"conversation_id": conversation_id, "origin": "console"},
-            )
+            launch_kwargs: dict = {
+                "query": question,
+                "chat_handoff": {"conversation_id": conversation_id, "origin": "console"},
+                "source_policy": source_policy,
+            }
+            if provider_overrides:
+                launch_kwargs["provider_overrides"] = provider_overrides
+            run = local_service.launch_run(**launch_kwargs)
             engine = LocalResearchEngine(
                 local_service,
                 search_params=search_params,
@@ -17030,8 +16961,11 @@ class ChatScreen(BaseAppScreen):
             exclusive=False,
             description=f"Console research: {question[:60]}",
         )
+        policy_note = (
+            f" [policy: {source_policy}]" if source_policy != "balanced" else ""
+        )
         await self._append_native_console_system_message(
-            f"Deep research started: {question}\n"
+            f"Deep research started: {question}{policy_note}\n"
             "The report will be added to this conversation when the run "
             "completes."
         )
@@ -18000,16 +17934,11 @@ class ChatScreen(BaseAppScreen):
             return None
         return str(run_id) if run_id else None
 
-    def _open_change_review(self, run_id: str | None = None) -> None:
-        """Push the Change Review screen for the active conversation.
+    def _console_change_review_provider(self):
+        """The v-opener's provider recipe, shared with the turn file card.
 
-        TASK-1972. Honest empty states are the SCREEN's job: opening with no
-        recorded turns shows "No file changes recorded", so this opener only
-        needs a provider -- absent (no tracker / no git / no persisted
-        conversation) it explains instead of silently no-oping.
-
-        Args:
-            run_id: Turn to select on open; ``None`` opens the latest.
+        Returns None whenever any collaborator is missing -- the card
+        degrades to the marker header; only the v opener toasts.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = None
@@ -18030,11 +17959,7 @@ class ChatScreen(BaseAppScreen):
             else None
         )
         if provider is None:
-            self.app_instance.notify(
-                "Change review needs git and a saved conversation.",
-                severity="warning",
-            )
-            return
+            return None
         # TASK-1974: reverts refuse while a run is active -- the engine's
         # probe reads THIS controller's live run state each time.
         if controller is not None:
@@ -18042,6 +17967,26 @@ class ChatScreen(BaseAppScreen):
             provider.run_active = lambda: (
                 controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             )
+        return provider
+
+    def _open_change_review(self, run_id: str | None = None) -> None:
+        """Push the Change Review screen for the active conversation.
+
+        TASK-1972. Honest empty states are the SCREEN's job: opening with no
+        recorded turns shows "No file changes recorded", so this opener only
+        needs a provider -- absent (no tracker / no git / no persisted
+        conversation) it explains instead of silently no-oping.
+
+        Args:
+            run_id: Turn to select on open; ``None`` opens the latest.
+        """
+        provider = self._console_change_review_provider()
+        if provider is None:
+            self.app_instance.notify(
+                "Change review needs git and a saved conversation.",
+                severity="warning",
+            )
+            return
         from tldw_chatbook.UI.Screens.change_review_screen import (
             ChangeReviewScreen,
         )

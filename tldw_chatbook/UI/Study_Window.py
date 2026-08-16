@@ -50,26 +50,18 @@ class StructuredLearningWidget(Widget):
         height: 100%;
         width: 100%;
     }
-    
+
     .structured-learning-container {
         padding: 1;
         height: 100%;
     }
-    
-    .topic-tree {
-        height: 1fr;
-        width: 50%;
-        border: round $surface;
-        margin-right: 1;
-    }
-    
-    .topic-content {
-        height: 1fr;
-        width: 50%;
+
+    .structured-learning-empty-state {
         border: round $surface;
         padding: 1;
+        color: $text-muted;
     }
-    
+
     .section-title {
         text-style: bold;
         margin-bottom: 1;
@@ -81,29 +73,32 @@ class StructuredLearningWidget(Widget):
         with ScrollableContainer(classes="structured-learning-container"):
             yield Label("📚 Structured Learning", classes="section-title")
 
-            with Horizontal():
-                # Topic tree on the left
-                with Vertical(classes="topic-tree-container"):
-                    yield Label("Learning Topics:", classes="subsection-title")
-                    yield Tree("Learning Paths", id="topic-tree", classes="topic-tree")
-
-                # Content display on the right
-                with Vertical(classes="topic-content-container"):
-                    yield Label("Topic Content:", classes="subsection-title")
-                    yield TextArea(
-                        "Select a topic from the tree to view content...",
-                        id="topic-content",
-                        classes="topic-content",
-                        disabled=True,
-                    )
-
-            # task-16195: the "Add New Topic" row (Input #new-topic-title +
-            # Button #add-topic-btn) was removed here. Its only handler lived
-            # in the legacy Event_Handlers/Study_Events table, which nothing
-            # dispatched since the Study rebuild, and no code in the app reads
-            # the topics table back -- the button was a dead affordance whose
-            # restored flow would have been a write-only sink. task-16196
-            # deleted that entire legacy module (it had no other importer).
+            # task-16195 removed the dead "Add New Topic" row (Input
+            # #new-topic-title + Button #add-topic-btn) here; its only
+            # handler lived in the legacy Event_Handlers/Study_Events table,
+            # which nothing dispatched since the Study rebuild, and no code
+            # in the app reads the topics table back.
+            #
+            # task-16845: the residual chrome left behind -- a #topic-tree
+            # that could only ever show its static "Learning Paths" root
+            # (nothing populates it, and no Tree.NodeSelected handler exists
+            # anywhere since task-16196 deleted the legacy module that held
+            # one) next to a disabled #topic-content TextArea whose
+            # placeholder promised "Select a topic from the tree to view
+            # content..." -- read as broken rather than intentionally empty.
+            # ChaChaNotes_DB's create_learning_path/create_topic are
+            # write-only (no list/get method exists for learning_paths or
+            # topics anywhere), so a real browsing UI would be a feature
+            # build, not a wiring fix (same call task-16195 made for the
+            # add-topic write path). Replaced with an honest notice instead
+            # of building that feature or leaving the misleading chrome.
+            yield Static(
+                "Structured Learning does not have a browsing UI yet in "
+                "this build. There is currently no way to list or view "
+                "learning paths and topics from this screen.",
+                id="structured-learning-empty-state",
+                classes="structured-learning-empty-state",
+            )
 
 
 class AnkiFlashcardsWidget(Widget):
@@ -437,7 +432,14 @@ class MindmapsWidget(Widget):
                 with Vertical(classes="mindmap-controls"):
                     yield Label("Add Node:", classes="subsection-title")
                     yield Input(placeholder="Node text...", id="node-text")
-                    yield Button("Add Child", id="add-child-btn", variant="primary")
+                    # task-16845: "Add Child" (#add-child-btn) had no
+                    # dispatcher anywhere, and ChaChaNotes_DB's
+                    # create_mindmap/add_mindmap_node are write-only (no
+                    # read/list method exists) while #mindmap-tree has no
+                    # population code -- a written node could never be
+                    # displayed. Removed; #node-text stays for Add Sibling,
+                    # which is a separate, equally-undispatched button out
+                    # of this task's scope.
                     yield Button("Add Sibling", id="add-sibling-btn", variant="default")
 
                     yield Label("Actions:", classes="subsection-title")
@@ -467,13 +469,7 @@ class CourseCreationWidget(Widget):
         padding: 1;
         height: 100%;
     }
-    
-    .course-form {
-        border: round $surface;
-        padding: 1;
-        margin-bottom: 1;
-    }
-    
+
     .module-list {
         height: 15;
         border: round $surface;
@@ -491,37 +487,15 @@ class CourseCreationWidget(Widget):
         with ScrollableContainer(classes="course-creation-container"):
             yield Label("📖 Course Creation", classes="section-title")
 
-            # Course details form
-            with Vertical(classes="course-form"):
-                yield Label("Course Details:", classes="subsection-title")
-
-                yield Label("Course Title:")
-                yield Input(placeholder="Enter course title...", id="course-title")
-
-                yield Label("Description:")
-                yield TextArea(
-                    "Enter course description...",
-                    id="course-description",
-                    classes="course-description",
-                )
-
-                with Horizontal(classes="form-row"):
-                    yield Label("Level:", classes="form-label")
-                    yield Select(
-                        options=[
-                            ("beginner", "Beginner"),
-                            ("intermediate", "Intermediate"),
-                            ("advanced", "Advanced"),
-                        ],
-                        id="course-level",
-                    )
-
-                yield Label("Prerequisites:")
-                yield Input(
-                    placeholder="Enter prerequisites...", id="course-prerequisites"
-                )
-
-                yield Button("Create Course", id="create-course-btn", variant="primary")
+            # task-16845: the "Course Details" form (title/description/
+            # level/prerequisites feeding "Create Course", #create-course-btn)
+            # was removed here. #create-course-btn had no dispatcher
+            # anywhere, and unlike the other three panes' buttons there is
+            # no schema support to remove-to-write-only either -- no
+            # `course`/`courses` table exists anywhere in ChaChaNotes_DB.
+            # Those four fields fed only this one dead button, so they were
+            # removed with it rather than left as an orphaned dead-end form
+            # (worse UX than the button alone, per the task-16195 finding).
 
             # Module management
             yield Label("Course Modules:", classes="subsection-title")
@@ -607,10 +581,14 @@ class StudyGuideWidget(Widget):
             yield ListView(id="practice-questions-list", classes="practice-questions")
 
             # Action buttons
+            # task-16845: "Generate from Topic" (#generate-guide-btn) had no
+            # dispatcher anywhere, and #guide-topic-select above is
+            # hard-coded to a single static "New Topic" option -- nothing
+            # populates it from the topics table (write-only, no read
+            # method), so there was no topic it could ever generate from.
+            # Removed; the remaining two buttons are separate,
+            # equally-undispatched buttons out of this task's scope.
             with Horizontal(classes="form-row"):
-                yield Button(
-                    "Generate from Topic", id="generate-guide-btn", variant="success"
-                )
                 yield Button("Generate Questions", id="generate-questions-btn")
                 yield Button("Save Guide", id="save-guide-btn", variant="primary")
 
@@ -667,9 +645,14 @@ class LearningMapWidget(Widget):
                         yield Static("None selected", id="current-topic")
 
                     yield Label("Path Actions:", classes="subsection-title")
-                    yield Button(
-                        "Add Milestone", id="add-milestone-btn", variant="primary"
-                    )
+                    # task-16845: "Add Milestone" (#add-milestone-btn) had
+                    # no dispatcher anywhere, no `milestone` concept exists
+                    # in ChaChaNotes_DB's schema at all, and #learning-map-tree
+                    # above has no population code (same shape as the
+                    # Structured Learning pane's topic tree) -- there was no
+                    # path to add or ever display one. Removed; the
+                    # remaining buttons are separate, equally-undispatched
+                    # buttons out of this task's scope.
                     yield Button(
                         "Mark Complete", id="mark-complete-btn", variant="success"
                     )
@@ -752,11 +735,6 @@ class StudyWindow(Container):
     }
     
     .card-input {
-        height: 5;
-        margin-bottom: 1;
-    }
-    
-    .course-description {
         height: 5;
         margin-bottom: 1;
     }

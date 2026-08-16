@@ -28,6 +28,14 @@ missed the prevent()/nav-echo convention before calling the tests stale.
 Another session may already be on some of these -- check `.worktrees/` and
 open branches before starting (a task's status is not a lock).
 
+Extra evidence for the capability-matrix pair (added 2026-08-16, burn-down
+close-out): both still fail at dev `ee741cf10` (re-run this session). The
+task-15774 review reproduced them standalone at its branch HEAD AND at a
+fresh origin/dev-tip throwaway worktree with the identical assertion:
+`#library-notes-new was not reachable with tab; focused=NavigationButton
+(id='nav-lab', ...)` -- i.e. tab-order focus stranding on the nav-lab
+button, not a notes-editor defect.
+
 ## Acceptance Criteria
 
 - [ ] Each of the six is attributed to its causing commit
