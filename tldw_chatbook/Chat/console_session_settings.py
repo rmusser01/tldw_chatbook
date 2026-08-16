@@ -120,9 +120,12 @@ _REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("gpt-oss", frozenset({"low", "medium", "high"})),
     ("qwen3", frozenset({"none"})),
 )
-# "none" is live-verified on dotted Qwens: it is consumed via our
-# enable_thinking=false mapping, so it must not warn as unconsumed.
-_QWEN_DOTTED_EFFORT_VALUES = frozenset({"low", "medium", "xhigh", "none"})
+# "none" and "high" are live-verified on dotted Qwens: "none" is consumed
+# via our enable_thinking=false mapping, and the template aliases "high" to
+# "xhigh" — neither must warn as unconsumed.
+_QWEN_DOTTED_EFFORT_VALUES = frozenset(
+    {"low", "medium", "high", "xhigh", "none"}
+)
 # local-llm sends compose llama.cpp-family wire fields (chat_template_kwargs
 # reasoning/enable_thinking + reasoning_budget_tokens), so its users need the
 # --jinja/b9982 requirements note too.
@@ -524,7 +527,17 @@ def build_canonical_chat_defaults_mutation(
 
 
 def reasoning_effort_hint_for_model(model: str | None) -> frozenset[str] | None:
-    """Return the effort values this model family's template consumes."""
+    """Return the effort values this model family's template consumes.
+
+    Args:
+        model: Model identifier as selected in the Console (e.g.
+            ``"Qwen3.8-27B"``). Case-insensitive; ``None``/blank allowed.
+
+    Returns:
+        The set of ``reasoning_effort`` values the model family's chat
+        template consumes, or ``None`` when the family is unknown and no
+        hint should be shown.
+    """
     lowered = str(model or "").strip().lower()
     if not lowered:
         return None
@@ -537,7 +550,20 @@ def reasoning_effort_hint_for_model(model: str | None) -> frozenset[str] | None:
 
 
 def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
-    """Non-blocking warnings for the Console settings modal (ADR-066)."""
+    """Return non-blocking warnings for the Console settings modal.
+
+    Warnings never block a save or send (ADR-066); blocking validation
+    lives in :func:`validate_console_session_settings`.
+
+    Args:
+        settings: The freshly parsed Console session settings.
+
+    Returns:
+        Zero or more user-facing warning strings: an effort value the
+        selected model family does not consume, and — for llama.cpp-family
+        providers with a thinking value set — the server requirements note
+        (``--jinja``; per-request budget needs llama.cpp b9982+).
+    """
     warnings: list[str] = []
     effort = str(settings.reasoning_effort or "").strip().lower()
     has_thinking_value = bool(effort) or settings.thinking_budget_tokens is not None

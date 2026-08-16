@@ -546,6 +546,34 @@ def chat_with_local_llm(
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a local llamafile/Local-LLM OpenAI-compatible server.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -689,6 +717,34 @@ def chat_with_llama(
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a llama.cpp server (llama_cpp/local_llamacpp/local_llamafile).
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -1389,6 +1445,34 @@ def chat_with_vllm(
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a vLLM OpenAI-compatible server (vllm/local_vllm).
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -1851,6 +1935,32 @@ def chat_with_custom_openai(
     *,
     api_key_resolved: bool | None = None,
 ):
+    """Chat with the first user-configured Custom OpenAI endpoint.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -2013,6 +2123,32 @@ def chat_with_custom_openai_2(
     *,
     api_key_resolved: bool | None = None,
 ):
+    """Chat with the second user-configured Custom OpenAI endpoint.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
     loaded_config_data = load_settings()

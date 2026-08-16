@@ -22,6 +22,19 @@ class StartAnchoredThinkFilter:
         self._buffer = ""
 
     def feed(self, chunk: str) -> str:
+        """Feed one stream chunk and return its visible text.
+
+        Args:
+            chunk: The next assistant content chunk from the stream. May be
+                empty, and may split a think tag across chunk boundaries.
+
+        Returns:
+            The portion of ``chunk`` (plus any previously buffered text)
+            that is visible reply text. Empty while the stream is still
+            inside a start-anchored think block or while an opening tag is
+            still ambiguous. Once a non-tag start has been seen, all
+            subsequent text passes through unfiltered.
+        """
         if not chunk:
             return ""
         if self._decided_visible:
@@ -53,6 +66,11 @@ class StartAnchoredThinkFilter:
             return self._buffer
 
     def flush(self) -> str:
-        # Stream ended while still probing or still inside an unterminated
-        # think block: drop the tail (spec'd behavior).
+        """Signal end-of-stream and return any remaining visible tail.
+
+        Returns:
+            Always ``""``: a stream that ends while still probing or inside
+            an unterminated start-anchored think block drops its tail by
+            contract (ADR-066), so there is never a remaining tail to emit.
+        """
         return ""

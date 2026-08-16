@@ -2212,10 +2212,12 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
 class TestReasoningEffortHints:
     def test_dotted_qwen_generations_are_effort_capable(self):
         # "none" is included: it is consumed via our enable_thinking=false
-        # mapping on dotted Qwens (live-verified).
+        # mapping on dotted Qwens (live-verified). "high" is included: the
+        # template aliases it to "xhigh" (live-verified), so warning on it
+        # would be a false positive against the actual wire behavior.
         for model in ("Qwen3.8-27B", "qwen3.5-397b-gguf:q4"):
             assert reasoning_effort_hint_for_model(model) == frozenset(
-                {"low", "medium", "xhigh", "none"}
+                {"low", "medium", "high", "xhigh", "none"}
             )
 
     def test_original_qwen3_is_toggle_only(self):
@@ -2240,11 +2242,13 @@ class TestConsoleSettingsWarnings:
 
     def test_value_outside_hint_warns(self):
         # Non-llama.cpp provider isolates the hint logic (the llama.cpp base
-        # fixture would also add the --jinja requirements note).
-        settings = self._settings(provider="openai", reasoning_effort="high")
+        # fixture would also add the --jinja requirements note). "minimal" is
+        # genuinely unconsumed on dotted Qwens: the wire composer's
+        # template-safe guard drops it rather than sending it.
+        settings = self._settings(provider="openai", reasoning_effort="minimal")
         warnings = console_settings_warnings(settings)
         assert len(warnings) == 1
-        assert "high" in warnings[0]
+        assert "minimal" in warnings[0]
         assert "xhigh" in warnings[0]
 
     def test_value_inside_hint_does_not_warn(self):
