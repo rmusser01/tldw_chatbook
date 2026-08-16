@@ -8280,10 +8280,10 @@ async def test_library_prompt_history_duplicate_name_is_retryable_not_stale_conf
         assert screen._library_prompt_conflict_snapshot is None
         assert state.selected is not None
         assert state.selected.source_version == 1
-        assert (
-            screen.query_one("#library-prompt-history-restore", Button).disabled
-            is False
+        restore = await _wait_for_selector(
+            screen, pilot, "#library-prompt-history-restore"
         )
+        assert restore.disabled is False
 
     after_detail = db.fetch_prompt_details(prompt_id)
     after_history = db.get_prompt_history_entries(prompt_uuid, page_size=10)
