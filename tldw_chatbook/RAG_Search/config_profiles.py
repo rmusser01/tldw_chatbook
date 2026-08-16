@@ -307,9 +307,6 @@ class ConfigProfileManager:
         hybrid_enhanced_rag.search.default_search_mode = "hybrid"
         hybrid_enhanced_rag.search.default_top_k = 10
         hybrid_enhanced_rag.search.include_citations = True
-        hybrid_enhanced_rag.search.include_parent_docs = True
-        hybrid_enhanced_rag.search.parent_size_threshold = 5000
-        hybrid_enhanced_rag.search.parent_inclusion_strategy = "size_based"
 
         self._profiles["hybrid_enhanced"] = ProfileConfig(
             id="hybrid_enhanced",
@@ -344,9 +341,6 @@ class ConfigProfileManager:
         hybrid_full_rag.search.default_search_mode = "hybrid"
         hybrid_full_rag.search.default_top_k = 20
         hybrid_full_rag.search.include_citations = True
-        hybrid_full_rag.search.include_parent_docs = True
-        hybrid_full_rag.search.parent_size_threshold = 8000
-        hybrid_full_rag.search.parent_inclusion_strategy = "size_based"
         hybrid_full_rag.search.max_context_size = 32000
 
         # "cross_encoder" is not an implemented reranking strategy in
@@ -521,9 +515,6 @@ class ConfigProfileManager:
         research_rag.chunking.preserve_structure = True
         research_rag.search.include_citations = True
         research_rag.search.default_top_k = 15
-        research_rag.search.include_parent_docs = True
-        research_rag.search.parent_size_threshold = 10000  # Larger for research papers
-        research_rag.search.parent_inclusion_strategy = "size_based"
 
         research_rerank = RerankingConfig(
             strategy="listwise", top_k_to_rerank=10, include_reasoning=True

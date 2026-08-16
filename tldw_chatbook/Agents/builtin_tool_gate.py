@@ -530,7 +530,7 @@ class ToolGate:
             Critical prerequisite fixed the identical bug one layer down,
             in ``tool_catalog.py``'s registration read; this enumerator
             must never reintroduce it one layer up).
-        group: ``"builtin"`` (the 7 ``_GATEABLE_BUILTINS`` rows) or ``
+        group: ``"builtin"`` (the ``_GATEABLE_BUILTINS`` rows) or ``
             "local"`` (the local-workspace-tool group: its master switch
             plus ``web_deep_search``, which shares the group it masters).
     """
@@ -581,8 +581,8 @@ def all_tool_gates() -> list[ToolGate]:
     """Every ``[tools]``/``[console]`` registration gate, on or off.
 
     THE single source of truth for task-3240's MCP-hub gate affordance
-    (Servers mode's built-in-source detail pane): the 7
-    ``_GATEABLE_BUILTINS`` rows (group ``"builtin"``, registration order),
+    (Servers mode's built-in-source detail pane): every
+    ``_GATEABLE_BUILTINS`` row (group ``"builtin"``, registration order),
     then the local group (group ``"local"``) -- its master switch
     (``[console] local_tools_enabled``) listed FIRST, since it masters the
     gate listed right after it, then ``web_deep_search``'s own gate.
@@ -598,7 +598,8 @@ def all_tool_gates() -> list[ToolGate]:
     ``BuiltinToolProvider.__init__``'s own per-entry try/except).
 
     Returns:
-        Nine gates in the order described above.
+        Every gate in the order described above (the `_GATEABLE_BUILTINS`
+        rows, then the local group's two).
     """
     from ..config import coerce_bool_setting, get_cli_setting
     from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY

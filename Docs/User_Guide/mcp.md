@@ -92,8 +92,13 @@ Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes, split
 into two subheadings:
 
-- **Agent built-ins** — the app's own file/note tools (read/list/write a
-  file, glob/grep the workspace, create/update a note).
+- **Agent built-ins** — the app's own file, note and library tools: read /
+  list / write a file, glob / grep the workspace, create / update a note,
+  and **expand a retrieval hit into its document** (`expand_document`,
+  TASK-16174 — it opens the note, media item, conversation or prompt behind
+  a Library search result, so it reads your library and, like every
+  risk-tagged tool, is floored to **Ask**: expect one approval card per
+  call until you set Allow).
 - **Local workspace, web, and Watchlists tools** — a master switch, labeled
   **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
   direct Tools-mode control. `web_deep_search` (multi-query web research that
@@ -337,4 +342,9 @@ a permission the app could not read shows as "Unknown" (never a false
 "Off") in the matrix, the State column, and the inspector alike.
 Verified against ee68f42ed — 2026-08-08 (task-3240): documented the new
 Servers-mode "Tool gates" group (builtin registration switches, at last
-reachable from live navigation) and its two discoverability breadcrumbs.*
+reachable from live navigation) and its two discoverability breadcrumbs.
+Docs pass 2026-08-15 (TASK-16174 fix wave, against the branch's code and
+tests, not a live screen): the "Agent built-ins" enumeration gained the
+eighth gate, `expand_document` — the pane renders one row per
+`_GATEABLE_BUILTINS` entry via `all_tool_gates()`, so the count follows
+that table.*

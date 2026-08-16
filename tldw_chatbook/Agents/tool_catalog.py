@@ -513,6 +513,12 @@ _GATEABLE_BUILTINS: tuple[GateableTool, ...] = (
     GateableTool(
         "grep_files_enabled", "file_operation_tools", "GrepFiles", "grep_files"
     ),
+    GateableTool(
+        "expand_document_enabled",
+        "document_expansion_tool",
+        "ExpandDocumentTool",
+        "expand_document",
+    ),
 )
 
 
