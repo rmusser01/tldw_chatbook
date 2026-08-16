@@ -555,15 +555,21 @@ async def test_a_tree_click_updates_each_affected_pane_at_most_once():
         )
 
 
-async def test_a_briefing_selection_costs_one_pane_recompose():
-    """The select->clear->reload pipeline, coalesced.
+async def test_a_briefing_selection_never_recomposes_the_pane():
+    """The select->clear->reload pipeline, fully scoped.
 
     Selecting a briefing moved three things in three separate instants: the
     selection itself, then the screen clearing the previous briefing's
     scripts/audio/citations off the pane one reactive at a time, then the
-    reload landing. The clearing now rides the recompose the selection has
-    already queued (`ArtifactsPane._clear_selection_derived_state`), so a
-    selection whose stale state has to be dropped costs ONE rebuild.
+    reload landing. Task-15461 coalesced that to ONE pane recompose (the
+    clearing rides the selection's own rebuild) -- and recorded that the one
+    remaining recompose still destroyed the briefings table under the
+    user's cursor. Task-15779 retires it: the selection-derived reactives
+    no longer recompose the pane at all; they rebuild only
+    `BriefingDetailRegion`, so a selection costs ZERO pane rebuilds (the
+    table survives -- pinned end-to-end by
+    `test_watchlists_artifacts_selection_in_place.py`) and at most one
+    region rebuild per message-pump drain, with the clearing unchanged.
     """
     app = _build_test_app()
     watchlist_id = _seed(app, briefings=2)
@@ -589,8 +595,17 @@ async def test_a_briefing_selection_costs_one_pane_recompose():
             pane.selected_briefing = rows[1]
             await _settle(pilot, host)
 
-        assert counted.recomposes["ArtifactsPane#watchlists-artifacts-pane"] == 1, (
-            f"one selection must cost one pane rebuild: {counted.report()}"
+        assert counted.recomposes["ArtifactsPane#watchlists-artifacts-pane"] == 0, (
+            "task-15779: a selection must never rebuild the pane -- that "
+            "rebuild is what destroyed the briefings table (and its focus, "
+            f"cursor and scroll) under the user: {counted.report()}"
+        )
+        assert (
+            counted.recomposes["BriefingDetailRegion#artifacts-detail-region"] == 1
+        ), (
+            "the selection, its synchronous clearing and its reload landing "
+            "must coalesce into ONE detail-region rebuild: "
+            f"{counted.report()}"
         )
         assert pane.scripts == [], "the previous briefing's scripts must be gone"
         assert pane.citations == [], "and so must its citations"

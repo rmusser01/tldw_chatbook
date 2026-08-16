@@ -11,7 +11,7 @@ Two conventions are load-bearing and copied deliberately from the sibling
 panes rather than reinvented:
 
 * `RecomposeCaptureGuard` ahead of the concrete container, because
-  `briefings`/`selected_briefing` are `reactive(..., recompose=True)` on a
+  `briefings`/`scope_label`/... are `reactive(..., recompose=True)` on a
   non-screen widget (task-627/637 -- see `recompose_capture_guard.py`).
 * `highlight_is_user_driven` (i.e. `table.has_focus`) on every
   `RowHighlighted`/`CellHighlighted`, because a freshly recomposed
@@ -19,17 +19,31 @@ panes rather than reinvented:
   that to selection turns this pane into a feedback loop against its own
   rebuild (TASK-1105, and the 157-selections-from-one-tab-open lesson).
 
+Task-15779 split the pane's recompose surface in two. The SELECTION-derived
+reactives (`selected_briefing`, `scripts`, `selected_script`,
+`script_audio`, `scripts_with_audio`, `citations`) no longer recompose the
+pane at all: selecting a briefing used to destroy and rebuild the very
+briefings `DataTable` the user was arrow-keying through, taking its focus,
+cursor and scroll with it (a second arrow-key press then did nothing --
+found and measured in task-15461). Their watchers now rebuild ONLY
+`BriefingDetailRegion` -- the stateless boundary widget holding everything
+below the table -- and patch the table's highlight and the Export/Keep
+buttons in place. The remaining `recompose=True` reactives (`briefings`,
+the scope/toolbar/picker state) still rebuild the whole pane, table
+included, since they change what the table itself must show.
+
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
 
-Spec #2 phase 2b, Task 7 (audio): `selected_script` above is `reactive(...,
-recompose=True)`, so EVERY script selection rebuilds every widget this
-`compose()` yields -- including Play/Stop. That rules out ever holding
-"is this row currently playing" as a reactive/attribute on this widget: it
-would be silently reset to its default on the very next selection, wrong by
-construction. The shared `SimpleAudioPlayer` singleton (`TTS/audio_player.
-get_audio_player`) is the only thing that survives a recompose, so it is
-also the only thing consulted for playback state -- see
+Spec #2 phase 2b, Task 7 (audio): `selected_script` rebuilds the whole
+detail region on every script selection (its watcher refreshes
+`BriefingDetailRegion`), so EVERY script selection rebuilds every widget
+`compose_briefing_detail()` yields -- including Play/Stop. That rules out
+ever holding "is this row currently playing" as a reactive/attribute on
+this widget: it would be silently reset to its default on the very next
+selection, wrong by construction. The shared `SimpleAudioPlayer` singleton
+(`TTS/audio_player.get_audio_player`) is the only thing that survives a
+recompose, so it is also the only thing consulted for playback state -- see
 `WatchlistsCollectionsScreen.handle_stop_audio_requested`.
 """
 
@@ -45,9 +59,11 @@ from rich.markdown import Markdown
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.coordinate import Coordinate
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Select, Static
+from textual.widgets.data_table import CellDoesNotExist, ColumnKey, RowDoesNotExist
 
 from ...Subscriptions.briefing_audio import audio_file_path_is_safe
 from ...Subscriptions.briefing_selection import (
@@ -623,6 +639,44 @@ def _audio_detail_renderable(row: dict[str, Any] | None) -> RenderableType:
     return Group(header, Text(f"Unrecognised audio status: {status or '—'}"))
 
 
+class BriefingDetailRegion(RecomposeCaptureGuard, Vertical):
+    """The selection-dependent lower half of the Artifacts pane (task-15779).
+
+    Everything below the briefings table -- the "Briefing detail" title, the
+    body, the citations table, and the scripts/audio section -- renders from
+    whichever briefing is selected. Before this widget existed it all lived
+    directly in `ArtifactsPane.compose`, with the selection-derived
+    reactives `recompose=True` ON THE PANE: every selection rebuilt the
+    whole pane, briefings `DataTable` included, destroying the very table
+    the user was navigating (focus, cursor and scroll all lost with it --
+    the "second arrow-key press does nothing" defect task-15461 measured
+    and recorded).
+
+    This widget is a recompose BOUNDARY, not a state owner: it holds no
+    reactives of its own and renders straight from the parent pane's state
+    (`ArtifactsPane.compose_briefing_detail`), so the pane's watchers can
+    rebuild JUST this region -- `refresh(recompose=True)`, naturally
+    coalesced by Textual's own `_recompose_required` flag when several
+    values land in one message-pump drain -- while the table above it
+    stands untouched. Keeping the state on the pane (rather than mirroring
+    it onto reactives here) means one source of truth: the screen's
+    `_apply_briefing_state_to_pane` and `_build_detail_pane` seeding keep
+    writing exactly the reactives they always wrote.
+
+    `RecomposeCaptureGuard` for the same task-627/637 reason the pane
+    itself carries it: this widget recomposes independently of any screen
+    recompose, so a mouse capture held by one of its own children at
+    rebuild time would otherwise leak.
+    """
+
+    def __init__(self, pane: "ArtifactsPane", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pane = pane
+
+    def compose(self):
+        yield from self._pane.compose_briefing_detail()
+
+
 class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     """List a watchlist's briefings and render the selected one."""
 
@@ -653,7 +707,18 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     _AUDIO_FAILED_STYLE = "bold red"
 
     briefings = reactive[list[dict[str, Any]]](list, recompose=True)
-    selected_briefing = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Task-15779: deliberately NOT `recompose=True`, unlike (almost) every
+    #: other reactive on this pane. A selection recompose destroys the very
+    #: `DataTable` the user is arrow-keying through -- focus, cursor and
+    #: scroll die with the old widget, so the second key press lands on
+    #: nothing (measured in task-15461, fixed here). `watch_selected_
+    #: briefing` instead patches the table's highlight and the Export/Keep
+    #: buttons in place and rebuilds only `BriefingDetailRegion`. The five
+    #: selection-DERIVED reactives below (`scripts` through `citations`)
+    #: follow the same rule for the same reason: they only ever change as a
+    #: consequence of a selection (the synchronous clearing, then the
+    #: reload landing), and either arrival used to tear the table down.
+    selected_briefing = reactive[dict[str, Any] | None](None)
     #: The scope line, supplied by the screen: which watchlist these
     #: briefings belong to, or the reason there are none to show.
     scope_label = reactive("", recompose=True)
@@ -702,18 +767,22 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: (newest first, per `list_briefing_scripts`) -- never every script
     #: across the whole watchlist, since a script belongs to exactly one
     #: briefing and this pane only ever shows one briefing's detail at a
-    #: time.
-    scripts = reactive[list[dict[str, Any]]](list, recompose=True)
+    #: time. Selection-derived: `recompose=False`, watcher refreshes the
+    #: detail region only (task-15779 -- see `selected_briefing` above).
+    scripts = reactive[list[dict[str, Any]]](list)
     #: The script whose detail is rendered below the scripts table, or
-    #: `None` when nothing is selected.
-    selected_script = reactive[dict[str, Any] | None](None, recompose=True)
+    #: `None` when nothing is selected. Selection-derived: `recompose=
+    #: False`, watcher refreshes the detail region only (task-15779).
+    selected_script = reactive[dict[str, Any] | None](None)
     #: Task 7: the SELECTED script's newest `briefing_audio` render, or
     #: `None` when it has never been synthesized. Screen-supplied, resolved
     #: alongside `selected_script` inside `_load_briefings` -- never set by
     #: this widget itself, so (unlike `selected_briefing`/`selected_script`)
     #: it carries no `watch_`/message pair: there is nothing on this pane
     #: that "selects" a particular audio render, only ever the newest one.
-    script_audio = reactive[dict[str, Any] | None](None, recompose=True)
+    #: Selection-derived: `recompose=False`, watcher refreshes the detail
+    #: region only (task-15779).
+    script_audio = reactive[dict[str, Any] | None](None)
     #: Review round 1, Minor #4: `{script_id: status}` for every one of
     #: `scripts`' ids that has at least one `briefing_audio` render, keyed
     #: to that render's NEWEST status (`list_briefing_audio` is
@@ -728,8 +797,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: (see `_AUDIO_FAILED_MARK` above), which the old presence-only
     #: shape could not do: a failed synthesis rendered visually identical
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
-    #: inside `_load_briefings`.
-    scripts_with_audio = reactive[dict[int, str]](dict, recompose=True)
+    #: inside `_load_briefings`. Selection-derived: `recompose=False`,
+    #: watcher refreshes the detail region only (task-15779).
+    scripts_with_audio = reactive[dict[int, str]](dict)
     #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
     #: selected script -- has at least one export-ready audio episode
     #: (`SubscriptionsDB.list_watchlist_audio_episodes`'s own `complete`
@@ -784,8 +854,15 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: having to re-derive that from an absent dict. `label` is always a
     #: `rich.text.Text`, never a bare `str`: an item title is remote text
     #: (the same reasoning `_script_turns_renderable` states for a turn),
-    #: so it must never reach a markup parser.
-    citations = reactive[list[dict[str, Any]]](list, recompose=True)
+    #: so it must never reach a markup parser. Selection-derived:
+    #: `recompose=False`, watcher refreshes the detail region only
+    #: (task-15779).
+    citations = reactive[list[dict[str, Any]]](list)
+
+    #: The briefings table's `ColumnKey`s, captured by `compose` when the
+    #: table is built so `_restyle_briefing_row` can address cells by key
+    #: (task-15779). A tuple default, never a mutable class attribute.
+    _briefings_column_keys: tuple[ColumnKey, ...] = ()
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
@@ -895,6 +972,63 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             cell.append(ArtifactsPane._AUDIO_FAILED_MARK, style=mark_style)
         return cell
 
+    def _briefing_row_cells(self, row: dict[str, Any], style: str) -> tuple[Text, ...]:
+        """One briefings-table row's six cells, styled as a unit.
+
+        Task-15779: shared by `compose` (the build) and `_restyle_briefing_
+        row` (the in-place highlight move a selection now performs instead
+        of a rebuild), so the selected-row presentation cannot drift
+        between the two paths.
+        """
+        return (
+            Text(_status_text(row) or "—", style=style),
+            Text(_window_text(row), style=style),
+            Text(str(row.get("item_count") or 0), style=style),
+            Text(str(row.get("featured_count") or 0), style=style),
+            Text(str(row.get("overflow_count") or 0), style=style),
+            # TASK-2308. This column is where the UAT found the house
+            # style -- but "2026-08-04 18:22:44" is simply SQLite's
+            # `CURRENT_TIMESTAMP`, i.e. UTC that happens to look humane.
+            # It goes through the same formatter as every other Watchlists
+            # table so the whole screen agrees on one zone.
+            Text(humane_timestamp(row.get("created_at")), style=style),
+        )
+
+    def _export_button_state(self) -> tuple[bool, str]:
+        """The Export button's (disabled, tooltip) for the current selection.
+
+        Task-15779: shared by `compose` and `_update_selection_dependent_
+        buttons` -- a selection patches the mounted button in place rather
+        than recomposing the pane, and the two paths must agree.
+        """
+        disabled = (
+            self.selected_briefing is None
+            or _status_text(self.selected_briefing) != STATUS_COMPLETE
+        )
+        tooltip = (
+            "Select a completed briefing to export it."
+            if disabled
+            else "Export this briefing as a markdown file."
+        )
+        return disabled, tooltip
+
+    def _keep_button_state(self, export_disabled: bool) -> tuple[bool, str]:
+        """The Keep button's (disabled, tooltip) -- Export's condition plus
+        a live ChaChaNotes handle. Shared for the same task-15779 reason as
+        `_export_button_state` above.
+        """
+        disabled = export_disabled or not self.chachanotes_available
+        if export_disabled:
+            tooltip = "Select a completed briefing to keep it."
+        elif not self.chachanotes_available:
+            tooltip = "Connect a ChaChaNotes database to keep briefings."
+        else:
+            tooltip = (
+                "Keep this briefing (and its scripts) so it survives "
+                "this watchlist's deletion."
+            )
+        return disabled, tooltip
+
     def compose(self):
         # `Text`, not a bare `str`: `Static` parses Rich markup by default
         # (`Static(..., markup=True)`), and this line carries a user-authored
@@ -961,20 +1095,20 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # rather than a new `Horizontal` -- adding a row here would cost
             # height this pane's budget cannot spare (see the module
             # docstring's own note on the pane's fixed `fr` split).
-            export_disabled = (
-                self.selected_briefing is None
-                or _status_text(self.selected_briefing) != STATUS_COMPLETE
-            )
+            #
+            # Task-15779: the disabled/tooltip pair comes from `_export_
+            # button_state`, shared with the in-place update `watch_
+            # selected_briefing` performs -- a selection no longer
+            # recomposes this pane, so these two buttons are the one piece
+            # of selection-dependent chrome OUTSIDE `BriefingDetailRegion`
+            # and must be patchable without a rebuild.
+            export_disabled, export_tooltip = self._export_button_state()
             yield Button(
                 "Export…",
                 id="artifacts-export-button",
                 compact=True,
                 disabled=export_disabled,
-                tooltip=(
-                    "Select a completed briefing to export it."
-                    if export_disabled
-                    else "Export this briefing as a markdown file."
-                ),
+                tooltip=export_tooltip,
             )
             # task-1780, Task 5: keeping a briefing into ChaChaNotes so it
             # survives this watchlist's deletion. Same disabled shape as
@@ -984,18 +1118,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # access to at all, so a missing handle degrades this ONE
             # button (never the whole pane, never the whole toolbar), with
             # a tooltip naming which of the two conditions is unmet.
-            keep_disabled = export_disabled or not self.chachanotes_available
-            if export_disabled:
-                keep_tooltip = "Select a completed briefing to keep it."
-            elif not self.chachanotes_available:
-                keep_tooltip = (
-                    "Connect a ChaChaNotes database to keep briefings."
-                )
-            else:
-                keep_tooltip = (
-                    "Keep this briefing (and its scripts) so it survives "
-                    "this watchlist's deletion."
-                )
+            keep_disabled, keep_tooltip = self._keep_button_state(export_disabled)
             yield Button(
                 "Keep",
                 id="artifacts-keep-button",
@@ -1215,8 +1338,14 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             str(self.selected_briefing.get("id")) if self.selected_briefing else None
         )
         table = DataTable(id="artifacts-table")
-        table.add_columns(
-            "Status", "Window", "Items", "Featured", "Overflow", "Created"
+        # The keys are kept so `_restyle_briefing_row` can update cells on
+        # the MOUNTED table when the selection moves (task-15779) --
+        # `add_columns` auto-generates them, and `update_cell` addresses
+        # cells by nothing else.
+        self._briefings_column_keys = tuple(
+            table.add_columns(
+                "Status", "Window", "Items", "Featured", "Overflow", "Created"
+            )
         )
         selected_index: int | None = None
         for index, row in enumerate(self.briefings):
@@ -1224,29 +1353,31 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             if row_key == selected_key:
                 selected_index = index
             style = self._SELECTED_ROW_STYLE if row_key == selected_key else ""
-            table.add_row(
-                Text(_status_text(row) or "—", style=style),
-                Text(_window_text(row), style=style),
-                Text(str(row.get("item_count") or 0), style=style),
-                Text(str(row.get("featured_count") or 0), style=style),
-                Text(str(row.get("overflow_count") or 0), style=style),
-                # TASK-2308. This column is where the UAT found the house
-                # style -- but "2026-08-04 18:22:44" is simply SQLite's
-                # `CURRENT_TIMESTAMP`, i.e. UTC that happens to look humane.
-                # It goes through the same formatter as every other Watchlists
-                # table so the whole screen agrees on one zone.
-                Text(humane_timestamp(row.get("created_at")), style=style),
-                key=row_key,
-            )
+            table.add_row(*self._briefing_row_cells(row, style), key=row_key)
         if selected_index is not None:
             # TASK-1105, exactly as `NotificationsPane` documents it: a
-            # selection recomposes this pane, so the new table's cursor
-            # starts at row 0 and says so. Seeding it from the surviving
-            # selection stops that announcement from dragging the selection
-            # back to the first row.
+            # recompose of this pane (a reload landing new rows, a section
+            # revisit -- since task-15779 no longer a mere selection) builds
+            # a new table whose cursor starts at row 0 and says so. Seeding
+            # it from the surviving selection stops that announcement from
+            # dragging the selection back to the first row.
             table.cursor_coordinate = Coordinate(selected_index, 0)
         yield table
 
+        # Task-15779: everything below the table is selection-dependent, so
+        # it lives behind its own recompose boundary -- selecting a briefing
+        # rebuilds `BriefingDetailRegion` alone, and the table above it
+        # (focus, cursor, scroll) survives. See the class's own docstring.
+        yield BriefingDetailRegion(self, id="artifacts-detail-region")
+
+    def compose_briefing_detail(self):
+        """The detail region's content, yielded by `BriefingDetailRegion`.
+
+        Everything here reads the PANE's reactives -- the region owns no
+        state (see its docstring). Extracted verbatim from this class's own
+        `compose` tail by task-15779; the structure, ids and gating are
+        unchanged, only the recompose scope moved.
+        """
         yield Static("Briefing detail", classes="pane-title")
         yield Static(self._detail_renderable(), id="artifacts-detail")
 
@@ -1544,7 +1675,9 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             return
         self.post_message(CitationActivated(item_id))
 
-    def watch_selected_briefing(self, briefing: dict[str, Any] | None) -> None:
+    def watch_selected_briefing(
+        self, old: dict[str, Any] | None, briefing: dict[str, Any] | None
+    ) -> None:
         if not self.is_mounted:
             # Defense in depth for pre-mount seeding. Since task-15778
             # `WatchlistsCollectionsScreen._build_detail_pane` seeds every
@@ -1554,7 +1687,122 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # follows it, and there is no screen to tell either way.
             return
         self._clear_selection_derived_state()
+        self._apply_briefing_selection_in_place(old, briefing)
         self.post_message(BriefingSelected(briefing))
+
+    def _apply_briefing_selection_in_place(
+        self, old: dict[str, Any] | None, new: dict[str, Any] | None
+    ) -> None:
+        """Repaint what a selection changes WITHOUT rebuilding the pane.
+
+        Task-15779. `selected_briefing` used to be `recompose=True`, so
+        this was `compose`'s job -- at the cost of destroying the briefings
+        `DataTable` the user was navigating (module docstring). A selection
+        changes exactly three things this pane shows:
+
+        * the table's selected-row highlight (moved cell-by-cell here, on
+          the SURVIVING table);
+        * the Export/Keep buttons' disabled/tooltip state;
+        * everything below the table -- which is `BriefingDetailRegion`'s
+          whole content, rebuilt as one unit.
+
+        Every lookup is guarded: this watcher also fires while a QUEUED
+        pane recompose has not run yet (e.g. `_apply_briefing_state_to_
+        pane` assigning `briefings` first, then the selection), in which
+        case the widgets patched here are the outgoing ones and the
+        recompose repaints everything from current state anyway --
+        patching them is harmless, failing on them must be too.
+        """
+        try:
+            table = self.query_one("#artifacts-table", DataTable)
+        except NoMatches:
+            table = None
+        if table is not None:
+            self._move_briefing_row_highlight(table, old, new)
+        self._update_selection_dependent_buttons()
+        self._refresh_detail_region()
+
+    def _move_briefing_row_highlight(
+        self,
+        table: DataTable,
+        old: dict[str, Any] | None,
+        new: dict[str, Any] | None,
+    ) -> None:
+        """Restyle the outgoing and incoming rows, and keep the cursor on
+        the selection when it was moved programmatically.
+
+        The cursor move is a no-op for the user-driven path (the cursor
+        arriving on the row IS what selected it), and deliberately keyed on
+        row index alone -- a programmatic selection must never yank the
+        COLUMN out from under a cell cursor.
+        """
+        old_key = str(old.get("id")) if old else None
+        new_key = str(new.get("id")) if new else None
+        if old_key is not None and old_key != new_key:
+            self._restyle_briefing_row(table, old_key, "")
+        if new_key is None:
+            return
+        self._restyle_briefing_row(table, new_key, self._SELECTED_ROW_STYLE)
+        try:
+            row_index = table.get_row_index(new_key)
+        except RowDoesNotExist:
+            return
+        if table.cursor_coordinate.row != row_index:
+            table.move_cursor(row=row_index)
+
+    def _restyle_briefing_row(
+        self, table: DataTable, row_key: str, style: str
+    ) -> None:
+        """Rewrite one row's cells with `style`, by key, on the mounted
+        table. Characters are identical either way -- `_briefing_row_cells`
+        is the single source for both the build and this patch."""
+        row = next(
+            (r for r in self.briefings if str(r.get("id")) == row_key), None
+        )
+        if row is None:
+            return
+        cells = self._briefing_row_cells(row, style)
+        for column_key, cell in zip(self._briefings_column_keys, cells):
+            try:
+                table.update_cell(row_key, column_key, cell)
+            except CellDoesNotExist:
+                # The mounted table predates the row (or a queued recompose
+                # will replace it) -- nothing to patch, nothing lost.
+                return
+
+    def _update_selection_dependent_buttons(self) -> None:
+        """Patch Export/Keep in place -- the one piece of selection-
+        dependent chrome outside `BriefingDetailRegion` (task-15779)."""
+        export_disabled, export_tooltip = self._export_button_state()
+        keep_disabled, keep_tooltip = self._keep_button_state(export_disabled)
+        for button_id, disabled, tooltip in (
+            ("#artifacts-export-button", export_disabled, export_tooltip),
+            ("#artifacts-keep-button", keep_disabled, keep_tooltip),
+        ):
+            try:
+                button = self.query_one(button_id, Button)
+            except NoMatches:
+                continue
+            button.disabled = disabled
+            button.tooltip = tooltip
+
+    def _refresh_detail_region(self) -> None:
+        """Schedule ONE rebuild of everything below the briefings table.
+
+        Task-15779: the selection-derived watchers all funnel here rather
+        than each recomposing the pane. Multiple calls inside one
+        message-pump drain coalesce -- `refresh(recompose=True)` only sets
+        `_recompose_required`, and the first `_check_recompose` to run
+        clears it -- so a selection plus its reload landing costs at most
+        one region rebuild per drain, and the table above is never touched.
+        """
+        try:
+            region = self.query_one(
+                "#artifacts-detail-region", BriefingDetailRegion
+            )
+        except NoMatches:
+            return
+        region.refresh(recompose=True)
 
     def _clear_selection_derived_state(self) -> None:
         """Drop the previous briefing's scripts, audio and citations.
@@ -1568,13 +1816,16 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         reload's own: one for the selection, then a second for the clearing.
 
         Doing it here, with `set_reactive`, folds the clearing into the ONE
-        recompose the selection change has already queued (task-15461):
-        `set_reactive` writes the value without firing watchers or scheduling
-        a second rebuild, and `compose` reads the cleared values when that
-        single pending recompose runs. The stale-frame guarantee
-        `handle_briefing_selected` documents is unchanged -- if anything it is
-        stronger, since the clearing now happens in the same synchronous
-        instant as the selection rather than one message later.
+        rebuild the selection change already schedules (task-15461; since
+        task-15779 that is `BriefingDetailRegion`'s refresh, no longer a
+        whole-pane recompose): `set_reactive` writes the value without
+        firing watchers or scheduling a rebuild of its own, and
+        `compose_briefing_detail` reads the cleared values when the
+        selection watcher's single pending region refresh runs. The
+        stale-frame guarantee `handle_briefing_selected` documents is
+        unchanged -- if anything it is stronger, since the clearing happens
+        in the same synchronous instant as the selection rather than one
+        message later.
 
         `selected_script` is deliberately included: its watcher would post
         `ScriptSelected(None)`, which the screen documents as the redundant
@@ -1588,7 +1839,26 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
     def watch_selected_script(self, script: dict[str, Any] | None) -> None:
         if self.is_mounted:
+            self._refresh_detail_region()
             self.post_message(ScriptSelected(script))
+
+    def watch_scripts(self) -> None:
+        """Selection-derived (task-15779): rebuild the detail region only.
+
+        No `is_mounted` guard needed beyond `_refresh_detail_region`'s own:
+        an unmounted pane has no region to find, so the query simply
+        misses. The same applies to the three watchers below.
+        """
+        self._refresh_detail_region()
+
+    def watch_script_audio(self) -> None:
+        self._refresh_detail_region()
+
+    def watch_scripts_with_audio(self) -> None:
+        self._refresh_detail_region()
+
+    def watch_citations(self) -> None:
+        self._refresh_detail_region()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Fires on activation (`Enter`, or a second click on an

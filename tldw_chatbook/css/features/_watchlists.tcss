@@ -1094,6 +1094,16 @@ WatchlistPickerDialog {
  * task 5): a briefing list over a briefing body, over a scripts list over
  * a script body, all inside the ITEMS region's fixed budget.
  *
+ * Task-15779 note: everything below the briefings table now lives inside
+ * `BriefingDetailRegion` (`#artifacts-detail-region`, its own rule below)
+ * -- the recompose boundary that lets a briefing selection rebuild the
+ * detail WITHOUT destroying the table above it. The pane's own `fr` pool
+ * is therefore two-deep: the table takes `2fr` against the region's
+ * `8fr` (the detail half's old 6+1+1 shares, pooled), and the region's
+ * children re-divide that share 6:1:1 among themselves. The reasoning
+ * below about each child's share and floor is unchanged -- only the level
+ * at which the detail-side `fr`s resolve moved.
+ *
  * Every one of the four needs an explicit `fr` share, and the two DETAIL
  * halves are the ones that actually bite. `ArtifactsPane` is a `Vertical`,
  * so its children lay out top to bottom: scope note (1), toolbar (1),
@@ -1146,6 +1156,24 @@ WatchlistPickerDialog {
     width: 100%;
     height: 2fr;
     min-height: 4;
+}
+
+/* Task-15779: the recompose boundary holding everything below the
+ * briefings table (title, detail, citations, scripts/audio). `8fr`
+ * against the table's `2fr` stands in for the old flat 2:(6+1+1) split;
+ * the children's own 6:1:1 shares below now resolve inside this box.
+ * `min-height: 8` is the no-selection floor (title's 4 rows plus the
+ * detail's own `min-height: 4`); `overflow-y: auto` mirrors
+ * `#watchlists-artifacts-pane`'s belt-and-suspenders rule one level
+ * down -- when a short terminal leaves less than the children's floors
+ * need, the region scrolls rather than silently clipping the scripts
+ * section past its bottom edge.
+ */
+#artifacts-detail-region {
+    width: 100%;
+    height: 8fr;
+    min-height: 8;
+    overflow-y: auto;
 }
 
 #artifacts-detail {
