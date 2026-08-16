@@ -110,18 +110,72 @@ URLs neither deadlock nor self-skip: the url_list/sitemap loops await each
 check, so the claim is free before the loop reaches a duplicate (pinned).
 
 **Evidence.** `Tests/Subscriptions/test_watchlist_check_in_flight_guard.py`
-(5 tests) run against pre-fix HEAD `1af8c0414` in a throwaway worktree: all
-5 red ON BEHAVIOR — the headline interleave test failed with "a manual Check
-Now overlapping a scheduled check of the same source went to the network too"
-(the review's exact double-check), after a first attempt that reddened only
-on ImportError was rewritten with a lazy registry lookup (lesson filed in
-`lessons-testing-evidence.md`). With the fix: the manual entrant completes
-`skipped` without fetching while the scheduled fetch is still gated; one
-item, one new snapshot. Affected suites: baseline 1530 passed/1 skipped at
-HEAD; post-fix 1565 passed/1 skipped (Tests/Subscriptions, the two
-Scheduling watchlist files, Tests/Watchlists, the three check-now UI tests
-— including the 15764-ported thread-identity file). Ruff clean on every
-touched file.
+run against pre-fix HEAD `1af8c0414` in a throwaway worktree: 5 failed —
+stated precisely, ONE of the five (the headline interleave test) reddened on
+the behavior itself, "a manual Check Now overlapping a scheduled check of
+the same source went to the network too"; the other four reddened on the
+then-absent `skipped` key in their exact-dict assertions, i.e. vocabulary
+pins, not behavioral reproductions. (A first attempt that reddened only on
+ImportError was rewritten with a lazy registry lookup — lesson filed in
+`lessons-testing-evidence.md`.) The pre-guard damage shape reproduced at
+base is fetches=2, 2 snapshots, 1 item, with `changed`/`unchanged` split
+nondeterministically between the two runs — a Check Now could answer
+"0 found" for a change the other run got; the 15764 review's own
+`['changed','changed']`/two-snapshot split is credited to that review, not
+reproduced here. With the fix: the manual entrant completes `skipped`
+without fetching while the scheduled fetch is still gated; one item, one
+new snapshot. Affected suites: baseline 1530 passed/1 skipped at HEAD;
+post-fix 1565 passed/1 skipped (Tests/Subscriptions, the two Scheduling
+watchlist files, Tests/Watchlists, the three check-now UI tests — including
+the 15764-ported thread-identity file). Ruff clean on every touched file.
+
+**Scope note.** AC #4 (honest surfacing of the skip) was ADDED during
+implementation — the filed task had three ACs; the parent brief's
+second-entrant UX decision point called for reading Check Now's result
+surface and keeping it honest, and the toast/counter/Runs-segment work is
+that decision. Rerun and check-all keep their generic reporting (review F5,
+disclosed follow-up scope); the Runs-pane segment covers those runs.
+
+**Review fix wave (independent review, verdict FIX-FIRST; scratchpad
+`review16838.md`).** The guard mechanism held every attack (no leak path,
+choke point complete, single-loop verified, preview scoping correct); one
+blocker downstream plus honesty items, all addressed:
+
+- **B1 (blocker)**: an entirely-skipped run travelled `execute_run`'s
+  ordinary completion accounting — zero `error` dispositions made
+  `_all_error_check_message` return None, routing it into
+  `record_check_result`'s SUCCESS branch: auto-pause breaker reset,
+  `last_error` cleared, `last_successful_check` stamped, and a `no_items`
+  alert fired, all by a run that contacted nothing (reviewer's probe: a
+  2-failure streak wiped to clean by a skip). Fixed with option (a): new
+  `_entirely_skipped_dispositions` helper + a short-circuit in
+  `execute_run` — the run ROW still persists with its skipped stats (Runs
+  pane honesty), but `record_check_result`, stats inflation, and alert
+  evaluation are all skipped (`record_run_result` grew
+  `evaluate_alerts: bool = True`, stronger than the existing
+  `dispatch_notifications` flag which still evaluated). Born-red pin
+  (reviewer's probe shape) written FIRST and observed red at the guard
+  commit `72b67f25f` (`consecutive_failures 2 -> 0`) before the fix:
+  `test_an_entirely_skipped_run_leaves_the_sources_health_row_untouched`.
+  The `_SUCCESS_DISPOSITION_COUNTERS` comment's now-false "an
+  entirely-skipped run is unaffected either way" sentence corrected.
+- **F2**: new `Tests/Subscriptions/test_app_watchlists_db_wiring.py` pins
+  the production invariant the id(db) keying rests on — the UI service and
+  the scheduler handler's default service resolve to the ONE
+  `app.subscriptions_db` object — so a wiring regression to per-instance
+  DBs cannot leave every guard test green while the guard silently stops
+  guarding.
+- **F3**: the registry comment now states the true liveness mechanism —
+  the set entry is `(int, int, str)` with no reference; it is
+  `_check_url_guarded`'s own frame holding `db` across the await that
+  prevents id reuse, and a key-only helper extraction would drop that.
+- **F4**: single-loop caveat lines added at the three launch sites that
+  could break the invariant (Check Now and Rerun `run_worker` sites in
+  `watchlists_collections_screen.py`, the scheduler worker in `app.py`).
+- **F6**: user-guide wording — the winner's result "appears in the Runs
+  section the next time the screen refreshes" (nothing pushes it live).
+- **F7**: born-red and damage-shape claims restated precisely here and in
+  the test file's comments (see Evidence above).
 
 **Files.** `tldw_chatbook/Subscriptions/monitoring_engine.py` (new
 disposition constant), `tldw_chatbook/Subscriptions/local_watchlists_service.py`

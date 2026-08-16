@@ -200,10 +200,15 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
 #: excluded because a skip proves nothing about the source's reachability:
 #: the URL was never contacted, so it must not count as the "genuine
 #: progress" that resets the auto-pause breaker in
-#: `_all_error_check_message`. (An entirely-skipped run is unaffected either
-#: way -- with zero `error` dispositions that function already returns
-#: `None`; this only matters for a run where every URL actually CHECKED
-#: errored and the rest were skipped, which should record the failure.)
+#: `_all_error_check_message`. This exclusion matters for the MIXED case --
+#: a run where every URL actually checked errored and the rest were skipped
+#: still records the failure. An ENTIRELY-skipped run never reaches
+#: `_all_error_check_message` at all: `execute_run` short-circuits its
+#: source-health accounting before that point (review B1 -- see
+#: `_entirely_skipped_dispositions` there), because with zero `error`
+#: dispositions the helper would return `None` and route the run into
+#: `record_check_result`'s SUCCESS branch, resetting the breaker and
+#: stamping `last_successful_check` for a run that contacted nothing.
 _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
     counter
     for counter in _DISPOSITION_COUNTERS
@@ -229,9 +234,13 @@ _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
 #: `WatchlistPreviewService` runs the same executor against a throwaway
 #: in-memory `SubscriptionsDB` whose row ids can collide with live ones, and
 #: without the scope a preview could falsely skip (or be skipped by) a real
-#: check. The id cannot alias across lives: the claim holds a reference to
-#: `db` for exactly the window the key is registered, so the object cannot
-#: be collected (and its id reused) while its key is in the set.
+#: check. The id cannot alias across lives — but note WHERE that guarantee
+#: comes from: the set entry is a plain `(int, int, str)` and holds NO
+#: reference to `db`. It is `_check_url_guarded`'s own frame — its `db`
+#: parameter, alive across the awaited check — that keeps the object from
+#: being collected (and its id reused) while its key is registered. A
+#: refactor that extracts the claim into a helper receiving only the
+#: precomputed key would silently drop that liveness guarantee.
 #:
 #: A plain `set` with no lock, on the single-loop argument: every entrant
 #: that reaches `_default_run_executor` runs on the app's one event loop
@@ -242,6 +251,46 @@ _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
 #: check entrant ever moves off the app loop, this needs a real lock -- see
 #: `_check_url_guarded`'s docstring.
 _IN_FLIGHT_URL_CHECKS: set[tuple[int, Any, str]] = set()
+
+
+def _entirely_skipped_dispositions(
+    dispositions_counts: Mapping[str, Any] | None,
+) -> bool:
+    """Whether a run's dispositions say it checked NOTHING because of the guard.
+
+    task-16838, review B1. True when at least one URL was `skipped` (a
+    concurrent check of the same (subscription, url) held the in-flight
+    claim) and every other counter is zero -- i.e. the run made no network
+    call and observed nothing at all. `execute_run` short-circuits the
+    source-health accounting for such a run: without this, its zero `error`
+    dispositions routed it through `record_check_result`'s SUCCESS branch,
+    which resets the auto-pause breaker, clears `last_error`, and stamps
+    `last_successful_check` -- a "successful check" by a run that never
+    contacted the source (the 16838 review's PROBE 1: a two-failure streak
+    wiped to clean by a skip). A PARTIALLY skipped run is deliberately not
+    matched: it did real work on the URLs it checked and keeps the ordinary
+    accounting.
+
+    Args:
+        dispositions_counts: The run's `_disposition_counts()` output, or
+            `None`/absent for source types with no dispositions (feed/API
+            runs, which can never skip and always return False here).
+
+    Returns:
+        True only for a non-empty counts mapping that is all zeros except
+        `skipped`.
+    """
+    if not isinstance(dispositions_counts, Mapping):
+        return False
+    skipped = int(dispositions_counts.get("skipped", 0) or 0)
+    if skipped <= 0:
+        return False
+    others = sum(
+        int(dispositions_counts.get(counter, 0) or 0)
+        for counter in _DISPOSITION_COUNTERS
+        if counter != "skipped"
+    )
+    return others == 0
 
 
 def _all_error_check_message(
@@ -1041,6 +1090,34 @@ class LocalWatchlistsService:
             stats.setdefault("items_found", len(raw_items))
             stats.setdefault("response_time_ms", int((time.time() - start_time) * 1000))
 
+            # task-16838, review B1: a run the in-flight guard made check
+            # NOTHING (every disposition `skipped` -- a concurrent check of
+            # the same source held every URL's claim) must not travel the
+            # ordinary completion accounting. It contacted the source zero
+            # times, so it is not evidence of anything: `record_check_result`
+            # below would land in its SUCCESS branch (zero `error`
+            # dispositions -> `_all_error_check_message` returns None) and
+            # reset the auto-pause breaker, clear `last_error`, stamp
+            # `last_successful_check`, and inflate `subscription_stats`;
+            # alert evaluation would fire `no_items` over an absence the run
+            # never observed. The winner -- the check that actually holds the
+            # claim -- records the source's real health moments later. Only
+            # the run ROW is written (with its skipped stats), so the Runs
+            # pane still shows honestly what this run did: nothing.
+            if _entirely_skipped_dispositions(stats.get("dispositions")) and (
+                not raw_items
+            ):
+                stats["items_ingested"] = 0
+                stats["new_items_found"] = 0
+                return await self.record_run_result(
+                    run_id,
+                    status=str(result.get("status") or "completed"),
+                    stats=stats,
+                    error_msg=result.get("error_msg"),
+                    log_text=result.get("log_text"),
+                    evaluate_alerts=False,
+                )
+
             filters = await run_db_off_loop(
                 db, self._load_source_filters, db, source_id
             )
@@ -1362,6 +1439,7 @@ class LocalWatchlistsService:
         error_msg: str | None = None,
         log_text: str | None = None,
         dispatch_notifications: bool = True,
+        evaluate_alerts: bool = True,
     ) -> dict[str, Any]:
         """Persist a completed local run and emit notifications for matching alert rules.
 
@@ -1369,6 +1447,13 @@ class LocalWatchlistsService:
         `run_db_off_loop` hop, in their existing order; the notification
         dispatch after them is unchanged and still runs on the caller's
         thread.
+
+        ``evaluate_alerts=False`` (task-16838, review B1) skips the alert-rule
+        evaluation entirely -- stronger than ``dispatch_notifications=False``,
+        which still evaluates and returns the triggered alerts. Used by
+        `execute_run` for an entirely-skipped run: a run that checked nothing
+        must not fire `no_items` (or any status-agnostic rule) over an absence
+        it never actually observed. The run row itself is still written.
         """
         db = self._db()
         current = await self.get_run(run_id)
@@ -1395,14 +1480,16 @@ class LocalWatchlistsService:
         # Reads `local_watchlist_alert_rules`; the dispatch below does not
         # touch sqlite and stays on the caller's thread, where the
         # notification dispatcher expects to be called.
-        triggered_alerts = await run_db_off_loop(
-            db,
-            self._evaluate_alert_rules_for_run,
-            run_id=int(run_id),
-            job_id=int(current.get("job_id") or current.get("source_id")),
-            stats=stats_payload,
-            status=str(status),
-        )
+        triggered_alerts: list[dict[str, Any]] = []
+        if evaluate_alerts:
+            triggered_alerts = await run_db_off_loop(
+                db,
+                self._evaluate_alert_rules_for_run,
+                run_id=int(run_id),
+                job_id=int(current.get("job_id") or current.get("source_id")),
+                stats=stats_payload,
+                status=str(status),
+            )
         if dispatch_notifications:
             for alert in triggered_alerts:
                 notification = self._dispatch_alert_notification(alert)

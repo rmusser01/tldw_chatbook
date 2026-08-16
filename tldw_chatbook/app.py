@@ -9929,6 +9929,11 @@ class TldwCli(
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
         # Start the background scheduler loop for reminders and scheduled tasks.
+        # A COROUTINE worker, never thread=True: scheduled watchlist checks
+        # dispatch from this loop, and the watchlists in-flight guard
+        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
+        # the invariant that every check entrant runs on the app's one event
+        # loop. Moving dispatch off-loop needs a lock there.
         self.scheduler_worker = self.run_worker(
             self.scheduler_loop.run(),
             exclusive=True,

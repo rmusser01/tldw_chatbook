@@ -21,7 +21,8 @@ source whose page is already being checked — usually because a scheduled
 check of it is mid-flight — the app does not run a second, duplicate check
 of the same page: your run completes immediately without touching the
 network, the toast says the check was skipped because one is already
-running, and the running check's result arrives moments later as usual.
+running, and the running check's result appears in the Runs section the
+next time the screen refreshes.
 The skipped run stays honest in the Runs section too: its detail line
 counts the page under "skipped (check already running)" rather than
 reading like a clean check that found nothing. Different sources are

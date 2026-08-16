@@ -6,18 +6,29 @@ worker on the app's event loop, and a UI "Check Now" runs `launch_run` /
 `execute_run` as a coroutine worker on the same loop -- so a scheduled check
 and a manual check of source X could interleave across `check_url`'s awaits
 (the network fetch plus the off-loop sqlite/CPU hops). Both read the same
-baseline before either wrote, and the review's forced interleave got
-`dispositions=['changed','changed']`: one page change double-reported, two
-snapshots written.
+baseline before either wrote. The 15764 review's own forced interleave
+reported `dispositions=['changed','changed']` with two snapshots written;
+this file's base-tree probes (gate released, both runs allowed to finish)
+consistently reproduced the double-CHECK with a different damage split --
+fetches=2, one item, one run `changed` and the other `unchanged`,
+nondeterministically assigned. Either split is a real defect: in the
+reproduced one, a run that fetched a genuinely changed page reports
+`unchanged`, so a user's Check Now can answer "0 found" for a change the
+other run got.
 
 The guard (`LocalWatchlistsService._check_url_guarded`) is a module-level
 in-flight set keyed `(id(db), subscription_id, url)`, claimed before the
 check and released in `finally`. The second entrant SKIPS with an honest
 `skipped` disposition; it does not queue or wait.
 
-The headline test below was born red at HEAD `1af8c0414` (pre-guard): the
-manual entrant reached the network while the scheduled fetch was still
-gated, and the run pair double-reported exactly as the review demonstrated.
+Born-red record, stated precisely: at HEAD `1af8c0414` (pre-guard) this
+file failed 5/5, but only the headline interleave test reddened ON THE
+BEHAVIOR -- the manual entrant reached the network while the scheduled
+fetch was still gated ("went to the network too"). The other four reddened
+on the then-absent `skipped` key in their exact-dict assertions: vocabulary
+pins, not behavioral reproductions. The B1 health-row test below was born
+red separately, at the guard commit `72b67f25f`, on its own behavior
+(`consecutive_failures 2 -> 0`).
 
 Threading note (same as `test_url_monitor_off_loop.py`): the file-backed DBs
 under `tmp_path` are load-bearing -- `SubscriptionsDB` keeps thread-local
@@ -218,9 +229,14 @@ async def test_scheduled_and_manual_check_of_same_source_cannot_double_report(
     assert manual_run["stats"]["dispositions"] == {**_ZERO_COUNTS, "skipped": 1}
     assert manual_run["found_count"] == 0
 
-    # ...and the durable record carries ONE report and ONE new snapshot,
-    # not two of each (pre-guard: dispositions ['changed','changed'], three
-    # snapshot rows, and the same change persisted from both runs).
+    # ...and the durable record carries ONE report and ONE new snapshot.
+    # Pre-guard (reproduced at base, 4 runs): both entrants fetched
+    # (fetches=2), 2 snapshot rows, 1 item -- and the change/unchanged
+    # dispositions split NONDETERMINISTICALLY between the two runs, so a
+    # Check Now could report `unchanged`/0-found for a change the other run
+    # got. (The 15764 review's own tighter interleave additionally observed
+    # ['changed','changed'] with two snapshots written; that exact split was
+    # not reproduced here and is credited to that review, not this file.)
     assert _item_count(db, source_id) == 1
     assert _snapshot_count(db, source_id, url) == 2
 
@@ -347,6 +363,97 @@ async def test_a_cancelled_check_releases_the_guard(tmp_path, monkeypatch):
     recovered = await _run_check(service, source_id)
     assert recovered["status"] == "completed"
     assert recovered["stats"]["dispositions"] == {**_ZERO_COUNTS, "baseline": 1}
+
+
+# --- Review B1: an entirely-skipped run must not record a successful check ---
+
+
+@pytest.mark.asyncio
+async def test_an_entirely_skipped_run_leaves_the_sources_health_row_untouched(
+    tmp_path, monkeypatch
+):
+    """Born red at `72b67f25f` (the guard commit, pre-B1): the 16838 review's
+    PROBE 1, as a pin.
+
+    An entirely-skipped run used to flow through `execute_run`'s ordinary
+    success accounting: `_all_error_check_message` returned `None` (zero
+    `error` dispositions), which routed it into `record_check_result`'s
+    SUCCESS branch -- so a run that made NO network call reset the source's
+    auto-pause breaker (`consecutive_failures`/`error_count` -> 0), cleared
+    `last_error`, and stamped `last_successful_check` on a source that had
+    never successfully checked. It also evaluated alert rules, firing
+    `no_items` for a run that looked for nothing. That is the same
+    false-clean shape the skip toast removed, one layer down -- and it
+    re-opens task-1394's breaker-delay in miniature (a Check Now during a
+    dead source's scheduled fetch wiped the streak the winner's failure
+    then restarted at 1).
+
+    The run RECORD must still persist with its skipped stats -- the Runs
+    pane shows it honestly -- but the source's health row and the alert
+    pipeline must be untouched.
+    """
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    url = "https://example.com/page"
+    source_id = db.add_subscription(name="Watched page", type="url", source=url)
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    # Two real failures build a genuine failure streak.
+    async def dead_host(fetch_url, *, client, max_bytes, **kwargs):
+        raise ConnectionError("host unreachable")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.guarded_fetch_httpx_async",
+        dead_host,
+    )
+    for _ in range(2):
+        failed = await _run_check(service, source_id)
+        assert failed["status"] == "failed"
+
+    before = dict(db.get_subscription(source_id))
+    assert before["consecutive_failures"] == 2, "precondition: a real streak"
+    assert before["last_error"], "precondition: a recorded error"
+    assert before["last_successful_check"] is None
+
+    # A `no_items` rule would fire on any 0-item run that reaches alert
+    # evaluation -- the probe for "the skipped run travelled the ordinary
+    # completion pipeline".
+    await service.create_alert_rule(
+        name="Nothing found", condition_type="no_items", source_id=source_id
+    )
+
+    # Force the entirely-skipped run by holding the claim, exactly as a
+    # concurrent check would.
+    fetched = _serve(monkeypatch, lambda u, n: _PAGE_ONE)
+    key = (id(db), source_id, url)
+    _in_flight().add(key)
+    try:
+        skipped_run = await _run_check(service, source_id)
+    finally:
+        _in_flight().discard(key)
+
+    # The run record itself persists honestly...
+    assert skipped_run["status"] == "completed"
+    assert skipped_run["stats"]["dispositions"] == {**_ZERO_COUNTS, "skipped": 1}
+    assert fetched == [], "an entirely-skipped run must not touch the network"
+    # ...but it is not a successful CHECK: no breaker reset, no cleared
+    # error, no success stamp...
+    after = dict(db.get_subscription(source_id))
+    for column in (
+        "consecutive_failures",
+        "error_count",
+        "last_error",
+        "last_successful_check",
+        "is_paused",
+    ):
+        assert after[column] == before[column], (
+            f"an entirely-skipped run changed the source's {column} "
+            f"({before[column]!r} -> {after[column]!r}) -- it recorded a "
+            "successful check despite contacting nothing"
+        )
+    # ...and no alert rule is evaluated against it.
+    assert skipped_run.get("triggered_alerts") == [], (
+        "a run that looked for nothing must not fire `no_items`"
+    )
 
 
 # --- Same-run re-entry: sequential duplicates neither deadlock nor self-skip --

@@ -5099,6 +5099,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RerunRunRequested)
     def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
         event.stop()
+        # A coroutine worker, never thread=True — this launches a check, so
+        # the in-flight guard's single-loop invariant applies (see
+        # `handle_check_now_requested`'s launch site).
         self.run_worker(self._rerun_run(event.source_id), exclusive=True)
 
     async def _rerun_run(self, source_id: Any) -> None:
@@ -5239,6 +5242,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._notify_watchlists(
             f"Checking {name}...", severity="information", markup=False
         )
+        # A COROUTINE worker, never thread=True: the watchlists in-flight
+        # guard (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is a
+        # lock-free set whose safety rests on every check entrant running on
+        # the app's one event loop. Moving this off-loop needs a lock there.
         self.run_worker(
             self._check_now_source(entity, source_key, name), group="wc_check_now"
         )
