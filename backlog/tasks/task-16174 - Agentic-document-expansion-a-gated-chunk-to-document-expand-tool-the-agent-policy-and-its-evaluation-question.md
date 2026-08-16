@@ -211,7 +211,7 @@ Task 3b pre-registered two ways expansion could misfire. **Neither
 manifested in this run, and neither is refuted by it** — the `plain`
 route emits no chunked rows and real database ids, so it cannot exercise
 either. They remain the first things to check if the tool is measured on a
-semantic/hybrid route, and are carried by a follow-up task:
+semantic/hybrid route, and are carried by **TASK-16588**:
 
 1. `chunk_start` is absent from the projected payload, so a chunked row
    would expand from the document HEAD rather than around the match.
