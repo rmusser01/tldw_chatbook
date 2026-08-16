@@ -2155,6 +2155,71 @@ async def test_cancelled_reaction_save_drains_failure_and_cleans_exact_orphan(
     assert screen._visual_identity_operation_task is None
 
 
+async def test_cancelled_reaction_save_drains_post_commit_reconciliation(
+    personas_editor_with_bound_pack, monkeypatch, tmp_path
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    invalidation_entered = asyncio.Event()
+    release_invalidation = asyncio.Event()
+    order = []
+
+    def publish(*_args, **_kwargs):
+        order.append("publish")
+        return VisualIdentityPublicationResult(
+            actor_kind="character",
+            actor_id=str(char_id),
+            old_pack_id=1,
+            old_version_id=1,
+            new_pack_id=2,
+            new_version_id=2,
+            version_directory=tmp_path,
+        )
+
+    async def invalidate(_result):
+        order.append("invalidate-start")
+        invalidation_entered.set()
+        await release_invalidation.wait()
+        order.append("invalidate-done")
+
+    async def refresh(_snapshot):
+        order.append("refresh")
+
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+    save = asyncio.create_task(
+        screen._save_visual_identity_pack(browser.pack),
+        name="cancelled-reaction-reconcile",
+    )
+    await asyncio.wait_for(invalidation_entered.wait(), 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is save
+    assert not await screen._stage_visual_identity_clear(asset)
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._visual_identity_publication_inflight
+    release_invalidation.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == ["publish", "invalidate-start", "invalidate-done", "refresh"]
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_authoring is None
+    assert browser._staged == {}
+
+
 async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reaches_it(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -3017,6 +3082,62 @@ async def test_cancelled_character_save_drains_late_error_and_releases_guard(
         await save
     assert not screen._character_save_inflight
     assert notifications == [("Character save failed.", "error")]
+
+
+async def test_cancelled_character_save_drains_post_commit_reconciliation(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    reconciliation_entered = asyncio.Event()
+    release_reconciliation = asyncio.Event()
+    order = []
+
+    def persist(*_args, **_kwargs):
+        order.append("persist")
+        return True
+
+    async def reconcile(saved_id, submitted_name):
+        order.append(("reconcile-start", saved_id, submitted_name))
+        reconciliation_entered.set()
+        await release_reconciliation.wait()
+        order.append("reconcile-done")
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Packed"}, str(char_id), "edit"
+        ),
+        name="cancelled-character-reconcile",
+    )
+    await asyncio.wait_for(reconciliation_entered.wait(), 2)
+
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+    assert screen._begin_visual_identity_operation(snapshot) is None
+    save.cancel()
+    await asyncio.sleep(0)
+    assert screen._character_save_inflight
+    release_reconciliation.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await save
+    assert order == [
+        "persist",
+        ("reconcile-start", str(char_id), "Packed"),
+        "reconcile-done",
+    ]
+    assert not screen._character_save_inflight
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
 
 
 async def test_generate_all_restores_missing_canonical_asset_and_direction(

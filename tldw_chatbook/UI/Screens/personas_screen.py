@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
 import dataclasses
 import json
 import re
@@ -541,12 +541,31 @@ class _CharacterSaveAuthority:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _DrainedThreadResult:
-    """One blocking result observed after every outer cancellation is drained."""
+class _DrainedTaskResult:
+    """One task result observed after every outer cancellation is drained."""
 
     value: Any = None
     error: Exception | None = None
     cancellation: asyncio.CancelledError | None = None
+
+
+async def _drain_async(
+    awaitable: Coroutine[Any, Any, Any], *, task_name: str
+) -> _DrainedTaskResult:
+    """Shield one critical task and report cancellation after it settles."""
+
+    task = asyncio.create_task(awaitable, name=task_name)
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            return _DrainedTaskResult(
+                value=await asyncio.shield(task), cancellation=cancellation
+            )
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+        except Exception as exc:
+            return _DrainedTaskResult(error=exc, cancellation=cancellation)
 
 
 async def _drain_to_thread(
@@ -555,23 +574,12 @@ async def _drain_to_thread(
     *args: Any,
     task_name: str,
     **kwargs: Any,
-) -> _DrainedThreadResult:
+) -> _DrainedTaskResult:
     """Shield one irreversible thread and report cancellation after it settles."""
 
-    thread_task = asyncio.create_task(
-        asyncio.to_thread(function, *args, **kwargs), name=task_name
+    return await _drain_async(
+        asyncio.to_thread(function, *args, **kwargs), task_name=task_name
     )
-    cancellation: asyncio.CancelledError | None = None
-    while True:
-        try:
-            return _DrainedThreadResult(
-                value=await asyncio.shield(thread_task), cancellation=cancellation
-            )
-        except asyncio.CancelledError as exc:
-            if cancellation is None:
-                cancellation = exc
-        except Exception as exc:
-            return _DrainedThreadResult(error=exc, cancellation=cancellation)
 
 
 class PersonasScreen(BaseAppScreen):
@@ -7888,7 +7896,8 @@ class PersonasScreen(BaseAppScreen):
                 result = outcome.value
                 published = True
                 self._visual_identity_authoring = None
-                try:
+
+                async def reconcile_publication() -> None:
                     await self._invalidate_visual_identity_publication(result)
                     if self._visual_identity_author_snapshot_is_current(state.snapshot):
                         editor = state.snapshot.editor_ref()
@@ -7902,7 +7911,14 @@ class PersonasScreen(BaseAppScreen):
                                     editor_session_token=state.snapshot.editor_session_token,
                                 )
                             )
-                except Exception:
+
+                reconciliation = await _drain_async(
+                    reconcile_publication(),
+                    task_name="personas-reaction-pack-reconcile",
+                )
+                if cancellation is None:
+                    cancellation = reconciliation.cancellation
+                if reconciliation.error is not None:
                     logger.warning(
                         "Visual Identity publication committed but presentation "
                         "failed (category=refresh_failed)."
@@ -10847,11 +10863,17 @@ class PersonasScreen(BaseAppScreen):
                 if current:
                     self._notify("Character save failed.", "error")
             elif current:
-                try:
-                    await self._after_character_save(
+                reconciliation = await _drain_async(
+                    self._after_character_save(
                         str(outcome.value), str(data.get("name") or "")
+                    ),
+                    task_name="personas-character-save-reconcile",
+                )
+                if outcome.cancellation is None:
+                    outcome = dataclasses.replace(
+                        outcome, cancellation=reconciliation.cancellation
                     )
-                except Exception:
+                if reconciliation.error is not None:
                     logger.warning(
                         "Character persistence committed but presentation failed "
                         "(category=refresh_failed)."
