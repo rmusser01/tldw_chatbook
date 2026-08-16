@@ -307,7 +307,8 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                     )
                 else:
                     active_reranker = self.reranker
-                results = await active_reranker.rerank(query, results)
+                outcome = await active_reranker.rerank(query, results)
+                results = outcome.results
 
                 rerank_time = time.time() - rerank_start
                 log_histogram("rag_reranking_time", rerank_time)
@@ -318,18 +319,18 @@ class EnhancedRAGServiceV2(EnhancedRAGService):
                 # call exhausting retries under a missing provider
                 # credential -- which looks identical to "nothing needed
                 # reranking" (an unchanged ordering, no exception) unless
-                # disclosed here. See BaseReranker.last_rerank_failures.
-                failed = getattr(active_reranker, "last_rerank_failures", 0)
-                total = getattr(active_reranker, "last_rerank_total", 0)
-                if failed:
-                    logger.warning(
-                        f"Reranking degraded: {failed}/{total} scorings failed"
-                    )
-                    results = _tag_first_result(
-                        results,
-                        "reranking_degraded",
-                        f"{failed}/{total} scorings failed",
-                    )
+                # disclosed here.
+                #
+                # These counts come from THIS call's return value, never
+                # from the reranker object: `self.reranker` is a singleton
+                # shared by every concurrent search(), so reading counters
+                # off it after rerank() returned let another search's
+                # failures be attributed to this search's tag (TASK-3502
+                # AC#4 -- scoped, not locked; see RerankOutcome).
+                if outcome.degraded:
+                    detail = f"{outcome.failed}/{outcome.total} scorings failed"
+                    logger.warning(f"Reranking degraded: {detail}")
+                    results = _tag_first_result(results, "reranking_degraded", detail)
             except Exception as exc:
                 logger.warning(
                     f"Reranking failed ({exc}); returning unreranked results"

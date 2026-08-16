@@ -3,10 +3,10 @@ id: TASK-3502
 title: >-
   Reranker follow-ups: provider/model selection, cost surface, and two re-review
   residuals
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-07 20:36'
-updated_date: '2026-08-07 22:05'
+updated_date: '2026-08-16 22:03'
 labels:
   - rag
   - settings
@@ -28,6 +28,14 @@ TASK-3170's Task 4 fixed the reranker factory so a reranking-enabled profile act
 - [ ] #3 A regression test drives the real PairwiseReranker and ListwiseReranker strategies through the reranking_degraded copy-not-mutate path and confirms neither poisons a cached SearchResult
 - [ ] #4 BaseReranker's per-call failure counters are safe under concurrent search() calls on the shared reranker singleton, or the diagnostic disclosure is scoped so a race cannot misattribute one search's failures to another's disclosed tag
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Spec: Docs/superpowers/specs/2026-08-16-reranker-followups-design.md
+Plan: Docs/superpowers/plans/2026-08-16-reranker-followups.md
+T1 engine honesty (AC#3, AC#4, note-b) -> T2 UI honesty (AC#1, AC#2, note-a) -> T3 closure + cross_encoder filing.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
