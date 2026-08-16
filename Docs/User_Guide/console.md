@@ -166,7 +166,10 @@ default), scrolling further back keeps loading older history while the newest
 end of the stretch is set aside the same way — so a very long session stays
 reachable by scrolling, at a roughly constant memory cost. One deliberate
 exception: a selected message is never set aside, so a selection pinned at
-the newest end of the stretch pauses the sliding until you clear it (Esc).
+either end of the stretch pauses the sliding in that direction until you
+clear it (Esc) — after a jump to an old message, the jumped-to selection
+sits at the oldest end, so reading far enough past it eventually pauses the
+forward walk the same way (the view stays bounded instead of growing).
 Scrolling back down (or a jump to an old message — selecting one far outside
 the stretch lands you on a fresh window around it instead of loading
 everything in between) walks forward the same way, and the jump-to-latest
@@ -410,4 +413,7 @@ delta — shipped tests and an isolated 500-message load probe; not re-checked
 live. "Long conversations" sliding scroll-back and bounded far jumps
 verified against TASK-15777 — shipped tests plus isolated 400/500-message
 mounted probes (scroll-back walked m360→m0 at a constant 101 mounted rows;
-a far jump mounted 5 rows instead of 490); not re-checked live.*
+a far jump mounted 5 rows instead of 490); not re-checked live. The
+head-pinned-selection pause (TASK-16851) verified by shipped tests — a
+post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
+it previously grew to 1966 and kept growing; not re-checked live.*

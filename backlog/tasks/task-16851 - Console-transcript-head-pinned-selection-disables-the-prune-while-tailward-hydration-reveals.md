@@ -1,8 +1,9 @@
 ---
 id: TASK-16851
 title: 'Console transcript: head-pinned selection disables the prune while tailward hydration reveals'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16'
 labels:
   - bug
@@ -49,3 +50,39 @@ document the bound.
 - [ ] #3 The 15777 two-sided suite (13), protected pruning suite, and End-drain pins stay green
 - [ ] #4 The one-frame End-during-prune residual is either closed or pinned-and-documented with its recovery
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce the head-pinned unbounded reveal as a born-red test: far jump
+   (`select_message` on a windowed-out target, which re-centers and pins the
+   selection at the window head), then a paced walk down; assert
+   `virtual_size.height` stays bounded near the high watermark and the
+   selection row + action row stay mounted. Run it RED at HEAD first.
+2. Fix shape (the review's suggestion — reading the code confirmed it is the
+   only shape compatible with slice-contiguity + the no-eviction rule):
+   `_hydrate_tailward` refuses to reveal another chunk while the measured
+   height is at/over the high mark AND the prune walk is blocked (empty
+   `_compute_prunable_prefix`) — hydration must not outrun a prune that
+   cannot make room. Selection stays mounted and highlighted; recovery for
+   full downward reachability is Esc (clear selection → prune unblocks →
+   hydration resumes) or the jump pill, both pinned.
+3. Consequence, documented: with a head-pinned selection HELD, the downward
+   walk now stalls bounded instead of mounting to the tail — contiguity
+   (one slice), a mounted selection, and a mounted far tail are mutually
+   exclusive, so full reachability under a held head-pinned selection is
+   mathematically impossible.
+   `test_far_jump_then_scrolling_down_walks_back_to_the_tail` is updated to
+   the new contract (clear the selection, then the walk reaches the tail);
+   the head-pinned stall + bound + Esc-resume is pinned by the new test.
+   Finding D's accepted twin (tail-pinned selection pauses the slide,
+   prune still bounds) is upward-hydration territory — untouched.
+4. End-during-prune race: stamp `scroll_end` with a monotonic intent time;
+   the prune's restore, on seeing an entry-detached reader whose raw anchor
+   is engaged at restore time, honors a stamp NEWER than prune entry — skip
+   the quiet release and the offset compensation, re-arm the drain — instead
+   of cancelling the user's End. Entry-state restore for every other case is
+   byte-identical (round-3 semantics preserved). Born-red pin injects End in
+   the entry→restore window via a wrapped `_run_prune_check`.
+5. Verification: new pins born red at HEAD; two-sided suite green; protected
+   `window_reconcile` + `windowing` suites green AND byte-unmodified;
+   pruning suite green; ruff on touched files.

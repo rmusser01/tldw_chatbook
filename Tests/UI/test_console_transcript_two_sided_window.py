@@ -242,7 +242,19 @@ async def test_far_jump_mounts_a_bounded_recentered_window():
 
 @pytest.mark.asyncio
 async def test_far_jump_then_scrolling_down_walks_back_to_the_tail():
-    """After a far jump the tail stays reachable by scrolling down."""
+    """After a far jump the tail stays reachable by scrolling down.
+
+    TASK-16851: the jump's selection is cleared before the walk. The jump
+    SELECTS its target at the window head, and a head-pinned selection now
+    pauses tailward hydration once the mounted height reaches the high
+    watermark (the prune cannot trim past a protected head group, so
+    hydration no longer outruns it — the original form of this test reached
+    the tail only by mounting an unbounded contiguous slice from m10 to
+    m499, the exact growth that task removed). The held-selection stall,
+    its height bound, and the Esc recovery are pinned in
+    ``test_console_transcript_selection_prune_bound.py``; this test keeps
+    pinning that a selection-free downward walk reaches the tail.
+    """
     app = TwoSidedHarness()
     history = _messages(500)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -258,8 +270,12 @@ async def test_far_jump_then_scrolling_down_walks_back_to_the_tail():
         await _settle(pilot)
         assert "m499" not in _mounted_message_ids(transcript)
 
+        transcript.action_clear_selection()
+        await _settle(pilot)
+
         for _ in range(120):
             transcript.scroll_to(y=transcript.max_scroll_y, animate=False)
+            transcript.action_page_down()
             await _settle(pilot, times=4)
             if "m499" in _mounted_message_ids(transcript):
                 break
