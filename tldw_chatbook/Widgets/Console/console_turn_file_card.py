@@ -92,6 +92,11 @@ class ConsoleTurnFileCard(Vertical):
         )
 
     async def _load_rows(self) -> None:
+        # The whole prepare-then-mount body lives in one try/except (mirrors
+        # ConsoleToolDiffRow._prepare_and_mount in console_transcript.py) so
+        # that a failure anywhere -- provider construction, the off-thread
+        # read, or the mount calls -- degrades to the marker-only header
+        # instead of raising out of this worker.
         try:
             provider = self._provider_factory()
             if provider is None:
@@ -120,34 +125,34 @@ class ConsoleTurnFileCard(Vertical):
                 return entries, mapping
 
             entries, mapping = await asyncio.to_thread(_read)
+            if not self.is_mounted or not entries:
+                return
+            self._entries = entries
+            self._row_for_entry = mapping
+            rows_box = self.query_one(".console-turn-file-rows", Vertical)
+            for idx, entry in enumerate(entries):
+                chevron = resolve_glyph(_CHEVRON_CLOSED)
+                row = Button(
+                    f"{chevron} {entry.status}  {entry.label}  "
+                    f"+{entry.adds} −{entry.dels}",
+                    classes="console-turn-file-row",
+                    compact=True,
+                )
+                row.entry_index = idx
+                # Button's default 0.2s "-active" flash guards `action_press`
+                # against a second Enter/click until the flash clears -- fine
+                # for a submit button, but this row toggles open/closed and a
+                # quick second press should never be silently swallowed.
+                row.active_effect_duration = 0
+                diff_body = VerticalScroll(classes="console-turn-file-diff")
+                diff_body.display = False
+                await rows_box.mount(row)
+                await rows_box.mount(diff_body)
         except Exception:
             logger.opt(exception=True).warning(
                 "Turn file card row load failed; keeping marker-only header."
             )
             return
-        if not self.is_mounted or not entries:
-            return
-        self._entries = entries
-        self._row_for_entry = mapping
-        rows_box = self.query_one(".console-turn-file-rows", Vertical)
-        for idx, entry in enumerate(entries):
-            chevron = resolve_glyph(_CHEVRON_CLOSED)
-            row = Button(
-                f"{chevron} {entry.status}  {entry.label}  "
-                f"+{entry.adds} −{entry.dels}",
-                classes="console-turn-file-row",
-                compact=True,
-            )
-            row.entry_index = idx
-            # Button's default 0.2s "-active" flash guards `action_press`
-            # against a second Enter/click until the flash clears -- fine
-            # for a submit button, but this row toggles open/closed and a
-            # quick second press should never be silently swallowed.
-            row.active_effect_duration = 0
-            diff_body = VerticalScroll(classes="console-turn-file-diff")
-            diff_body.display = False
-            await rows_box.mount(row)
-            await rows_box.mount(diff_body)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         idx = getattr(event.button, "entry_index", None)
@@ -168,33 +173,41 @@ class ConsoleTurnFileCard(Vertical):
             return
         if idx not in self._diff_cache:
             snapshot_row = self._row_for_entry.get(idx)
-            provider = self._provider_factory()
-            if provider is None or snapshot_row is None:
+            if snapshot_row is None:
                 return
+            # Provider construction, the cap read, the off-thread diff read,
+            # and the mount all live in one try/except -- a transient
+            # provider-construction failure on first expand must degrade the
+            # row (stay collapsed) rather than raise out of this `on_*`
+            # handler, which Textual would otherwise propagate to
+            # `app._handle_exception()` and exit the whole app.
             try:
+                provider = self._provider_factory()
+                if provider is None:
+                    return
                 text = await asyncio.to_thread(
                     provider.diff_text, snapshot_row, entry.path
+                )
+                cap = int(getattr(provider, "diff_display_max_lines", 2000))
+                lines = text.splitlines()
+                if len(lines) > cap:
+                    hidden = len(lines) - cap
+                    lines = lines[:cap] + [f"… {hidden} more lines (diff capped)"]
+                self._diff_cache[idx] = "\n".join(lines)
+                if not body.is_mounted:
+                    return
+                await body.mount(
+                    Static(
+                        self._styled_diff(self._diff_cache[idx]),
+                        classes="console-turn-file-diff-text",
+                        markup=False,
+                    )
                 )
             except Exception:
                 logger.opt(exception=True).warning(
                     "Turn file card diff load failed for {}", entry.label
                 )
                 return
-            cap = int(getattr(provider, "diff_display_max_lines", 2000))
-            lines = text.splitlines()
-            if len(lines) > cap:
-                hidden = len(lines) - cap
-                lines = lines[:cap] + [f"… {hidden} more lines (diff capped)"]
-            self._diff_cache[idx] = "\n".join(lines)
-            if not body.is_mounted:
-                return
-            await body.mount(
-                Static(
-                    self._styled_diff(self._diff_cache[idx]),
-                    classes="console-turn-file-diff-text",
-                    markup=False,
-                )
-            )
         body.display = True
         row.label = (
             f"{resolve_glyph(_CHEVRON_OPEN)} {entry.status}  "

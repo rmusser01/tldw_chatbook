@@ -106,6 +106,58 @@ async def test_expand_shows_capped_scrolling_diff():
 
 
 @pytest.mark.asyncio
+async def test_expand_provider_construction_failure_never_crashes_app():
+    """Pins the Critical fix: the factory succeeds on its FIRST call (used
+    by `_load_rows`, which was already guarded) but raises on its SECOND
+    call (used by `on_button_pressed` on first expand, which was NOT). An
+    exception escaping a Textual `on_*` handler propagates to
+    `app._handle_exception()`, which unconditionally exits the app -- so
+    this must degrade the row instead, leaving the app fully responsive.
+    """
+    calls = {"n": 0}
+
+    def factory():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeProvider()
+        raise RuntimeError("shadow repo transiently unavailable")
+
+    class _FlakyHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", factory, id="card-under-test"
+            )
+
+    async with _FlakyHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows = list(card.query(".console-turn-file-row"))
+        assert len(rows) == 2
+
+        rows[0].focus()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+
+        bodies = list(card.query(".console-turn-file-diff"))
+        assert bodies[0].display is False, (
+            "diff body must stay hidden when provider construction fails"
+        )
+        assert card.is_mounted
+        assert pilot.app.is_running, (
+            "a provider-construction failure on expand must not crash the app"
+        )
+
+        # The app must still be responsive after the failure -- a press on
+        # the OTHER row (a fresh factory call) is handled the same way,
+        # not just tolerated once by accident.
+        rows[1].focus()
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert bodies[1].display is False
+        assert card.is_mounted
+        assert pilot.app.is_running
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_degrades_to_marker_only():
     class _Broken(_FakeProvider):
         def turns(self):
