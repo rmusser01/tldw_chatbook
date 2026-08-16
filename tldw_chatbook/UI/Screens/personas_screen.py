@@ -10550,6 +10550,12 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if not self._local_character_actions_allowed():
             return
+        if self._visual_identity_has_unsaved_authoring():
+            self._notify(
+                "Save or Cancel reaction changes before saving the character.",
+                "warning",
+            )
+            return
         if self._character_save_inflight:
             # A save for this session is already persisting (re-entrant
             # Save click / Ctrl+S); ignore the duplicate rather than firing

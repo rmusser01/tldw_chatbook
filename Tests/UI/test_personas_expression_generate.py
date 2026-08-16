@@ -67,6 +67,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterExpressionSetExportRequested,
     CharacterExpressionSetImportRequested,
     CharacterExpressionStylePickRequested,
+    CharacterSaveRequested,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -2334,3 +2335,129 @@ async def test_visual_identity_orphan_cleanup_never_notifies_reloaded_editor(
 
     assert await save is False
     assert notifications == []
+
+
+async def test_character_save_refuses_staged_reaction_changes_without_mutation(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "unsaved character edit")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_clear(asset)
+    authoring = screen._visual_identity_authoring
+    assert authoring is not None
+    generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+    notifications = _capture_notifications(app)
+
+    screen._handle_save_requested(CharacterSaveRequested(editor.get_character_data()))
+
+    assert save_calls == []
+    assert notifications == [
+        ("Save or Cancel reaction changes before saving the character.", "warning")
+    ]
+    assert editor._area("description").text == "unsaved character edit"
+    assert screen._character_editor_generation == generation
+    assert screen._visual_identity_authoring is authoring
+    assert not authoring.cancel_event.is_set()
+    assert asset.expression_key in authoring.candidate.cleared_expression_keys
+    assert not screen._character_save_inflight
+
+
+async def test_character_save_refuses_inflight_reaction_generation_without_cancelling(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "unsaved character edit")
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    monkeypatch.setattr(
+        personas_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(default_backend="fal"),
+    )
+    monkeypatch.setattr(
+        personas_screen_module,
+        "resolve_visual_identity",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            actor_kind="character",
+            actor_id=str(char_id),
+            pack_id=1,
+            pack_version_id=1,
+            asset_id=21,
+            content_type="image/png",
+            image_bytes=_valid_png(),
+        ),
+    )
+    entered = Event()
+    release = Event()
+
+    def generate(request):
+        entered.set()
+        assert release.wait(2)
+        return SimpleNamespace(content=_valid_png(), content_type="image/png")
+
+    monkeypatch.setattr(personas_screen_module, "run_generation", generate)
+    generation_task = asyncio.create_task(
+        screen._generate_visual_identity_assets((asset,))
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+    authoring = screen._visual_identity_authoring
+    assert authoring is not None
+    editor_generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+    notifications = _capture_notifications(app)
+    try:
+        screen._handle_save_requested(
+            CharacterSaveRequested(editor.get_character_data())
+        )
+
+        assert save_calls == []
+        assert notifications == [
+            ("Save or Cancel reaction changes before saving the character.", "warning")
+        ]
+        assert editor._area("description").text == "unsaved character edit"
+        assert screen._character_editor_generation == editor_generation
+        assert screen._visual_identity_authoring is authoring
+        assert screen._visual_identity_operation_task is generation_task
+        assert not authoring.cancel_event.is_set()
+        assert not screen._character_save_inflight
+    finally:
+        screen._request_visual_identity_generation_cancel()
+        release.set()
+        assert await generation_task is False
+
+
+async def test_character_save_dispatches_normally_without_reaction_authoring(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = _set_description(screen, "ordinary character edit")
+    generation = screen._character_editor_generation
+    save_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_save_character_worker",
+        lambda *args: save_calls.append(args),
+    )
+
+    screen._handle_save_requested(CharacterSaveRequested(editor.get_character_data()))
+
+    assert len(save_calls) == 1
+    assert save_calls[0][0]["description"] == "ordinary character edit"
+    assert save_calls[0][1:] == (screen.state.selected_entity_id, screen._edit_mode)
+    assert screen._character_editor_generation == generation
+    assert screen._character_save_inflight
