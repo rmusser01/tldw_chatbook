@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+from functools import lru_cache
+from importlib import resources
 from typing import Any
+
+from .visual_identity import SAMIRA_EXPRESSION_KEYS, SAMIRA_REACTION_LABELS
 
 EXPRESSION_PROMPT_STATES: tuple[str, ...] = (
     "avatar",
@@ -19,6 +25,50 @@ STATE_MODIFIERS: dict[str, str] = {
     "error": "confused sheepish expression, embarrassed, sweatdrop",
 }
 """Expression modifiers keyed by state."""
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalVisualIdentityReaction:
+    """One approved built-in reaction used to restore omitted user rows."""
+
+    original_label: str
+    expression_key: str
+    display_label: str
+    visual_direction: str
+
+
+@lru_cache(maxsize=1)
+def canonical_visual_identity_reactions() -> tuple[
+    CanonicalVisualIdentityReaction, ...
+]:
+    """Return the canonical 31-label taxonomy and generation directions."""
+
+    manifest = resources.files("tldw_chatbook").joinpath(
+        "assets/characters/samira/visual_identity_pack.json"
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    rows = {str(row["original_label"]): row for row in payload["assets"]}
+    if set(rows) != set(SAMIRA_REACTION_LABELS):
+        raise RuntimeError("canonical_visual_identity_taxonomy_invalid")
+    reactions = []
+    for label in SAMIRA_REACTION_LABELS:
+        row = rows[label]
+        direction = row.get("generation", {}).get("visual_direction")
+        if (
+            row.get("expression_key") != SAMIRA_EXPRESSION_KEYS[label]
+            or not isinstance(direction, str)
+            or not direction.strip()
+        ):
+            raise RuntimeError("canonical_visual_identity_taxonomy_invalid")
+        reactions.append(
+            CanonicalVisualIdentityReaction(
+                original_label=label,
+                expression_key=SAMIRA_EXPRESSION_KEYS[label],
+                display_label=str(row["display_label"]),
+                visual_direction=direction,
+            )
+        )
+    return tuple(reactions)
 
 
 def compose_expression_prompt(

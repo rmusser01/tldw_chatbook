@@ -45,6 +45,7 @@ from ...Character_Chat.Character_Chat_Lib import (
 )
 from ...Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
+    canonical_visual_identity_reactions,
     compose_expression_prompt,
     compose_visual_identity_prompt,
 )
@@ -803,6 +804,7 @@ class PersonasScreen(BaseAppScreen):
         self._visual_identity_authoring: _VisualIdentityAuthoringState | None = None
         self._visual_identity_operation_task: asyncio.Task[Any] | None = None
         self._visual_identity_operation_event: threading.Event | None = None
+        self._visual_identity_publication_inflight: bool = False
         self._profile_save_inflight: bool = False
         # Mirrors _profile_save_inflight for the character editor: guards
         # against a re-entrant Save (double-click/Ctrl+S) while an earlier
@@ -7234,13 +7236,31 @@ class PersonasScreen(BaseAppScreen):
         event = state.cancel_event if state is not None else threading.Event()
         self._visual_identity_operation_task = task
         self._visual_identity_operation_event = event
+        browser = snapshot.browser_ref()
+        if browser is not None and browser.parent is not None:
+            browser.set_preparing(True)
         return task, event
 
-    def _finish_visual_identity_operation(self, task: asyncio.Task[Any]) -> None:
+    def _finish_visual_identity_operation(
+        self,
+        task: asyncio.Task[Any],
+        browser: PersonasVisualIdentityPackWidget | None = None,
+    ) -> None:
         if self._visual_identity_operation_task is task:
             self._visual_identity_operation_task = None
             if self._visual_identity_authoring is None:
                 self._visual_identity_operation_event = None
+            current = self._visual_identity_author_snapshot()
+            if (
+                browser is not None
+                and browser.parent is not None
+                and current is not None
+                and current.browser_ref() is browser
+            ):
+                try:
+                    browser.set_preparing(False)
+                except QueryError:
+                    pass
 
     def _visual_identity_has_unsaved_authoring(self) -> bool:
         task = self._visual_identity_operation_task
@@ -7303,9 +7323,18 @@ class PersonasScreen(BaseAppScreen):
                 "Reaction pack is no longer available; reopen the editor.", "warning"
             )
             return None
-        if event.is_set() or not self._visual_identity_author_snapshot_is_current(
-            snapshot
+        authority = (
+            candidate.old_binding_id,
+            candidate.old_pack_id,
+            candidate.old_version_id,
+        )
+        expected = (snapshot.binding_id, snapshot.pack_id, snapshot.pack_version_id)
+        if (
+            authority != expected
+            or event.is_set()
+            or not self._visual_identity_author_snapshot_is_current(snapshot)
         ):
+            event.set()
             candidate.cancel()
             return None
         state = _VisualIdentityAuthoringState(
@@ -7362,7 +7391,7 @@ class PersonasScreen(BaseAppScreen):
             )
             return True
         finally:
-            self._finish_visual_identity_operation(task)
+            self._finish_visual_identity_operation(task, browser)
 
     async def _stage_visual_identity_clear(
         self, asset: VisualIdentityAssetMetadata
@@ -7400,7 +7429,7 @@ class PersonasScreen(BaseAppScreen):
             browser.set_staged_change(asset.expression_key, "clear")
             return True
         finally:
-            self._finish_visual_identity_operation(task)
+            self._finish_visual_identity_operation(task, browser)
 
     @staticmethod
     def _visual_identity_direction(
@@ -7426,6 +7455,51 @@ class PersonasScreen(BaseAppScreen):
             context.get("visual_direction") if isinstance(context, dict) else None
         )
         return str(direction or asset.display_label)
+
+    @staticmethod
+    def _canonical_visual_identity_assets() -> tuple[VisualIdentityAssetMetadata, ...]:
+        """Build path-free metadata for every approved reaction row."""
+
+        return tuple(
+            VisualIdentityAssetMetadata(
+                asset_id=-(index + 1),
+                expression_key=reaction.expression_key,
+                original_label=reaction.original_label,
+                display_label=reaction.display_label,
+                content_type="image/png",
+                is_animated=False,
+            )
+            for index, reaction in enumerate(canonical_visual_identity_reactions())
+        )
+
+    @staticmethod
+    def _restore_candidate_reaction_rows(
+        candidate: VisualIdentityCandidate,
+        assets: tuple[VisualIdentityAssetMetadata, ...],
+    ) -> None:
+        """Make canonical rows omitted by a user version stageable again."""
+
+        known = {str(row["expression_key"]) for row in candidate.assets}
+        directions = {
+            reaction.expression_key: reaction.visual_direction
+            for reaction in canonical_visual_identity_reactions()
+        }
+        missing = tuple(
+            {
+                "id": asset.asset_id,
+                "expression_key": asset.expression_key,
+                "original_expression_key": asset.original_label,
+                "display_label": asset.display_label,
+                "bytes": 0,
+                "source_context_json": json.dumps(
+                    {"visual_direction": directions[asset.expression_key]}
+                ),
+            }
+            for asset in assets
+            if asset.expression_key not in known
+        )
+        if missing:
+            candidate.assets += missing
 
     async def _visual_identity_reference(
         self, snapshot: _VisualIdentityAuthorSnapshot
@@ -7488,7 +7562,7 @@ class PersonasScreen(BaseAppScreen):
                 snapshot, browser, assets, event
             )
         finally:
-            self._finish_visual_identity_operation(task)
+            self._finish_visual_identity_operation(task, browser)
 
     async def _generate_visual_identity_assets_admitted(
         self,
@@ -7516,6 +7590,7 @@ class PersonasScreen(BaseAppScreen):
         state = await self._visual_identity_candidate(snapshot, event)
         if state is None:
             return False
+        self._restore_candidate_reaction_rows(state.candidate, assets)
         semaphore = asyncio.Semaphore(3)
         editor = snapshot.editor_ref()
         if editor is None:
@@ -7578,13 +7653,21 @@ class PersonasScreen(BaseAppScreen):
 
         browser.set_generating(True)
         failed = False
+        provider_failed = False
         try:
             try:
                 async with asyncio.TaskGroup() as group:
                     for asset in assets:
                         group.create_task(generate(asset))
-            except* Exception:
+            except* Exception as group:
                 failed = True
+                provider_failed = any(
+                    not (
+                        isinstance(exc, RuntimeError)
+                        and str(exc) == "visual_identity_generation_cancelled"
+                    )
+                    for exc in group.exceptions
+                )
         except asyncio.CancelledError:
             event.set()
             self._discard_visual_identity_authoring()
@@ -7594,10 +7677,28 @@ class PersonasScreen(BaseAppScreen):
             or event.is_set()
             or not self._visual_identity_author_snapshot_is_current(snapshot)
         ):
+            if provider_failed and self._visual_identity_author_snapshot_is_current(
+                snapshot
+            ):
+                logger.warning(
+                    "Visual Identity generation failed (category=provider_failed)."
+                )
+                self._notify("Reaction generation failed. Try again.", "error")
             self._discard_visual_identity_authoring()
             if browser.is_mounted:
                 browser.set_generating(False)
             return False
+        pack = browser.pack
+        if pack is not None:
+            existing = {asset.expression_key for asset in pack.assets}
+            restored = tuple(
+                asset for asset in assets if asset.expression_key not in existing
+            )
+            if restored:
+                browser.pack = dataclasses.replace(pack, assets=pack.assets + restored)
+                browser.apply_filter(
+                    browser.query_one("#personas-visual-identity-filter", Input).value
+                )
         for asset in assets:
             browser.set_staged_change(asset.expression_key, "generate")
         browser.set_generating(False)
@@ -7632,16 +7733,27 @@ class PersonasScreen(BaseAppScreen):
                 or not self._visual_identity_author_snapshot_is_current(snapshot)
             ):
                 return False
+            try:
+                assets = self._canonical_visual_identity_assets()
+            except (KeyError, TypeError, ValueError, RuntimeError):
+                self._notify("The reaction catalog is unavailable.", "warning")
+                return False
             return await self._generate_visual_identity_assets_admitted(
-                snapshot, browser, pack.assets, event
+                snapshot, browser, assets, event
             )
         finally:
-            self._finish_visual_identity_operation(task)
+            self._finish_visual_identity_operation(task, browser)
 
     def _request_visual_identity_generation_cancel(self) -> None:
+        if self._visual_identity_publication_inflight:
+            return
         event = self._visual_identity_operation_event
-        if event is not None:
+        task = self._visual_identity_operation_task
+        if event is not None and task is not None and not task.done():
             event.set()
+        else:
+            self._discard_visual_identity_authoring()
+            self._visual_identity_operation_event = None
 
     async def _save_visual_identity_pack(
         self, pack: VisualIdentityPackMetadata | None
@@ -7660,9 +7772,11 @@ class PersonasScreen(BaseAppScreen):
             return False
         task, _event = admission
         browser = state.snapshot.browser_ref()
+        published = False
         try:
             if browser is not None:
-                browser.set_generating(True)
+                browser.set_saving(True)
+            self._visual_identity_publication_inflight = True
             user_root = get_user_data_dir()
             try:
                 result = await asyncio.to_thread(
@@ -7690,8 +7804,6 @@ class PersonasScreen(BaseAppScreen):
                     self._notify(
                         f"Reaction pack was not saved ({exc.category}).", "error"
                     )
-                    if browser is not None and browser.is_mounted:
-                        browser.set_generating(False)
                 return False
             except (ValueError, sqlite3.Error):
                 if self._visual_identity_author_snapshot_is_current(state.snapshot):
@@ -7699,9 +7811,8 @@ class PersonasScreen(BaseAppScreen):
                         "Reaction pack was not saved (visual_identity_save_failed).",
                         "error",
                     )
-                    if browser is not None and browser.is_mounted:
-                        browser.set_generating(False)
                 return False
+            published = True
             self._visual_identity_authoring = None
             await self._invalidate_visual_identity_publication(result)
             if not self._visual_identity_author_snapshot_is_current(state.snapshot):
@@ -7719,8 +7830,31 @@ class PersonasScreen(BaseAppScreen):
                 )
             )
             return True
+        except Exception:
+            if published:
+                logger.warning(
+                    "Visual Identity publication committed but presentation failed "
+                    "(category=refresh_failed)."
+                )
+                self._notify(
+                    "Reaction pack saved, but the editor could not refresh.",
+                    "warning",
+                )
+                return True
+            raise
         finally:
-            self._finish_visual_identity_operation(task)
+            self._visual_identity_publication_inflight = False
+            if browser is not None and browser.parent is not None:
+                try:
+                    if published:
+                        browser.reset_staged()
+                    elif self._visual_identity_author_snapshot_is_current(
+                        state.snapshot
+                    ):
+                        browser.set_saving(False)
+                except QueryError:
+                    pass
+            self._finish_visual_identity_operation(task, browser)
 
     async def _invalidate_visual_identity_publication(
         self, result: VisualIdentityPublicationResult
@@ -7731,7 +7865,13 @@ class PersonasScreen(BaseAppScreen):
             session = getattr(screen, "_session", None)
             invalidate = getattr(session, "invalidate_visual_identity_actor", None)
             if callable(invalidate):
-                await invalidate(result.actor_kind, result.actor_id)
+                try:
+                    await invalidate(result.actor_kind, result.actor_id)
+                except Exception:
+                    logger.warning(
+                        "Visual Identity Console invalidation failed "
+                        "(category=cache_invalidation_failed)."
+                    )
 
     @on(VisualIdentityPackClearRequested)
     def _handle_visual_identity_clear_requested(
@@ -10616,7 +10756,18 @@ class PersonasScreen(BaseAppScreen):
             # path) resets this same flag itself.
             self._character_save_inflight = False
             return
-        await self._after_character_save(saved_id, str(data.get("name") or ""))
+        try:
+            await self._after_character_save(saved_id, str(data.get("name") or ""))
+        except Exception:
+            logger.warning(
+                "Character persistence committed but presentation failed "
+                "(category=refresh_failed)."
+            )
+            self._notify(
+                "Character saved, but the editor could not refresh.", "warning"
+            )
+        finally:
+            self._character_save_inflight = False
 
     async def _after_character_save(
         self, saved_id: str, submitted_name: str = ""

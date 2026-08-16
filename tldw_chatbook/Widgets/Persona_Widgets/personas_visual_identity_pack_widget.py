@@ -121,6 +121,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
         self._filtered: tuple[VisualIdentityAssetMetadata, ...] = ()
         self._selected: VisualIdentityAssetMetadata | None = None
         self._staged: dict[str, str] = {}
+        self._busy: Literal["preparing", "generating", "saving"] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Visual Identity", id="personas-visual-identity-title")
@@ -295,25 +296,57 @@ class PersonasVisualIdentityPackWidget(Vertical):
             f"{count} staged {suffix}"
         )
         self.query_one("#personas-visual-identity-save", Button).disabled = False
+        cancel = self.query_one("#personas-visual-identity-cancel", Button)
+        cancel.disabled = False
+        cancel.display = True
+
+    def set_preparing(self, preparing: bool) -> None:
+        """Expose cancellation while candidate/reference work is admitted."""
+
+        self._set_busy("preparing" if preparing else None)
 
     def set_generating(self, generating: bool) -> None:
         """Expose one honest generation/cancellation state."""
 
-        for action in ("replace", "generate", "generate-all", "clear", "save"):
-            self.query_one(
-                f"#personas-visual-identity-{action}", Button
-            ).disabled = generating
-        self.query_one("#personas-visual-identity-cancel", Button).display = generating
-        self.query_one("#personas-visual-identity-dirty", Static).update(
-            "Generating reactions…" if generating else self._dirty_copy()
+        self._set_busy("generating" if generating else None)
+
+    def set_saving(self, saving: bool) -> None:
+        """Expose non-cancellable publication separately from generation."""
+
+        self._set_busy("saving" if saving else None)
+
+    def _set_busy(
+        self, busy: Literal["preparing", "generating", "saving"] | None
+    ) -> None:
+        self._busy = busy
+        selected_missing = self._selected is None
+        for action in ("replace", "generate", "clear"):
+            self.query_one(f"#personas-visual-identity-{action}", Button).disabled = (
+                busy is not None or selected_missing
+            )
+        self.query_one("#personas-visual-identity-generate-all", Button).disabled = (
+            busy is not None or self.pack is None
         )
+        self.query_one("#personas-visual-identity-save", Button).disabled = (
+            busy is not None or not self._staged
+        )
+        cancel = self.query_one("#personas-visual-identity-cancel", Button)
+        cancel.display = busy in {"preparing", "generating"} or (
+            busy is None and bool(self._staged)
+        )
+        cancel.disabled = busy == "saving"
+        copy = {
+            "preparing": "Preparing reactions…",
+            "generating": "Generating reactions…",
+            "saving": "Saving reaction pack…",
+        }.get(busy, self._dirty_copy())
+        self.query_one("#personas-visual-identity-dirty", Static).update(copy)
 
     def reset_staged(self) -> None:
         """Discard only unpublished widget state."""
 
         self._staged.clear()
-        self.set_generating(False)
-        self.query_one("#personas-visual-identity-save", Button).disabled = True
+        self._set_busy(None)
 
     def _dirty_copy(self) -> str:
         count = len(self._staged)

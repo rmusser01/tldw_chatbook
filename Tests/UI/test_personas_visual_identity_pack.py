@@ -334,6 +334,51 @@ async def test_pack_generate_all_and_cancel_are_explicit_typed_actions():
 
 
 @pytest.mark.asyncio
+async def test_idle_staged_change_exposes_working_cancel_to_pilot():
+    module = _browser_module()
+    app = _browser_host(_samira_pack())
+    async with app.run_test(size=(120, 40)) as pilot:
+        browser = app.query_one(_browser_class())
+        browser.set_staged_change("custom:admiration", "clear")
+        cancel = browser.query_one("#personas-visual-identity-cancel", Button)
+
+        assert cancel.display
+        assert not cancel.disabled
+        cancel.press()
+        await pilot.pause()
+
+        assert isinstance(app.captured[-1], module.VisualIdentityPackCancelRequested)
+
+
+@pytest.mark.asyncio
+async def test_saving_state_is_honest_and_non_cancellable():
+    app = _browser_host(_samira_pack())
+    async with app.run_test(size=(120, 40)):
+        browser = app.query_one(_browser_class())
+        browser.set_staged_change("custom:admiration", "replace")
+
+        assert hasattr(browser, "set_saving")
+        browser.set_saving(True)
+
+        assert (
+            _text(browser.query_one("#personas-visual-identity-dirty", Static))
+            == "Saving reaction pack…"
+        )
+        assert not browser.query_one("#personas-visual-identity-cancel", Button).display
+        for action in ("replace", "generate", "generate-all", "clear", "save"):
+            assert browser.query_one(
+                f"#personas-visual-identity-{action}", Button
+            ).disabled
+
+        browser.set_saving(False)
+        assert (
+            _text(browser.query_one("#personas-visual-identity-dirty", Static))
+            == "1 staged change"
+        )
+        assert browser.query_one("#personas-visual-identity-cancel", Button).display
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
 async def test_browser_geometry_stays_in_bounds_and_hides_preview_first(size):
     app = _browser_host(_samira_pack())
