@@ -86,7 +86,7 @@ re-created lazily by the screen when a test's app object never had one
 are never cached (`app.py` `_create_navigation_screen`), so anything that
 must outlive a navigation cannot live on one.
 
-## Still deliberately unchanged
+## The wake gate (was: "still deliberately unchanged")
 
 - ~~**`_attempt`'s `_shutdown_requested` gate**~~ — **relaxed by
   task-15860's wake-fires-headless slice.** The lifetime landing left it
@@ -97,6 +97,7 @@ must outlive a navigation cannot live on one.
   refuses a wake; a visit that merely ended does not. `leave_console`'s
   Event is unchanged and still denies this visit's parked approval
   rounds.
+
 ## Continuity (task-15860 Task 3, landed)
 
 The store this holds is now the SINGLE source of truth for Console message
