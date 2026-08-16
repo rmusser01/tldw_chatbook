@@ -175,3 +175,66 @@ the boundary signal), with the existing prefix prune bounding that end.
 `Tests/UI/test_console_transcript_two_sided_window.py` (new),
 `backlog/docs/lessons-backlog-hygiene.md` (checkout-baseline trap), this
 task file.
+
+### Review round (FIX-FIRST verdict — all findings addressed)
+
+An independent review (scratchpad `review15777.md`) confirmed the mechanism
+(slice-by-construction verified on every mutation path; born-red 7-of-8,
+stronger than claimed; both headline repros exact) and found three blockers
+plus two lower items, all reproduced. All fixed this round; every fix
+carries a pin that was run RED against the pre-fix HEAD `dc5224c0b` first
+(5/5 failed), then green:
+
+- **A (HIGH, ghost tail-follow).** `Widget.scroll_end()` (the End key) and
+  `_check_anchor()` clear `_anchor_released` without calling `anchor()`, so
+  the override was bypassable: follow-state over a hidden tail — streamed
+  replies piled invisibly into the suffix and the jump pill (gated on NOT
+  following) was suppressed exactly when it was the only recovery.
+  Belt-and-braces fix: `_is_following_tail()` itself now returns False
+  whenever a hidden tail exists (`_raw_anchor_engaged()` keeps the raw
+  Textual state), the `_hydrate_tailward` self-chain also runs while the
+  raw anchor is engaged (converges to the true tail from an End press even
+  with no ticks), and `set_messages` heals raw-anchored-with-suffix by
+  re-windowing onto a fresh tail (covers the no-new-user-message reply that
+  never takes the send branch). Pin: End from deep scroll-back → pill
+  displayed + streamed reply mounts + suffix drains.
+- **B (MEDIUM-HIGH, fixed point was ratio-contingent).** The trim walked
+  ESTIMATED lines while the prune fires on MEASURED height; content with
+  measured/estimated > high/low (short one-line messages ≈1.35-1.7x)
+  produced a permanent hydrate/prune 2-cycle that never reached m0
+  (review: 98 prune events). Fix: `_compute_tail_trim_start` now walks
+  measured `outer_size.height` with the prune's own margin-collapse math
+  (`_measured_message_groups`, mirroring `_compute_prunable_prefix`), so
+  the trim and the prune share units and the ordering argument is real.
+  Pin: 600 one-line messages at 600/760 marks (ratio 1.27 < measured 1.35)
+  reach m0 with ≤ 8 prune batches. `console.md`'s "unlimited" prose
+  softened to what is true (sliding, with the selection-pause exception).
+- **C (MEDIUM, kill-switch flip).** `set_messages`' windowing-disabled
+  branch now clears the hidden tail (it only carried the prefix contract
+  before), so `transcript_window_lines = 0` mid-session resurrects the
+  trimmed tail on the next ingest. Pin: flip with 299 hidden → tail row
+  remounts (watermarks still bound the view, per the 15455 contract); with
+  pruning also off, all 400 mount.
+- **D (LOW, selection).** The trim now protects the SELECTED message like
+  the prune does (stop-the-walk; contiguity forbids skipping). Trade-off
+  documented: a selection pinned at the mounted bottom pauses the sliding
+  (prune still bounds height) until cleared — same stance the prune already
+  takes. Streaming rows deliberately stay trimmable (hidden = zero cost;
+  pill/heal recover them). Pin: selected m398 survives 30 scroll-back
+  rounds mounted.
+- **E (LOW, far-jump overshoot).** The re-center's reconcile transits an
+  emptied arrangement and the placement parks the target near y=0 — both
+  fired the top-boundary watcher and hydrated one spurious chunk ABOVE the
+  target (34 rows from m0 instead of the window from m10). Fixed with a
+  one-shot `_suppress_boundary_hydration` latch set in
+  `_recenter_window_on`, released when the placement lands (or superseded).
+  Pin: the jump target is the first mounted row.
+- **F (NIT).** The jump-pill test now pins `pill.display` while a tail is
+  hidden (the missing assertion that would have caught A).
+
+Round verification: two-sided suite 13/13 (8 original + 5 review pins, all
+5 born red on `dc5224c0b`); protected suites 17/17 green and STILL
+unmodified (`git diff` empty); adjacent console set (pruning, tail-follow,
+selection contract, jump pill, region, fence throttle, diff row, native
+transcript) 160 passed + the 3 speak-action failures already proven
+pre-existing on base; ruff clean.

@@ -160,16 +160,18 @@ under you, keeping the same message in view; the jump-to-latest pill or a new
 send takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
 context sent to the model always use the full history.
 
-Scroll-back is unlimited: the view slides rather than grows. Once the mounted
-stretch reaches `prune_low_watermark` (12,000 rows by default), scrolling
-further back keeps loading older history while the newest end of the stretch
-is set aside the same way — so all of a very long session is reachable by
-scrolling, at a roughly constant memory cost. Scrolling back down (or a jump
-to an old message — selecting one far outside the stretch lands you on a
-fresh window around it instead of loading everything in between) walks
-forward the same way, and the jump-to-latest pill or a new send always
-returns you straight to a fresh view of the tail. Tune it under
-`[chat_defaults]` in `config.toml`:
+Scroll-back no longer stops at the watermarks: the view slides rather than
+grows. Once the mounted stretch reaches `prune_low_watermark` (12,000 rows by
+default), scrolling further back keeps loading older history while the newest
+end of the stretch is set aside the same way — so a very long session stays
+reachable by scrolling, at a roughly constant memory cost. One deliberate
+exception: a selected message is never set aside, so a selection pinned at
+the newest end of the stretch pauses the sliding until you clear it (Esc).
+Scrolling back down (or a jump to an old message — selecting one far outside
+the stretch lands you on a fresh window around it instead of loading
+everything in between) walks forward the same way, and the jump-to-latest
+pill or a new send always returns you straight to a fresh view of the tail.
+Tune it under `[chat_defaults]` in `config.toml`:
 
 - `transcript_window_lines` (144) and `transcript_scrollback_lines` (96) are
   **floors**, not the budget. The window actually used is the larger of the

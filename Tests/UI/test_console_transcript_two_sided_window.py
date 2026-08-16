@@ -291,6 +291,13 @@ async def test_jump_to_latest_from_deep_scrollback_restores_a_bounded_tail():
         )
         assert "m399" not in _mounted_message_ids(transcript)
 
+        # Review F: pin the pill itself — its visibility while a tail is
+        # hidden during a run is the recovery affordance (see the End-key
+        # pin for the suppression this would have caught).
+        transcript.sync_jump_indicator("streaming")
+        pill = transcript.query_one("#console-transcript-jump-pill")
+        assert pill.display, "the pill must be offered while a tail is hidden"
+
         transcript.jump_to_latest()
         assert await _wait_for(
             pilot, lambda: "m399" in _mounted_message_ids(transcript)
@@ -417,3 +424,250 @@ async def test_kill_switch_keeps_the_one_sided_ceiling_and_full_reveals():
         assert _mounted_message_ids(transcript)[-1] == "m399", (
             "with windowing disabled the tail must never be trimmed"
         )
+
+
+# ---------------------------------------------------------------------------
+# Review round (TASK-15777 FIX-FIRST verdict): ghost tail-follow, the
+# measured/estimated trim skew, the kill-switch flip, and trim protections.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
+    """`End` must never produce follow-state over a hidden tail (review A).
+
+    Born red: `Widget.scroll_end()` (the End key) clears `_anchor_released`
+    without calling `anchor()`, so the transcript reported tail-follow while
+    the newest rows stayed hidden — a streamed reply never mounted and the
+    jump pill (whose visibility is gated on NOT following) was suppressed at
+    exactly the moment it was the only recovery.
+    """
+    app = TwoSidedHarness()
+    history = _messages(400)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        await _scroll_back_until(
+            pilot,
+            transcript,
+            lambda: "m0" in _mounted_message_ids(transcript),
+        )
+        assert transcript._hidden_tail_ids, "precondition: a tail must be hidden"
+
+        # The End key path: re-engages Textual's anchor WITHOUT anchor().
+        transcript.scroll_end(animate=False)
+        transcript.sync_jump_indicator("streaming")
+        pill = transcript.query_one("#console-transcript-jump-pill")
+        assert not transcript._is_following_tail(), (
+            "a hidden tail means the reader is NOT at the newest content, "
+            "whatever Textual's anchor flag says"
+        )
+        assert pill.display, (
+            "the jump pill must be offered whenever a tail is hidden during "
+            "a run — its suppression was the trap in review finding A"
+        )
+
+        # An in-flight reply (no new USER message, so no send-yank branch).
+        live = ConsoleChatMessage(
+            id="live-reply",
+            role=ConsoleMessageRole.ASSISTANT,
+            content="streamed so far",
+            status="streaming",
+        )
+        for _ in range(8):
+            transcript.set_messages([*history, live])
+            await transcript.refresh_messages()
+            await _settle(pilot, times=3)
+
+        assert "live-reply" in _mounted_message_ids(transcript), (
+            "a reader whose anchor re-engaged at the slice bottom must "
+            "converge to the true tail and see the streamed reply"
+        )
+        assert not transcript._hidden_tail_ids
+        assert transcript._is_following_tail()
+
+
+@pytest.mark.asyncio
+async def test_short_message_scrollback_reaches_m0_without_prune_chasing():
+    """The trim must bound MEASURED height, not estimated (review B).
+
+    Born red: the trim walked estimated lines while the prune fires on
+    measured height. Short one-line messages measure ~1.35x their estimate
+    in this harness; with a high/low budget of 760/600 = 1.27 the estimated
+    trim never fired, the prune removed exactly what every hydration added
+    (a permanent 2-cycle), and m0 was never reached.
+    """
+    app = TwoSidedHarness(low=600, high=760)
+    history = [
+        ConsoleChatMessage(
+            id=f"m{index}",
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content="ok",
+        )
+        for index in range(600)
+    ]
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        prune_batches: list[int] = []
+        original_prunable = transcript._compute_prunable_prefix
+
+        def _counting_prunable(*args, **kwargs):
+            prune_ids, height = original_prunable(*args, **kwargs)
+            if prune_ids:
+                prune_batches.append(len(prune_ids))
+            return prune_ids, height
+
+        transcript._compute_prunable_prefix = _counting_prunable  # type: ignore[method-assign]
+        try:
+            reached = await _scroll_back_until(
+                pilot,
+                transcript,
+                lambda: "m0" in _mounted_message_ids(transcript),
+                rounds=80,
+            )
+        finally:
+            transcript._compute_prunable_prefix = original_prunable  # type: ignore[method-assign]
+
+        assert reached, (
+            "short-message scroll-back never reached m0: stuck at "
+            f"{_mounted_message_ids(transcript)[:1]} after "
+            f"{len(prune_batches)} prune batches"
+        )
+        assert len(prune_batches) <= 8, (
+            "the prune must not chase hydration (the review's 2-cycle logged "
+            f"~98 prune events); saw {len(prune_batches)}"
+        )
+        assert transcript.virtual_size.height <= 760 + 40, (
+            "the mounted view must stay near the watermarks"
+        )
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_flip_with_a_hidden_tail_mounts_everything():
+    """Flipping the kill switch mid-session must clear the hidden tail (review C).
+
+    Born red: `set_messages`' windowing-disabled branch carried the sticky
+    suffix forward, so `transcript_window_lines = 0` — the escape hatch that
+    exists to switch a windowing bug off without a release — left 299
+    messages hidden forever.
+    """
+    app = TwoSidedHarness()
+    history = _messages(400)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        await _scroll_back_until(
+            pilot,
+            transcript,
+            lambda: "m0" in _mounted_message_ids(transcript),
+        )
+        assert transcript._hidden_tail_ids, "precondition: a tail must be hidden"
+
+        app.app_config["chat_defaults"]["transcript_window_lines"] = 0
+        for _ in range(3):
+            transcript.set_messages(list(history))
+            await transcript.refresh_messages()
+            await _settle(pilot)
+
+        assert not transcript._hidden_tail_ids, (
+            "the kill switch must clear the hidden tail on the next ingest"
+        )
+        # The kill switch disables WINDOWING, not the watermarks: the tail
+        # must resurrect and the view must unfreeze, while the height
+        # watermarks may still bound the mounted prefix (the 15455 contract
+        # the existing kill-switch pins protect).
+        mounted = _mounted_message_ids(transcript)
+        assert mounted[-1] == "m399", (
+            "windowing off must remount the trimmed tail — the review's "
+            "frozen-view repro was exactly this row never coming back"
+        )
+
+        # Switching the watermarks off as well restores the whole history.
+        app.app_config["chat_defaults"]["prune_high_watermark"] = 0
+        transcript._pruned_message_ids.clear()
+        transcript.set_messages(list(history))
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        assert len(_mounted_message_ids(transcript)) == 400, (
+            "with windowing AND pruning off, everything mounts"
+        )
+
+
+@pytest.mark.asyncio
+async def test_tail_trim_never_hides_the_selected_message():
+    """The trim protects the selection exactly like the prune does (review D).
+
+    Born red: the trim protected only the focused row; a selected tail
+    message unmounted (action row included) during deep scroll-back while
+    `selected_message_id` still named it, and `j` then teleported to the
+    top of the visible window.
+    """
+    app = TwoSidedHarness()
+    history = _messages(400)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        transcript.select_message("m398")
+        assert await _wait_for(
+            pilot, lambda: "m398" in _mounted_message_ids(transcript)
+        )
+
+        transcript.release_anchor()
+        for _ in range(30):
+            transcript.scroll_to(y=0, animate=False)
+            await _settle(pilot)
+
+        assert "m398" in _mounted_message_ids(transcript), (
+            "the selected message must never be trimmed out of the DOM"
+        )
+        assert len(_mounted_message_ids(transcript)) <= 300, (
+            "the prune must still bound the DOM while the selection blocks "
+            "the tail trim"
+        )
+
+
+@pytest.mark.asyncio
+async def test_far_jump_lands_with_the_target_as_the_first_mounted_row():
+    """A re-centered jump mounts the load-shaped window, nothing above (review E).
+
+    Born red: the transient empty layout during the re-center reconcile (and
+    the target-to-top placement) fired the top-boundary watcher, so one extra
+    upward chunk mounted — m10 of 500 landed as 34 rows starting at m0
+    instead of the intended window starting at m10.
+    """
+    app = TwoSidedHarness()
+    history = _messages(500)
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history)
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        transcript.select_message("m10")
+        assert await _wait_for(
+            pilot, lambda: "m10" in _mounted_message_ids(transcript)
+        )
+        await _settle(pilot)
+
+        mounted = _mounted_message_ids(transcript)
+        assert mounted[0] == "m10", (
+            f"the jump target must be the first mounted row, got {mounted[0]}"
+        )
+        assert len(mounted) <= 40
