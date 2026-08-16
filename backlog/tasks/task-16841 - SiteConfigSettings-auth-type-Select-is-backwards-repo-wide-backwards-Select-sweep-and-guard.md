@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-16'
-updated_date: '2026-08-16 17:52'
+updated_date: '2026-08-16 18:22'
 labels:
   - bug
   - ui
@@ -129,14 +129,30 @@ consumer. Full verdict table:
 | `Widgets/voice_profile_dialog.py:151` `#language-select` | `(value, label)` (`("en","English")`, ...) | **BACKWARDS -- FIXED** | `on_button_pressed`: `language = query_one("#language-select", Select).value` -> `profile_data["language"]` -> `VoiceBackendManager.create_profile(..., language=...)`. Reachable: Lab > Speech > Voice Cloning > New Profile -> `Voice_Cloning_Window._create_new_profile` pushes this dialog with the constructor's default `value=self.profile_data.get("language") or "en"` -- crashed on EVERY "New Voice Profile" open (`Select._on_mount` -> `_init_selected_option` -> the reactive `value` setter), not just edits |
 | `UI/Voice_Cloning_Window.py:375` `#test-profile-select` (built in `_update_profile_display`) | `(id, display_label)` (`test_options.append((profile["name"], profile["display_name"]))`) | **BACKWARDS -- FIXED** | `_test_generate_voice`: `test_profile = query_one(...).value` -> `voice = f"profile:{test_profile}"` sent to the TTS backend. No crash (no explicit initial `value=`), but wrong behavior: the dropdown showed the internal name instead of the display name, and selecting a profile sent the display name as the profile id |
 | `UI/Study_Window.py:584` `#guide-topic-select` | `(value, label)` (`("new","New Topic")`) | **BACKWARDS -- FIXED** | No `.value` consumer anywhere in the repo (grep-confirmed), so never raised -- but Textual always renders element 0, so the dropdown showed the literal text "new" instead of "New Topic". Cosmetic-only, still a real defect |
+| `UI/Study_Window.py:511-516` `CourseCreationWidget`'s `#course-level` | `(value, label)` (`("beginner","Beginner")`, `("intermediate","Intermediate")`, `("advanced","Advanced")`) | **BACKWARDS on this branch's base -- FOUND LATE, NOT FIXED HERE (justified below)** | Missed by both the original manual sweep and the guard on the first commit (`a2ca6aee`) -- caught by a follow-up review. `StudyScreen` is a live nav route (more reachable than `SiteConfigSettings`); zero `.value` consumers anywhere (grep-confirmed) -- same cosmetic-only profile as `#guide-topic-select`, and Textual renders element 0, so the dropdown showed lowercase "beginner"/"intermediate"/"advanced". **Not fixed on this branch**: `git show origin/dev:tldw_chatbook/UI/Study_Window.py` shows an unrelated, already-merged TASK-16845 deleted the entire "Course Details" form (title/description/level/prerequisites feeding a dead `#create-course-btn`) from `CourseCreationWidget` before this branch was rebased onto `origin/dev` -- `#course-level` no longer exists there. Fixing it against this branch's stale base would be pure churn, discarded (or worse, conflicting) at the next rebase, which this branch needs regardless. Verified, not assumed: fetched `origin`, confirmed `c8b951616`/`facd895ad` (task-16845) is on `origin/dev` and not an ancestor of this branch's base `ecbcd5cd8`, and that dev's `CourseCreationWidget.compose` has no `#course-level` and a comment explaining the removal |
 | All other literal-list sites (~226 remaining of 230) | `(label, value)` | Correct | Spot-checked broadly (STTS/TTS families, Console/Settings modals, Tools_Settings_Window, MCP modules, Study_Modules, Persona widgets, Speech settings) -- all consistent with the convention TASK-15772/15991 established |
 | `mcp_inspector.py:2752`, `mcp_tools_mode.py:_server_options`, `settings_screen.py:_library_rag_profile_select_options`, `chat_approval_card.py:_options_for_row`, `console_model_popover.py`/`console_settings_modal.py` provider/model option builders, `library_screen.py:_library_notes_folder_target_options`, `speech_settings_group.py:SELECT_OPTIONS` dict, `reminder_form.py:_schedule_options`/`_preset_options`, `settings_screen.py:_appearance_theme_options`, `results_grid.py:_baseline_options`, `settings_splash_screen_viewer.py:_default_select_options`, `speech_tts_settings_panel.py:_default_profile_options`/`_safe_exact_options`/`_realtime_provider_options`, `character_voice_widget.py:voice_options`, `mcp_rail.py:scope_options`/`ref_options` | `(label, value)` | Correct | Each traced to its definition and consumer by hand (not just shape-matched) -- see per-site detail in the PR discussion; all consistent |
 | `Widgets/base_components.py`'s `FormField.options` / `create_form_field(field_type="select", ...)` | n/a | **Dead code** | Zero call sites anywhere in the repo use `field_type="select"` for either helper -- nothing to be backwards *about* |
 | `Widgets/enhanced_file_picker.py:self.filters.selections` | n/a | Out of scope | `Filters` is a vendored `Third_Party/textual_fspicker` type, not this repo's code |
 
-No further sites were found beyond the three listed as BACKWARDS -- FIXED
-(plus the headline #1). Each got its own born-red test, red at HEAD, green
-after the fix:
+**Correction (post-commit review, honestly owned): AC#2's original claim
+("every backwards site found is fixed or justified in the notes" / "No
+further sites were found beyond the three listed") was FALSIFIED.** A
+follow-up review found a fifth backwards site, `#course-level` (table row
+above), that both the manual sweep and the first cut of the guard missed --
+same file, same bug class, one function above `#guide-topic-select`. It
+slipped through for a specific, now-documented reason (see the guard
+section below): its three option pairs are all same-word-different-case
+(`"beginner"`/`"Beginner"` etc.), which is exactly the shape the guard's
+`("none", "None")`-is-fine exemption was designed to tolerate -- and
+because *every* pair in this particular list has that shape, no pair ever
+tripped the "at least one pair differs by more than case" rule. AC#2 now
+reads honestly as: five backwards sites were found across the two review
+passes; four are fixed with born-red tests; the fifth is justified in the
+table above (already deleted on `origin/dev` by a concurrent, unrelated
+task -- fixing it here is pointless churn given the pending rebase). Each
+of the four fixed sites got its own born-red test, red at HEAD, green after
+the fix:
 - `Tests/Widgets/test_voice_profile_dialog.py` (3 tests) -- red with
   `InvalidSelectValueError: Illegal select value 'en'` on the default "New
   Voice Profile" open.
@@ -158,28 +174,55 @@ like human text (contains a space, or Title-Cased), and the two aren't the
 same word after normalizing case/separators (so `("none", "None")` alone
 isn't flagged, but `("basic", "Basic Auth")` in the same list is).
 
-Honest coverage, stated in the guard's own docstring: it catches literal,
-hand-typed option tuples -- which is what caught 3 of this task's 4 real
-findings (`#auth-type-select`, `#language-select`, `#guide-topic-select`)
--- and raises zero false positives across the ~230 correct literal-list
-sites already in this repo (verified by running it against HEAD before any
-fix landed, restricted to the untouched files). It structurally CANNOT
-catch the `Voice_Cloning_Window` bug: `(profile["name"],
-profile["display_name"])` has no string literal to pattern-match against --
-that one needed tracing what the dict keys *mean*, which the guard's
-docstring calls out explicitly as a known, permanent gap, together with the
-other three documented gaps (single-word labels with no space/Title-Case,
-more than one hop of indirection, non-string values). An `ALLOWLIST`
-mechanism exists for a genuinely intentional exception; it is empty at
-landing (`test_current_repo_has_no_allowlist_entries` pins that).
+Honest coverage, stated in the guard's own docstring and now amended with a
+fifth, real gap found by the follow-up review: it catches literal,
+hand-typed option tuples with at least one non-uniformly-cased pair --
+which is what caught 3 of the 5 real findings (`#auth-type-select`,
+`#language-select`, `#guide-topic-select`) -- and raises zero false
+positives across the ~230 correct literal-list sites already in this repo
+(verified by running it against HEAD before any fix landed, restricted to
+the untouched files). It structurally CANNOT catch two shapes, both
+demonstrated by real bugs this task found, not hypothesized:
+1. **Dynamic, non-literal options** (`Voice_Cloning_Window`):
+   `(profile["name"], profile["display_name"])` has no string literal to
+   pattern-match against -- tracing what the dict keys *mean* isn't
+   statically decidable in general.
+2. **A uniformly same-word-cased options list** (`#course-level`, found by
+   the follow-up review): when EVERY pair in a list is the
+   same-word-different-case shape, every pair individually passes the
+   `("none", "None")`-is-fine exemption, so the whole site goes unflagged.
+   This gap is now MEASURED, not just described: an independent
+   same-word-different-case census across the whole package found 141 such
+   pairs; 140 of 141 are `Title-first, lowercase-second` (the correct
+   convention) and exactly one -- `#course-level` -- is inverted. The
+   140:1 signal means the gap is narrow in practice but real; the guard's
+   docstring now documents it explicitly (with the 141-pair census) and a
+   new mutation-test fixture (`test_guard_detects_a_synthetic_backwards_
+   select`, the `uniformly_cased_widget.py` case) reproduces the exact
+   `#course-level` shape byte-for-byte and pins that the guard does NOT
+   flag it -- a deliberate tripwire against silently "fixing" the gap's
+   assertion out from under a docstring that still claims it exists.
+
+Together with the two other originally-documented gaps (single-word labels
+with no space/Title-Case; more than one hop of indirection) and non-string
+values (correctly never flagged), the guard's docstring's "What this does
+NOT catch" section now lists all five known gap categories with concrete
+evidence for each. An `ALLOWLIST` mechanism exists for a genuinely
+intentional exception; it is empty at landing (`test_current_repo_has_no_
+allowlist_entries` pins that) -- `#course-level` was deliberately NOT added
+to it, since it is a real bug on this branch, not an intentional exception;
+it is simply not being fixed here because the code is already gone
+upstream.
 
 Proven three ways: (1) `test_no_backwards_select_option_literals` passes
-clean against the real, fixed repo; (2) a tmp_path mutation test
-(`test_guard_detects_a_synthetic_backwards_select`) seeds a literal-shaped
-backwards Select, a variable-indirection backwards Select, a correct
-Select, and the *documented-gap* dynamic-dict-key shape, asserting the
-first two are flagged, the third isn't, and the fourth (correctly) isn't
-either; a fourth test proves the allowlist suppresses a flagged site by
+clean against the real, fixed repo (and, as expected, still does not flag
+`#course-level` -- the gap is real and current, not hypothetical); (2) a
+tmp_path mutation test (`test_guard_detects_a_synthetic_backwards_select`)
+seeds a literal-shaped backwards Select, a variable-indirection backwards
+Select, a correct Select, the documented-gap dynamic-dict-key shape, and
+(added in the follow-up round) the documented-gap uniformly-cased shape,
+asserting the first two are flagged and the other three (correctly) are
+not; a fourth test proves the allowlist suppresses a flagged site by
 `(path, lineno)`; (3) **live temporary reintroduction** (AC#3's own
 wording) -- reverted `SiteConfigSettings.py`'s already-fixed
 `#auth-type-select` tuples back to `(value, label)` via `Edit`, re-ran
@@ -191,16 +234,31 @@ checkout`) and re-ran green.
 **Files touched:** `tldw_chatbook/UI/SiteConfigSettings.py`,
 `tldw_chatbook/Widgets/voice_profile_dialog.py`,
 `tldw_chatbook/UI/Voice_Cloning_Window.py`,
-`tldw_chatbook/UI/Study_Window.py` (fixes); `Tests/UI/
-test_site_config_settings.py`, `Tests/Widgets/test_voice_profile_dialog.py`,
-`Tests/UI/test_voice_cloning_test_profile_select.py`, `Tests/UI/
+`tldw_chatbook/UI/Study_Window.py` (fixes -- `#course-level` deliberately
+untouched, see table); `Tests/UI/test_site_config_settings.py`,
+`Tests/Widgets/test_voice_profile_dialog.py`, `Tests/UI/
+test_voice_cloning_test_profile_select.py`, `Tests/UI/
 test_study_guide_topic_select.py`, `Tests/Architecture/
-test_backwards_select_option_guard.py` (new tests).
+test_backwards_select_option_guard.py` (new/updated tests -- the guard file
+was revised in the follow-up round to add the uniformly-cased-list gap,
+its docstring, and its mutation-test fixture).
 
-**Verification:** `ruff check` clean on all touched files. Full new/changed
-suite (18 tests across 5 files) green. Full `Tests/Architecture/` suite:
-138 passed, 3 pre-existing failures unrelated to this change (`test_
-persistent_diagnostic_inventory.py` x2, `test_screen_size_ratchet.py`'s
-`chat_screen.py` budget) -- none of the three touch any file this task
-modified; confirmed pre-existing via `git diff --stat` showing zero overlap.
+**Verification (first round):** `ruff check` clean on all touched files.
+Full new/changed suite (18 tests across 5 files) green. Full
+`Tests/Architecture/` suite: 138 total, 135 passed, 3 pre-existing failures
+unrelated to this change (`test_persistent_diagnostic_inventory.py` x2,
+`test_screen_size_ratchet.py`'s `chat_screen.py` budget) -- none of the
+three touch any file this task modified; confirmed pre-existing via `git
+diff --stat` showing zero overlap (independently reproduced by the
+follow-up reviewer against the exact same three names).
+
+**Verification (follow-up round, after the `#course-level` correction):**
+fetched `origin`, confirmed `origin/dev`'s `facd895ad` (task-16845) already
+removed `#course-level` and is not an ancestor of this branch's base.
+`ruff check` clean on the updated guard file.
+`Tests/Architecture/test_backwards_select_option_guard.py` (5 tests, +1 new
+mutation fixture): 5 passed. Guard file + all 18 originally-added tests +
+`Tests/UI/test_study_screen.py` + `Tests/UI/test_study_dashboard.py`
+(broader Study-screen coverage, sanity-checked since `Study_Window.py` is
+discussed even though untouched this round): 44 passed, 0 failed.
 <!-- SECTION:NOTES:END -->

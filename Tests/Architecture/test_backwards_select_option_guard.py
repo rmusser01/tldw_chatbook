@@ -21,6 +21,23 @@ by tooling:
   sent the wrong profile reference to the TTS backend), and
   ``UI/Study_Window.py`` (``#guide-topic-select`` -- an unconsumed but still
   visibly wrong dropdown, showing "new" instead of "New Topic").
+* A post-commit review of this very task found a **fifth** site this
+  guard's first cut still missed: ``UI/Study_Window.py``'s
+  ``CourseCreationWidget.compose`` composed ``#course-level`` as
+  ``[("beginner", "Beginner"), ("intermediate", "Intermediate"),
+  ("advanced", "Advanced")]`` -- backwards, reachable (``StudyScreen`` is a
+  live nav route), unconsumed (same cosmetic-only profile as
+  ``#guide-topic-select``). It slipped through both the manual sweep AND
+  the guard for the same reason -- see the new gap below. It was NOT fixed
+  in this repo: an unrelated, already-merged TASK-16845 deleted the whole
+  "Course Details" form (title/description/level/prerequisites feeding a
+  dead ``#create-course-btn``) on ``origin/dev`` before this task's branch
+  was rebased onto it, so ``#course-level`` no longer exists there --
+  fixing it on this task's stale base would only be reverted by the
+  rebase. Confirmed via ``git show origin/dev:tldw_chatbook/UI/
+  Study_Window.py`` (``CourseCreationWidget.compose`` has no ``#course-
+  level`` and no "Course Details" form at all, replaced by a comment
+  explaining the removal).
 
 Every one of those four new sites was *reachable* -- a nav-unreachable
 Select is nice-to-have severity mitigation, not a reason a bug is allowed to
@@ -45,10 +62,15 @@ has:
 
 This is a heuristic over TEXT SHAPE, run against every current literal
 Select/``set_options`` option list in this repo as part of TASK-16841's own
-sweep: it flagged the accurate two of the four new backwards sites that had
-literal string options (``#auth-type-select``, ``#language-select``,
-``#guide-topic-select``) and raised **zero** false positives across the
+sweep: of the five new-and-newly-found backwards sites (four from the
+original sweep, one -- ``#course-level`` -- from the follow-up review), it
+correctly flagged three that had literal string options with at least one
+non-uniformly-cased pair (``#auth-type-select``, ``#language-select``,
+``#guide-topic-select``), and raised **zero** false positives across the
 roughly 230 other literal option-tuple sites checked by hand in that sweep.
+It does NOT catch ``#course-level`` (a uniformly same-word-cased list) or
+``#test-profile-select`` (dynamic, non-literal options) -- see both gaps
+below.
 
 ## What this does NOT catch (stated honestly, not aspirationally)
 
@@ -70,6 +92,27 @@ roughly 230 other literal option-tuple sites checked by hand in that sweep.
 * Non-string values (``Select.BLANK``, an enum's ``.value`` member, etc.) --
   these fail the "both elements are string constants" check and are
   silently skipped, never flagged, which is correct (nothing to compare).
+* **An options list whose EVERY pair is the same-word-different-case
+  shape.** The equality check that keeps ``("none", "None")`` from being
+  flagged on its own (see "What this catches" above) is a per-PAIR
+  exemption; it only stays safe in aggregate because a real backwards list
+  usually has at least one pair -- like ``("basic", "Basic Auth")`` next to
+  ``("none", "None")`` -- where label and value are different WORDS, not
+  just different case, which still trips the shape check. When an entire
+  list is uniformly same-word-cased (``[("beginner", "Beginner"),
+  ("intermediate", "Intermediate"), ("advanced", "Advanced")]``), every
+  pair individually satisfies the exemption and the whole site goes
+  unflagged, backwards or not -- exactly what happened at ``UI/
+  Study_Window.py``'s ``#course-level`` (see above). This is a MEASURED
+  risk, not a guessed one: an independent same-word-different-case census
+  across the whole package at the time of that review found **141** such
+  pairs; **140 of 141 were Title-first/lowercase-second (the correct
+  ``(label, value)`` convention)**, and ``#course-level`` was the lone
+  outlier. A 140:1 signal means this gap is narrow in practice, but it is
+  real and this guard cannot see inside a uniformly-cased list -- a case
+  this stark (and this rare) is exactly why the ``ALLOWLIST`` mechanism
+  and human code review still matter alongside this guard, not instead of
+  it.
 
 A guard that only catches the common, literal shape -- and never cries wolf
 on the ~230 correct sites already in this repo -- is worth more than one
@@ -341,6 +384,27 @@ def test_guard_detects_a_synthetic_backwards_select(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    (ui_dir / "uniformly_cased_widget.py").write_text(
+        "\n".join(
+            (
+                "from textual.widgets import Select",
+                "",
+                "class UniformlyCasedWidget:",
+                "    def compose(self):",
+                "        yield Select(",
+                "            options=[",
+                '                ("beginner", "Beginner"),',
+                '                ("intermediate", "Intermediate"),',
+                '                ("advanced", "Advanced"),',
+                "            ],",
+                '            id="course-level",',
+                "        )",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
     violations: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
         violations.extend(_violations_in_file(path, package_root=package_root))
@@ -352,6 +416,16 @@ def test_guard_detects_a_synthetic_backwards_select(tmp_path: Path) -> None:
     # The dynamic (data-driven) site is the documented gap: no literal text
     # to pattern-match, so it must NOT be flagged (and must not crash).
     assert "tldw_chatbook/UI/dynamic_widget.py" not in flagged_files
+    # The documented "uniformly same-word-cased list" gap (module docstring,
+    # "What this does NOT catch") -- this is the real UI/Study_Window.py
+    # #course-level shape, reproduced byte-for-byte. It is backwards
+    # ((value, label) order throughout) but every pair individually passes
+    # the same-word exemption, so the guard cannot see it. This assertion
+    # pins that gap as MEASURED, not merely claimed in prose: if a future
+    # change to `_pair_is_backwards`/`_normalized` accidentally started
+    # catching this shape, this test would need updating -- a deliberate
+    # tripwire, not an oversight.
+    assert "tldw_chatbook/UI/uniformly_cased_widget.py" not in flagged_files
 
 
 def test_allowlist_suppresses_a_reviewed_site(tmp_path: Path) -> None:
