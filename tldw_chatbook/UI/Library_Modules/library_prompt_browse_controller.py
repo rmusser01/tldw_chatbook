@@ -270,9 +270,7 @@ class LibraryPromptBrowseController:
             return self.result.error
         applied_scope = applied.scope
         if replace(failed_scope, page=applied_scope.page) == applied_scope:
-            if failed_scope.page != applied_scope.page:
-                return f"Couldn't load page {failed_scope.page}."
-            return self.result.error
+            return f"Couldn't load page {failed_scope.page}."
         return "Filter wasn't applied; showing previous results."
 
     def invalidate(self, scope: PromptBrowseScope | None = None) -> int:

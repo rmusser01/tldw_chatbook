@@ -200,6 +200,31 @@ async def test_controller_retains_applied_rows_during_loading_and_page_failure()
 
 
 @pytest.mark.asyncio
+async def test_controller_same_page_refresh_failure_uses_page_copy() -> None:
+    screen = _WorkerScreen()
+    scope = PromptBrowseScope(query="same", page=1)
+    service = _ScriptedBrowseService(
+        _page_record(page=1, total=1),
+        RuntimeError("private same-page failure"),
+    )
+    controller = _controller(
+        screen=screen,
+        service=lambda: service,
+        sync_view=lambda: lambda _result, _focus: None,
+    )
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+
+    assert controller.applied_result is not None
+    assert controller.applied_result.scope == scope
+    assert controller.pager.status_copy == "Couldn't load page 1."
+    assert controller.pager.retry_visible is True
+
+
+@pytest.mark.asyncio
 async def test_controller_failed_scope_change_keeps_full_applied_scope_for_paging() -> (
     None
 ):
