@@ -4512,3 +4512,49 @@ recognize next time: pytest's own timing says the suite finished but the
 process idles at 0% CPU; macOS `sample` shows `wait_for_thread_shutdown`;
 `kill -ABRT` (with `PYTHONFAULTHANDLER=1`) dumps the stuck thread stacks into
 stderr.
+
+---
+
+## A cross-suite ordering failure can be an app KILLING ITSELF, not an object crossing the boundary (task-15860, 2026-08-16)
+
+`Tests/UI/test_console_headless_wake_fires.py` +
+`Tests/UI/test_console_store_continuity.py` run together gave **1 failed, 4
+passed**; each file alone was green. Every hypothesis on the obvious list was
+about something *surviving* the test boundary — an undisposed app-owned
+`ConsoleRuntime`, a pending delivery, a leaked DB handle, a module singleton,
+a daemon thread. All of them were wrong. Four *identical* wake rounds in one
+process were green, and the two poisoners followed by a plain no-wake nav probe
+were green: nothing accumulated. What actually happened was that the THIRD
+app killed itself — a `console-sync` worker whose screen had been closed raised
+`NoMatches`, Textual's default `exit_on_error=True` handed it to
+`App._handle_exception`, and from then on every `post_message` was silently
+dropped, so the next `NavigateToScreen` produced 15 seconds of total silence
+and "stuck on LibraryScreen". The prior tests contributed timing pressure, not
+state.
+
+**What to do.** Before hunting for the leaked object, ask whether the victim
+app is still ALIVE: dump `app.is_running` / `app._closing` / `app._closed` /
+`app._exception` at the point of the symptom. A dead Textual app is
+indistinguishable from a hung one from the outside — the message queue is
+empty, the workers list is empty, the loop is running, and nothing logs. Two
+corollaries that generalise: (1) `is_mounted` stays **True** for a screen
+Textual has already closed (the removed surface reported `is_mounted=True`
+with `is_running=False` and no children), so a mount check is not a liveness
+check — `_closing`/`_closed` are; (2) a per-file green gate structurally
+cannot see this class, because the damage needs several app lifetimes in one
+process. Running the whole directory in one invocation is what surfaces it.
+
+## A coroutine that re-arms itself from `finally` escapes the framework's teardown sweep (task-15860, 2026-08-16)
+
+Textual cancels a node's workers in `Widget._on_unmount`
+(`workers.cancel_node(self)`). `ChatScreen._sync_native_console_chat_ui`
+re-armed itself with `self.run_worker(...)` inside its own `finally` — which
+runs *after* that sweep — so the worker it created was never in the cancelled
+set, ran a full DOM sync against a screen with no children, and killed the app.
+The instrumentation that named it in one pass: wrap `DOMNode.run_worker`
+filtered to the suspect group and log `traceback.format_stack()` at creation;
+the creating frame was the `finally` itself. Generalises to any self-scheduling
+loop (timers re-arming timers, callbacks re-posting themselves): the framework's
+"cancel everything this node owns" happens once, and anything scheduled after
+it is invisible to it. Guard the re-arm on the owner still being alive, not
+just the body.

@@ -445,3 +445,194 @@ left ON** (`13 passed` each) — which also rules out order dependence.
    (the `Tests/Chat/` fourteen byte-identical in both directions). They
    are pre-existing reds on `dev` and someone should own them, but not
    this task.
+
+---
+
+## 11. Cross-suite leak — found after merging dev
+
+### 11.1 The symptom
+
+Merging current `dev` did not break anything on its own, but it made the
+branch's own gate insufficient. Run the two files **together**:
+
+```
+pytest Tests/UI/test_console_headless_wake_fires.py \
+       Tests/UI/test_console_store_continuity.py -q
+```
+
+→ **1 failed, 4 passed**. The casualty is the continuity landing's
+four-way agreement test, and its message is a navigation that never
+happened: `navigating to 'chat' never reached ChatScreen; stuck on
+LibraryScreen`. Every file passes alone (continuity alone: **4 passed**).
+
+### 11.2 Bisect — it takes THREE Console apps, and the wake shape
+
+Measured, each combination executed:
+
+| Invocation | Result |
+|---|---|
+| `test_console_store_continuity.py` alone (4 tests) | 4 passed |
+| headless-wake e2e + `test_transcript_payload…` (2 apps) | 2 passed |
+| `test_a_wake_that_ran…` + `test_transcript_payload…` (2 apps) | 2 passed |
+| headless-wake e2e + `test_a_wake_that_ran…` + `test_transcript_payload…` | **1 failed, 2 passed** |
+| four *identical* wake rounds in one process (throwaway probe) | 4 passed — so it is **not** monotonic accumulation |
+| the two poisoners + a plain (no-wake) nav probe | 3 passed — so it is **not** "the third app" |
+
+So the trigger is the third Console app **that also runs a wake turn
+across a navigation**, and it is order/timing sensitive, not a plain
+regression.
+
+### 11.3 The mechanism — traced, not inferred
+
+A throwaway pytest plugin wrapped `ConsoleSessionSurface.sync_sessions`,
+`App._handle_exception`, `DOMNode.run_worker` (filtered to
+`group="console-sync"`) and `ChatScreen._sync_native_console_chat_ui`.
+The failing run's own log, in order:
+
+```
+STEP nav: leaving console
+tick ENTER  screen_running=True   in_progress=False
+tick ENTER  (coalesced: in_progress=True -> _console_sync_requested = True)
+run_worker(console-sync) from chat_screen.py:15846      <- the tick's own `finally`
+tick EXIT-OK screen_running=False                       <- the screen is ALREADY closed
+tick ENTER  screen_running=False screen_mounted=True    <- the re-armed worker runs anyway
+sync_sessions RAISED NoMatches("#console-native-tab-strip")  mounted=True running=False
+App._handle_exception(WorkerFailed(...))
+```
+
+and immediately afterwards the app object reports
+`running=False closing=True closed=True
+exception=WorkerFailed(NoMatches("#console-native-tab-strip"))`.
+
+**The leaking object, named precisely: the `console-sync` Textual
+`Worker` wrapping `ChatScreen._sync_native_console_chat_ui`, created by
+that coroutine's own `finally` re-arm on a `ChatScreen` whose message
+pump Textual has already closed.**
+
+Three production facts compose:
+
+1. `_sync_native_console_chat_ui`'s `finally` re-arms itself with
+   `self.run_worker(...)` whenever a coalesced request arrived mid-tick
+   (a wake turn appending transcript rows during a navigation is exactly
+   that). That call happens **after** Textual's unmount sweep
+   (`Widget._on_unmount` → `workers.cancel_node(self)`), so the worker it
+   creates was never in the cancelled set and nothing will ever cancel it.
+2. The tick touches the DOM: `_sync_console_native_session_tabs` →
+   `ConsoleSessionSurface.sync_sessions` →
+   `query_one("#console-native-tab-strip")` — the widgets a navigation
+   away from Console removes.
+3. Textual workers default to `exit_on_error=True`
+   (`textual/worker.py:380`), so the `NoMatches` reaches
+   `App._handle_exception` and **exits the app**. After that every
+   `post_message` is silently dropped — which is why the next test's
+   `NavigateToScreen("chat")` produced 15 seconds of complete silence and
+   then "stuck on LibraryScreen".
+
+`is_mounted` is no defence: the removed surface still reported
+`is_mounted=True` while its own pump reported `is_running=False`.
+
+### 11.4 Verdict: PRODUCTION defect, with proof
+
+**This is a production crash that the wake-fires-headless gate change
+exposes. It is not test pollution, and it is not the app-owned runtime
+failing to be disposed.**
+
+Proof, in four parts, each executed:
+
+1. **Nothing crosses the test boundary.** The failure is entirely inside
+   the third app's own lifetime: that app kills *itself*, and the pytest
+   test that owns it then fails on the consequence. Four *identical* wake
+   rounds in one process were all green (§11.2), so no object accumulates
+   across apps; the app-owned `ConsoleRuntime`, its store, its bridge and
+   the wake coordinator are all per-app and none of them appears in the
+   crash chain.
+2. **Every frame in the crash chain is production code**, and none of it
+   is this branch's. `git show --stat` over this branch's five commits:
+   the only production commit (`474af3b6b`) touches
+   `console_chat_controller.py`, `console_fleet_wake.py` and
+   `console_runtime.py` — **`chat_screen.py` is untouched by this
+   branch**. Both halves of the defect are present verbatim on
+   `origin/dev`: the unguarded `finally` re-arm
+   (`origin/dev:chat_screen.py:15853-15862`) and the unguarded
+   `query_one` (`origin/dev:console_session_surface.py:532`).
+3. **The gate relaxation is the exposer, measured both ways.** With the
+   `_attempt` gate reverted to `_shutdown_requested` *and* the fix
+   neutralised, the same two-file invocation gives **1 failed, 4 passed
+   where the failure is the headless e2e** (correct: the old gate refuses)
+   and continuity is **4/4 green**. With the new gate and the fix
+   neutralised it is the continuity test that fails. Same test files,
+   same machine, one line of production difference.
+4. **The consequence is app-lifetime, not test-lifetime.** In production
+   the app that dies is the user's session: navigate away from Console
+   while a sync tick is coalescing (a wake or fleet turn landing rows
+   during the "Leave Console?" flow is the everyday shape) and the TUI
+   exits. Calling this "just test pollution" would have shipped that.
+
+Honest scope: this branch did not create the crash, it made it reachable
+often enough to see. The window existed on `dev` — a 0.2s sync tick plus
+an append-driven tick, against a screen that can be unmounted at any
+moment — and nobody had hit it.
+
+*Inference, labelled:* why it takes three apps rather than one is not
+proven. The most likely reading is accumulated process pressure (loguru
+sinks, SQLite handles, executor threads) widening a race, and the
+measurements above are consistent with it — but I did not isolate the
+slowdown source, and no claim here depends on doing so.
+
+### 11.5 The fix
+
+`tldw_chatbook/UI/Screens/chat_screen.py`, three small pieces, one
+invariant — **a torn-down screen renders nothing**:
+
+* `ChatScreen._console_screen_torn_down()` — new predicate reading
+  `_closing`/`_closed`, the pair Textual itself sets first in
+  `MessagePump._close_messages` and reads for `is_parent_active`.
+  Deliberately **not** `is_mounted` (True for the corpse) and
+  deliberately **not** `is_running` (also False *before* a pump starts,
+  which would silently no-op every harness that calls the tick on a
+  hand-built, never-mounted `ChatScreen`).
+* `_sync_native_console_chat_ui` returns immediately when the screen is
+  torn down, and clears the coalesced request rather than passing it on.
+* Its `finally` no longer re-arms a worker on a dead screen, and a
+  **teardown-scoped** `except` absorbs a failure that arrives mid-tick —
+  re-raising untouched when the screen is alive, so this is not a blanket
+  swallow.
+
+`exit_on_error` is deliberately left alone: turning worker failures
+non-fatal app-wide would hide the next bug of this class instead of
+fixing this one.
+
+### 11.6 Regression tests — `Tests/UI/test_console_sync_outlives_screen.py`
+
+Five tests, all driven through the real navigation API on a real app:
+
+1. a `console-sync` worker scheduled on a genuinely navigated-away screen
+   must not kill the app — and navigating back must still work (the
+   user-visible symptom, asserted directly);
+2. a torn-down screen must run **no** sync work and must **not** re-arm;
+3. **control** — a LIVE screen's sync failure must still propagate;
+4. a real navigation arriving mid-tick is absorbed, and the coalesced
+   request it leaves behind must not become a worker;
+5. the partial-teardown window (`_closing` set, children already gone —
+   Textual's own ordering) is absorbed.
+
+### 11.7 Mutations run and killed
+
+| # | Mutation | Killed by | Result |
+|---|---|---|---|
+| 1 | entry guard `if self._console_screen_torn_down():` → `if False:` | test 2 | 1 failed, 3 passed |
+| 2 | `finally` re-arm guard → `if True:` (always re-arm) | test 4 | 1 failed, 3 passed |
+| 3 | teardown-scoped `except` → always `raise` | test 5 | 1 failed, 4 passed |
+| 4 | teardown-scoped `except` → blanket swallow (`if False: raise`) | test 3 (the control) | 1 failed, 4 passed |
+| 5 | `_console_screen_torn_down()` → `return False` | tests 1, 2, 4, 5 | 4 failed, 1 passed |
+| 6 | `_console_screen_torn_down()` → `return True` | tests 3, 4, 5 | 3 failed, 2 passed |
+
+Recorded honestly: **mutation 3 SURVIVED the first four-test draft.** The
+mid-tick navigation test could not reach the `except` at all, because by
+the time an awaited navigation returns the whole surface has gone and
+`_sync_console_native_session_tabs` short-circuits on its own
+`QueryError` guard. Test 5 was written specifically to reach that branch,
+and only then did mutation 3 die. Every mutation was applied and reverted
+with `Edit`, with `grep -c MUTATION` = 0 and `git diff --stat` checked
+after each.
+
