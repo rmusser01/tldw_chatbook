@@ -200,6 +200,13 @@ def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
     at the cap" (a complete read) from "over it" (a partial one). A partial
     read comes back carrying a note, because reporting it as complete would
     be indistinguishable from a whole-document read.
+
+    `include_image_data=False` (the task-260 precedent): the rendering uses
+    `sender`/`content` only, so the reader's default would pull up to
+    `MAX_TRANSCRIPT_MESSAGES` image BLOBs into memory for text that cannot
+    use them. The rendered transcript is byte-identical either way --
+    `image_mime_type` is still returned, so nothing downstream loses the
+    fact that an image exists.
     """
     from ..config import get_chachanotes_db_lazy
 
@@ -209,7 +216,9 @@ def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
         return None
     messages = list(
         db.get_messages_for_conversation(
-            conversation_id, limit=MAX_TRANSCRIPT_MESSAGES + 1
+            conversation_id,
+            limit=MAX_TRANSCRIPT_MESSAGES + 1,
+            include_image_data=False,
         )
         or ()
     )

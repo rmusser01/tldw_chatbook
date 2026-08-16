@@ -1,10 +1,13 @@
 ---
-id: task-16788
+id: TASK-16788
 title: Run-log tools are offered regardless of allowed_tools
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-16'
-labels: [agents, tools]
+updated_date: '2026-08-16 16:31'
+labels:
+  - agents
+  - tools
 dependencies: []
 priority: low
 ---
