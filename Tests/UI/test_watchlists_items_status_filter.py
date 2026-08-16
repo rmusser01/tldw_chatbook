@@ -116,8 +116,8 @@ def _row_texts_by_id(pane: ArticleListPane) -> dict[str, str]:
     out: dict[str, str] = {}
     for node in list_view.children:
         if isinstance(node, _ArticleRow):
-            static = node.children[0]
-            out[node.item_id_key] = static.render().plain
+            # task-15776: the row renders itself -- there is no inner Static.
+            out[node.item_id_key] = node.render().plain
     return out
 
 
