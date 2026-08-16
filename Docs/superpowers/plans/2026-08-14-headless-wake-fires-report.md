@@ -546,6 +546,14 @@ Proof, in four parts, each executed:
    across apps; the app-owned `ConsoleRuntime`, its store, its bridge and
    the wake coordinator are all per-app and none of them appears in the
    crash chain.
+
+   The undisposed-runtime hypothesis was the first one checked and it was
+   **executed, not reasoned away**. A probe seeded a real Console, left
+   `app.run_test()`, then measured: `controller._disposed` → **True**,
+   `app.console_runtime is runtime` → **False** (detached), and after
+   `gc.collect()` the live-object census was **0 `ConsoleRuntime`, 0
+   `ConsoleChatController`**. The runtime is disposed and collected at app
+   exit; it is not the leak.
 2. **Every frame in the crash chain is production code**, and none of it
    is this branch's. `git show --stat` over this branch's five commits:
    the only production commit (`474af3b6b`) touches
