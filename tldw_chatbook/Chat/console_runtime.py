@@ -95,9 +95,20 @@ must outlive a navigation cannot live on one.
   one. Between visits the flag is set exactly as it was before this
   landing, so a wake still does not fire headless. Making it fire is the
   next task.
-- **Continuity.** Console message state still travels through
-  `ScreenStateStore.native_console_state`; the app-owned store is not yet
-  the continuity owner (plan Task 3, blocked on an owner call).
+## Continuity (task-15860 Task 3, landed)
+
+The store this holds is now the SINGLE source of truth for Console message
+history. `ChatScreen`'s `ScreenStateStore` snapshot no longer carries
+`sessions`, `messages_by_session` or `active_session_id`: it carries view
+state only (image view modes, task-resume projection, RAG source scope,
+staged live-work launch). Task 0's P3b executed why — with the runtime
+app-owned but the snapshot still carrying history, a wake turn that ran
+while Console was unmounted persisted four rows to ChaChaNotes and the
+returning user saw the two that predated the snapshot.
+
+Concretely: `_restore_native_console_state` no longer calls
+`ConsoleChatStore.restore_state`, so a returning view reads the live store
+it left behind — tree, active leaf, drafts, pending attachments and all.
 """
 
 from __future__ import annotations

@@ -9915,6 +9915,95 @@ def test_native_console_state_serializes_plain_string_message_role():
     assert serialized["role"] == "assistant"
 
 
+def _console_snapshot_with_sessions(screen: ChatScreen) -> dict | None:
+    """The screen-state payload as it looked BEFORE task-15860 Task 3.
+
+    Console message state stopped travelling through `ScreenStateStore`
+    when the app-owned `ConsoleRuntime`'s store became the single source of
+    truth for history: `_serialize_native_console_state` no longer emits
+    `sessions`/`messages_by_session`/`active_session_id`, and
+    `_restore_native_console_state` no longer calls
+    `ConsoleChatStore.restore_state`.
+
+    The per-session and per-message (de)serializers themselves are still
+    live code with no production caller (retirement tracked as task-16520),
+    and the tests below are about THEIR shape -- legacy-payload tolerance,
+    character-provenance narrowing, byte-free message projection. So the
+    round trip they need is spelled out here, next to them, instead of
+    borrowed from a production method that no longer performs it.
+
+    Returns:
+        The live view-state payload with the retired session/message keys
+        added back, or ``None`` when the screen has no sessions (the same
+        condition the production serializer returns ``None`` for).
+    """
+    payload = screen._serialize_native_console_state()
+    if payload is None:
+        return None
+    store = screen._console_chat_store
+    payload["active_session_id"] = store.active_session_id
+    payload["sessions"] = [
+        screen._session._console_session_to_state(session)
+        for session in store.sessions()
+    ]
+    payload["messages_by_session"] = {
+        session.id: [
+            ChatScreen._serialize_console_message(message)
+            for message in store.messages_for_session(session.id)
+        ]
+        for session in store.sessions()
+    }
+    return payload
+
+
+def _restore_console_snapshot_with_sessions(screen: ChatScreen, payload) -> None:
+    """The mirror of `_console_snapshot_with_sessions` -- see its docstring.
+
+    Reproduces the retired half of `_restore_native_console_state` in the
+    same order it ran (rehydrate, `store.restore_state`, hydrate generation
+    metadata) and then hands the payload to the LIVE method for the view
+    state it still owns.
+    """
+    if not isinstance(payload, dict):
+        screen._restore_native_console_state(payload)
+        return
+    raw_sessions = payload.get("sessions")
+    if isinstance(raw_sessions, list) and raw_sessions:
+        store = screen._ensure_console_chat_store()
+        raw_messages = payload.get("messages_by_session")
+        messages_by_session = raw_messages if isinstance(raw_messages, dict) else {}
+        restored_sessions = []
+        restored_messages: dict[str, list] = {}
+        for raw_session in raw_sessions:
+            if not isinstance(raw_session, dict):
+                continue
+            session = screen._session._console_session_from_state(raw_session)
+            restored_sessions.append(session)
+            restored_messages[session.id] = []
+            raw_list = messages_by_session.get(session.id, [])
+            if not isinstance(raw_list, list):
+                continue
+            for raw_message in raw_list:
+                message = ChatScreen._restore_console_message(raw_message)
+                if message is None:
+                    continue
+                screen._rehydrate_console_message_image(message)
+                restored_messages[session.id].append(message)
+        screen._rehydrate_console_message_attachments(
+            [message for messages in restored_messages.values() for message in messages]
+        )
+        active_session_id = payload.get("active_session_id")
+        store.restore_state(
+            sessions=restored_sessions,
+            messages_by_session=restored_messages,
+            active_session_id=(
+                str(active_session_id) if active_session_id is not None else ""
+            ),
+        )
+        screen._rehydrate_console_message_generation_metadata(store, restored_messages)
+    screen._restore_native_console_state(payload)
+
+
 def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build a native-console screen shell for direct serialize/restore calls.
 
@@ -10076,13 +10165,13 @@ def test_native_console_state_round_trip_preserves_session_updated_at():
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert payload["sessions"][0]["updated_at"] == "2020-01-01T00:00:00+00:00"
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
@@ -10113,7 +10202,7 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert (
         payload["sessions"][0]["settings"]["system_prompt"]
@@ -10122,7 +10211,7 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.settings is not None
@@ -10144,7 +10233,7 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
         messages_by_session={session.id: []},
         active_session_id=session.id,
     )
-    payload = _bare_console_screen(store)._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(_bare_console_screen(store))
     assert payload is not None
     settings_payload = payload["sessions"][0]["settings"]
     assert settings_payload is not None
@@ -10170,9 +10259,9 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
     restored_session = restored_store.sessions()[0]
-    serialized = restored_screen._serialize_native_console_state()
+    serialized = _console_snapshot_with_sessions(restored_screen)
 
     assert payload == payload_before
     assert (
@@ -10215,7 +10304,7 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert {
         key: payload["sessions"][0][key]
@@ -10238,7 +10327,7 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.runtime_backend == "local"
@@ -10272,7 +10361,7 @@ def test_live_server_session_never_exposes_local_character_projection():
 
     assert screen._current_console_rail_character_id() is None
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert payload["sessions"][0]["character_id"] is None
     assert session.character_id == 7
@@ -10300,7 +10389,7 @@ def test_native_console_state_restore_adapts_legacy_local_character_without_auth
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.runtime_backend == "local"
@@ -10347,7 +10436,7 @@ def test_source_aware_native_console_state_rejects_character_without_valid_sourc
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == ""
@@ -10396,7 +10485,7 @@ def test_native_console_state_restore_does_not_coerce_identity_scalars():
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == "local"
@@ -10442,7 +10531,7 @@ def test_native_console_state_restore_drops_server_numeric_local_projection():
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == "server"
@@ -10480,7 +10569,7 @@ def test_native_console_state_restore_tolerates_legacy_payload_without_updated_a
     restored_screen = _bare_console_screen(restored_store)
 
     before = datetime.now(timezone.utc)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
     after = datetime.now(timezone.utc)
 
     restored_session = restored_store.sessions()[0]
@@ -11279,7 +11368,7 @@ def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11347,7 +11436,7 @@ def test_restore_native_console_state_rehydrates_generation_metadata_end_to_end(
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11428,7 +11517,7 @@ def test_restore_generation_metadata_survives_stale_session_key_in_payload():
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11562,13 +11651,13 @@ def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
     state, _cache = screen._ensure_console_image_view()
     state.restore({message.id: "hidden", "stale-id": "graphics"})
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     # Live override survives; the stale one is pruned at serialize time.
     assert payload["image_view_modes"] == {message.id: "hidden"}
 
     fresh = ChatScreen(app)
-    fresh._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(fresh, payload)
     fresh_state, _ = fresh._ensure_console_image_view()
     assert fresh_state.serialize() == {message.id: "hidden"}
 

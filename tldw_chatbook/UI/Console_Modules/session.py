@@ -105,9 +105,12 @@ otherwise suggest belong here, for the reasons noted:
 - `_serialize_native_console_state`/`_restore_native_console_state` -- the
   WHOLE native-Console screen-state (de)serializers (image view modes,
   library RAG source types, the pending live-work launch, task-resume
-  state...), which call this cluster's own `_console_session_to_state`/
-  `_console_session_from_state` per-session helpers directly by name rather
-  than owning the per-session shape themselves.
+  state...). Since task-15860 Task 3 they carry VIEW state only: Console's
+  sessions and transcripts live in the app-owned `ConsoleRuntime` store,
+  which survives the navigation, so `_console_session_to_state`/
+  `_console_session_from_state` below have **no production caller left**
+  and are exercised only by their own tests. Their retirement is tracked
+  as task-16520; nothing in the app reads them today.
 """
 
 from __future__ import annotations

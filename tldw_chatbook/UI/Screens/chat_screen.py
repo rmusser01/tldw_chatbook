@@ -14547,18 +14547,24 @@ class ChatScreen(BaseAppScreen):
 
     @classmethod
     def _serialize_console_message(cls, message: ConsoleChatMessage) -> dict[str, Any]:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        (unbound, `ChatScreen.X(...)`) for `_serialize_native_console_
-        state`'s staying call and the pre-existing test suite's
-        direct-call convention (8 sites)."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3**: message state
+        stopped travelling in the screen-state snapshot, so nothing in the
+        app serializes a Console message any more. Kept (unbound,
+        `ChatScreen.X(...)`) only for the pre-existing test suite's
+        direct-call convention; retiring it and its counterpart is a
+        separate, mechanical cleanup.
+        """
         return ConsoleMessageController._serialize_console_message(message)
 
     @classmethod
     def _restore_console_message(cls, payload: Any) -> ConsoleChatMessage | None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        (unbound, `ChatScreen.X(...)`) for `_restore_native_console_
-        state`'s staying call and the pre-existing test suite's
-        direct-call convention (7 sites)."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_serialize_console_message` above.
+        """
         return ConsoleMessageController._restore_console_message(payload)
 
     # App-object attribute holding staged-but-unsent attachments across screen
@@ -14799,16 +14805,23 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _rehydrate_console_message_image(self, message: ConsoleChatMessage) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call and the
-        pre-existing test suite's direct-call convention."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3**: with the store
+        surviving the navigation there is no snapshot to rehydrate from --
+        the live message objects never lost their bytes. Kept for the
+        pre-existing test suite's direct-call convention.
+        """
         self._message._rehydrate_console_message_image(message)
 
     def _rehydrate_console_message_attachments(
         self, messages: list[ConsoleChatMessage]
     ) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_rehydrate_console_message_image` above.
+        """
         self._message._rehydrate_console_message_attachments(messages)
 
     def _rehydrate_console_message_generation_metadata(
@@ -14816,8 +14829,11 @@ class ChatScreen(BaseAppScreen):
         store: "ConsoleChatStore",
         restored_messages_by_session: Dict[str, list[ConsoleChatMessage]],
     ) -> None:
-        """Delegate to `ConsoleMessageController` (wave-3 task 1) -- kept
-        for `_restore_native_console_state`'s staying call."""
+        """Delegate to `ConsoleMessageController` (wave-3 task 1).
+
+        **No production caller since task-15860 Task 3** -- see
+        `_rehydrate_console_message_image` above.
+        """
         self._message._rehydrate_console_message_generation_metadata(
             store, restored_messages_by_session
         )

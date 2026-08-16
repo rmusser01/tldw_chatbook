@@ -8170,6 +8170,18 @@ class TldwCli(
         UI freeze (root-caused 2026-07-11). UX continuity across visits is
         owned by ``ScreenStateStore`` through each screen's
         ``save_state``/``restore_state`` boundary, not instance reuse.
+
+        One documented exception, since task-15860: Console's message
+        history is NOT in that snapshot. It lives in the app-owned
+        ``ConsoleRuntime``'s ``ConsoleChatStore``, which outlives every
+        ``ChatScreen``; Console's snapshot carries only view state (image
+        view modes, the task-resume projection, the staged live-work
+        launch). Two sources of truth is what that snapshot had become --
+        a turn that ran while Console was unmounted persisted to
+        ChaChaNotes and was then overwritten, unseen, by a snapshot taken
+        before it (executed: ``Docs/superpowers/plans/2026-08-14-headless-
+        wake-task-0-report.md``, P3b). Screens still die on navigation;
+        only the runtime survives.
         """
         return screen_class(self)
 
@@ -8757,6 +8769,12 @@ class TldwCli(
                 if outgoing_screen_class is not None:
                     outgoing_key = resolved_outgoing_key
 
+        # A Console snapshot that fails to be replaced below must not survive
+        # with its published prompt-target projection attached (the stale
+        # target `publish_console_prompt_target` would otherwise be read back
+        # against). Since task-15860 this discards VIEW state only: Console's
+        # sessions and transcripts live in the app-owned `ConsoleRuntime`
+        # store, which no snapshot lifecycle can drop.
         if outgoing_key == TAB_CHAT:
             self.screen_state_store.discard(outgoing_key)
 
