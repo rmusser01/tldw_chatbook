@@ -155,9 +155,32 @@ def _armed_round_ids(controller, session_id) -> list[str]:
         ]
 
 
+def _round_is_claimable(controller, session_id) -> bool:
+    """Registered AND payload-retained -- the two writes a mount needs.
+
+    `request_mcp_approvals` registers the round in
+    `_pending_approval_rounds` and only afterwards retains its payload in
+    `_parked_approval_payloads`, with `_resolve_mcp_approval_timeout_
+    seconds()` (a `get_cli_setting` read, which on a cold test config
+    CREATES the file) in between. Waiting on the registration alone
+    therefore returns inside that window, and an attach that follows
+    finds no payload and mounts nothing.
+
+    Measured, not theorised: mutation M3 made
+    `test_attaching_a_view_mounts_a_round_armed_while_detached` fail
+    deterministically for exactly this reason -- a mutation "kill" that
+    was really a timing artefact. The mount depends on the PAYLOAD, so
+    that is what the precondition has to observe.
+    """
+    if not _armed_round_ids(controller, session_id):
+        return False
+    with controller._approval_state_lock:
+        return controller._parked_approval_payloads.get(session_id) is not None
+
+
 async def _wait_for_round(controller, session_id, *, seconds: float = 3.0) -> bool:
     return await _settle(
-        lambda: bool(_armed_round_ids(controller, session_id)), seconds=seconds
+        lambda: _round_is_claimable(controller, session_id), seconds=seconds
     )
 
 
