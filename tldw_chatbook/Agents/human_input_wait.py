@@ -42,13 +42,14 @@ _WAIT_REFCOUNTS: dict[str, int] = {}
 
 
 @contextmanager
-def use_human_input_wait(run_id: str) -> Iterator[None]:
+def use_human_input_wait(run_id: str | None) -> Iterator[None]:
     """Mark ``run_id`` as waiting on a human decision for the block.
 
     Args:
-        run_id: The run whose per-call clock should pause. A falsy value
-            normalizes to ``""`` (the no-run key a round armed outside any
-            agent run carries -- same convention as ``run_context``).
+        run_id: The run whose per-call clock should pause. ``None`` or an
+            empty string normalizes to ``""`` (the no-run key a round
+            armed outside any agent run carries -- same convention as
+            ``run_context``).
 
     Yields:
         None. The mark is refcounted and drops on exit, including on an
@@ -69,12 +70,13 @@ def use_human_input_wait(run_id: str) -> Iterator[None]:
                 _WAIT_REFCOUNTS.pop(key, None)
 
 
-def human_input_wait_active(run_id: str) -> bool:
+def human_input_wait_active(run_id: str | None) -> bool:
     """Whether a human decision is pending for ``run_id`` right now.
 
     Args:
-        run_id: The run to check. A falsy value checks the ``""`` slot,
-            mirroring ``use_human_input_wait``'s normalization.
+        run_id: The run to check. ``None`` or an empty string checks the
+            ``""`` slot, mirroring ``use_human_input_wait``'s
+            normalization.
 
     Returns:
         True while at least one wait holds the mark. Never raises.
