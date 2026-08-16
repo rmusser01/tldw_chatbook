@@ -44,8 +44,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     ConsoleChatMessage,
     ConsoleMessageRole,
+    ConsoleRunStatus,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -63,6 +65,7 @@ from tldw_chatbook.Widgets.Console.console_side_chat_modal import ConsoleSideCha
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
     ConsoleTranscriptMessage,
+    _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 
 
@@ -623,6 +626,68 @@ async def test_active_run_status_enables_feedback_entries():
         assert not menu.query_one("#console-selection-lgm", Button).disabled
         assert not menu.query_one("#console-selection-comment", Button).disabled
         assert not menu.query("#console-selection-feedback-hint")
+
+
+def test_feedback_active_run_statuses_have_single_source_of_truth():
+    """The transcript's string set and the screen's tuple both derive from
+    the canonical ``FEEDBACK_ACTIVE_RUN_STATUSES`` next to ``ConsoleRunStatus``.
+
+    Pins the derivation (final-review finding): a status added to one site
+    without the canonical set must fail here, not silently drift.
+    """
+    assert set(FEEDBACK_ACTIVE_RUN_STATUSES) == {
+        ConsoleRunStatus.VALIDATING,
+        ConsoleRunStatus.STREAMING,
+        ConsoleRunStatus.CHECKING_CITATIONS,
+        ConsoleRunStatus.RETRYING,
+    }
+    assert _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES == {
+        status.value for status in FEEDBACK_ACTIVE_RUN_STATUSES
+    }
+    assert set(chat_screen_module.CONSOLE_ACTIVE_RUN_STATUSES) == set(
+        FEEDBACK_ACTIVE_RUN_STATUSES
+    )
+
+
+@pytest.mark.parametrize(
+    ("run_status", "expect_armed"),
+    [
+        *(  # the four canonical active statuses arm the feedback actions
+            (status.value, True) for status in sorted(FEEDBACK_ACTIVE_RUN_STATUSES)
+        ),
+        *(  # every idle/terminal status keeps them gated
+            (status.value, False)
+            for status in (
+                ConsoleRunStatus.COMPLETED,
+                ConsoleRunStatus.BLOCKED,
+                ConsoleRunStatus.STOPPED,
+                ConsoleRunStatus.FAILED,
+                ConsoleRunStatus.IDLE,
+            )
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_run_gating_parametrized(run_status: str, expect_armed: bool):
+    """Only the canonical ``FEEDBACK_ACTIVE_RUN_STATUSES`` arm Request
+    changes / LGTM; Comment never gates and the hint appears exactly
+    when the other two are gated."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status=run_status)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await _drag_select_first_row(pilot, app)
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert (
+            menu.query_one("#console-selection-request-changes", Button).disabled
+            is not expect_armed
+        )
+        assert (
+            menu.query_one("#console-selection-lgm", Button).disabled is not expect_armed
+        )
+        assert not menu.query_one("#console-selection-comment", Button).disabled
+        if expect_armed:
+            assert not menu.query("#console-selection-feedback-hint")
+        else:
+            assert menu.query_one("#console-selection-feedback-hint")
 
 
 @pytest.mark.asyncio

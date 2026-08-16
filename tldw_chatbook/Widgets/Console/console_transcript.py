@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleMessageRole,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -90,8 +91,10 @@ CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 #: (Request changes / LGTM) can be queued behind the active run via the
 #: prompt-queue seam. Anything else (or a screen without the run-status
 #: seam at all) leaves those two menu actions gated; Comment never gates.
+#: Derived (as raw strings, matching the seam's wire format) from the
+#: canonical ``FEEDBACK_ACTIVE_RUN_STATUSES`` next to ``ConsoleRunStatus``.
 _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES = frozenset(
-    {"validating", "streaming", "checking_citations", "retrying"}
+    {status.value for status in FEEDBACK_ACTIVE_RUN_STATUSES}
 )
 #: TASK-1365: virtual-height watermarks (terminal rows) for transcript pruning.
 #: 20000 rows is several hundred long messages; rows are cheap to measure but

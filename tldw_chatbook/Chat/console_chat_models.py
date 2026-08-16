@@ -39,6 +39,25 @@ class ConsoleRunStatus(str, Enum):
     RETRYING = "retrying"
 
 
+#: Console selection phase 3: run statuses during which an agent run counts
+#: as active for selection review feedback -- Request changes / LGTM arm
+#: (feedback queues behind the run via the prompt-queue seam); anything
+#: else leaves those two menu actions gated (Comment never gates).
+#: Single source of truth: both consumers derive from this set -- the
+#: transcript's selection gating (a string frozenset of the values) and
+#: the screen's active-run constant (used for the transcript poll timer,
+#: the sub-agent badge cache, and the same feedback gating). New active
+#: statuses must be added here, never at a consumer.
+FEEDBACK_ACTIVE_RUN_STATUSES: frozenset["ConsoleRunStatus"] = frozenset(
+    {
+        ConsoleRunStatus.VALIDATING,
+        ConsoleRunStatus.STREAMING,
+        ConsoleRunStatus.CHECKING_CITATIONS,
+        ConsoleRunStatus.RETRYING,
+    }
+)
+
+
 class ConsoleSubmissionOrigin(str, Enum):
     """Origin of a Console turn entering the accepted-send boundary.
 

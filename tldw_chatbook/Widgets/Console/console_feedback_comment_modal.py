@@ -8,12 +8,17 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 _ACTION_HEADERS = {
-    "request-changes": "Request changes — leave a comment",
-    "lgm": "LGTM — leave a comment",
-    "comment": "Comment on selection",
+    ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES: (
+        "Request changes — leave a comment"
+    ),
+    ConsoleSelectionFeedbackRequested.ACTION_LGM: "LGTM — leave a comment",
+    ConsoleSelectionFeedbackRequested.ACTION_COMMENT: "Comment on selection",
 }
 _DEFAULT_HEADER = "Comment on selection"
 

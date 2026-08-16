@@ -204,6 +204,7 @@ from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunMarker,
     ConsoleRunStatus,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
     ConsoleWorkspaceContext,
     derive_console_session_title,
@@ -640,12 +641,16 @@ _CHATDICT_STRATEGY = "sorted_evenly"
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
-# justifies an eager re-count.
-CONSOLE_ACTIVE_RUN_STATUSES = (
-    ConsoleRunStatus.VALIDATING,
-    ConsoleRunStatus.RETRYING,
-    ConsoleRunStatus.STREAMING,
-    ConsoleRunStatus.CHECKING_CITATIONS,
+# justifies an eager re-count, and by the selection feedback gating
+# (Request changes / LGTM). Derived from the canonical
+# ``FEEDBACK_ACTIVE_RUN_STATUSES`` (next to ``ConsoleRunStatus`` in
+# ``Chat/console_chat_models.py``) so the feedback gating and this
+# constant can never drift apart; other behaviors hang off this tuple,
+# so its membership must stay exactly the canonical four active states.
+# Sorted by value purely for a deterministic tuple; every consumer does
+# membership checks only.
+CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
+    sorted(FEEDBACK_ACTIVE_RUN_STATUSES, key=lambda status: status.value)
 )
 # Console selection phase 3 (task 5): the bracketed header each feedback
 # action stamps on the composed next-user message (plan task 5 template:
