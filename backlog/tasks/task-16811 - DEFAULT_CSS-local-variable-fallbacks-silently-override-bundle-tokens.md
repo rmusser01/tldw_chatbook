@@ -37,6 +37,14 @@ token-free structural rules in `DEFAULT_CSS` — then regenerate the bundle
 (never hand-edit it). Assert the resolved background color in a
 real-CSS-stack test, since a class-toggle assertion alone cannot catch
 this (the class toggles correctly today; the color is what's wrong).
+
+**Update (PR #1728, 2026-08-16):** the ConsoleTurnFileCard instance was
+fixed on that PR after Qodo re-raised it — selection rules moved into
+`css/components/_agentic_terminal.tcss`, bundle regenerated, and a
+resolved-color parity test added
+(`test_selected_card_uses_the_bundles_focus_background`). AC #1 is
+therefore already satisfied; the remaining scope is the repo-wide
+pattern audit (AC #2) and its bundle/test hygiene (AC #3).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

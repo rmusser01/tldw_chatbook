@@ -748,3 +748,19 @@ async def test_deleted_and_renamed_rows_badge_even_when_path_was_tool_touched(
         renamed = next(l for l in labels if "new.txt" in l)
         assert BADGE_COPY in doomed, f"deletion unbadged: {doomed}"
         assert BADGE_COPY in renamed, f"rename unbadged: {renamed}"
+
+
+def test_turn_for_run_matches_the_full_scan(review_fixture):
+    """The run-scoped read returns exactly what the turns() scan built.
+
+    ``ConsoleTurnFileCard`` resolves its run through ``turn_for_run``
+    (Qodo, PR #1728: per-card ``turns()`` calls re-scanned the whole
+    conversation history); the two paths share ``_build_review_turn``,
+    and this pins that they can never drift on label, rows, or order.
+    """
+    provider, _root, run1, run2 = review_fixture
+    scanned = {t.run_id: t for t in provider.turns()}
+    for run_id in (run1, run2):
+        direct = provider.turn_for_run(run_id)
+        assert direct == scanned[run_id]
+    assert provider.turn_for_run("no-such-run") is None

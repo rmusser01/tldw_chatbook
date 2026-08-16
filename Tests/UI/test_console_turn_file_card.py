@@ -314,3 +314,42 @@ async def test_provider_failure_degrades_to_marker_only():
         assert MARKER.split(" — ")[0] in str(
             card.query_one(".console-turn-file-header").render()
         )
+
+
+@pytest.mark.asyncio
+async def test_selected_card_uses_the_bundles_focus_background():
+    """Selected-card styling must resolve the BUNDLE's $ds-focus-bg.
+
+    Regression guard for the TASK-16811 footgun (re-raised by Qodo on
+    PR #1728): a widget-local `$ds-focus-bg:` "fallback" in DEFAULT_CSS
+    shadows the app bundle's token for every rule in that CSS source, so
+    the selected card rendered $surface while every other selected
+    transcript row rendered the focus colour. A class-toggle assertion
+    cannot catch that -- only the resolved colour can.
+    """
+    from textual.widgets import Static
+
+    class _ParityHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield Static(
+                "peer",
+                classes="console-transcript-message-selected",
+                id="selected-peer",
+            )
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: _FakeProvider(),
+                selected=True,
+                id="card-under-test",
+            )
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: _FakeProvider(),
+                id="card-unselected",
+            )
+
+    async with _ParityHost().run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        peer_bg = pilot.app.query_one("#selected-peer").styles.background
+        card_bg = pilot.app.query_one("#card-under-test").styles.background
+        plain_bg = pilot.app.query_one("#card-unselected").styles.background
+        assert card_bg == peer_bg
+        assert card_bg != plain_bg

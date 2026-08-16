@@ -34,10 +34,6 @@ class ConsoleTurnFileCard(Vertical):
     """Stacked, expandable per-file diff card rendered under a turn marker."""
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
-
     ConsoleTurnFileCard {
         height: auto;
         min-height: 1;
@@ -59,17 +55,14 @@ class ConsoleTurnFileCard(Vertical):
         overflow-x: hidden;
         scrollbar-size: 1 1;
     }
-    /* Selection styling parity with the plain marker row it replaces
-       (`.console-transcript-message-selected` in the app bundle): same
-       focus tokens, same bold-underline header treatment. */
-    ConsoleTurnFileCard.console-turn-file-card-selected {
-        background: $ds-focus-bg;
-    }
-    ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
     """
+    # Selection styling (parity with `.console-transcript-message-selected`)
+    # deliberately does NOT live in DEFAULT_CSS: it needs the app bundle's
+    # `$ds-focus-bg`/`$ds-focus-fg` tokens, and Textual resolves `$vars`
+    # per CSS source, so a local "fallback" here would unconditionally
+    # shadow the bundle's values (TASK-16811, caught again by Qodo on
+    # PR #1728). The rules live beside the message-selected block in
+    # `css/components/_agentic_terminal.tcss`.
 
     def __init__(
         self,
@@ -115,6 +108,9 @@ class ConsoleTurnFileCard(Vertical):
         Called from ``ConsoleTranscript._update_row_widget`` when only the
         row's selection flipped -- expanded rows and the cached diff text
         must survive a selection change (final-review fix wave).
+
+        Args:
+            selected: Whether this card's transcript row is now selected.
         """
         self._selected = selected
         self.set_class(selected, "console-turn-file-card-selected")
@@ -124,6 +120,10 @@ class ConsoleTurnFileCard(Vertical):
         plain marker's ``ConsoleTranscriptMessage.on_click``) -- except a
         file-row button, whose own click already toggles that row's
         expand/collapse and must not also flip transcript selection.
+
+        Args:
+            event: The click; its ``control`` distinguishes a file-row
+                button press from a click on the card chrome.
         """
         if event.control is not None and event.control.has_class(
             "console-turn-file-row"
@@ -157,6 +157,7 @@ class ConsoleTurnFileCard(Vertical):
         yield Vertical(classes="console-turn-file-rows")
 
     def on_mount(self) -> None:
+        """Start the async row load; the header renders immediately."""
         self.run_worker(
             self._load_rows(),
             group="console-turn-file-card-load",
@@ -175,10 +176,19 @@ class ConsoleTurnFileCard(Vertical):
                 return
 
             def _read() -> tuple[list[TurnFileEntry], dict[int, dict]]:
-                turn = next(
-                    (t for t in provider.turns() if t.run_id == self._run_id),
-                    None,
-                )
+                # Run-scoped read when the provider offers it (Qodo,
+                # PR #1728): a transcript can hold many cards, and each
+                # `turns()` call scans and groups the WHOLE conversation's
+                # snapshot history just to keep one run. Fall back to the
+                # scan for duck-typed providers without the method.
+                turn_for_run = getattr(provider, "turn_for_run", None)
+                if callable(turn_for_run):
+                    turn = turn_for_run(self._run_id)
+                else:
+                    turn = next(
+                        (t for t in provider.turns() if t.run_id == self._run_id),
+                        None,
+                    )
                 if turn is None:
                     return [], {}
                 # Per-row pairing, never root-keyed: `turn.rows` can hold

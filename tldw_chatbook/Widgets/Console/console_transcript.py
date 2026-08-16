@@ -2460,6 +2460,11 @@ class ConsoleTranscript(VerticalScroll):
         the screen's sync loop keeps this current on the mounted instance
         every tick, so a session switch or a bridge becoming available never
         needs a fresh transcript instance to take effect.
+
+        Args:
+            factory: Zero-arg callable yielding a change-review provider
+                for the active session (may return ``None`` when no run
+                is reviewable), or ``None`` to render plain marker rows.
         """
         self._change_review_provider_factory = factory
 
