@@ -52,22 +52,24 @@ class _Host(App[None]):
         yield AudioBookGenerationWidget()
 
 
-def _make_large_book(n_words: int, *, words_per_chapter: int = 60_000) -> str:
+def _make_large_book(n_words: int, *, words_per_chapter: int = 2000) -> str:
     """Build synthetic book text with a "Chapter N" header every so often.
 
     Mirrors the shape the reviewer benchmarked ChapterDetector against
     (~19ms/90k words, ~60ms/300k, ~200ms on a 6MB paste): plain prose lines
     interspersed with chapter markers the detector's regexes actually match,
-    not degenerate all-blank or all-matching input. Detection time is driven
-    by total line/word count, not chapter count, so `words_per_chapter`
-    defaults high enough (~50 chapters for a 3,000,000-word book) to stay
-    realistic -- an earlier, denser default (one chapter every 2000 words,
-    999 chapters for 3M words) produced a chapter count high enough to
-    intermittently trip an unrelated, pre-existing race in
-    `ChapterEditorWidget`/`Select`'s mount sequence when the chapter table
-    populates that many rows in one reactive update (observed once in a
-    full-file run, not reproducible in isolation -- a real flake, but not
-    one this task owns fixing).
+    not degenerate all-blank or all-matching input.
+
+    The default density (one chapter every 2000 words: 999 chapters for a
+    3,000,000-word book) is the ORIGINAL one. Task-15478 temporarily reduced
+    it to 60,000 words/chapter because populating that many chapter rows in
+    one reactive update intermittently tripped a then-unowned race in
+    `ChapterEditorWidget`/`Select`'s mount sequence (observed once in a
+    full-file run: `NoMatches: No nodes match 'SelectOverlay'` out of the
+    remount's Select). Task-15773 fixed that race at the source -- `chapters`
+    no longer recomposes the widget, so a population mounts nothing -- and
+    restored this density; the dedicated regression tests live in
+    `Tests/Widgets/test_chapter_editor_widget_population_race.py`.
     """
     words_per_line = 12
     lines: list[str] = []
