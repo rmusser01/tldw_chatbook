@@ -252,6 +252,7 @@ def build_console_controllers(
             lambda: screen._focus_console_workspace_conversation_search()
         ),
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
+        screen_running_accessor=lambda: screen.is_running,
         current_chat_controller_accessor=lambda: screen._console_chat_controller,
         fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
         run_marker_with_unseen=(

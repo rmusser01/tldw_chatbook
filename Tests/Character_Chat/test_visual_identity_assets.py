@@ -266,7 +266,7 @@ def test_builtin_load_uses_importlib_package_assets_root(
 
 
 def test_user_load_is_confined_below_injected_visual_identities_root(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image_bytes = _image_bytes()
     manifest = _manifest_for_bytes(
@@ -276,12 +276,26 @@ def test_user_load_is_confined_below_injected_visual_identities_root(
     path = user_data_dir / "visual_identities" / "packs/example/v1/neutral.webp"
     path.parent.mkdir(parents=True)
     path.write_bytes(image_bytes)
+    validations: list[tuple[Path, Path, bool, bool]] = []
+
+    def validate_path(
+        candidate: Path,
+        root: Path,
+        *,
+        redact_paths: bool,
+        allow_hidden: bool,
+    ) -> Path:
+        validations.append((candidate, root, redact_paths, allow_hidden))
+        return candidate.resolve()
+
+    monkeypatch.setattr(visual_identity, "validate_path", validate_path, raising=False)
 
     loaded = load_visual_identity_asset(
         manifest.assets[0], source_kind="manual", user_data_dir=user_data_dir
     )
 
     assert loaded.data == image_bytes
+    assert validations == [(path, user_data_dir / "visual_identities", True, True)]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="os.read is used by POSIX fd loading")

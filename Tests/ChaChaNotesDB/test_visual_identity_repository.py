@@ -154,6 +154,24 @@ def test_find_pack_by_stable_source_id_respects_deleted_tombstones(
     assert tombstone["status"] == "deleted"
 
 
+def test_find_pack_by_source_id_reads_one_consistent_transaction(
+    repository: VisualIdentityRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _activate(repository, source_kind="builtin", source_id="fixture.pack")
+    original_transaction = repository.db.transaction
+    transaction_calls = 0
+
+    def tracked_transaction(*args, **kwargs):
+        nonlocal transaction_calls
+        transaction_calls += 1
+        return original_transaction(*args, **kwargs)
+
+    monkeypatch.setattr(repository.db, "transaction", tracked_transaction)
+
+    assert repository.find_pack_by_source_id("fixture.pack") is not None
+    assert transaction_calls == 1
+
+
 @pytest.mark.parametrize(
     "source_context_json",
     [

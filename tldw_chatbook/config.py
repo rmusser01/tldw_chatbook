@@ -6412,7 +6412,14 @@ media_db: Optional[MediaDatabase] = None
 
 
 def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
-    """Seed restart-safe bundled profile content after database initialization."""
+    """Seed restart-safe bundled profile content after database initialization.
+
+    Args:
+        db: Initialized profile-local character database.
+
+    Returns:
+        The same database instance after best-effort built-in seeding.
+    """
     try:
         from tldw_chatbook.Character_Chat.visual_identity import ensure_builtin_samira
 

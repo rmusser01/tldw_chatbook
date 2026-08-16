@@ -41,31 +41,32 @@ class VisualIdentityRepository:
         Raises:
             ValueError: If selected built-in metadata or its active version is invalid.
         """
-        rows = self.db.execute_query(
-            """
-            SELECT *
-              FROM visual_identity_packs
-             WHERE owner_user_id = ?
-               AND source_kind = ?
-               AND (? = 1 OR status != ?)
-             ORDER BY id
-            """,
-            (LOCAL_OWNER_ID, "builtin", int(include_deleted), "deleted"),
-        ).fetchall()
-        for row in rows:
-            pack = dict(row)
-            try:
-                context = json.loads(
-                    pack["source_context_json"],
-                    parse_constant=_reject_nonstandard_json_constant,
-                )
-            except (TypeError, ValueError) as exc:
-                raise ValueError("visual_identity_source_context_invalid") from exc
-            if not isinstance(context, dict):
-                raise ValueError("visual_identity_source_context_invalid")
-            if context.get("source_id") == source_id:
-                self._validate_pack_active_version(pack)
-                return pack
+        with self.db.transaction():
+            rows = self.db.execute_query(
+                """
+                SELECT *
+                  FROM visual_identity_packs
+                 WHERE owner_user_id = ?
+                   AND source_kind = ?
+                   AND (? = 1 OR status != ?)
+                 ORDER BY id
+                """,
+                (LOCAL_OWNER_ID, "builtin", int(include_deleted), "deleted"),
+            ).fetchall()
+            for row in rows:
+                pack = dict(row)
+                try:
+                    context = json.loads(
+                        pack["source_context_json"],
+                        parse_constant=_reject_nonstandard_json_constant,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("visual_identity_source_context_invalid") from exc
+                if not isinstance(context, dict):
+                    raise ValueError("visual_identity_source_context_invalid")
+                if context.get("source_id") == source_id:
+                    self._validate_pack_active_version(pack)
+                    return pack
         return None
 
     def get_active_actor_pack(

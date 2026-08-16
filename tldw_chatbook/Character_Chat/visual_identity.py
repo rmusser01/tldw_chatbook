@@ -24,6 +24,7 @@ from loguru import logger
 from PIL import Image, UnidentifiedImageError
 
 from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 # Begin pinned server normalization block (byte-for-byte from):
@@ -1209,7 +1210,13 @@ def _confined_user_asset_path(
         assets_root = (profile_root / "visual_identities").resolve(strict=False)
         candidate = assets_root.joinpath(*parts)
         resolved_candidate = candidate.resolve(strict=False)
-    except (OSError, RuntimeError, TypeError):
+        validate_path(
+            candidate,
+            assets_root,
+            redact_paths=True,
+            allow_hidden=True,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError):
         raise ValueError("visual_identity_path_invalid") from None
     if not assets_root.is_relative_to(
         profile_root

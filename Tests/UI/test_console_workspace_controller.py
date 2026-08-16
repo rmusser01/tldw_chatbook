@@ -105,6 +105,7 @@ def _workspace_controller(
         focus_conversation_search=_noop,
         sync_workspace_context=_noop,
         schedule_timer=_noop,
+        screen_running_accessor=lambda: True,
         current_chat_controller_accessor=_noop,
         fleet_unseen_ids_accessor=lambda: frozenset(),
         run_marker_with_unseen=_noop,
