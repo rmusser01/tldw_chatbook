@@ -6,7 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Callable, Iterable, Literal, Mapping
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -53,12 +53,14 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
@@ -1768,8 +1770,22 @@ class ConsoleTranscript(VerticalScroll):
     )
     """Widget classes that must keep the current selection active when clicked."""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        change_review_provider_factory: Callable[[], Any] | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
+        #: Turn-file-card spec: a zero-arg callable returning the shared
+        #: change-review provider, or ``None``. Late-binding (the same
+        #: builder convention as the region's other constructor callables)
+        #: so a stale reference is never cached across session switches.
+        #: The screen's sync loop keeps this current on the mounted
+        #: instance (``set_change_review_provider_factory``); the
+        #: constructor default keeps every harness that builds this widget
+        #: directly working unmodified.
+        self._change_review_provider_factory = change_review_provider_factory
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
@@ -2434,6 +2450,18 @@ class ConsoleTranscript(VerticalScroll):
             and type(count) is int
             and count > 0
         }
+
+    def set_change_review_provider_factory(
+        self, factory: Callable[[], Any] | None
+    ) -> None:
+        """Update the change-summary turn-file-card's provider factory.
+
+        Screen-owned (mirrors ``set_summary_boundary``/``set_image_specs``):
+        the screen's sync loop keeps this current on the mounted instance
+        every tick, so a session switch or a bridge becoming available never
+        needs a fresh transcript instance to take effect.
+        """
+        self._change_review_provider_factory = factory
 
     def sync_empty_state(
         self,
@@ -3309,6 +3337,18 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-original-attempt",
             )
         if row.kind == "message" and row.message is not None:
+            review_run_id = getattr(row.message, "change_review_run_id", None)
+            if (
+                review_run_id
+                and self._change_review_provider_factory is not None
+                and bool(get_cli_setting("console", "turn_file_cards", True))
+            ):
+                return ConsoleTurnFileCard(
+                    str(row.message.content),
+                    str(review_run_id),
+                    self._change_review_provider_factory,
+                    id=f"console-turn-file-card-{row.message.id}",
+                )
             presentation = self._message_presentation(row.message)
             if (
                 row.message.role is ConsoleMessageRole.ASSISTANT
