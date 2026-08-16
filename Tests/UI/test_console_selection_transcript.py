@@ -498,7 +498,14 @@ async def test_mouse_up_outside_transcript_finishes_drag():
         # The manager no longer suppresses subsequent row clicks: a real
         # click is Down+Up+Click; the empty finish consumes the flag so the
         # Click toggles message selection again. (m2, not m1: the menu mount
-        # can re-anchor the transcript scroll and push m1 off-screen.)
+        # can re-anchor the transcript scroll and push m1 off-screen.) Close
+        # the screen-anchored popover first (escape leaves the suppression
+        # flag untouched): the mounted menu reflows the rows, and a click
+        # through the collapsed row region can land on m2's header label
+        # instead of its body -- the compact menu moved that landing cell.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.query(ConsoleSelectionMenu)
         await pilot.click("#console-message-m2")
         await pilot.pause()
         assert transcript.selected_message_id == "m2"

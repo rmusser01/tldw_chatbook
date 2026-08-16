@@ -474,6 +474,9 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
         row = app.query_one("#console-message-m0", ConsoleTranscriptMessage)
         region = transcript.region
         assert region.bottom < 32  # transcript does NOT reach the screen bottom
+        # Fixture shape pin (clamp-fix review): the stand-in must really sit
+        # BELOW the transcript, or the test stops regressing the overlap.
+        assert app.query_one("#composer-standin").region.y >= region.bottom
         transcript.selection_manager.begin_drag(row.id, 0)
         transcript.selection_manager.extend_drag(row.id, 5)
         row.set_selection_range(0, 5)
@@ -492,6 +495,100 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
         assert menu.region.right <= region.right
         assert region.y <= menu.region.y
         assert menu.region.bottom <= region.bottom
+
+
+class _TinyTranscriptFeedbackApp(App[None]):
+    """Transcript box (6 rows) shorter than the compact feedback menu.
+
+    Clamp-fix review: on 24-30 row terminals the transcript box can be
+    shorter than even the compact menu; the shrink guard must trade the
+    container border + hint line instead of bleeding over the composer.
+    """
+
+    CSS = """
+    ConsoleTranscript {
+        height: 6;
+    }
+    #composer-standin {
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"answer row {i} selectable text",
+                    id=f"m{i}",
+                )
+                for i in range(10)
+            ]
+        )
+        yield transcript
+        yield Static("composer stand-in", id="composer-standin")
+
+
+@pytest.mark.asyncio
+async def test_short_owner_box_shrinks_menu_and_keeps_containment():
+    """Shrink guard: a box shorter than even the compact feedback menu drops
+    the container border and hint line (no actions hidden), and the
+    re-measured menu stays inside the transcript box."""
+    app = _TinyTranscriptFeedbackApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0")
+        region = transcript.region
+        assert region.height == 6  # box shorter than the 9-row compact menu
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=region.bottom - 1,
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()  # measured clamp pass
+        await pilot.pause()  # shrink pass re-measures after the class flip
+        await pilot.pause()
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.has_class("shrunk-for-short-owner")
+        assert not menu.query_one("#console-selection-feedback-hint").display
+        # All six actions stay mounted and displayed (no action-hiding).
+        assert len([b for b in menu.query("Button") if b.display]) == 6
+        assert menu.region.height <= region.height
+        assert menu.region.bottom <= region.bottom
+        assert menu.region.x >= region.x
+        assert menu.region.right <= region.right
+
+
+@pytest.mark.asyncio
+async def test_null_transcript_region_falls_back_to_screen_bounds():
+    """Clamp-fix review: a NULL/unmeasured transcript region (textual 8.2.8
+    yields NULL_REGION, never None) must not collapse the menu anchor to
+    (0, 0) -- the transcript clamps against screen-size bounds instead,
+    mirroring the menu-side guard for unmeasured owners."""
+    from unittest.mock import PropertyMock, patch
+
+    from textual.geometry import Offset, Region
+
+    app = _TranscriptMenuApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        with patch.object(
+            ConsoleTranscript,
+            "region",
+            new_callable=PropertyMock,
+            return_value=Region(),
+        ):
+            await _finish_drag_selection(pilot)  # release at screen (4, 6)
+        await pilot.pause()  # let the menu's measured clamp settle
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.absolute_offset == Offset(4, 7)
 
 
 @pytest.mark.asyncio
@@ -754,6 +851,28 @@ class _FeedbackMenuApp(App[None]):
         self, event: ConsoleSelectionMenu.Comment
     ) -> None:
         self.comment_events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_compact_menu_fits_height_budget():
+    """Height budget (clamp-fix review): one row per action button.
+
+    The 3-row library Button chrome (line-pad + tall border) stacked the
+    feedback variant to ~24 rows -- taller than a short transcript's whole
+    box on 24-30 row terminals, so even the owner-box clamp bled the menu
+    over the composer. Compact form: feedback variant <= 10 rows (6
+    single-row buttons + 1-row hint + container border), base <= 8.
+    """
+    app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.region.height <= 10
+    app = _FeedbackMenuApp(feedback_available=False, run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.region.height <= 8
 
 
 @pytest.mark.asyncio

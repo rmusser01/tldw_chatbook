@@ -38,6 +38,11 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+#: Shrink-guard class: added by the measured clamp when the owner box is
+#: shorter than even the compact menu; drops the container border and the
+#: hint line (3 rows) before the top-out tie-break. No actions are hidden.
+_SHRUNK_CLASS = "shrunk-for-short-owner"
+
 #: Shown (dim, inside the menu) and carried on the disabled buttons'
 #: tooltips when Request changes / LGTM are run-gated (phase 3 task 2).
 _NO_RUN_HINT = "No active run — start a run to send review feedback"
@@ -103,9 +108,34 @@ class ConsoleSelectionMenu(Vertical):
         background: $surface;
         padding: 0 1;
     }
+    /* One row per action (clamp-fix review): the library Button chrome
+       (line-pad 1 + tall bottom border) stacked 3 rows per button, so the
+       6-action feedback variant measured ~24 rows and towered over short
+       transcripts, bleeding past the owner-box clamp onto the composer.
+       !important is load-bearing: the library's variant/hover/disabled
+       rules re-assert border-top/bottom at equal-or-higher specificity. */
+    ConsoleSelectionMenu Button {
+        height: 1 !important;
+        min-height: 1 !important;
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+        padding: 0 1 !important;
+    }
     ConsoleSelectionMenu #console-selection-feedback-hint {
         color: $text-muted;
         text-style: dim;
+        width: auto;
+    }
+    /* Shrink guard for boxes shorter than even the compact menu: the
+       measured clamp adds this class, trading the container border and
+       the hint line for 3 more usable rows (last resort before the
+       top-out tie-break; no actions are ever hidden). */
+    ConsoleSelectionMenu.shrunk-for-short-owner {
+        border: none;
+    }
+    ConsoleSelectionMenu.shrunk-for-short-owner #console-selection-feedback-hint {
+        display: none;
     }
     """
 
@@ -251,6 +281,16 @@ class ConsoleSelectionMenu(Vertical):
         if bounds is None:
             screen_size = self.screen.size
             bounds = Region(0, 0, screen_size.width, screen_size.height)
+        # Shrink guard (clamp-fix review): a box shorter than even the
+        # compact menu cannot contain it at ANY offset -- trade the
+        # container border + hint line for three more usable rows, then
+        # re-measure in a fresh layout pass (the class check stops the
+        # recursion; if it still does not fit, the top-out tie-break below
+        # is the accepted last resort).
+        if region.height > bounds.height and not self.has_class(_SHRUNK_CLASS):
+            self.add_class(_SHRUNK_CLASS)
+            self.call_after_refresh(self._clamp_within_owner)
+            return
         shift_x = max(0, region.right - bounds.right)
         shift_y = max(0, region.bottom - bounds.bottom)
         if not shift_x and not shift_y:

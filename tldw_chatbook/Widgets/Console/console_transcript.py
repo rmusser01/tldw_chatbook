@@ -20,6 +20,7 @@ from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
 from textual.events import Click, Key, MouseDown, MouseMove, MouseUp
+from textual.geometry import Region
 from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
@@ -3742,6 +3743,14 @@ class ConsoleTranscript(VerticalScroll):
         # region, and the menu's measured post-layout clamp (in the menu)
         # finishes the job against the same box.
         bounds = self.region
+        if not bounds:
+            # Clamp-fix review: pre-layout the region is NULL_REGION (never
+            # None in textual 8.2.8), and a zero-size box would collapse
+            # both clamp axes to its origin and pin the menu at (0, 0) --
+            # fall back to screen-size bounds, mirroring the menu-side
+            # guard for unmeasured owners.
+            screen_size = self.screen.size
+            bounds = Region(0, 0, screen_size.width, screen_size.height)
         self.screen.mount(
             ConsoleSelectionMenu(
                 screen_x=self._clamp_menu_offset(
