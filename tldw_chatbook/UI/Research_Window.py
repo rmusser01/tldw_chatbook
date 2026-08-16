@@ -407,8 +407,22 @@ class ResearchWindow(Vertical):
             if not resolved_checkpoint_id and self.current_source != "local":
                 self._set_status("Checkpoint id is required.")
                 return None
+            run_id = self._selected_run_id()
             if not resolved_checkpoint_id:
-                resolved_checkpoint_id = "local-checkpoint-unavailable"
+                # task-16482: local runs resolve their latest PENDING
+                # checkpoint (the engine parks at one boundary at a time).
+                local_service = getattr(
+                    self.app_instance, "local_research_service", None
+                )
+                pending = (
+                    local_service.latest_pending_checkpoint(run_id)
+                    if local_service is not None
+                    else None
+                )
+                if pending is None:
+                    self._set_status("No pending checkpoint for this run.")
+                    return None
+                resolved_checkpoint_id = str(pending["id"])
             resolved_patch_payload = (
                 patch_payload
                 if patch_payload is not None
@@ -425,6 +439,10 @@ class ResearchWindow(Vertical):
             return None
         self._set_selected_run(updated, reset_payload_state=False)
         self._set_status(f"Approved research checkpoint {resolved_checkpoint_id}.")
+        if self.current_source == "local":
+            # task-16482: approval unblocks the boundary -- restart the
+            # engine so the run continues to its next phase/checkpoint.
+            self._start_local_engine(run_id)
         return updated
 
     async def watch_selected_run_events(

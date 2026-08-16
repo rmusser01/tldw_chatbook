@@ -178,3 +178,84 @@ def test_update_run_progress_missing_run_raises(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
     with pytest.raises(ValueError, match="research run not found"):
         service.update_run_progress("local:research_run:nope", phase="collecting")
+
+
+# --- checkpoints (task-16482) -----------------------------------------------------
+
+def _launch_checkpoint_run(service, **kwargs):
+    return service.launch_run(query="Checkpoint question", **kwargs)
+
+
+def test_checkpoint_create_list_latest_pending(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+
+    assert checkpoint["checkpoint_type"] == "plan_review"
+    assert checkpoint["status"] == "pending"
+    listed = service.list_checkpoints(run["id"])
+    assert [c["id"] for c in listed] == [checkpoint["id"]]
+    assert service.latest_pending_checkpoint(run["id"])["id"] == checkpoint["id"]
+
+
+def test_patch_and_approve_stores_patch_bumps_version_and_records_event(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+
+    approved = service.patch_and_approve_checkpoint(
+        run["id"], checkpoint["id"], patch_payload={"limits": {"max_searches": 3}}
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["resolution"] == "approved"
+    assert approved["user_patch"] == {"limits": {"max_searches": 3}}
+    assert approved["version"] == checkpoint["version"] + 1
+    assert service.latest_pending_checkpoint(run["id"]) is None
+    events = [e["event"] for e in service.list_run_events(run["id"])]
+    assert "checkpoint_approved" in events
+
+
+def test_patch_validation_rejects_unknown_keys_and_bad_inventory(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    plan = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    with pytest.raises(ValueError, match="unexpected patch keys"):
+        service.patch_and_approve_checkpoint(
+            run["id"], plan["id"], patch_payload={"bogus_key": 1}
+        )
+
+    sources = service.create_checkpoint(
+        run["id"],
+        checkpoint_type="sources_review",
+        proposed_payload={"source_ids": ["s1", "s2"]},
+    )
+    with pytest.raises(ValueError, match="not in the proposed inventory"):
+        service.patch_and_approve_checkpoint(
+            run["id"], sources["id"], patch_payload={"pinned_source_ids": ["sX"]}
+        )
+    with pytest.raises(ValueError, match="disjoint"):
+        service.patch_and_approve_checkpoint(
+            run["id"],
+            sources["id"],
+            patch_payload={"pinned_source_ids": ["s1"], "dropped_source_ids": ["s1"]},
+        )
+
+
+def test_approve_requires_pending_checkpoint(tmp_path):
+    service = LocalResearchService(tmp_path / "research.db")
+    run = _launch_checkpoint_run(service)
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])
+
+    with pytest.raises(ValueError, match="not pending"):
+        service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])

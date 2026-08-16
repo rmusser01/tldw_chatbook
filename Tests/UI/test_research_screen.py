@@ -273,7 +273,7 @@ async def test_research_window_approves_selected_server_checkpoint():
 
 
 @pytest.mark.asyncio
-async def test_research_window_reports_local_checkpoint_approval_unavailable():
+async def test_research_window_reports_no_pending_local_checkpoint():
     service = FakeResearchScopeService()
     app = SimpleNamespace(research_scope_service=service)
     window = ResearchWindow(app)
@@ -283,8 +283,10 @@ async def test_research_window_reports_local_checkpoint_approval_unavailable():
 
     updated = await window.approve_selected_checkpoint()
 
+    # task-16482: local approval EXISTS now; the unavailable case is "no
+    # pending checkpoint" (no local service wired in this test).
     assert updated is None
-    assert "Local research checkpoints" in window.status_message
+    assert "No pending checkpoint" in window.status_message
 
 
 # --- local engine start wiring (task-16322, ADR-068) ---------------------------
@@ -570,3 +572,46 @@ async def test_ask_follow_up_requires_selection_and_local_source(monkeypatch):
     assert result is None
     assert constructed["n"] == 0
     assert "local" in window.status_message
+
+
+# --- local checkpoint approval (task-16482) ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+
+    local_service = LocalResearchService(":memory:")
+    run = local_service.launch_run(query="Checkpointed run")
+    checkpoint = local_service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    service = FakeResearchScopeService()
+    service.runs["local"] = [
+        SimpleNamespace(id=run["id"], query="Checkpointed run", status="running",
+                        phase="planning", control_state="awaiting_plan_review",
+                        latest_checkpoint_id=checkpoint["id"])
+    ]
+    app = SimpleNamespace(research_scope_service=service,
+                          local_research_service=local_service)
+    window = ResearchWindow(app_instance=app)
+    restarted = []
+    monkeypatch.setattr(window, "_start_local_engine", restarted.append)
+
+    async def approve(scope_run_id, checkpoint_id, patch_payload):
+        return local_service.patch_and_approve_checkpoint(
+            scope_run_id, checkpoint_id, patch_payload=patch_payload
+        )
+
+    async def fake_scope_approve(run_id_arg, checkpoint_id, *, mode, patch_payload):
+        assert mode == "local"
+        return await approve(run_id_arg, checkpoint_id, patch_payload)
+
+    service.patch_and_approve_checkpoint = fake_scope_approve
+
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    updated = await window.approve_selected_checkpoint(patch_payload={"limits": {}})
+
+    assert updated["status"] == "approved"
+    assert local_service.latest_pending_checkpoint(run["id"]) is None
+    assert restarted == [run["id"]]
