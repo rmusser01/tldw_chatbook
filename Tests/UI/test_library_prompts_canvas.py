@@ -2465,6 +2465,21 @@ class _GatedFailingSecondPromptPage(_FakePromptScopeServiceWithList):
         return await super().browse_prompts(**kwargs)
 
 
+class _GatedSecondPromptPage(_FakePromptScopeServiceWithList):
+    """Hold page 2 once so pager focus crosses a real loading recompose."""
+
+    def __init__(self, prompts) -> None:
+        super().__init__(prompts)
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("page") == 2 and not self.release.is_set():
+            self.started.set()
+            assert await asyncio.to_thread(self.release.wait, 10.0)
+        return await super().browse_prompts(**kwargs)
+
+
 class _ShrinkingPromptPageService(_FakePromptScopeServiceWithList):
     """Shrink before page 2 so the real response coherently clamps to page 1."""
 
@@ -2778,6 +2793,66 @@ async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disabl
         assert previous.disabled is True
         assert clamped_next.disabled is True
         assert screen.query_one("#library-prompts-filter", Input).has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_page_focus_survives_loading_recompose() -> None:
+    """A real loading phase must not replace the invoking pager focus."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _GatedSecondPromptPage(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": f"2026-08-01T00:{index:02d}:00+00:00",
+                "version": 1,
+            }
+            for index in range(1, 46)
+        ]
+    )
+    app.prompt_scope_service = service
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        screen = LibraryScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-prompt-row")) == 20,
+            message="Initial Prompt page never mounted.",
+        )
+
+        next_page = screen.query_one("#library-prompts-page-next", Button)
+        next_page.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: next_page.has_focus,
+            message="Prompt Next never received focus.",
+        )
+        next_page.press()
+        assert await asyncio.to_thread(service.started.wait, 10.0)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_browse_controller.result.status == "loading"
+                and screen.query_one("#library-prompts-page-previous", Button).disabled
+                and screen.query_one("#library-prompts-page-next", Button).disabled
+            ),
+            message="Prompt page 2 loading recompose never settled.",
+        )
+
+        service.release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 2
+                and screen.query_one("#library-prompts-page-next", Button).has_focus
+            ),
+            message="Prompt Next focus was not restored after loading.",
+        )
 
 
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
