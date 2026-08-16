@@ -193,11 +193,15 @@ carries a pin that was run RED against the pre-fix HEAD `dc5224c0b` first
   Belt-and-braces fix: `_is_following_tail()` itself now returns False
   whenever a hidden tail exists (`_raw_anchor_engaged()` keeps the raw
   Textual state), the `_hydrate_tailward` self-chain also runs while the
-  raw anchor is engaged (converges to the true tail from an End press even
-  with no ticks), and `set_messages` heals raw-anchored-with-suffix by
-  re-windowing onto a fresh tail (covers the no-new-user-message reply that
-  never takes the send branch). Pin: End from deep scroll-back → pill
-  displayed + streamed reply mounts + suffix drains.
+  raw anchor is engaged, and `set_messages` heals raw-anchored-with-suffix
+  by re-windowing onto a fresh tail (covers the no-new-user-message reply
+  that never takes the send branch). Pin: End from deep scroll-back → pill
+  displayed + streamed reply mounts + suffix drains. **Round-2 correction:
+  this round's "converges even with no ticks" claim was FALSE at
+  `1e0af17a5`** — the round-1 pin passed only at zero intervening frames;
+  the round-2 review pinned the stall's causal chain and the round-2 fixes
+  below make the convergence claim actually true (and pinned at a 5-frame
+  settle).
 - **B (MEDIUM-HIGH, fixed point was ratio-contingent).** The trim walked
   ESTIMATED lines while the prune fires on MEASURED height; content with
   measured/estimated > high/low (short one-line messages ≈1.35-1.7x)
@@ -238,3 +242,66 @@ unmodified (`git diff` empty); adjacent console set (pruning, tail-follow,
 selection contract, jump pill, region, fence throttle, diff row, native
 transcript) 160 passed + the 3 speak-action failures already proven
 pre-existing on base; ruff clean.
+
+### Review round 2 (FIX-FIRST — one blocker: A's convergence)
+
+The round-2 review confirmed B, C, E, F decisively fixed and D acceptable,
+and pinned A's remaining stall causally: the belt predicate makes the
+prune's `following` capture False during an End-initiated drain, so its
+else-branch restore ran the PUBLIC `scroll_to` → `release_anchor()` —
+clearing the raw anchor both convergence braces test. Fixing that exposed
+a second, deeper entry the review had not needed to name:
+
+- **Prune restore made faithful, not merely non-releasing.** First fix
+  attempt (`_scroll_to(..., release_anchor=False)` alone) turned
+  `test_pruning_preserves_scroll_position_when_scrolled_up` red — which
+  revealed the old public release had been ACCIDENTALLY LOAD-BEARING: the
+  reconcile's layout shrink CLAMPS `scroll_y`, and a detached reader
+  sitting at the bottom gets silently re-attached by Textual's
+  `_check_anchor` at that clamp (traced: `W 33->31`, `CHECK re-engaged`,
+  then the compensation is pulled back to the bottom by the still-engaged
+  anchor). The public release had been undoing that. The restore now
+  captures `_raw_anchor_engaged()` at prune entry and restores THAT state:
+  a detached reader the clamp re-attached is re-released via a new
+  `_release_anchor_quietly()` (no user-intent stamp — TASK-336 ordering —
+  unlike the old accidental release, which stamped), BEFORE the
+  compensating internal `_scroll_to` so the anchor cannot fight it; an
+  entry-engaged anchor (the End drain) stays engaged so the chain
+  survives the prune. Why this branch over the reviewer's alternative
+  (`_raw_anchor_engaged()` at the `following =` capture): that would send
+  raw-anchored-with-suffix readers into the `anchor()`+`scroll_end`
+  branch, and `anchor()` reveals the tail window — a prune firing
+  mid-walk would teleport a reader whose anchor engaged incidentally at
+  the slice bottom, yanking them and dropping their mounted scroll-back.
+  The `following` choice of branch is right; only the side effect was
+  wrong.
+- **`scroll_end` override — the first chain link cannot be event-driven.**
+  Reproducing the reshaped pin exposed a second stall entry the round-2
+  probe's shape happened not to hit: with a pill display toggle between
+  End and the deferred scroll (exactly what the app's sync does), the
+  compositor's anchor path moves the widget to the bottom WITHOUT firing
+  the `scroll_y` watcher at all (instrumented: watcher provably live
+  through the up-walk, silent across the whole 32→580 jump — the reactive
+  never saw a change because the compositor had already moved it). Every
+  scroll-EVENT hook can therefore miss the drain's first link, so
+  `scroll_end()` itself (the End action) now schedules the first tailward
+  chunk; the self-chain carries on the raw ANCHOR STATE, needing no
+  events. `jump_to_latest` and the prune's following-branch reach
+  `scroll_end` with no suffix (no-op for them).
+- **Pin re-shaped** per the review: End → 5-frame settle → assert the
+  drain converges to the true tail with NO ticks → then ingest and assert
+  the reply mounts. Born red against `1e0af17a5` (stalled, 250 hidden);
+  the reviewer's `probe_a_timing.py` passes at 5/20/100 settle frames
+  (was: fail at all three, pass only at 0).
+- Non-blockers landed: debug log when the trim is blocked by a pinned
+  selection/focus (mirrors the prune's blocked-walk log); the phase-2
+  kill-switch assertion message no longer over-claims (it now names the
+  cleared-prefix precondition); `_measured_message_groups` documents the
+  latent margin-collapse divergence from the prune's cumulative walk
+  (exact today at zero row margins; conservative if margins appear).
+
+Round-2 verification: two-sided 13/13; protected 17/17, both files still
+byte-identical to base; pruning suite 8/8 (the detached-reader pin that
+caught the load-bearing release, back green with the faithful restore);
+adjacent set 160 passed + the 3 known pre-existing; `probe_a_timing.py`
+5/20/100 all pass; ruff clean.

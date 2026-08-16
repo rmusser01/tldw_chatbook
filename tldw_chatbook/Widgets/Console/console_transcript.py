@@ -2011,6 +2011,17 @@ class ConsoleTranscript(VerticalScroll):
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
 
+    def _release_anchor_quietly(self) -> None:
+        """Release the raw anchor WITHOUT stamping user scroll intent.
+
+        For programmatic corrections (the prune restoring a detached reader
+        the shrink-clamp re-attached — TASK-15777 review round 2). The
+        public ``release_anchor`` records the release as a user gesture,
+        which would let a maintenance scroll outrank a later send's follow
+        intent (TASK-336 ordering).
+        """
+        super().release_anchor()
+
     @on(events.MouseScrollUp)
     def _hydrate_scrollback_on_boundary_wheel(
         self, _event: events.MouseScrollUp
@@ -3078,6 +3089,7 @@ class ConsoleTranscript(VerticalScroll):
             f"(estimated height {estimated_height})"
         )
         following = self._is_following_tail()
+        raw_anchor_at_entry = self._raw_anchor_engaged()
         anchor_y = self.scroll_y
         self._pruned_message_ids.update(prune_ids)
         logger.info(
@@ -3094,22 +3106,32 @@ class ConsoleTranscript(VerticalScroll):
                 self.anchor()
                 self.scroll_end(animate=False)
             else:
-                # Keep the same content in view: shift the offset up by the
-                # height actually removed (measured, not estimated). Use
-                # Textual's internal switch — this is a COMPENSATION, not a
-                # user gesture, exactly like the hydration restore above.
-                # The public scroll_to() calls release_anchor(), which (a)
-                # stamps _user_scroll_time as if the user had scrolled (a
-                # programmatic shift must never outrank a later send's
-                # follow intent — TASK-336 ordering), and (b) — review
-                # round 2's blocker — cleared the RAW anchor during an
-                # End-initiated tail drain: with a tail hidden the belt
-                # predicate makes `following` False, this branch ran, and
-                # the fabricated release disarmed both convergence braces
-                # (the _hydrate_tailward chain and the set_messages heal),
-                # stalling the drain mid-history forever. A genuinely
-                # detached reader's anchor is already released, so for them
-                # this is behavior-identical.
+                # Restore the reader's state FAITHFULLY, in two parts.
+                #
+                # Anchor state (review round 2's blocker): the shrink from
+                # the reconcile CLAMPS scroll_y to the new maximum, and if
+                # the reader happened to sit at the bottom, Textual's
+                # `_check_anchor` silently re-engages the raw anchor at
+                # that clamp — before this callback runs. The old public
+                # `scroll_to` released the anchor as a side effect, which
+                # accidentally undid that for detached readers but ALSO
+                # disarmed the End-drain's convergence braces (raw anchor
+                # engaged + hidden tail), stalling the drain mid-history
+                # forever. So: restore the anchor state captured at prune
+                # entry — quietly re-release a detached reader the clamp
+                # re-attached (no user-intent stamp: a programmatic shift
+                # must never outrank a later send's follow intent,
+                # TASK-336), and leave an entry-engaged anchor engaged so
+                # the drain keeps converging.
+                if not raw_anchor_at_entry and self._raw_anchor_engaged():
+                    self._release_anchor_quietly()
+                # Content: keep the same rows in view by shifting the
+                # offset up by the height actually removed (measured, not
+                # estimated), via Textual's internal switch — this is a
+                # COMPENSATION, not a user gesture, exactly like the
+                # hydration restore above. Ordering matters: release first,
+                # or the still-engaged anchor pulls the compensating scroll
+                # back to the bottom.
                 removed = total_height - self.virtual_size.height
                 self._scroll_to(
                     y=max(0.0, anchor_y - removed),
