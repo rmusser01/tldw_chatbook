@@ -139,7 +139,8 @@ What that means in practice: with the gate on and "always allow" set for
 this tool, an agent has a **read-by-raw-id primitive** — hand it a
 `source_type` and the row's backing database id and it returns the whole
 note, media item, conversation transcript or prompt in bounded windows.
-That duplicates what the 18 direct Library get-tools do while bypassing
+That duplicates what the direct Library get-tools do (6 of the 18
+`library_*` tools; expansion overlaps 4 of the 6 seams) while bypassing
 their opaque `type:<base64url>` ID codec, which normally means a get-tool
 can only open a row some earlier search actually returned.
 

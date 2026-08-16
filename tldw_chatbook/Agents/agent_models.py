@@ -438,7 +438,11 @@ class AgentConfig:
             *Why calls are not caught later.* ``run_agent_loop`` dispatches
             each runtime name in its own dedicated ``elif`` branch BEFORE
             the generic ``deps.invoke_tool`` fallback, so ``invoke_tool``'s
-            allow-list check structurally never sees a runtime call. The
+            allow-list check never sees a runtime call the loop is WIRED for
+            (8 of the 11 branches are guarded by their dep being
+            non-None: an unwired runtime name -- e.g. a sub-agent's
+            search_run_log -- falls through to the catalog fallback
+            and is refused there). The
             one exception is ``spawn_subagent``, whose branch re-checks
             ``config.allowed_tools`` itself and refuses before dispatch
             (Q6) -- the rest are governed only by their gates and by the

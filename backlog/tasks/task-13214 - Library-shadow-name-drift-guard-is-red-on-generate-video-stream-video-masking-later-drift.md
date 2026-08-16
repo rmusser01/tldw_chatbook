@@ -32,3 +32,11 @@ Still red at 2026-08-11 on feat/rag-p2a-instrument-renewal (785ce369c) — re-ve
 
 Third sighting, 2026-08-16, on `chore/rag-16688-16788-residue` (base dev `c2f30862c`, HEAD `a6f04ea68`) during TASK-16688's `Tests/Library` battery — re-verified directly (`pytest Tests/Library/test_library_skills_state.py` → 1 failed, 15 passed), not inferred. The guard is still red, but the uncovered name has CHANGED: `ConsoleCommandRegistry names not covered: {'research'}`. generate-video/stream-video are now covered (AC#1 satisfied on dev), so what is left is the next gap underneath them — AC#3's masking argument playing out exactly as written. `research` is the `/research` Console command added by `e1f3a4424` (task-16481, "deliver completed research runs into the originating chat"), an ancestor of that branch's base. Not fixed there: out of that arc's scope, and this task already owns the guard. Recorded here rather than filed as a duplicate.
 <!-- SECTION:NOTES:END -->
+
+**Fourth sighting-adjacent finding (2026-08-16, the 16688/16788 batch's
+final review, F6):** `expand_document` (TASK-16174's gated builtin) is
+MISSING from `_SHADOWED_BUILTIN_NAMES`, although every other config-gated
+builtin is listed there precisely because this drift guard cannot see
+gated tools — a skill could shadow it undetected. Same family as the
+`research` gap above; whoever repairs the guard should add it in the same
+pass.

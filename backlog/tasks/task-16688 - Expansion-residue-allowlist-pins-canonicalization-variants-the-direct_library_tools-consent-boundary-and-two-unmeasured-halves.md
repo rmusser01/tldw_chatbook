@@ -55,7 +55,8 @@ makes that toggle the Console consent boundary: OFF, the agent gets bounded
 `search_library_rag` excerpts and no direct Library reads. `expand_document`
 returns whole documents by **raw** backing id regardless of that setting,
 under its own `[tools]` gate plus the per-call ask floor; ON, it duplicates
-the 18 direct get-tools while bypassing their opaque public-ID codec. Two
+the direct get-tools (6 of the 18 `library_*` tools) while bypassing
+their opaque public-ID codec. Two
 mitigations are real and pinned (OFF by default; `risk_tags=("reads",)` →
 `ask`, 7 approval rounds observed live), and the raw id already left the
 adapter pre-arc as `result_id` — so the arc types an existing exposure
@@ -148,7 +149,8 @@ the per-call **Ask** floor its `risk_tags=("reads",)` forces. What that
 means once a user enables the gate and clicks "always allow" is a
 **read-by-raw-id primitive**: `source_type` + the row's backing database id
 returns the whole note/media/conversation/prompt in bounded windows,
-duplicating the 18 direct Library get-tools while bypassing their opaque
+duplicating the direct Library get-tools (6 of the 18 `library_*`
+tools; 4 seams overlap) while bypassing their opaque
 `type:<base64url>` ID codec, which normally lets a get-tool open only a row
 some earlier search returned. Why it is accepted: the gate is off until
 turned on; the risk tag floors an inherited Allow back to Ask (one approval
@@ -188,7 +190,7 @@ on all three counts. `report.md` is committed beside it.
 baseline.`, all 105 cells at (+0.000), 307 passed.
 
 Batteries: `Tests/Tools` 577 passed / 15 skipped, `Tests/Agents` 1456
-passed, `Tests/Library` 1994 passed / 1 skipped with ONE failure —
+passed, `Tests/Library` 1994 passed / 2 skipped with ONE failure —
 `test_library_skills_state.py::test_shadow_name_set_stays_in_sync_with_real_sources`
 (`ConsoleCommandRegistry` name `research` missing from
 `_SHADOWED_BUILTIN_NAMES`), which arrived on dev with `e1f3a4424`, an
