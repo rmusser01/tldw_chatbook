@@ -5274,6 +5274,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             error_msg = stats.get("error_msg")
         return str(error_msg or "the source reported a failed run")
 
+    @staticmethod
+    def _check_was_entirely_skipped(result: Any) -> bool:
+        """Whether a completed check checked NOTHING because another was running.
+
+        task-16838. The per-(subscription, url) in-flight guard
+        (`LocalWatchlistsService._check_url_guarded`) makes a Check Now that
+        lands while a scheduled check of the same source is mid-flight skip
+        rather than double-check -- the run completes with a `skipped`
+        disposition count and nothing else. Without this, that run's toast
+        read "Check complete: X — 0 found, 0 new.", which tells the user
+        their page was checked and unchanged when it was not checked at all.
+
+        Only an ENTIRELY skipped run qualifies: a `url_list` run that checked
+        most URLs and skipped one did real work, and its ordinary completion
+        toast stays honest for it (the Runs pane detail carries the per-URL
+        skip count).
+
+        Args:
+            result: Whatever `check_now` returned.
+
+        Returns:
+            True when the run's dispositions show at least one skip and
+            zero of everything else.
+        """
+        if not isinstance(result, Mapping):
+            return False
+        stats = result.get("stats")
+        if not isinstance(stats, Mapping):
+            return False
+        dispositions = stats.get("dispositions")
+        if not isinstance(dispositions, Mapping):
+            return False
+        try:
+            skipped = int(dispositions.get("skipped", 0) or 0)
+            others = sum(
+                int(value or 0)
+                for counter, value in dispositions.items()
+                if counter != "skipped"
+            )
+        except (TypeError, ValueError):
+            return False
+        return skipped > 0 and others == 0
+
     async def _check_now_source(
         self,
         source: dict[str, Any],
@@ -5374,7 +5417,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     status = str((result or {}).get("status") or "").lower()
                     reached_terminal = status in self._TERMINAL_RUN_STATUSES
                     if callable(notify):
-                        if reached_terminal:
+                        if reached_terminal and self._check_was_entirely_skipped(
+                            result
+                        ):
+                            # task-16838: the in-flight guard skipped every
+                            # URL -- say so rather than "0 found, 0 new",
+                            # which would claim the page was checked and
+                            # unchanged when it was not checked at all.
+                            notify(
+                                f"Check skipped: {name} — a check of this "
+                                f"source is already running.",
+                                severity="warning",
+                                markup=False,
+                            )
+                        elif reached_terminal:
                             # The run's own counters (TASK-2309), when the
                             # result actually carries them -- the local
                             # backend's `execute_run` always returns a

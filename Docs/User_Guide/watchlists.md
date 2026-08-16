@@ -14,6 +14,19 @@ Mixed | Local/Server". This screen was previously called "Subscriptions."
 - Press **Ctrl+6**, click **⌃6 Watchlists** in the nav bar, or press
   **Ctrl+P** → "Tab Navigation: Switch to Watchlists".
 
+## Checking a source while a check is already running
+
+One check of a given page runs at a time. If you press **Check now** for a
+source whose page is already being checked — usually because a scheduled
+check of it is mid-flight — the app does not run a second, duplicate check
+of the same page: your run completes immediately without touching the
+network, the toast says the check was skipped because one is already
+running, and the running check's result arrives moments later as usual.
+The skipped run stays honest in the Runs section too: its detail line
+counts the page under "skipped (check already running)" rather than
+reading like a clean check that found nothing. Different sources are
+unaffected — they check concurrently, exactly as before.
+
 ## Exporting briefings and podcast feeds
 
 The **Artifacts** section of a watchlist holds its briefings — text digests

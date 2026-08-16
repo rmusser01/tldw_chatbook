@@ -498,11 +498,14 @@ _NO_DISPOSITIONS = {
     "rebaselined": 0,
     # task-1394: a URL that raised instead of completing `check_url`.
     "error": 0,
+    # task-16838: a URL never checked because a concurrent check of the same
+    # (subscription, url) pair was already in flight.
+    "skipped": 0,
 }
 
 
 def _counts(**overrides: int) -> dict[str, int]:
-    """The full five-key disposition-count dict, with `overrides` applied.
+    """The full zero-filled disposition-count dict, with `overrides` applied.
 
     Written as the whole dict rather than a single-key lookup so a test cannot
     pass while some *other* disposition also fired. `baseline` and
@@ -535,6 +538,11 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
     call that raised instead of returning; it is pinned here too, and by the
     same reasoning -- a rename of `DISPOSITION_ERROR` that drifted from this
     binding would `KeyError` on the very run it exists to keep from failing.
+
+    task-16838 added a seventh, `(DISPOSITION_SKIPPED_IN_FLIGHT, None)`, for a
+    `check_url` call never made at all -- a concurrent check of the same
+    (subscription, url) pair held the in-flight claim -- pinned for the same
+    anti-drift reason.
     """
     from tldw_chatbook.Subscriptions import monitoring_engine
     from tldw_chatbook.Subscriptions.local_watchlists_service import (
@@ -559,9 +567,14 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
             monitoring_engine.REASON_EXTRACTION_SETTINGS_CHANGED,
         ),
         (monitoring_engine.DISPOSITION_ERROR, None),
+        (monitoring_engine.DISPOSITION_SKIPPED_IN_FLIGHT, None),
     }
     assert (
         mapping[(monitoring_engine.DISPOSITION_ERROR, None)] == "error"
+    )
+    assert (
+        mapping[(monitoring_engine.DISPOSITION_SKIPPED_IN_FLIGHT, None)]
+        == "skipped"
     )
     assert mapping[(monitoring_engine.DISPOSITION_CHANGED, None)] == "changed"
     assert mapping[(monitoring_engine.DISPOSITION_UNCHANGED, None)] == "unchanged"

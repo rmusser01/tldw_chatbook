@@ -289,6 +289,28 @@ def test_stats_text_shows_the_error_count_for_a_partially_failed_run():
     assert "0 error" in clean
 
 
+def test_stats_text_shows_the_skipped_count_only_when_a_check_was_skipped():
+    """task-16838: a URL skipped by the in-flight guard is named, not silent.
+
+    A run that landed while another check of the same source was mid-flight
+    completes with a `skipped` disposition instead of double-checking. That
+    must be visible here, or the run reads like a clean check that found
+    nothing -- the exact ambiguity the disposition line exists to remove.
+    Unlike `error`, the segment is conditional: a zero is omitted (the counts
+    are zero-filled at write time, so absence always means a true zero), and
+    runs recorded before the counter existed render exactly as before.
+    """
+    text = RunsPane._stats_text(_disposition_run(unchanged=2, skipped=1))
+    assert "1 skipped (check already running)" in text
+
+    # No skip: the segment is absent entirely -- both for a new run with a
+    # zero-filled counter and for an old row with no `skipped` key at all.
+    assert "skipped" not in RunsPane._stats_text(
+        _disposition_run(changed=2, skipped=0)
+    )
+    assert "skipped" not in RunsPane._stats_text(_disposition_run(changed=2))
+
+
 def test_stats_text_distinguishes_a_first_check_from_a_settings_rebaseline():
     """Whole-branch review, Critical 1: the two must not read alike.
 

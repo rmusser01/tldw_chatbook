@@ -80,6 +80,10 @@ _DISPOSITION_COUNTERS: tuple[str, ...] = (
     # that reads this tuple positionally (none of the current readers do, but
     # a future one might) sees the existing five counters shift place.
     "error",
+    # task-16838. Same appended-last rationale. A URL this run never checked
+    # at all, because another check of the same (subscription, url) pair was
+    # already in flight -- see `_check_url_guarded`.
+    "skipped",
 )
 
 
@@ -102,13 +106,16 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
     them back into one leaves the `reason` with no production consumer at all,
     which is what made spec §3's "the Runs pane says why" untrue.
 
-    Five of the six pairs below are exactly the five `_disposition` call
+    Five of the seven pairs below are exactly the five `_disposition` call
     sites in `check_url`; an unlisted pair raises `KeyError` in
     `_disposition_counts`, deliberately. The sixth, `DISPOSITION_ERROR`, is
     NOT one of `check_url`'s own outcomes -- it is synthesized by
     `_default_run_executor`'s `url_list`/`sitemap` loops around a
     `check_url` call that raised instead of returning (task-1394), so one
-    dead URL is counted rather than failing the whole run.
+    dead URL is counted rather than failing the whole run. The seventh,
+    `DISPOSITION_SKIPPED_IN_FLIGHT`, is likewise caller-synthesized
+    (`_check_url_guarded`, task-16838): the call was never made because a
+    concurrent check of the same (subscription, url) pair held the claim.
 
     The `monitoring_engine` import is deliberately local, not module-level:
     this module loads unconditionally from `Subscriptions/__init__.py`
@@ -123,6 +130,7 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         DISPOSITION_BASELINE_STORED,
         DISPOSITION_CHANGED,
         DISPOSITION_ERROR,
+        DISPOSITION_SKIPPED_IN_FLIGHT,
         DISPOSITION_UNCHANGED,
         DISPOSITION_WITHHELD,
         REASON_BELOW_CHANGE_THRESHOLD,
@@ -144,6 +152,9 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         # URLs errored", not "which exception", so it needs exactly one
         # stable pair rather than one per exception type.
         (DISPOSITION_ERROR, None): "error",
+        # task-16838: a URL this run never checked because a concurrent
+        # check of the same (subscription, url) pair was already in flight.
+        (DISPOSITION_SKIPPED_IN_FLIGHT, None): "skipped",
     }
 
 
@@ -181,13 +192,56 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
 
 
 #: The `_DISPOSITION_COUNTERS` entries that mean "this URL's check_url call
-#: actually succeeded" -- every counter except `"error"`. Named as a tuple
-#: comprehension over `_DISPOSITION_COUNTERS` rather than re-spelled here so
-#: the all-error detection below cannot silently drift from the counters it
-#: is reading (same rationale as `_disposition_count_keys`'s docstring).
+#: actually succeeded" -- every counter except `"error"` and `"skipped"`.
+#: Named as a tuple comprehension over `_DISPOSITION_COUNTERS` rather than
+#: re-spelled here so the all-error detection below cannot silently drift
+#: from the counters it is reading (same rationale as
+#: `_disposition_count_keys`'s docstring). `"skipped"` (task-16838) is
+#: excluded because a skip proves nothing about the source's reachability:
+#: the URL was never contacted, so it must not count as the "genuine
+#: progress" that resets the auto-pause breaker in
+#: `_all_error_check_message`. (An entirely-skipped run is unaffected either
+#: way -- with zero `error` dispositions that function already returns
+#: `None`; this only matters for a run where every URL actually CHECKED
+#: errored and the rest were skipped, which should record the failure.)
 _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
-    counter for counter in _DISPOSITION_COUNTERS if counter != "error"
+    counter
+    for counter in _DISPOSITION_COUNTERS
+    if counter not in ("error", "skipped")
 )
+
+
+#: task-16838: every URL check currently in flight, keyed
+#: `(id(db), subscription_id, url)`. This is the serialization mechanism the
+#: TASK-15764 review established did not exist: the scheduler (an async
+#: worker on the app's event loop) and a UI "Check Now" (a coroutine worker
+#: on the same loop) can otherwise interleave checks of the SAME source
+#: across `check_url`'s awaits (the network fetch plus the off-loop sqlite
+#: and CPU hops), both read the same baseline before either writes, and one
+#: page change is reported twice with two snapshots written.
+#:
+#: MODULE-level, not service-instance state, deliberately: production wiring
+#: (`app.py`, task-15463) holds TWO `LocalWatchlistsService` instances over
+#: the ONE shared `SubscriptionsDB` -- the UI's `self.local_watchlists_
+#: service` and the `WatchlistCheckHandler`'s own default-constructed one --
+#: so instance state would never see the exact cross-entrant interleave this
+#: exists to stop. `id(db)` scopes the key to that shared database object:
+#: `WatchlistPreviewService` runs the same executor against a throwaway
+#: in-memory `SubscriptionsDB` whose row ids can collide with live ones, and
+#: without the scope a preview could falsely skip (or be skipped by) a real
+#: check. The id cannot alias across lives: the claim holds a reference to
+#: `db` for exactly the window the key is registered, so the object cannot
+#: be collected (and its id reused) while its key is in the set.
+#:
+#: A plain `set` with no lock, on the single-loop argument: every entrant
+#: that reaches `_default_run_executor` runs on the app's one event loop
+#: (scheduler: `run_worker(self.scheduler_loop.run(), ...)`; Check Now /
+#: Rerun: coroutine workers; the scheduled handler awaits the service
+#: directly), and `_check_url_guarded`'s claim-check-and-add / discard are
+#: synchronous between awaits, hence atomic with respect to that loop. If a
+#: check entrant ever moves off the app loop, this needs a real lock -- see
+#: `_check_url_guarded`'s docstring.
+_IN_FLIGHT_URL_CHECKS: set[tuple[int, Any, str]] = set()
 
 
 def _all_error_check_message(
@@ -1610,7 +1664,13 @@ class LocalWatchlistsService:
         if source_type in _FEED_SOURCE_TYPES:
             items = await FeedMonitor().check_feed(subscription_config)
         elif source_type == "url":
-            result, disposition = await URLMonitor(db).check_url(subscription_config)
+            result, disposition = await self._check_url_guarded(
+                URLMonitor(db),
+                subscription_config,
+                str(subscription_config.get("source") or ""),
+                db,
+                isolated=False,
+            )
             items = [result] if result else []
             dispositions = [disposition]
         elif source_type == "url_list":
@@ -1618,8 +1678,8 @@ class LocalWatchlistsService:
             items = []
             dispositions = []
             for url in self._urls_for_url_list(subscription_config):
-                result, disposition = await self._check_url_isolated(
-                    monitor, subscription_config, url
+                result, disposition = await self._check_url_guarded(
+                    monitor, subscription_config, url, db, isolated=True
                 )
                 dispositions.append(disposition)
                 if result:
@@ -1635,8 +1695,8 @@ class LocalWatchlistsService:
             # if the sitemap itself cannot be fetched there is no per-URL
             # work to isolate).
             for url in await self._urls_for_sitemap(subscription_config):
-                result, disposition = await self._check_url_isolated(
-                    monitor, subscription_config, url
+                result, disposition = await self._check_url_guarded(
+                    monitor, subscription_config, url, db, isolated=True
                 )
                 dispositions.append(disposition)
                 if result:
@@ -1668,6 +1728,103 @@ class LocalWatchlistsService:
                 run_stats["max_withheld_pct"] = max_withheld
             result_payload["stats"] = run_stats
         return result_payload
+
+    async def _check_url_guarded(
+        self,
+        monitor: Any,
+        subscription_config: Mapping[str, Any],
+        url: str,
+        db: Any,
+        *,
+        isolated: bool,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """One URL check behind the per-(subscription, url) in-flight guard.
+
+        task-16838, from the TASK-15764 review (PR #1679, finding 1): a
+        scheduled check and a manual Check Now of the same source both run on
+        the app's event loop and can interleave across `check_url`'s awaits
+        -- both read the same baseline before either writes, so one page
+        change is double-reported with two snapshots written. This is the
+        choke point every url-family arm of `_default_run_executor` (`url`,
+        `url_list`, `sitemap`) goes through, so it covers every entrant that
+        can write: the scheduler handler, the UI's Check Now / Rerun, and any
+        direct `launch_run`/`execute_run` caller. (Shadow mode's direct
+        `check_url` probe is deliberately outside it: `persist_snapshots=
+        False` means it cannot write a snapshot or report an item, and the
+        scheduler loop already serializes shadow probes against each other.)
+
+        The second entrant SKIPS -- it does not queue or wait. A concurrent
+        Check Now while a scheduled check runs means the user gets the
+        scheduled check's result moments later; queuing a duplicate check
+        behind it would re-fetch a page whose fresh snapshot the winner just
+        wrote and report "unchanged", i.e. do network work to say nothing.
+        The skip is honest, not silent: an INFO log here, a dedicated
+        `DISPOSITION_SKIPPED_IN_FLIGHT` disposition (-> the run's `skipped`
+        stats counter, rendered by the Runs pane), and the Check Now toast
+        for an entirely-skipped run says a check was already running.
+
+        Same-run re-entry cannot deadlock or self-skip: the `url_list`/
+        `sitemap` loops await each check to completion, so for a duplicate
+        URL within one run's list the claim registered here has already been
+        released (the `finally` below) before the loop reaches the
+        duplicate.
+
+        Single-loop atomicity: the membership test and `add` below run
+        synchronously between awaits on the app's one event loop, which every
+        entrant runs on (see `_IN_FLIGHT_URL_CHECKS`). If any entrant ever
+        moves off that loop, this check-then-add becomes a real race and
+        needs a lock keyed the same way.
+
+        Args:
+            monitor: The `URLMonitor` (or fake, in tests) to check with.
+            subscription_config: The source's execution config; must carry
+                the subscription's ``id``.
+            url: The one URL this call would check -- the claim key, and
+                (when ``isolated``) the per-URL override passed through to
+                `_check_url_isolated`.
+            db: The database this run writes to. Part of the claim key so a
+                preview's throwaway in-memory DB can never collide with the
+                live one (see `_IN_FLIGHT_URL_CHECKS`).
+            isolated: ``True`` for the `url_list`/`sitemap` loops, where a
+                raise must become a `DISPOSITION_ERROR` for this URL rather
+                than failing the whole run (task-1394); ``False`` for the
+                single-`url` arm, where a raise still fails the run exactly
+                as before.
+
+        Returns:
+            Whatever the underlying check returned, unchanged, when this
+            entrant won the claim. ``(None, {"kind":
+            DISPOSITION_SKIPPED_IN_FLIGHT, ...})`` when a concurrent check
+            of the same (subscription, url) already held it.
+        """
+        from .monitoring_engine import DISPOSITION_SKIPPED_IN_FLIGHT
+
+        subscription_id = subscription_config.get("id")
+        key = (id(db), subscription_id, url)
+        if key in _IN_FLIGHT_URL_CHECKS:
+            # Subscription id only, never the URL -- it can carry a query
+            # string with sensitive data (`_check_url_isolated`'s rule).
+            logger.info(
+                f"watchlist check skipped: subscription {subscription_id} "
+                f"already has a check of this URL in flight"
+            )
+            return None, {
+                "kind": DISPOSITION_SKIPPED_IN_FLIGHT,
+                "reason": None,
+                "withheld_percentage": None,
+            }
+        _IN_FLIGHT_URL_CHECKS.add(key)
+        try:
+            if isolated:
+                return await self._check_url_isolated(
+                    monitor, subscription_config, url
+                )
+            return await monitor.check_url(subscription_config)
+        finally:
+            # `finally`, so a raise (the non-isolated arm), a cancellation
+            # (the user navigating away mid-check), or an isolated error can
+            # never strand the pair as permanently "in flight" (AC #3).
+            _IN_FLIGHT_URL_CHECKS.discard(key)
 
     @staticmethod
     async def _check_url_isolated(

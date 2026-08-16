@@ -4636,3 +4636,21 @@ Same task, implementation twin worth remembering: a decision that walks
 must run under the widget's reconcile lock — read mid-reconcile, the transient
 child order faked a "blocked prune" and stalled a selection-free End drain
 (218 messages stranded in the born-red End-race pin).
+
+## A born-red run that dies on ImportError is not born-red evidence (TASK-16838, 2026-08-16)
+
+The in-flight-guard test file imported the new `_IN_FLIGHT_URL_CHECKS`
+registry at module top. Run against the pre-fix tree (worktree at
+`1af8c0414`) it "failed" — but on collection, with `ImportError: cannot
+import name '_IN_FLIGHT_URL_CHECKS'`. That red proves only that the test
+mentions a symbol the fix adds — the same red a typo would produce — and it
+says nothing about whether the bug (the 15764 double-check interleave) is
+reproduced or the assertions could catch it. Rewritten with a lazy
+`getattr(svc, "_IN_FLIGHT_URL_CHECKS", set())` lookup so the file COLLECTS
+on both trees, the pre-fix run reddened on the behaviour itself: the manual
+entrant's gated fetch fired while the scheduled fetch was still in flight
+("went to the network too"), the exact double-report the review had
+demonstrated. Rule: when new-code symbols would make a born-red file
+unimportable at base, reference them lazily (or split the white-box asserts
+out) so the base-tree run fails on the assertion that carries the evidence,
+not on `import`.
