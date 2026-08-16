@@ -23,7 +23,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import pytest
 from textual.widget import Widget
@@ -259,21 +258,20 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
 
     * The **region** is built exactly once per switch -- that is `builds`.
     * The **pane** rebuilds at most once, and the one is not a data-arrival
-      duplicate: `_build_detail_pane` seeds `rules_pane.rules` on a
-      freshly-constructed pane whose class default is `[]`, so Textual queues
-      a recompose (`[] != [row]`) that fires just after the pane mounts.
-      Traced to `_build_detail_pane` directly, and it is pre-existing and
-      unchanged by this task -- the whole-screen recompose called the same
-      factory and paid the same cost. It is invisible on an empty fixture,
-      which is exactly why it went unnoticed until a row was seeded.
-      (Removing it means seeding the panes with `set_reactive`, which is not
-      safe to do blind: `RunsPane`'s seeding order is load-bearing -- setting
-      `selected_run` clears the detail, so the detail must be set after it.
-      Recorded as a residual, deliberately not attempted here.)
+      duplicate. `_build_detail_pane` used to seed `rules_pane.rules` by
+      plain assignment on a freshly-constructed pane whose class default is
+      `[]`, so Textual queued a recompose (`[] != [row]`) that fired just
+      after the pane mounted -- the residual this task recorded, closed by
+      task-15778 (the factories now seed `recompose=True` reactives with
+      `set_reactive`, per-reactive, keeping `RunsPane`'s load-bearing
+      `selected_run` watcher on the plain path). What `<= 1` still allows on
+      a COLD visit is the genuine data arrival: the loader can land after
+      the mount and push `[] -> [row]`, which is one honest rebuild.
 
     The claim this test therefore pins is the one AC#1 makes: **one scoped
     region build, and no SECOND rebuild from the loader landing** -- verified
-    on a warm revisit, where the rows are already on screen state.
+    on a warm revisit, where the rows are already on screen state (and where,
+    since task-15778, the count is exactly zero).
     """
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -323,9 +321,10 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
             await _settle(pilot, host)
 
         assert builds == ["sources", "rules"], builds
-        assert warm.recomposes["RulesPane#watchlists-rules-pane"] <= 1, (
-            "a warm revisit must cost at most the pre-mount seeding rebuild "
-            f"named in this test's docstring: {warm.report()}"
+        assert warm.recomposes["RulesPane#watchlists-rules-pane"] == 0, (
+            "a warm revisit must not rebuild the freshly built pane at all "
+            "-- the pre-mount seeding recompose this used to tolerate was "
+            f"removed by task-15778: {warm.report()}"
         )
         assert warm.recomposes["WatchlistsCollectionsScreen#-"] == 0, warm.report()
         assert (

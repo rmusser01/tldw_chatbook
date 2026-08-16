@@ -1,8 +1,9 @@
 ---
 id: TASK-15778
 title: 'Watchlists: batch the cold Read-tab region swap and drop the pre-mount seeding recompose'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-13 12:31'
 labels:
   - perf
@@ -49,5 +50,50 @@ rebuilds.
 - [ ] Every other pane that uses `_build_detail_pane` is checked for its own
       seeding-order dependencies before the change lands, not just
       `RunsPane`
+- [ ] `_build_content_pane`'s `item` seeding (the CONTENT region built by the
+      same cold Read-tab swap; `item` is `recompose=True` and pays the same
+      extra recompose whenever an item is selected) gets the identical
+      treatment, with its own seeding-order/watcher audit
 - [ ] `Tests/Watchlists/test_watchlists_scoped_rebuilds.py` and the sources/
       rules pane suites stay green
+
+## Implementation Plan
+
+1. Re-verify both premises at HEAD (`41a2f8a00`, which includes task-15775's
+   seed-before-compose and task-15776's row collapse): confirm neither
+   residual was already fixed — (a) no `batch_update`/`batch()` anywhere in
+   the workbench's swap path, so the cold Read switch still pays one
+   layout/paint pass per remove/mount cycle; (b) `_build_detail_pane` still
+   seeds recompose=True reactives by plain assignment, so a seeded row still
+   queues one extra pane recompose per region build. Evidence via an
+   instrumented probe (isolated HOME/XDG config, seeded fixture): layout-pass
+   count + wall clock for the cold Read switch, and per-pane recompose counts
+   per section switch.
+2. AC#1: wrap `WatchlistsWorkbench.apply_section_view`'s mounted-path DOM
+   work in `self.app.batch_update()` so the CONTENT mount, the ITEMS region
+   rebuild and the header rebuild are reconciled in ONE layout/paint pass
+   instead of one per remove/mount cycle. Focus restoration
+   (`_restore_focus_after_swap`) and the persisted-layout contract are
+   untouched — the batch only defers repaints, it does not reorder the DOM
+   work.
+3. AC#2/#3: audit every pane branch in `_build_detail_pane` for
+   recompose=True reactives and watcher side effects, then convert exactly
+   the recompose=True seeding assignments to `set_reactive` (their pre-mount
+   watchers are all `is_mounted`-gated no-ops — verified per pane). Keep the
+   non-recompose assignments as plain assignments so their load-bearing
+   watcher side effects survive: `RunsPane.selected_run` must keep firing
+   `watch_selected_run` (clears the detail — hence detail-after-selection
+   order — and starts the run poll for a mid-flight run). `RulesPane.
+   edit_rule` gets a pre-mount `set_reactive` path for `show_rule_form`.
+4. Born-red tests (new file `Tests/Watchlists/test_watchlists_cold_read_swap.py`,
+   reusing the 15775 `_SwapCounter`/15461 `_RebuildCounter` patterns):
+   batch-active-during-swap pin (deterministic, red pre-fix), zero-pane-
+   recompose-per-switch pins for the seeded panes (red pre-fix at 1),
+   `RunsPane` ordering + poll-side-effect pins (red under a wrong-order or
+   set_reactive-blind mutation), and the cold Read switch verified under
+   both the first-run default layout and a user-customized layout.
+5. Before/after swap-count + layout-pass + timing measurements on a cold
+   Read-tab open, recorded in Implementation Notes.
+6. Run the Watchlists suites (scoped_rebuilds, cold_open_layout, workbench,
+   sources/rules/runs/artifacts/items pane suites, destination shell), ruff
+   check + format on touched files, commit.

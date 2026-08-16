@@ -2085,6 +2085,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Called fresh on every region rebuild — see the factory note on
         `WatchlistsWorkbench.__init__`.
+
+        Seeding discipline (task-15778): every `recompose=True` reactive is
+        seeded with `set_reactive`, never plain assignment. A plain
+        assignment on the freshly constructed, not-yet-mounted pane runs
+        `refresh(recompose=True)` the instant the seeded value differs from
+        the class default (`[] != [row]`), which queues a `_check_recompose`
+        that fires just after the pane mounts — one full extra pane rebuild
+        per region build, measured on every data-carrying section switch
+        (task-15461's residual 4). `compose()` reads the same reactives, so
+        `set_reactive` renders identically without the queued rebuild. The
+        panes' pre-mount watchers were audited per-branch before this
+        change: every watcher on a converted reactive is an
+        `is_mounted`-gated no-op pre-mount, so nothing is lost by skipping
+        it. NON-recompose reactives deliberately stay plain assignments —
+        `RunsPane.selected_run`'s watcher side effects are load-bearing
+        (see that branch).
         """
         detail_title = self._SECTION_DETAIL_TITLE.get(self.active_section, "Detail")
         children: list[Widget] = [
@@ -2096,11 +2112,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         if self.active_section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
-            overview.data = self.overview_data
+            overview.set_reactive(OverviewPane.data, self.overview_data)
             # TASK-998: lets the first-run panel distinguish "no watchlists at
             # all" from "a watchlist with no sources in it" -- `overview_data`
             # counts sources, items and runs, never watchlists.
-            overview.watchlist_count = len(self._tree_watchlists)
+            overview.set_reactive(
+                OverviewPane.watchlist_count, len(self._tree_watchlists)
+            )
             children.append(overview)
         elif self.active_section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -2111,7 +2129,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
             # the table back to every source while the header still names one
             # watchlist.
-            sources_pane.sources = self.scoped_loaded_sources()
+            sources_pane.set_reactive(
+                SourcesPane.sources, self.scoped_loaded_sources()
+            )
             sources_pane.selected_source = self.selected_source
             # TASK-2309: re-seed from screen state for the identical
             # rebuild-survival reason as `selected_source` on the line
@@ -2133,12 +2153,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else sources_pane.default_destination
             )
             if self._source_create_draft_type is not None:
-                sources_pane.create_draft_source_type = self._source_create_draft_type
+                sources_pane.set_reactive(
+                    SourcesPane.create_draft_source_type,
+                    self._source_create_draft_type,
+                )
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
             # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
-            # in sources_pane.py).
-            sources_pane.show_create_form = self._source_create_form_open
+            # in sources_pane.py). `set_reactive` (task-15778):
+            # `watch_show_create_form` is entirely `is_mounted`-gated, so the
+            # plain assignment bought nothing pre-mount but the extra
+            # recompose.
+            sources_pane.set_reactive(
+                SourcesPane.show_create_form, self._source_create_form_open
+            )
             sources_pane.create_draft_name = self._source_create_draft["name"]
             sources_pane.create_draft_url = self._source_create_draft["url"]
             sources_pane.create_draft_tags = self._source_create_draft["tags"]
@@ -2149,7 +2177,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             children.append(sources_pane)
         elif self.active_section == "runs":
             runs_pane = RunsPane(id="watchlists-runs-pane")
-            runs_pane.runs = self._loaded_runs
+            # `runs` is the pane's only `recompose=True` reactive, so it is
+            # the only one converted to `set_reactive` (task-15778). The
+            # four below stay PLAIN assignments on purpose:
+            # `watch_selected_run` is load-bearing even pre-mount -- it
+            # starts the status poll when the seeded run is still running
+            # (without it, a region rebuild mid-run would freeze the run's
+            # status until a manual refresh) -- and none of the four is
+            # `recompose=True`, so none of them costs the extra rebuild this
+            # task removes.
+            runs_pane.set_reactive(RunsPane.runs, self._loaded_runs)
             runs_pane.selected_run = self.selected_run
             # After `selected_run`, never before: setting the selection clears
             # the pane's detail (a run's items must never outlive the run they
@@ -2161,6 +2198,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
+            # Audited for task-15778 and deliberately left as plain
+            # assignments: `ArticleListPane` has NO `recompose=True`
+            # reactives at all (its watchers patch the mounted list in
+            # place), so this branch never paid the pre-mount seeding
+            # recompose and there is nothing to convert.
             items_pane = ArticleListPane(id="watchlists-items-pane")
             items_pane.items = self._loaded_items
             # Seed the filter, the search box and the selection too
@@ -2189,51 +2231,80 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
             rules_pane = RulesPane(id="watchlists-rules-pane")
-            rules_pane.rules = self._loaded_rules
+            rules_pane.set_reactive(RulesPane.rules, self._loaded_rules)
             # Seed the edit-form state so an in-progress rule edit survives
             # this pane being reconstructed (Finding 4, fix round 2) — the
             # same treatment the Sources create-form draft already gets
             # above; see `_rule_form_open`/`_rule_form_editing` in __init__
-            # and RuleFormVisibilityChanged in rules_pane.py.
+            # and RuleFormVisibilityChanged in rules_pane.py. `edit_rule`
+            # itself takes the `set_reactive` route on an unmounted pane
+            # (task-15778) — see its own comment.
             if self._rule_form_open:
                 if self._rule_form_editing is not None:
                     rules_pane.edit_rule(self._rule_form_editing)
                 else:
-                    rules_pane.show_rule_form = True
+                    rules_pane.set_reactive(RulesPane.show_rule_form, True)
             children.append(rules_pane)
         elif self.active_section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
-            notifications_pane.notifications = self._loaded_notifications
-            notifications_pane.selected_notification = self.selected_notification
+            notifications_pane.set_reactive(
+                NotificationsPane.notifications, self._loaded_notifications
+            )
+            notifications_pane.set_reactive(
+                NotificationsPane.selected_notification,
+                self.selected_notification,
+            )
             children.append(notifications_pane)
         elif self.active_section == "artifacts":
             # Seeded from screen state for the same reason every sibling
             # above is -- this is a factory the workbench calls on every
             # region rebuild, so a fresh pane's reactives start at their
-            # class defaults.
+            # class defaults. Every reactive this branch seeds is
+            # `recompose=True`, so every one goes through `set_reactive`
+            # (task-15778; the pane's two seeded-reactive watchers,
+            # `watch_selected_briefing`/`watch_selected_script`, are both
+            # pre-mount no-ops -- the former even guards specifically
+            # against wiping this very seeding).
             artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
-            artifacts_pane.briefings = self._loaded_briefings
-            artifacts_pane.selected_briefing = self._selected_briefing
-            artifacts_pane.scope_label = self._briefing_scope_label()
-            artifacts_pane.can_generate = self._can_generate_briefing()
-            artifacts_pane.default_provider_display = self._briefing_provider_display()
-            artifacts_pane.selection_mode = self._briefing_selection_mode
-            artifacts_pane.presets = self._loaded_briefing_presets
-            artifacts_pane.default_preset_id = self._briefing_default_preset_id
-            artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
-            artifacts_pane.briefing_schedules_enabled = (
-                self._briefing_schedules_enabled()
+            seed = artifacts_pane.set_reactive
+            seed(ArtifactsPane.briefings, self._loaded_briefings)
+            seed(ArtifactsPane.selected_briefing, self._selected_briefing)
+            seed(ArtifactsPane.scope_label, self._briefing_scope_label())
+            seed(ArtifactsPane.can_generate, self._can_generate_briefing())
+            seed(
+                ArtifactsPane.default_provider_display,
+                self._briefing_provider_display(),
             )
-            artifacts_pane.scripts = self._loaded_scripts
-            artifacts_pane.selected_script = self._selected_script
-            artifacts_pane.script_audio = self._loaded_script_audio
-            artifacts_pane.scripts_with_audio = self._scripts_with_audio
-            artifacts_pane.citations = self._loaded_citations
-            artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
-            artifacts_pane.chachanotes_available = self._chachanotes_db() is not None
-            artifacts_pane.can_serve_feed = self._last_feed_export_directory is not None
-            artifacts_pane.feed_server_running = self._feed_server.is_running
-            artifacts_pane.feed_server_url = self._feed_server.url
+            seed(ArtifactsPane.selection_mode, self._briefing_selection_mode)
+            seed(ArtifactsPane.presets, self._loaded_briefing_presets)
+            seed(ArtifactsPane.default_preset_id, self._briefing_default_preset_id)
+            seed(
+                ArtifactsPane.briefing_cadence_seconds,
+                self._briefing_cadence_seconds,
+            )
+            seed(
+                ArtifactsPane.briefing_schedules_enabled,
+                self._briefing_schedules_enabled(),
+            )
+            seed(ArtifactsPane.scripts, self._loaded_scripts)
+            seed(ArtifactsPane.selected_script, self._selected_script)
+            seed(ArtifactsPane.script_audio, self._loaded_script_audio)
+            seed(ArtifactsPane.scripts_with_audio, self._scripts_with_audio)
+            seed(ArtifactsPane.citations, self._loaded_citations)
+            seed(
+                ArtifactsPane.has_audio_episodes,
+                self._watchlist_has_audio_episodes,
+            )
+            seed(
+                ArtifactsPane.chachanotes_available,
+                self._chachanotes_db() is not None,
+            )
+            seed(
+                ArtifactsPane.can_serve_feed,
+                self._last_feed_export_directory is not None,
+            )
+            seed(ArtifactsPane.feed_server_running, self._feed_server.is_running)
+            seed(ArtifactsPane.feed_server_url, self._feed_server.url)
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -2299,7 +2370,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         would go stale the instant the layout that produced it changes.
         """
         pane = ContentPane(id="watchlists-content-pane")
-        pane.item = self._selected_content_item
+        # `set_reactive`: `item` is the pane's one `recompose=True` reactive
+        # and has no watcher, so a plain assignment here bought nothing but
+        # the queued extra recompose whenever an item was selected — a full
+        # second render of the article, inside the very swap task-15778
+        # batches. `expanded`/`position` below are non-recompose reactives
+        # whose watchers patch in place and stay plain, same audit as
+        # `_build_detail_pane`'s.
+        pane.set_reactive(ContentPane.item, self._selected_content_item)
         pane.expanded = self.region_layout.solo_region == Region.CONTENT
         # TASK-3072 plan task 9: re-seed the footer the same way `item` is
         # re-seeded just above, so a region rebuild re-renders the same
