@@ -3704,8 +3704,12 @@ class ConsoleTranscript(VerticalScroll):
         (selection lifecycle).
 
         The event carries SCREEN coordinates directly; the clamp keeps the
-        anchor within the screen bounds (the ``+1`` sits the menu just
-        below the release row).
+        anchor within the OWNING TRANSCRIPT's visible region (the ``+1``
+        sits the menu just below the release row). Live-spike 2026-08-16:
+        the real Console layout puts the composer + status bar BELOW the
+        transcript, so the transcript's box ends above the screen edge --
+        clamping the anchor to SCREEN bounds let a bottom-of-transcript
+        release paint the menu over the composer.
 
         Async and awaiting the previous menu's removal is load-bearing:
         ``Widget.remove()`` only SCHEDULES removal while ``mount()``
@@ -3733,14 +3737,18 @@ class ConsoleTranscript(VerticalScroll):
         # run-gated through the owning screen's status seam.
         origin_row = self._active_selection_row()
         feedback_available = self._row_supports_selection_feedback(origin_row)
-        screen_size = self.screen.size
+        # Clamp the ANCHOR POINT into the transcript's own visible box
+        # (never the bare screen): the composer/status bar live below this
+        # region, and the menu's measured post-layout clamp (in the menu)
+        # finishes the job against the same box.
+        bounds = self.region
         self.screen.mount(
             ConsoleSelectionMenu(
                 screen_x=self._clamp_menu_offset(
-                    event.screen_x, screen_size.width, margin=2
+                    event.screen_x, low=bounds.x, high=bounds.right, margin=2
                 ),
                 screen_y=self._clamp_menu_offset(
-                    event.screen_y + 1, screen_size.height, margin=2
+                    event.screen_y + 1, low=bounds.y, high=bounds.bottom, margin=2
                 ),
                 owner=self,
                 feedback_available=feedback_available,
@@ -3749,9 +3757,15 @@ class ConsoleTranscript(VerticalScroll):
         )
 
     @staticmethod
-    def _clamp_menu_offset(value: int, extent: int, *, margin: int) -> int:
-        """Clamp a transcript-local menu offset so the menu stays on the transcript."""
-        return max(0, min(value, max(0, extent - margin)))
+    def _clamp_menu_offset(value: int, low: int, high: int, *, margin: int) -> int:
+        """Clamp a screen-space menu anchor into ``[low, high - margin]``.
+
+        ``low``/``high`` delimit the owning transcript's visible box on one
+        axis, so the anchor can never leave the transcript (the composer
+        below it stays clear); the inner ``max(low, ...)`` guards
+        degenerate boxes thinner than the margin.
+        """
+        return max(low, min(value, max(low, high - margin)))
 
     @on(ConsoleSelectionMenu.AddToChat)
     def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:

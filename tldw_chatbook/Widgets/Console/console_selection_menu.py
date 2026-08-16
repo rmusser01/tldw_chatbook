@@ -8,7 +8,11 @@ combination painted the menu translated by the offset while clipping it to
 the un-translated dock slot -- the user saw one button, and hit-tests used
 the un-translated region so the other buttons were unclickable. Mounting on
 the screen with ``absolute_offset`` folds the position into the widget's
-region, so paint, clipping, and hit-testing all agree.
+region, so paint, clipping, and hit-testing all agree. Post-layout the
+menu clamps itself inside the OWNING TRANSCRIPT's visible box -- never the
+bare screen -- because the composer + status bar live below the transcript
+(a screen-clamped bottom release painted the menu over them; live spike
+2026-08-16).
 
 Escape and click-outside dismiss with no side effects (task-16211 modal
 contract, recorded by ADR-068). Keyboard navigation: up/down cycles the
@@ -29,7 +33,7 @@ from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.events import Click, Key
-from textual.geometry import Offset
+from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -206,10 +210,12 @@ class ConsoleSelectionMenu(Vertical):
             self._previous_focus = None
         self.absolute_offset = Offset(*self._anchor)
         # Only this widget knows its real extent (border + padding +
-        # buttons); pull the anchor back inside the screen once layout has
-        # measured it, or a release near the bottom edge anchors the lower
-        # buttons off-screen (pilot/OutOfBounds; real terminal: unreachable).
-        self.call_after_refresh(self._clamp_within_screen)
+        # buttons); pull the anchor back inside the OWNING TRANSCRIPT's
+        # visible box once layout has measured it, or a release near the
+        # transcript's bottom edge anchors the lower buttons over the
+        # composer below it (live spike 2026-08-16; pilot/OutOfBounds;
+        # real terminal: unreachable and overlapping).
+        self.call_after_refresh(self._clamp_within_owner)
         # Skip disabled buttons (run-gated feedback actions): focusing one
         # would drop focus entirely (disabled widgets are not focusable).
         buttons = [b for b in self.query(Button) if b.display and not b.disabled]
@@ -221,20 +227,39 @@ class ConsoleSelectionMenu(Vertical):
         else:
             self.focus(scroll_visible=False)
 
-    def _clamp_within_screen(self) -> None:
-        """Shift the anchor so the measured menu fits the screen."""
+    def _clamp_within_owner(self) -> None:
+        """Shift the anchor so the measured menu fits its clamp box.
+
+        The clamp box is the OWNING TRANSCRIPT's visible region (the
+        composer + status bar live below it, so the transcript box ends
+        above the screen edge -- clamping to SCREEN bounds painted the menu
+        over the composer on bottom-of-transcript releases, live spike
+        2026-08-16). Ownerless menus (bare test harnesses) fall back to the
+        screen bounds.
+        """
         if self.parent is None or not self.is_attached:
             return
         region = self.region
-        screen_size = self.screen.size
         if not region:
             return
-        shift_x = max(0, region.right - screen_size.width)
-        shift_y = max(0, region.bottom - screen_size.height)
+        owner = self._owner
+        bounds: Region | None = None
+        if owner is not None and owner.is_attached:
+            owner_region = owner.region
+            if owner_region:
+                bounds = owner_region
+        if bounds is None:
+            screen_size = self.screen.size
+            bounds = Region(0, 0, screen_size.width, screen_size.height)
+        shift_x = max(0, region.right - bounds.right)
+        shift_y = max(0, region.bottom - bounds.bottom)
         if not shift_x and not shift_y:
             return
         x, y = self._anchor
-        self._anchor = (max(0, x - shift_x), max(0, y - shift_y))
+        self._anchor = (
+            max(bounds.x, x - shift_x),
+            max(bounds.y, y - shift_y),
+        )
         self.absolute_offset = Offset(*self._anchor)
 
     def on_key(self, event: Key) -> None:

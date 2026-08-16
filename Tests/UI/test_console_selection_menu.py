@@ -427,6 +427,73 @@ async def test_menu_anchors_at_release_cell_in_tall_transcript():
         assert transcript.virtual_size.height == flow_height_before
 
 
+class _ShortTranscriptWithComposerApp(App[None]):
+    """Transcript that does NOT reach the screen bottom (composer below).
+
+    Live-spike 2026-08-16: the real Console layout puts the composer +
+    status bar BELOW the transcript, so the transcript's visible box ends
+    above the screen edge. Clamping the menu to SCREEN bounds let a
+    bottom-anchored menu paint over the composer.
+    """
+
+    CSS = """
+    ConsoleTranscript {
+        height: 20;
+    }
+    #composer-standin {
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content=f"row {i} selectable text", id=f"m{i}"
+                )
+                for i in range(30)
+            ]
+        )
+        yield transcript
+        yield Static("composer stand-in", id="composer-standin")
+
+
+@pytest.mark.asyncio
+async def test_last_row_release_keeps_menu_within_transcript_not_composer():
+    """Regression (live spike 2026-08-16): clamp to the transcript box, not
+    the screen.
+
+    A release on the LAST visible row of a transcript that does not extend
+    to the screen bottom must keep the menu inside the transcript's visible
+    region -- never overlapping the composer that lives below it.
+    """
+    app = _ShortTranscriptWithComposerApp()
+    async with app.run_test(size=(80, 32)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = app.query_one("#console-message-m0", ConsoleTranscriptMessage)
+        region = transcript.region
+        assert region.bottom < 32  # transcript does NOT reach the screen bottom
+        transcript.selection_manager.begin_drag(row.id, 0)
+        transcript.selection_manager.extend_drag(row.id, 5)
+        row.set_selection_range(0, 5)
+        transcript.selection_manager.finish_drag()
+        transcript.post_message(
+            ConsoleTranscript.TranscriptTextSelected(
+                selection=TextSelection(row.id, 0, 5),
+                screen_x=region.x + 4,
+                screen_y=region.bottom - 1,  # release at the transcript's last row
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()  # let the post-layout clamp settle
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert region.x <= menu.region.x
+        assert menu.region.right <= region.right
+        assert region.y <= menu.region.y
+        assert menu.region.bottom <= region.bottom
+
+
 @pytest.mark.asyncio
 async def test_far_right_release_keeps_menu_inside_transcript():
     """Regression: a release near the transcript's right edge must not overhang.
