@@ -7,11 +7,10 @@ sync code must translate it rather than sending it to a server.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Final
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
 
 LOCAL_OWNER_ID: Final = 0
 
@@ -188,6 +187,8 @@ class VisualIdentityRepository:
         expected_active_identity: tuple[int, int] | None = None,
         expected_binding_id: int | None = None,
         expected_binding_version: int | None = None,
+        expected_source_pack_version: int | None = None,
+        publication_guard: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Atomically create and activate one complete pack graph.
 
@@ -202,6 +203,9 @@ class VisualIdentityRepository:
             expected_binding_id: Optional immutable binding row identity that
                 must still own the actor before activation.
             expected_binding_version: Optional optimistic binding revision.
+            expected_source_pack_version: Optional optimistic source-pack revision.
+            publication_guard: Optional final filesystem identity check invoked
+                while the transaction holds its write reservation.
 
         Returns:
             Nested plain dictionaries for the activated graph.
@@ -233,6 +237,38 @@ class VisualIdentityRepository:
                     != expected_active_identity
                 ):
                     raise ValueError("visual_identity_binding_changed")
+                reserved = self.db.execute_query(
+                    """
+                    UPDATE visual_identity_bindings
+                       SET id = id
+                     WHERE id = ? AND owner_user_id = ? AND status = 'active'
+                       AND version = ?
+                    """,
+                    (int(existing["id"]), LOCAL_OWNER_ID, int(existing["version"])),
+                )
+                if reserved.rowcount != 1:
+                    raise ValueError("visual_identity_binding_changed")
+                source_pack = self.db.execute_query(
+                    """
+                    SELECT status, active_version_id, version
+                      FROM visual_identity_packs
+                     WHERE id = ? AND owner_user_id = ?
+                    """,
+                    (expected_active_identity[0], LOCAL_OWNER_ID),
+                ).fetchone()
+                if (
+                    source_pack is None
+                    or source_pack["status"] != "active"
+                    or int(source_pack["active_version_id"])
+                    != expected_active_identity[1]
+                    or (
+                        expected_source_pack_version is not None
+                        and int(source_pack["version"]) != expected_source_pack_version
+                    )
+                ):
+                    raise ValueError("visual_identity_binding_changed")
+            if publication_guard is not None and not publication_guard():
+                raise ValueError("visual_identity_publication_changed")
             pack_id = int(
                 self.db.execute_query(
                     """
@@ -296,6 +332,7 @@ class VisualIdentityRepository:
         expected_binding_version: int | None = None,
         expected_pack_version: int | None = None,
         require_single_active_binding: bool = False,
+        publication_guard: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Atomically publish the next immutable version of a user-owned pack.
 
@@ -314,6 +351,8 @@ class VisualIdentityRepository:
             expected_pack_version: Optional optimistic pack revision.
             require_single_active_binding: Whether the pack must be bound only
                 to this actor before it may advance.
+            publication_guard: Optional final filesystem identity check invoked
+                while the transaction holds its write reservation.
 
         Returns:
             Nested plain dictionaries for the newly active graph.
@@ -370,6 +409,20 @@ class VisualIdentityRepository:
                 and self.count_active_pack_bindings(pack_id) != 1
             ):
                 raise ValueError("visual_identity_binding_changed")
+            if binding is not None:
+                reserved = self.db.execute_query(
+                    """
+                    UPDATE visual_identity_bindings
+                       SET id = id
+                     WHERE id = ? AND owner_user_id = ? AND status = 'active'
+                       AND version = ?
+                    """,
+                    (int(binding["id"]), LOCAL_OWNER_ID, int(binding["version"])),
+                )
+                if reserved.rowcount != 1:
+                    raise ValueError("visual_identity_binding_changed")
+            if publication_guard is not None and not publication_guard():
+                raise ValueError("visual_identity_publication_changed")
 
             version_number = int(
                 self.db.execute_query(

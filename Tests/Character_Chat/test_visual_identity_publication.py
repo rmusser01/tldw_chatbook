@@ -385,7 +385,7 @@ def test_permission_or_atomic_replace_failure_preserves_active_and_cleans_stagin
 
     with pytest.raises(
         VisualIdentityPublicationError, match="visual_identity_publication_denied"
-    ):
+    ) as caught:
         publish_visual_identity_candidate(
             environment["db"],
             candidate,
@@ -394,6 +394,7 @@ def test_permission_or_atomic_replace_failure_preserves_active_and_cleans_stagin
         )
 
     assert _active_identity(environment) == before
+    assert caught.value.cleanup_candidate_relpath is None
     assert not list(environment["user_root"].rglob(".staging-*"))
     assert not list(environment["user_root"].rglob("manifest.json"))
 
@@ -1539,11 +1540,14 @@ def test_post_rename_fifo_asset_is_rejected_without_blocking(
             atomic_replace=replace_then_fifo,
         )
 
-    assert caught.value.cleanup_candidate_relpath is not None
+    if forced_fallback:
+        assert caught.value.cleanup_candidate_relpath is None
+    else:
+        assert caught.value.cleanup_candidate_relpath is not None
     assert _active_identity(environment) == before
 
 
-def test_forced_fallback_failure_retains_bounded_cleanup_candidate(
+def test_forced_fallback_failure_does_not_promise_unverified_cleanup(
     publication_environment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     environment = publication_environment
@@ -1568,14 +1572,10 @@ def test_forced_fallback_failure_retains_bounded_cleanup_candidate(
             atomic_replace=deny_replace,
         )
 
-    assert caught.value.cleanup_candidate_relpath is not None
-    retained = (
-        environment["user_root"]
-        / "visual_identities"
-        / caught.value.cleanup_candidate_relpath
-    )
-    assert retained.is_dir()
-    assert (retained / "manifest.json").is_file()
+    assert caught.value.cleanup_candidate_relpath is None
+    retained = list(environment["user_root"].rglob(".staging-*"))
+    assert len(retained) == 1
+    assert (retained[0] / "manifest.json").is_file()
 
 
 def test_same_binding_row_away_and_back_revision_is_rejected(
@@ -1952,3 +1952,378 @@ def test_post_rename_parent_fsync_failure_reports_known_cleanup_candidate(
     ).is_dir()
     assert candidate._publishing is False
     assert _active_identity(environment) == before
+
+
+@pytest.mark.parametrize("source_pack_change", ["archive", "revision"])
+def test_fork_rejects_source_pack_status_or_revision_race(
+    publication_environment,
+    source_pack_change: str,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((51, 51, 51)))
+
+    def replace_then_change_source(source, destination, **kwargs):
+        os.replace(source, destination, **kwargs)
+        with db.transaction():
+            db.execute_query(
+                """
+                UPDATE visual_identity_packs
+                   SET status = ?, version = version + 1
+                 WHERE id = ?
+                """,
+                (
+                    "archived" if source_pack_change == "archive" else "active",
+                    candidate.old_pack_id,
+                ),
+            )
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_binding_changed"
+    ) as caught:
+        publish_visual_identity_candidate(
+            db,
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=replace_then_change_source,
+        )
+
+    assert caught.value.cleanup_candidate_relpath is not None
+    assert not db.execute_query(
+        "SELECT id FROM visual_identity_packs WHERE source_kind = 'manual'"
+    ).fetchall()
+
+
+def test_posix_staging_cleanup_candidate_is_consumable(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"],
+        actor_kind="character",
+        actor_id=environment["actor_id"],
+    )
+    candidate.stage_replacement("thinking", _png_bytes((52, 52, 52)))
+    original_discard = visual_identity_module._discard_staging_directory
+
+    monkeypatch.setattr(
+        visual_identity_module, "_discard_staging_directory", lambda *_args: False
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                PermissionError("denied")
+            ),
+        )
+
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+    assert "/.staging-" in relpath
+    monkeypatch.setattr(
+        visual_identity_module, "_discard_staging_directory", original_discard
+    )
+    assert visual_identity_module.cleanup_visual_identity_publication_candidate(
+        environment["db"], relpath, user_data_dir=environment["user_root"]
+    )
+    assert not (environment["user_root"] / "visual_identities" / relpath).exists()
+
+
+def test_cleanup_holds_write_reservation_until_reference_recheck(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((53, 53, 53)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+
+    original_discard = visual_identity_module._discard_pinned_directory
+    injected = False
+
+    def inject_reference_then_report_success(parent_fd, entry_name, pinned_fd):
+        nonlocal injected
+        if not injected:
+            injected = True
+            db.execute_query(
+                """
+                UPDATE visual_identity_assets
+                   SET storage_relpath = ?
+                 WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
+                """,
+                (f"{relpath}/manifest.json",),
+            )
+            return True
+        return original_discard(parent_fd, entry_name, pinned_fd)
+
+    monkeypatch.setattr(
+        visual_identity_module,
+        "_discard_pinned_directory",
+        inject_reference_then_report_success,
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_referenced"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+
+
+def test_new_reference_writer_cannot_enter_during_cleanup(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((53, 54, 53)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+
+    discard_entered = threading.Event()
+    release_discard = threading.Event()
+    writer_attempting = threading.Event()
+    writer_entered = threading.Event()
+    original_discard = visual_identity_module._discard_pinned_directory
+
+    def blocked_discard(parent_fd, entry_name, pinned_fd):
+        discard_entered.set()
+        assert release_discard.wait(5)
+        return original_discard(parent_fd, entry_name, pinned_fd)
+
+    def competing_reference_writer():
+        connection = sqlite3.connect(db.db_path_str, timeout=5)
+        try:
+            writer_attempting.set()
+            connection.execute("BEGIN IMMEDIATE")
+            writer_entered.set()
+            connection.execute(
+                """
+                UPDATE visual_identity_assets
+                   SET storage_relpath = ?
+                 WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
+                """,
+                (f"{relpath}/manifest.json",),
+            )
+            connection.rollback()
+        finally:
+            connection.close()
+
+    monkeypatch.setattr(
+        visual_identity_module, "_discard_pinned_directory", blocked_discard
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        cleanup = executor.submit(
+            visual_identity_module.cleanup_visual_identity_publication_candidate,
+            db,
+            relpath,
+            user_data_dir=environment["user_root"],
+        )
+        assert discard_entered.wait(5)
+        writer = executor.submit(competing_reference_writer)
+        assert writer_attempting.wait(5)
+        try:
+            assert not writer_entered.wait(0.2)
+        finally:
+            release_discard.set()
+        assert cleanup.result(timeout=5)
+        writer.result(timeout=5)
+    assert writer_entered.is_set()
+
+
+def test_final_name_is_revalidated_inside_repository_transaction(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"],
+        actor_kind="character",
+        actor_id=environment["actor_id"],
+    )
+    candidate.stage_replacement("thinking", _png_bytes((54, 54, 54)))
+    original_sync = visual_identity_module._sync_publication_directory
+    sync_calls = 0
+
+    def swap_after_second_sync(directory):
+        nonlocal sync_calls
+        original_sync(directory)
+        sync_calls += 1
+        if sync_calls == 2:
+            versions = next(environment["user_root"].rglob("versions"))
+            final = next(
+                path
+                for path in versions.iterdir()
+                if path.is_dir() and not path.name.startswith(".staging-")
+            )
+            os.rename(final, versions / ".detached-final")
+            final.mkdir()
+
+    monkeypatch.setattr(
+        visual_identity_module, "_sync_publication_directory", swap_after_second_sync
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+        )
+
+    assert _active_identity(environment) == before
+    assert caught.value.cleanup_candidate_relpath is None
+    assert (
+        not environment["db"]
+        .execute_query(
+            "SELECT id FROM visual_identity_packs WHERE source_kind = 'manual'"
+        )
+        .fetchall()
+    )
+
+
+def test_final_name_guard_runs_with_repository_write_reservation(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((54, 55, 54)))
+    original_match = visual_identity_module._entry_matches_fd
+    reservation_observed: list[bool] = []
+
+    def observe_reservation(parent_fd, entry_name, pinned_fd):
+        if db.get_connection().in_transaction:
+            competitor = sqlite3.connect(db.db_path_str, timeout=0)
+            try:
+                try:
+                    competitor.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    reservation_observed.append(True)
+                else:
+                    reservation_observed.append(False)
+                    competitor.rollback()
+            finally:
+                competitor.close()
+        return original_match(parent_fd, entry_name, pinned_fd)
+
+    monkeypatch.setattr(
+        visual_identity_module, "_entry_matches_fd", observe_reservation
+    )
+    publish_visual_identity_candidate(
+        db, candidate, user_data_dir=environment["user_root"]
+    )
+
+    assert reservation_observed == [True]
+
+
+def test_cleanup_refuses_detached_directory_replaced_by_symlink(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((55, 55, 55)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+    original_discard = visual_identity_module._discard_pinned_directory
+
+    def substitute_then_discard(parent_fd, entry_name, pinned_fd):
+        os.rename(
+            entry_name,
+            ".detached-cleanup",
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        os.mkdir("replacement-target", dir_fd=parent_fd)
+        os.symlink("replacement-target", entry_name, dir_fd=parent_fd)
+        return original_discard(parent_fd, entry_name, pinned_fd)
+
+    monkeypatch.setattr(
+        visual_identity_module, "_discard_pinned_directory", substitute_then_discard
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_denied"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+
+    versions = next(environment["user_root"].rglob("versions"))
+    assert (versions / ".detached-cleanup" / "manifest.json").is_file()
+    assert (versions / Path(relpath).name).is_symlink()
+
+
+def test_cleanup_rejects_caller_owned_transaction(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((56, 56, 56)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+
+    with (
+        db.transaction(),
+        pytest.raises(
+            VisualIdentityPublicationError,
+            match="visual_identity_transaction_active",
+        ),
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+
+    assert (environment["user_root"] / "visual_identities" / relpath).is_dir()

@@ -1903,10 +1903,6 @@ def publish_visual_identity_candidate(
             versions_fd=versions_fd,
             staging_fd=staging_fd,
             final_name=final_name,
-            staging_identity=staging_identity,
-            staging_dir=staging_dir,
-            final_dir=final_dir,
-            staging_relpath=staging_relpath,
             final_relpath=final_relpath,
         )
 
@@ -2025,6 +2021,18 @@ def publish_visual_identity_candidate(
             )
             _verify_materialized_candidate(published_read, assets)
             _sync_publication_directory(versions_fd if posix_guards else versions_root)
+
+            def publication_guard() -> bool:
+                if posix_guards:
+                    return _publication_chain_matches(
+                        chain, secured_identities
+                    ) and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                return (
+                    _path_chain_matches(secured_identities, profile_root=profile_root)
+                    and staging_identity is not None
+                    and _path_matches_identity(final_dir, staging_identity)
+                )
+
             try:
                 if fork_pack:
                     graph = repository.activate_pack(
@@ -2049,6 +2057,8 @@ def publish_visual_identity_candidate(
                         ),
                         expected_binding_id=candidate.old_binding_id,
                         expected_binding_version=candidate.old_binding_version,
+                        expected_source_pack_version=candidate.old_pack_version,
+                        publication_guard=publication_guard,
                     )
                 else:
                     graph = repository.publish_version(
@@ -2063,17 +2073,16 @@ def publish_visual_identity_candidate(
                         expected_binding_version=candidate.old_binding_version,
                         expected_pack_version=candidate.old_pack_version,
                         require_single_active_binding=True,
+                        publication_guard=publication_guard,
                     )
             except ValueError as error:
-                category = (
-                    "visual_identity_binding_changed"
-                    if str(error) == "visual_identity_binding_changed"
-                    else "visual_identity_database_failed"
-                )
-                raise VisualIdentityPublicationError(
-                    category,
-                    cleanup_candidate_relpath=final_relpath,
-                ) from None
+                if str(error) == "visual_identity_binding_changed":
+                    category = "visual_identity_binding_changed"
+                elif str(error) == "visual_identity_publication_changed":
+                    category = "visual_identity_publication_denied"
+                else:
+                    category = "visual_identity_database_failed"
+                raise VisualIdentityPublicationError(category) from None
             except (
                 CharactersRAGDBError,
                 sqlite3.Error,
@@ -2082,8 +2091,7 @@ def publish_visual_identity_candidate(
                 TypeError,
             ):
                 raise VisualIdentityPublicationError(
-                    "visual_identity_database_failed",
-                    cleanup_candidate_relpath=final_relpath,
+                    "visual_identity_database_failed"
                 ) from None
             candidate._published = True
             candidate._publishing = False
@@ -2133,7 +2141,8 @@ def publish_visual_identity_candidate(
 
 
 _PUBLICATION_CLEANUP_RE = re.compile(
-    r"\Apacks/(profile-[0-9a-f]{32})/versions/([0-9a-f]{32})\Z"
+    r"\Apacks/(profile-[0-9a-f]{32})/versions/"
+    r"([0-9a-f]{32}|\.staging-[0-9a-f]{32})\Z"
 )
 
 
@@ -2153,19 +2162,11 @@ def cleanup_visual_identity_publication_candidate(
     if match is None or not _publication_posix_guards_available():
         raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
     profile_root, assets_root = _visual_identity_publication_roots(user_data_dir)
+    connection = None
     try:
-        if db.get_connection().in_transaction:
+        connection = db.get_connection()
+        if connection.in_transaction:
             raise VisualIdentityPublicationError("visual_identity_transaction_active")
-        referenced = db.execute_query(
-            """
-            SELECT 1
-             FROM visual_identity_assets
-             WHERE owner_user_id = 0
-               AND (storage_relpath = ? OR storage_relpath LIKE ?)
-             LIMIT 1
-            """,
-            (cleanup_candidate_relpath, f"{cleanup_candidate_relpath}/%"),
-        ).fetchone()
     except VisualIdentityPublicationError:
         raise
     except (
@@ -2179,9 +2180,6 @@ def cleanup_visual_identity_publication_candidate(
         raise VisualIdentityPublicationError(
             "visual_identity_database_failed"
         ) from None
-    if referenced is not None:
-        raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
-
     pack_token, version_token = match.groups()
     versions_root = assets_root / "packs" / pack_token / "versions"
     identities: dict[Path, tuple[int, int]] = {}
@@ -2205,6 +2203,7 @@ def cleanup_visual_identity_publication_candidate(
         raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
     chain: list[tuple[int, str, int, Path]] = []
     candidate_fd = -1
+    reservation_active = False
     try:
         chain = _open_publication_chain(versions_root)
         versions_fd = chain[-1][2]
@@ -2215,15 +2214,51 @@ def cleanup_visual_identity_publication_candidate(
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=versions_fd,
         )
+        connection.execute("BEGIN IMMEDIATE")
+        reservation_active = True
+        referenced = connection.execute(
+            """
+            SELECT 1
+              FROM visual_identity_assets
+             WHERE owner_user_id = 0
+               AND (storage_relpath = ? OR storage_relpath LIKE ?)
+             LIMIT 1
+            """,
+            (cleanup_candidate_relpath, f"{cleanup_candidate_relpath}/%"),
+        ).fetchone()
+        if referenced is not None:
+            raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
+        if not _publication_chain_matches(chain, identities):
+            raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
         if not _discard_pinned_directory(versions_fd, version_token, candidate_fd):
             raise VisualIdentityPublicationError("visual_identity_cleanup_denied")
         _sync_publication_directory(versions_fd)
+        referenced = connection.execute(
+            """
+            SELECT 1
+              FROM visual_identity_assets
+             WHERE owner_user_id = 0
+               AND (storage_relpath = ? OR storage_relpath LIKE ?)
+             LIMIT 1
+            """,
+            (cleanup_candidate_relpath, f"{cleanup_candidate_relpath}/%"),
+        ).fetchone()
+        if referenced is not None:
+            raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
+        connection.commit()
+        reservation_active = False
         return True
     except VisualIdentityPublicationError:
         raise
+    except sqlite3.Error:
+        raise VisualIdentityPublicationError(
+            "visual_identity_database_failed"
+        ) from None
     except OSError:
         raise VisualIdentityPublicationError("visual_identity_cleanup_denied") from None
     finally:
+        if reservation_active:
+            connection.rollback()
         if candidate_fd >= 0:
             os.close(candidate_fd)
         if chain:
@@ -2556,10 +2591,6 @@ def _remaining_publication_candidate_relpath(
     versions_fd: int,
     staging_fd: int,
     final_name: str,
-    staging_identity: tuple[int, int] | None,
-    staging_dir: Path,
-    final_dir: Path,
-    staging_relpath: str,
     final_relpath: str,
 ) -> str | None:
     if posix_guards:
@@ -2570,12 +2601,6 @@ def _remaining_publication_candidate_relpath(
         ):
             return final_relpath
         return None
-    if staging_identity is None:
-        return None
-    if _path_matches_identity(final_dir, staging_identity):
-        return final_relpath
-    if _path_matches_identity(staging_dir, staging_identity):
-        return staging_relpath
     return None
 
 
@@ -2704,9 +2729,6 @@ def _discard_pinned_directory(parent_fd: int, entry_name: str, pinned_fd: int) -
             dir_fd=parent_fd,
             follow_symlinks=False,
         )
-        if stat.S_ISLNK(entry_stat.st_mode):
-            os.unlink(entry_name, dir_fd=parent_fd)
-            return True
         if pinned_fd < 0 or not stat.S_ISDIR(entry_stat.st_mode):
             return False
         pinned_stat = os.fstat(pinned_fd)
