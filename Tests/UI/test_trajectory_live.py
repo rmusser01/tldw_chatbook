@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -371,10 +372,20 @@ def test_build_trajectory_snapshot_renders_compaction_and_variants(tmp_path):
         db.close()
 
 
-def test_trajectory_launch_action_presents_screen():
-    """The action pushes a TrajectoryScreen built from the active session."""
-    instance = ChatScreen.__new__(ChatScreen)  # bypass heavy __init__
-    pushed: list[object] = []
+async def test_trajectory_launch_action_presents_screen():
+    """The `y` action builds off-thread and pushes a real TrajectoryScreen.
+
+    Regression shape matters here (task-16847): the first version of this
+    test monkeypatched ``instance.call_from_thread`` and
+    ``instance.push_screen`` directly onto the ChatScreen instance --
+    doubles for attributes that do not exist on ``Screen`` at all (both are
+    App-only in Textual 8). The test passed while pressing ``y`` in the
+    real app raised ``AttributeError`` inside the thread worker and never
+    presented anything. This version exercises the real seams instead: the
+    real ``run_worker(thread=True)``, the real ``App.call_from_thread``
+    marshal from the worker thread, and the real ``App.push_screen`` -- so
+    a bare-``self.`` regression on any of them fails loudly.
+    """
 
     class _Store:
         active_session_id = "sess-1"
@@ -390,13 +401,26 @@ def test_trajectory_launch_action_presents_screen():
         def get_payload_revision(self, conversation_id):
             return 1
 
-    instance._console_chat_store = _Store()
-    instance.push_screen = lambda screen, **kwargs: pushed.append(screen)
-    instance.notify = lambda *args, **kwargs: None
-    # Run the launch worker synchronously: build -> present -> push_screen.
-    instance.run_worker = lambda fn, **kwargs: fn()
-    instance.call_from_thread = lambda fn, *args: fn(*args)
+    class _HostApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield Static("base")
 
-    ChatScreen.action_open_trajectory_view(instance)
-    assert pushed and isinstance(pushed[0], TrajectoryScreen)
-    assert pushed[0]._conversation_id == "conv-1"
+    app = _HostApp()
+    async with app.run_test() as pilot:
+        instance = ChatScreen.__new__(ChatScreen)  # bypass heavy __init__
+        # Real DOMNode/MessagePump plumbing without ChatScreen's heavy
+        # __init__, then graft onto the running app so `self.app` (the
+        # attribute the production code must reach through) resolves.
+        Screen.__init__(instance)
+        instance._parent = app
+        instance._console_chat_store = _Store()
+        instance.notify = lambda *args, **kwargs: None  # not under test
+
+        ChatScreen.action_open_trajectory_view(instance)
+        # build() runs on a real worker thread; present() is marshaled back
+        # via the real App.call_from_thread and pushes onto the real stack.
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert isinstance(app.screen, TrajectoryScreen)
+        assert app.screen._conversation_id == "conv-1"

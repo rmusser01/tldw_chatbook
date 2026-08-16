@@ -3038,8 +3038,12 @@ class ChatScreen(BaseAppScreen):
         def build() -> TrajectorySnapshot:
             return _build_trajectory_snapshot(store, conv_id)
 
+        # task-16847: `Screen` defines NEITHER `call_from_thread` NOR
+        # `push_screen` (both are App-only in Textual 8) -- the original
+        # bare `self.` spelling of each raised AttributeError inside the
+        # thread worker, so pressing `y` never presented anything.
         def present(snapshot: TrajectorySnapshot) -> None:
-            self.push_screen(
+            self.app.push_screen(
                 TrajectoryScreen(
                     snapshot,
                     screen_title=screen_title,
@@ -3051,7 +3055,7 @@ class ChatScreen(BaseAppScreen):
 
         def build_worker() -> None:
             snapshot = build()
-            self.call_from_thread(present, snapshot)
+            self.app.call_from_thread(present, snapshot)
 
         self.notify("Building trajectory…")
         self.run_worker(
