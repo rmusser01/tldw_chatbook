@@ -8527,6 +8527,9 @@ class ConsoleChatController:
             and owner.persisted_conversation_id is not None
         ):
             snapshots = self._durable_context_snapshots(session_id)
+            # Truthiness on purpose: None (unvalidatable lineage) and ()
+            # (no durable rows yet) both select no memory — an empty prefix
+            # can't validate any candidate — matching the send-path guards.
             if snapshots:
                 memory = select_valid_memory(
                     self._context_repository.list_active_memories(
@@ -8549,6 +8552,7 @@ class ConsoleChatController:
         ):
             return None
         snapshots = self._durable_context_snapshots(session_id)
+        # Truthiness on purpose: None and () both mean nothing can be reset.
         if not snapshots:
             return None
         memory = select_valid_memory(
