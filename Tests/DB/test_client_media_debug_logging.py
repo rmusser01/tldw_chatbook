@@ -8,11 +8,13 @@ text. The document-version assertions retain task-15474's lazy logging check.
 import inspect
 import io
 import logging
+import sqlite3
 import sys
 
 import pytest
 from loguru import logger
 
+from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError, MediaDatabase
 
 
@@ -154,6 +156,85 @@ class TestConvertedSitesStillLogUnderDebug:
             db.db_path_str,
         ):
             assert private_value not in captured
+
+    def test_closed_connection_reopens_without_private_diagnostics(self, db):
+        database_path = db.db_path_str
+        connection = db.get_connection()
+        connection.close()
+        db._local.conn_last_used = None
+        loguru_output = io.StringIO()
+        stdlib_output = io.StringIO()
+        stdlib_handler = logging.StreamHandler(stdlib_output)
+        root_logger = logging.getLogger()
+        previous_level = root_logger.level
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(stdlib_handler)
+        sink_id = logger.add(loguru_output, level="DEBUG")
+        try:
+            rows, total = db.search_media_db(None, library_summary=True)
+        finally:
+            logger.remove(sink_id)
+            root_logger.removeHandler(stdlib_handler)
+            root_logger.setLevel(previous_level)
+
+        assert rows == []
+        assert total == 0
+        captured = loguru_output.getvalue() + stdlib_output.getvalue()
+        assert "Media database connection was closed; reopening." in captured
+        assert database_path not in captured
+        assert "test-client" not in captured
+
+    @pytest.mark.parametrize("operation", ["search", "types"])
+    def test_connection_open_failure_is_wrapped_without_private_diagnostics(
+        self, db, monkeypatch, operation
+    ):
+        error_sentinel = "PRIVATE_CONNECTION_ERROR_TASK_16483"
+        database_path = db.db_path_str
+        db.close_connection()
+
+        def fail_connection(*_args, **_kwargs):
+            raise sqlite3.OperationalError(
+                f"{error_sentinel} path={database_path} credential=PRIVATE_TOKEN"
+            )
+
+        monkeypatch.setattr(
+            media_db_module, "connect_private_sqlite", fail_connection
+        )
+        loguru_output = io.StringIO()
+        stdlib_output = io.StringIO()
+        stdlib_handler = logging.StreamHandler(stdlib_output)
+        root_logger = logging.getLogger()
+        previous_level = root_logger.level
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(stdlib_handler)
+        sink_id = logger.add(loguru_output, level="DEBUG")
+        try:
+            expected_message = (
+                "Media search failed"
+                if operation == "search"
+                else "Failed to fetch distinct media types"
+            )
+            with pytest.raises(DatabaseError, match=expected_message) as raised:
+                if operation == "search":
+                    db.search_media_db(None, library_summary=True)
+                else:
+                    db.get_distinct_media_types()
+        finally:
+            logger.remove(sink_id)
+            root_logger.removeHandler(stdlib_handler)
+            root_logger.setLevel(previous_level)
+
+        captured = loguru_output.getvalue() + stdlib_output.getvalue()
+        assert "error_type=OperationalError" in captured
+        assert raised.value.__cause__ is None
+        for private_value in (
+            error_sentinel,
+            database_path,
+            "PRIVATE_TOKEN",
+            "test-client",
+        ):
+            assert private_value not in captured
+            assert private_value not in str(raised.value)
 
     def test_get_all_document_versions_log_line_fires_under_debug(self, db, capsys):
         media_id = _seed_one_media_item(db)

@@ -714,7 +714,7 @@ class MediaDatabase:
                     conn.execute("SELECT 1")  # Simple check
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
                     logging.warning(
-                        f"Thread-local connection to {self.db_path_str} was closed. Reopening."
+                        "Media database connection was closed; reopening."
                     )
                     is_closed = True
                     try:
@@ -745,18 +745,14 @@ class MediaDatabase:
                 conn.execute("PRAGMA synchronous=NORMAL;")
                 conn.execute("PRAGMA foreign_keys = ON;")
                 self._local.conn = conn
-                logging.debug(
-                    f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
-                )
-            except (sqlite3.Error, PrivatePathError) as e:
+                logging.debug("Media database connection opened.")
+            except (sqlite3.Error, PrivatePathError) as error:
                 logging.error(
-                    f"Failed to connect to database at {self.db_path_str}: {e}",
-                    exc_info=True,
+                    "Media database connection failed (error_type=%s).",
+                    type(error).__name__,
                 )
                 self._local.conn = None
-                raise DatabaseError(
-                    f"Failed to connect to database '{self.db_path_str}': {e}"
-                ) from e
+                raise DatabaseError("Failed to connect to media database.") from None
         self._local.conn_last_used = time.monotonic()
         return self._local.conn
 
@@ -2224,9 +2220,11 @@ class MediaDatabase:
             f"{final_select_stmt} {base_from} {join_clause} {where_clause} "
             f"{order_by_clause_str} LIMIT ? OFFSET ?"
         )
-        connection = self.get_connection()
-        owns_transaction = not connection.in_transaction
+        connection = None
+        owns_transaction = False
         try:
+            connection = self.get_connection()
+            owns_transaction = not connection.in_transaction
             if owns_transaction:
                 connection.execute("BEGIN")
             count_row = connection.execute(count_sql, tuple(params)).fetchone()
@@ -2241,7 +2239,7 @@ class MediaDatabase:
             if owns_transaction:
                 connection.commit()
         except Exception as error:
-            if owns_transaction:
+            if connection is not None and owns_transaction:
                 connection.rollback()
             logger.error(
                 "Media search failed (error_type={}).", type(error).__name__
