@@ -85,10 +85,11 @@ wins; never build speculative UI for an affordance nothing designed). Evidence c
    legacy 2025-07 `Docs/Features/TTS-To-Do.md` checklist claiming the (unwired)
    implementation as complete.
 4. The export UX that WAS designed is live on a different, unrelated path: Speech
-   playground `#audio-export-btn` (`UI/Speech/speech_playground_pane.py:228`) →
-   `app.export_current_audio` (`app.py:11179`) →
-   `STTSEventHandler.export_current_audio` (`STTS_Events/stts_events.py:2786`),
-   with path validation. It shares nothing with the retired machinery.
+   playground `#audio-export-btn` → `_export_audio()` → `_handle_audio_export()`,
+   self-contained in `UI/Speech/speech_playback_mixin.py` (review-corrected: the
+   originally-cited `app.export_current_audio`/`STTSEventHandler.export_current_audio`
+   chain is itself ORPHANED — no production caller; queued for filing). Either way it
+   shares nothing with the retired machinery.
 5. Design coherence: per-message cached audio is deliberately ephemeral — playback
    schedules a secure delete 5s after play starts, and the artifact discipline
    zeroes files in place. A per-message export affordance would race its own
@@ -156,3 +157,14 @@ that `_discard_tts_artifact` bypasses `_artifact_cleanup_retry`-style claim chec
 — which is now vacuous, since the claim invariant itself was retired with the
 export path. Recommend closing 16836 as dissolved by this task, or re-scoping it
 to nothing more than a doc note.
+
+**Review corrections (controller, post-review):** the live playground export chain is
+`_export_audio()` → `_handle_audio_export()` in `speech_playback_mixin.py`, not the
+orphaned `export_current_audio` pair originally cited (that pair is a new filing
+candidate). The inventory-drift note's "console_turn_file_card 8→9" is actually two
+rows (`console_transcript.py` 8→9 + `console_turn_file_card.py` new 0→2), both from
+PR #1728's skipped regen. The 17-importer/427-collected figure was a grep-substring
+artifact (STTS_Events matches TTS_Events): the AST-correct count is 15 files/357
+tests, zero errors either way. Review also found stronger retire evidence: task-559
+deliberately skipped wiring this handler over the 5s auto-delete race. Review
+independently verified TASK-16836 DISSOLVED by this retirement.

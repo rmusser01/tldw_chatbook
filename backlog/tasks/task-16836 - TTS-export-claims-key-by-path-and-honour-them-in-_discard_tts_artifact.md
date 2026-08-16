@@ -1,7 +1,7 @@
 ---
 id: TASK-16836
 title: 'TTS export claims: key by path and honour them in _discard_tts_artifact'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-16'
 labels:
@@ -50,3 +50,16 @@ alongside this one), but it becomes live the moment export is wired.
 - [ ] #2 The protection survives eviction of the id→path cache entry (the F3 case is pinned by a test that fails against the id-keyed join)
 - [ ] #3 The existing 15471/16199 claim tests stay green
 <!-- AC:END -->
+
+## Implementation Notes
+
+**Closed as DISSOLVED by TASK-16837's retirement (same branch/PR).** Every AC here keyed
+off the TTS export claim mechanism: F2 (`_discard_tts_artifact` must honour claims) and
+F3 (key claims by path) protected in-flight exports — and TASK-16837 retired the entire
+export path after establishing it was never wired and never reachable (event never
+posted; handler class not a MessagePump; task-559 had already deliberately skipped
+wiring it over the 5s auto-delete race). With `_exporting_audio_refcounts` and the
+claim-poll deleted (the dict provably had one — unreachable — writer, so it was always
+empty at runtime), there are no claims to key and nothing for the cleanup paths to
+honour. The 16837 reviewer independently verified nothing in this task's scope remains
+live. No code change belongs to this task.
