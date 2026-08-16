@@ -187,6 +187,7 @@ class VisualIdentityRepository:
         actor_id: int | str,
         expected_active_identity: tuple[int, int] | None = None,
         expected_binding_id: int | None = None,
+        expected_binding_version: int | None = None,
     ) -> dict[str, Any]:
         """Atomically create and activate one complete pack graph.
 
@@ -200,6 +201,7 @@ class VisualIdentityRepository:
                 must still own the actor binding before a copy-on-write fork.
             expected_binding_id: Optional immutable binding row identity that
                 must still own the actor before activation.
+            expected_binding_version: Optional optimistic binding revision.
 
         Returns:
             Nested plain dictionaries for the activated graph.
@@ -222,6 +224,10 @@ class VisualIdentityRepository:
                     or (
                         expected_binding_id is not None
                         and int(existing["id"]) != expected_binding_id
+                    )
+                    or (
+                        expected_binding_version is not None
+                        and int(existing["version"]) != expected_binding_version
                     )
                     or (int(existing["pack_id"]), int(existing["active_version_id"]))
                     != expected_active_identity
@@ -287,6 +293,9 @@ class VisualIdentityRepository:
         default_expression_key: str | None = None,
         expected_active_version_id: int | None = None,
         expected_binding_id: int | None = None,
+        expected_binding_version: int | None = None,
+        expected_pack_version: int | None = None,
+        require_single_active_binding: bool = False,
     ) -> dict[str, Any]:
         """Atomically publish the next immutable version of a user-owned pack.
 
@@ -301,6 +310,10 @@ class VisualIdentityRepository:
                 active for both pack and actor before appending.
             expected_binding_id: Optional immutable binding row identity that
                 must still own the actor before appending.
+            expected_binding_version: Optional optimistic binding revision.
+            expected_pack_version: Optional optimistic pack revision.
+            require_single_active_binding: Whether the pack must be bound only
+                to this actor before it may advance.
 
         Returns:
             Nested plain dictionaries for the newly active graph.
@@ -336,14 +349,27 @@ class VisualIdentityRepository:
                         expected_binding_id is not None
                         and int(binding["id"]) != expected_binding_id
                     )
+                    or (
+                        expected_binding_version is not None
+                        and int(binding["version"]) != expected_binding_version
+                    )
                     or int(binding["pack_id"]) != pack_id
                 ):
                     raise ValueError("visual_identity_binding_changed")
                 if (
                     int(pack["active_version_id"]) != expected_active_version_id
                     or int(binding["active_version_id"]) != expected_active_version_id
+                    or (
+                        expected_pack_version is not None
+                        and int(pack["version"]) != expected_pack_version
+                    )
                 ):
                     raise ValueError("visual_identity_binding_changed")
+            if (
+                require_single_active_binding
+                and self.count_active_pack_bindings(pack_id) != 1
+            ):
+                raise ValueError("visual_identity_binding_changed")
 
             version_number = int(
                 self.db.execute_query(
@@ -386,6 +412,19 @@ class VisualIdentityRepository:
             if active is None:
                 raise RuntimeError("published_visual_identity_pack_not_found")
             return active
+
+    def count_active_pack_bindings(self, pack_id: int) -> int:
+        """Return the number of active actor bindings for one local pack."""
+
+        row = self.db.execute_query(
+            """
+            SELECT COUNT(*)
+              FROM visual_identity_bindings
+             WHERE owner_user_id = ? AND pack_id = ? AND status = 'active'
+            """,
+            (LOCAL_OWNER_ID, pack_id),
+        ).fetchone()
+        return int(row[0])
 
     def archive_pack(self, pack_id: int) -> dict[str, Any]:
         """Soft-archive a pack.

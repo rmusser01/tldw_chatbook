@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import sqlite3
@@ -30,6 +31,12 @@ from tldw_chatbook.Utils.private_paths import PrivatePathResult, PrivatePathStat
 def _png_bytes(color: tuple[int, int, int]) -> bytes:
     stream = BytesIO()
     Image.new("RGB", (16, 16), color).save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def _bmp_bytes(color: tuple[int, int, int]) -> bytes:
+    stream = BytesIO()
+    Image.new("RGB", (16, 16), color).save(stream, format="BMP")
     return stream.getvalue()
 
 
@@ -1364,3 +1371,584 @@ def test_directory_syncs_bracket_atomic_replace_before_database_commit(
     )
 
     assert events == ["sync", "replace", "sync", "db"]
+
+
+def test_publish_rejects_caller_transaction_before_candidate_or_filesystem_work(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((28, 28, 28)))
+
+    with (
+        pytest.raises(
+            VisualIdentityPublicationError,
+            match="^visual_identity_transaction_active$",
+        ),
+        environment["db"].transaction(),
+    ):
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+        )
+
+    assert candidate._publishing is False
+    assert candidate._published is False
+    assert not (environment["user_root"] / "visual_identities").exists()
+
+
+def test_unsupported_valid_image_format_is_cleaned_and_candidate_is_reusable(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _bmp_bytes((29, 29, 29)))
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="^visual_identity_candidate_invalid$"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"], candidate, user_data_dir=environment["user_root"]
+        )
+
+    assert candidate._publishing is False
+    assert not list(environment["user_root"].rglob(".staging-*"))
+    assert not list(environment["user_root"].rglob("manifest.json"))
+    candidate.stage_replacement("thinking", _png_bytes((30, 30, 30)))
+    result = publish_visual_identity_candidate(
+        environment["db"], candidate, user_data_dir=environment["user_root"]
+    )
+    assert result.version_directory.is_dir()
+
+
+@pytest.mark.parametrize("forced_fallback", [False, True])
+def test_asset_name_swap_during_bounded_read_is_rejected(
+    publication_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    forced_fallback: bool,
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((31, 31, 31)))
+    original_read = os.read
+    swapped = False
+    replace_called = False
+
+    def swap_name_then_read(descriptor: int, count: int) -> bytes:
+        nonlocal swapped
+        if not swapped:
+            staging = next(environment["user_root"].rglob(".staging-*"), None)
+            if staging is not None:
+                asset = next(
+                    path
+                    for path in staging.iterdir()
+                    if path.is_file() and path.name != "manifest.json"
+                )
+                os.rename(asset, asset.with_suffix(asset.suffix + ".detached"))
+                asset.write_bytes(_png_bytes((32, 32, 32)))
+                swapped = True
+        return original_read(descriptor, count)
+
+    def track_replace(source, destination, **kwargs):
+        nonlocal replace_called
+        replace_called = True
+        os.replace(source, destination, **kwargs)
+
+    if forced_fallback:
+        monkeypatch.setattr(
+            visual_identity_module,
+            "_publication_posix_guards_available",
+            lambda: False,
+        )
+    monkeypatch.setattr(visual_identity_module.os, "read", swap_name_then_read)
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_candidate_invalid"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=track_replace,
+        )
+
+    assert swapped is True
+    assert replace_called is False
+    assert _active_identity(environment) == before
+
+
+@pytest.mark.parametrize("forced_fallback", [False, True])
+def test_post_rename_fifo_asset_is_rejected_without_blocking(
+    publication_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    forced_fallback: bool,
+) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO contract requires os.mkfifo")
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((33, 33, 33)))
+
+    def replace_then_fifo(source, destination, **kwargs):
+        os.replace(source, destination, **kwargs)
+        if kwargs:
+            final_fd = os.open(
+                str(destination),
+                os.O_RDONLY | os.O_DIRECTORY,
+                dir_fd=kwargs["dst_dir_fd"],
+            )
+            try:
+                asset_name = next(
+                    name for name in os.listdir(final_fd) if name != "manifest.json"
+                )
+                os.unlink(asset_name, dir_fd=final_fd)
+                os.mkfifo(asset_name, 0o600, dir_fd=final_fd)
+            finally:
+                os.close(final_fd)
+        else:
+            final_dir = Path(destination)
+            asset = next(
+                path for path in final_dir.iterdir() if path.name != "manifest.json"
+            )
+            asset.unlink()
+            os.mkfifo(asset, 0o600)
+
+    if forced_fallback:
+        monkeypatch.setattr(
+            visual_identity_module,
+            "_publication_posix_guards_available",
+            lambda: False,
+        )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_candidate_invalid"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=replace_then_fifo,
+        )
+
+    assert caught.value.cleanup_candidate_relpath is not None
+    assert _active_identity(environment) == before
+
+
+def test_forced_fallback_failure_retains_bounded_cleanup_candidate(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((34, 34, 34)))
+
+    def deny_replace(_source, _destination):
+        raise PermissionError("private fallback path")
+
+    monkeypatch.setattr(
+        visual_identity_module, "_publication_posix_guards_available", lambda: False
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=deny_replace,
+        )
+
+    assert caught.value.cleanup_candidate_relpath is not None
+    retained = (
+        environment["user_root"]
+        / "visual_identities"
+        / caught.value.cleanup_candidate_relpath
+    )
+    assert retained.is_dir()
+    assert (retained / "manifest.json").is_file()
+
+
+def test_same_binding_row_away_and_back_revision_is_rejected(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    repository = VisualIdentityRepository(db)
+    competitor = repository.activate_pack(
+        pack={
+            "title": "Revision competitor",
+            "source_kind": "builtin",
+            "source_context": {},
+        },
+        manifest={"fixture": "revision-competitor"},
+        assets=[
+            _asset(
+                environment["package_root"],
+                expression_key="neutral",
+                original_label="revision-neutral",
+                color=(35, 35, 35),
+            )
+        ],
+        actor_kind="character",
+        actor_id=environment["other_actor_id"],
+    )
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((36, 36, 36)))
+
+    def replace_then_away_back(source, destination, **kwargs):
+        os.replace(source, destination, **kwargs)
+        with db.transaction():
+            db.execute_query(
+                """
+                UPDATE visual_identity_bindings
+                   SET pack_id = ?, active_version_id = ?, version = version + 1
+                 WHERE id = ?
+                """,
+                (
+                    competitor["pack"]["id"],
+                    competitor["version"]["id"],
+                    candidate.old_binding_id,
+                ),
+            )
+            db.execute_query(
+                """
+                UPDATE visual_identity_bindings
+                   SET pack_id = ?, active_version_id = ?, version = version + 1
+                 WHERE id = ?
+                """,
+                (
+                    candidate.old_pack_id,
+                    candidate.old_version_id,
+                    candidate.old_binding_id,
+                ),
+            )
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_binding_changed"
+    ):
+        publish_visual_identity_candidate(
+            db,
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=replace_then_away_back,
+        )
+
+
+def test_manual_pack_revision_bump_is_rejected_before_append(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    first = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    first.stage_replacement("thinking", _png_bytes((37, 37, 37)))
+    first_result = publish_visual_identity_candidate(
+        db, first, user_data_dir=environment["user_root"]
+    )
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((38, 38, 38)))
+
+    def replace_then_bump_pack(source, destination, **kwargs):
+        os.replace(source, destination, **kwargs)
+        with db.transaction():
+            db.execute_query(
+                "UPDATE visual_identity_packs SET version = version + 1 WHERE id = ?",
+                (candidate.old_pack_id,),
+            )
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_binding_changed"
+    ):
+        publish_visual_identity_candidate(
+            db,
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=replace_then_bump_pack,
+        )
+
+    versions = db.execute_query(
+        "SELECT id FROM visual_identity_pack_versions WHERE pack_id = ?",
+        (first_result.new_pack_id,),
+    ).fetchall()
+    assert len(versions) == 1
+
+
+def test_shared_manual_pack_save_forks_target_and_preserves_other_actor(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    first_bytes = _png_bytes((39, 39, 39))
+    first = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    first.stage_replacement("thinking", first_bytes)
+    first_result = publish_visual_identity_candidate(
+        db, first, user_data_dir=environment["user_root"]
+    )
+    with db.transaction():
+        db.execute_query(
+            """
+            UPDATE visual_identity_bindings
+               SET pack_id = ?, active_version_id = ?, version = version + 1
+             WHERE actor_kind = 'character' AND actor_id = ? AND status = 'active'
+            """,
+            (
+                first_result.new_pack_id,
+                first_result.new_version_id,
+                str(environment["other_actor_id"]),
+            ),
+        )
+
+    target_bytes = _png_bytes((40, 40, 40))
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", target_bytes)
+    result = publish_visual_identity_candidate(
+        db, candidate, user_data_dir=environment["user_root"]
+    )
+
+    assert result.new_pack_id != first_result.new_pack_id
+    target = resolve_visual_identity(
+        db,
+        actor_kind="character",
+        actor_id=environment["actor_id"],
+        requested_state="thinking",
+        user_data_dir=environment["user_root"],
+    )
+    other = resolve_visual_identity(
+        db,
+        actor_kind="character",
+        actor_id=environment["other_actor_id"],
+        requested_state="thinking",
+        user_data_dir=environment["user_root"],
+    )
+    other_graph = VisualIdentityRepository(db).get_active_actor_pack(
+        "character", environment["other_actor_id"]
+    )
+    assert target.image_bytes == target_bytes
+    assert other.image_bytes == first_bytes
+    assert other_graph is not None
+    assert other_graph["pack"]["active_version_id"] == first_result.new_version_id
+    assert other_graph["version"]["id"] == first_result.new_version_id
+
+
+def test_binding_added_during_manual_append_forces_conflict(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    first = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    first.stage_replacement("thinking", _png_bytes((40, 41, 40)))
+    first_result = publish_visual_identity_candidate(
+        db, first, user_data_dir=environment["user_root"]
+    )
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((40, 42, 40)))
+
+    def replace_then_share(source, destination, **kwargs):
+        os.replace(source, destination, **kwargs)
+        with db.transaction():
+            db.execute_query(
+                """
+                UPDATE visual_identity_bindings
+                   SET pack_id = ?, active_version_id = ?, version = version + 1
+                 WHERE actor_kind = 'character' AND actor_id = ? AND status = 'active'
+                """,
+                (
+                    first_result.new_pack_id,
+                    first_result.new_version_id,
+                    str(environment["other_actor_id"]),
+                ),
+            )
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_binding_changed"
+    ):
+        publish_visual_identity_candidate(
+            db,
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=replace_then_share,
+        )
+    versions = db.execute_query(
+        "SELECT id FROM visual_identity_pack_versions WHERE pack_id = ?",
+        (first_result.new_pack_id,),
+    ).fetchall()
+    assert len(versions) == 1
+
+
+def test_cleanup_removes_multiple_unreferenced_publication_candidates(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+
+    def fail_database(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private profile path")
+
+    monkeypatch.setattr(VisualIdentityRepository, "activate_pack", fail_database)
+    cleanup_relpaths: list[str] = []
+    for color in ((41, 41, 41), (42, 42, 42)):
+        candidate = create_visual_identity_candidate(
+            db, actor_kind="character", actor_id=environment["actor_id"]
+        )
+        candidate.stage_replacement("thinking", _png_bytes(color))
+        with pytest.raises(VisualIdentityPublicationError) as caught:
+            publish_visual_identity_candidate(
+                db, candidate, user_data_dir=environment["user_root"]
+            )
+        assert caught.value.cleanup_candidate_relpath is not None
+        cleanup_relpaths.append(caught.value.cleanup_candidate_relpath)
+
+    assert len(list(environment["user_root"].rglob("manifest.json"))) == 2
+    for relpath in cleanup_relpaths:
+        assert visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+    assert not list(environment["user_root"].rglob("manifest.json"))
+
+
+def test_cleanup_refuses_active_referenced_version(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((43, 43, 43)))
+    result = publish_visual_identity_candidate(
+        environment["db"], candidate, user_data_dir=environment["user_root"]
+    )
+    relpath = result.version_directory.relative_to(
+        environment["user_root"] / "visual_identities"
+    ).as_posix()
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_referenced"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            environment["db"], relpath, user_data_dir=environment["user_root"]
+        )
+
+    assert result.version_directory.is_dir()
+
+
+@pytest.mark.parametrize(
+    "relpath",
+    ["../outside", "/absolute", "packs/not-profile/versions/not-a-version"],
+)
+def test_cleanup_refuses_malformed_or_outside_relpaths(
+    publication_environment, relpath: str
+) -> None:
+    environment = publication_environment
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_denied"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            environment["db"], relpath, user_data_dir=environment["user_root"]
+        )
+
+
+def test_cleanup_refuses_package_root_and_unverified_fallback(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((44, 44, 44)))
+
+    def fail_database(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(VisualIdentityRepository, "activate_pack", fail_database)
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+
+    original_guards = visual_identity_module._publication_posix_guards_available
+    monkeypatch.setattr(
+        visual_identity_module, "_publication_posix_guards_available", lambda: False
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_denied"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+    assert (environment["user_root"] / "visual_identities" / relpath).is_dir()
+
+    monkeypatch.setattr(
+        visual_identity_module, "_publication_posix_guards_available", original_guards
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError,
+        match="visual_identity_package_root_immutable",
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["package_root"]
+        )
+
+
+def test_post_rename_parent_fsync_failure_reports_known_cleanup_candidate(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((45, 45, 45)))
+    original_sync = visual_identity_module._sync_publication_directory
+    calls = 0
+
+    def fail_parent_sync(directory):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError(errno.EIO, "private sync failure")
+        original_sync(directory)
+
+    monkeypatch.setattr(
+        visual_identity_module, "_sync_publication_directory", fail_parent_sync
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_failed"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"], candidate, user_data_dir=environment["user_root"]
+        )
+
+    assert caught.value.cleanup_candidate_relpath is not None
+    assert (
+        environment["user_root"]
+        / "visual_identities"
+        / caught.value.cleanup_candidate_relpath
+    ).is_dir()
+    assert candidate._publishing is False
+    assert _active_identity(environment) == before
