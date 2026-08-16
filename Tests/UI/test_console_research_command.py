@@ -53,3 +53,15 @@ def test_intent_shape():
         question="q", source_policy="web_first", providers=["biomedical"]
     )
     assert intent.provider_overrides() == {"academic_providers": ["biomedical"]}
+
+
+def test_dangling_flag_token_is_a_usage_error():
+    with pytest.raises(ValueError, match="--policy needs a value"):
+        parse_research_command("--policy")  # flag with no value, no question
+    with pytest.raises(ValueError, match="--providers needs a value"):
+        parse_research_command("a question --providers")  # dangling at end
+
+
+def test_oversized_args_rejected_by_shared_validator():
+    with pytest.raises(ValueError, match="too long"):
+        parse_research_command("x" * 5000 + " --policy web_only")

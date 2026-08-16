@@ -57,3 +57,16 @@ def test_expand_mixes_ids_and_categories_with_dedupe():
 def test_expand_rejects_unknown_tokens():
     with pytest.raises(ValueError, match="unknown research source or category"):
         expand_source_selection(["biomedical", "not_a_thing"])
+
+
+def test_paper_provider_constants_in_sync_with_catalog():
+    # Qodo (PR 1724): the service-level provider listings must not drift
+    # from the catalog the lane actually runs.
+    from tldw_chatbook.Research_Interop.local_research_search_service import (
+        LOCAL_SUPPORTED_PAPER_PROVIDERS,
+    )
+
+    catalog_ids = {e.source_id for e in catalog_entries()}
+    assert set(LOCAL_SUPPORTED_PAPER_PROVIDERS) <= catalog_ids
+    # Every catalog source is runnable by the lane (full parity, not a subset).
+    assert set(LOCAL_SUPPORTED_PAPER_PROVIDERS) == catalog_ids

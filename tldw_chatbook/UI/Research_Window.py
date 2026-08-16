@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-
-from loguru import logger
 from typing import Any
 
 from textual import on
+
+from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (

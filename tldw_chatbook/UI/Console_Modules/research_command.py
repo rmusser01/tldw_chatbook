@@ -28,6 +28,9 @@ RESEARCH_POLICIES = (
 def _extract_flags(args: str) -> tuple[dict[str, str], str]:
     """Split --flag value tokens out of the args.
 
+    Args:
+        args: The raw /research argument text.
+
     Returns:
         (flags dict, remaining question text). Flags may appear anywhere;
         a flag consumes exactly the next whitespace-delimited token.
@@ -86,10 +89,20 @@ def parse_research_command(args: str) -> ResearchCommandIntent:
         ValueError: For an unknown policy, an empty question, or empty
             provider lists.
     """
+    from tldw_chatbook.Utils.input_validation import validate_text_input
+
+    raw_args = str(args or "")
+    if not validate_text_input(raw_args, max_length=2000):
+        raise ValueError("arguments too long or contain invalid content")
+
     policy = "balanced"
     providers: list[str] | None = None
 
-    flags, question = _extract_flags(str(args or ""))
+    flags, question = _extract_flags(raw_args)
+    if "--policy" in raw_args.split() and "policy" not in flags:
+        raise ValueError("--policy needs a value")
+    if "--providers" in raw_args.split() and "providers" not in flags:
+        raise ValueError("--providers needs a value")
 
     if "policy" in flags:
         value = flags["policy"].lower()
