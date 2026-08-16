@@ -178,8 +178,21 @@ async def main_async(args: argparse.Namespace) -> int:
         if args.academic:
             from tldw_chatbook.Research_Interop.academic_providers import search_papers
 
-            paper_search_fn = search_papers
-            print("academic lane: ON (arXiv + Semantic Scholar join the evidence pool)")
+            if args.providers:
+                from tldw_chatbook.Research_Interop.research_source_catalog import (
+                    expand_source_selection,
+                )
+
+                providers = expand_source_selection(
+                    [t.strip().lower() for t in args.providers.split(",") if t.strip()]
+                )
+
+                def paper_search_fn(query, _providers=providers):
+                    return search_papers(query, providers=_providers)
+                print(f"academic lane: ON (providers: {', '.join(providers)})")
+            else:
+                paper_search_fn = search_papers
+                print("academic lane: ON (default provider set)")
         engine = LocalResearchEngine(
             service, search_params=search_params, paper_search_fn=paper_search_fn
         )
@@ -237,6 +250,11 @@ def main() -> int:
         "--llm-base-url",
         default=None,
         help="prime api_settings.<--llm>.api_url for this process (no config file writes); implies --llm",
+    )
+    parser.add_argument(
+        "--providers",
+        default=None,
+        help="academic providers for the lane: source ids or categories (biomedical, repositories, ...)",
     )
     parser.add_argument(
         "--academic",
