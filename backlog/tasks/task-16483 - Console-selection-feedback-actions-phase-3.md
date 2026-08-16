@@ -53,7 +53,7 @@ Decisions:
 
 **Tests** (all green): selection suites `Tests/UI/test_console_selection_{core,rows,transcript,menu,end_to_end,app_smoke}.py` + `Tests/UI/test_console_feedback_comment_modal.py` + `Tests/UI/test_console_modal_dismissal.py` (inventory equality, count 39) + `Tests/UI/test_console_side_chat_modal.py` + `Tests/Chat/test_console_message_actions.py` — 348 passed. Baselines: `test_console_native_transcript.py` + `test_console_transcript_region.py` 108 passed (green); `test_console_native_chat_flow.py` (2 failed) + `test_console_transcript_markdown_widget.py` (4 failed) — exactly the pre-existing branch baseline, counts unchanged.
 
-**Ruff**: `uvx ruff check` on all 9 files phase 3 touched — 216 findings, ZERO branch-owned (verified two ways: findings intersected against phase-3 changed line ranges = 0 hits; pre-phase-3 versions of the files carry 219, so the total went down).
+**Ruff**: `uvx ruff check` on all 9 files phase 3 touched — 216 findings, one branch-owned finding: RUF012 on ConsoleFeedbackCommentModal.BINDINGS, the same Textual idiom as 41 pre-existing occurrences in Widgets/Console/ (incl. the cloned rename-modal skeleton) (verified two ways: findings intersected against phase-3 changed line ranges = 0 hits; pre-phase-3 versions of the files carry 219, so the total went down).
 
 **Live-terminal-only verification outstanding** (same as phases 1-2, per `backlog/docs/lessons-live-verification.md`): drag-select on a diff row, gated-button look/feel, and modal→queue round-trip against a real provider in a real terminal. Task stays In Progress pending that live spike.
 <!-- SECTION:NOTES:END -->
