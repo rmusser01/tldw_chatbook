@@ -1,8 +1,9 @@
 ---
 id: TASK-15774
 title: Library media viewer search status and nav controls sit below the fold at 80x24
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-13 12:31'
 labels:
   - ux
@@ -38,3 +39,30 @@ unreachable without scrolling/focusing first).
       tests (task-15458's) stay green; a new compositor-based test pins the
       80x24 chrome as visibly painted, mirroring the 170x48
       non-overlapping-regions test task-15458 already has
+
+## Implementation Plan
+
+1. Reproduce at exactly 80x24 with compositor render strips (real mounted
+   `LibraryHarness` app, search active): capture the before state showing
+   status + Prev/Next below the fold.
+2. Add the born-red compositor test to `Tests/UI/test_library_shell.py`
+   (80x24, search active, "Match 1 of 101 matches" + "◀ Prev" + "Next ▶"
+   painted on-screen) mirroring task-15458's 170x48 chrome test; run at
+   HEAD and record the red.
+3. Layout decision: dock the search controls to the top of the scrolling
+   viewer WHILE A SEARCH IS ACTIVE (browser/editor find-bar convention,
+   and the same chrome idiom as the Library ingest commit bar's
+   `dock: bottom` pinned edge). `LibraryMediaContentSearchControls`
+   toggles an active-state class; the component CSS
+   (`css/components/_agentic_terminal.tcss`, bundle regenerated via
+   `build_css.py`, never hand-edited) docks the active controls with a
+   raised background + separator rule and compact margins. Inactive
+   search keeps today's in-flow layout: zero stolen space, no
+   duplicated chrome.
+4. Verify: new test green; task-15458's 170x48 chrome test and 80x24
+   in-place-navigation test green; whole media-viewer family in
+   `test_library_shell.py` green; 120x40 spot-check strips (inactive: no
+   dock, no duplicate chrome; active: single docked bar).
+5. ruff check + format touched files; update the Library User Guide
+   page's Verified-against stamp if it documents this viewer; task notes
+   + Done.
