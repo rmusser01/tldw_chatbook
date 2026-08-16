@@ -44,7 +44,10 @@ delegation during the chat_screen decomposition (methods moved onto
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Red: run the two pre-existing chat-flow failures (test_console_native_chat_flow.py) that hit this crash; add a direct regression test driving action_open_console_session_switcher\n2. Fix: delegate through self._session._current_console_conversation_id() at chat_screen.py:2986 (matches the file's own working call at :9965)\n3. Audit sibling actions for other missed _session/_workspace delegations (AC#4)\n4. Green: targeted suites; PR
+1. Red: run the two pre-existing chat-flow failures (test_console_native_chat_flow.py) that hit this crash; add a direct regression test driving action_open_console_session_switcher
+2. Fix: delegate through self._session._current_console_conversation_id() at chat_screen.py:2986 (matches the file's own working call at :9965)
+3. Audit sibling actions for other missed _session/_workspace delegations (AC#4)
+4. Green: targeted suites; PR
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
