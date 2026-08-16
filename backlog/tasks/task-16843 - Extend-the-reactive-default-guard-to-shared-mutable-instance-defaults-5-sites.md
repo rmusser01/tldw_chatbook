@@ -160,7 +160,7 @@ string broke `_build_current_context_widgets`'s `msg.content` access,
 demonstrating real corruption, not just an identity curiosity). Post-fix,
 green.
 
-**Verification:** guard tests (10 in the file, all green), aliasing tests (6
+**Verification:** guard tests (5 in the file, all green), aliasing tests (6
 in the file, all green), `Tests/UI/test_console_context_modal.py` +
 `test_console_modal_dismissal.py` + `test_chat_screen_context_modal.py` (131
 passed), and the named 15775/15778 pin suites —
