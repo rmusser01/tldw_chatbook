@@ -391,9 +391,8 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
             ("type(exc).__name__",),
         ),
     },
-    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": {
-        "No audio file found to export": (2, ()),
-    },
+    # task-16837: the tts_events.py row ("No audio file found to export",
+    # 2 calls) was retired with the dead TTSExportEvent path it lived in.
     "tldw_chatbook/DB/Subscriptions_DB.py": {
         "subscription_items_fts unavailable; falling back to LIKE search": (
             1,
