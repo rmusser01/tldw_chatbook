@@ -102,6 +102,12 @@ class TestCharacterCard:
             await pilot.pause()
             assert edit.disabled is False
             assert edit.tooltip is None
+            card.load_character({})
+            await pilot.pause()
+            assert pilot.app.query_one("#personas-character-card-empty").display
+            assert not pilot.app.query_one("#personas-character-card-body").display
+            assert edit.disabled is True
+            assert edit.tooltip == "Select a character to edit."
 
     async def test_load_populates_fields_and_enables_edit(self):
         app = WidgetApp()

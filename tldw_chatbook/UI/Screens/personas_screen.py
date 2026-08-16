@@ -11000,16 +11000,19 @@ class PersonasScreen(BaseAppScreen):
                 screen_generation=self._character_editor_generation,
             )
         self._set_active_row_unsaved(False)
+        card = self.query_one(PersonasCharacterCardWidget)
         if saved_record:
             # Keep the handler's cache in sync so other _full_character_record
             # readers (Edit-again, world-book/dictionary refreshes) see the
             # fresh record too.
             self.character_handler.current_character_id = saved_id
             self.character_handler.current_character_data = dict(saved_record)
+            card.load_character(saved_record)
         else:
             saved_record = None
             self.character_handler.current_character_id = None
             self.character_handler.current_character_data = {}
+            card.load_character({})
         # ``saved_id`` was just persisted, so it is authoritative; resolve the
         # name by the re-read record or the submitted name rather than
         # scanning the now-page-only cache.

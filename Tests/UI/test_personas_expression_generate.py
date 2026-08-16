@@ -59,6 +59,9 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 )
 from tldw_chatbook.Media_Creation.generation_templates import get_template
 from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
+    PersonasCharacterCardWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -3400,9 +3403,16 @@ async def test_character_save_reconciliation_never_launches_detached_reload(
 ):
     _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
     editor = screen.query_one(PersonasCharacterEditorWidget)
+    card = screen.query_one(PersonasCharacterCardWidget)
     release = asyncio.Event()
     load_calls: list[str] = []
     late_workers: list[asyncio.Task] = []
+    rendered_character_ids: list[int | str | None] = []
+    saved_record = personas_screen_module.ccp_character_handler.fetch_character_by_id(
+        char_id
+    )
+    assert saved_record is not None
+    saved_record = {**saved_record, "name": "After save"}
 
     async def launch_detached_reload(character_id):
         load_calls.append(str(character_id))
@@ -3416,8 +3426,34 @@ async def test_character_save_reconciliation_never_launches_detached_reload(
     monkeypatch.setattr(
         screen.character_handler, "load_character", launch_detached_reload
     )
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "fetch_character_by_id",
+        lambda _character_id: dict(saved_record),
+    )
+
+    async def record_thumbnail_render(_screen, character_id):
+        rendered_character_ids.append(character_id)
+
+    monkeypatch.setattr(
+        personas_screen_module.PersonasScreen,
+        "_render_all_character_editor_thumbnails",
+        record_thumbnail_render,
+    )
 
     await screen._after_character_save(str(char_id), "Saved session")
+
+    assert screen.character_handler.current_character_data["name"] == "After save"
+    assert editor._character_data["name"] == "After save"
+    assert str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    ) == "Name: After save"
+    assert rendered_character_ids == [char_id]
+    screen._finish_cancel_edit()
+    assert screen._edit_mode == "view"
+    assert str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    ) == "Name: After save"
     await screen._begin_create_character()
     editor._input("name").value = "New session sentinel"
     release.set()
@@ -3432,6 +3468,8 @@ async def test_character_save_fetch_failure_clears_handler_without_detached_relo
     personas_editor_with_bound_pack, monkeypatch
 ):
     _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    card = screen.query_one(PersonasCharacterCardWidget)
+    card.load_character({"id": "prior", "name": "Prior character"})
     screen.character_handler.current_character_id = "stale-id"
     screen.character_handler.current_character_data = {"name": "Stale character"}
     load_character = AsyncMock()
@@ -3452,6 +3490,11 @@ async def test_character_save_fetch_failure_clears_handler_without_detached_relo
     assert screen.character_handler.current_character_id is None
     assert screen.character_handler.current_character_data == {}
     assert screen._edit_mode == "view"
+    assert card.query_one("#personas-character-card-empty").display
+    assert not card.query_one("#personas-character-card-body").display
+    assert "Prior character" not in str(
+        card.query_one("#personas-character-card-name", Static).renderable
+    )
 
 
 async def test_generate_all_restores_missing_canonical_asset_and_direction(
