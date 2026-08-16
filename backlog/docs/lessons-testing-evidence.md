@@ -4433,3 +4433,25 @@ probe characterizing what the code does deterministically under the flake's stim
 -- the flake may be the tail of a bug whose body is fully reproducible; (2) a
 repetition budget that finds nothing (34/34 clean here) is not evidence the race is
 gone -- the gated one-run interleave was both stronger and cheaper.
+
+## Re-verify a residual's CAUSAL hypothesis before building the fix around it (task-15778, 2026-08-15)
+
+Task-15461's Implementation Notes recorded a residual with a cause attached:
+the cold Read tab's wall-clock regressed "because the scoped path does the
+CONTENT remount as its own discrete remove/mount pair rather than inside one
+batched recompose -- Textual's `batch()` is the obvious next move." Task-15778
+was filed around that hypothesis. A neutered-batch A/B on the same HEAD
+refuted it: **zero** in-swap layout passes and zero compositor refreshes with
+AND without `App.batch_update`, because the entire swap already runs inside
+`_drain_surface_refresh`'s single `call_next` callback -- a paint-atomicity
+that 15461's own `run_worker` -> `call_next` move had bought silently, one
+task before it filed the residual blaming its absence. The batch shipped
+anyway, but as an explicit contract (survives a future awaiting factory or a
+drain restructure), documented as such -- not as the measured win the task
+title promised. Two probe traps that nearly hid this: (1) counting layout
+passes over the whole settle window attributed 3 post-swap passes (loader,
+reseed) to the swap -- bracket the exact call under test, not the settle;
+(2) the first probe "confirmed" the premise with numbers that were real but
+belonged to a different mechanism. The residual's fix-shaped hypothesis is a
+hypothesis; A/B the mechanism (here: neuter the proposed fix on the same
+HEAD) before writing the Implementation Notes around it.
