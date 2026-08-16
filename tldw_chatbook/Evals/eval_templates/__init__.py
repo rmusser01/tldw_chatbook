@@ -16,6 +16,7 @@ from .coding import CodingTemplates
 from .safety import SafetyTemplates
 from .creative import CreativeTemplates
 from .multimodal import MultimodalTemplates
+from .research import ResearchTemplates
 
 
 class EvalTemplateManager:
@@ -33,6 +34,7 @@ class EvalTemplateManager:
         self.safety = SafetyTemplates()
         self.creative = CreativeTemplates()
         self.multimodal = MultimodalTemplates()
+        self.research = ResearchTemplates()
 
         # Cache for templates
         self._template_cache = {}
@@ -59,6 +61,7 @@ class EvalTemplateManager:
             self.safety,
             self.creative,
             self.multimodal,
+            self.research,
         ]:
             template = category.get_template(template_name)
             if template:

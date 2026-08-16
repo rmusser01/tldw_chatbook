@@ -654,3 +654,55 @@ async def test_load_bundle_auto_loads_the_report(monkeypatch):
     assert window.current_artifact is not None
     assert window.current_artifact["artifact_name"] == "report_v1.md"
     assert "Answer[1]." in window.current_artifact["content"]
+
+
+# --- selected-run auto-refresh (task-16486) ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_auto_refresh_updates_non_terminal_local_run_preserving_payload():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    window.runs[0].status = "running"
+    window.current_bundle = {"kept": True}
+
+    calls = {"n": 0}
+
+    async def get_run(run_id, *, mode):
+        calls["n"] += 1
+        return SimpleNamespace(id=run_id, query="Local query", status="running",
+                               phase="synthesizing", control_state="running")
+
+    service.get_run = get_run
+    await window._auto_refresh_selected_run()
+
+    assert calls["n"] == 1
+    assert window.selected_run.phase == "synthesizing"
+    assert window.current_bundle == {"kept": True}  # payload state preserved
+
+
+@pytest.mark.asyncio
+async def test_auto_refresh_skips_terminal_and_non_local():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    window.runs[0].status = "completed"  # terminal: no refresh
+
+    calls = {"n": 0}
+
+    async def get_run(run_id, *, mode):
+        calls["n"] += 1
+        return window.runs[0]
+
+    service.get_run = get_run
+    await window._auto_refresh_selected_run()
+    assert calls["n"] == 0
+
+    window.runs[0].status = "running"
+    window.current_source = "server"  # server source: not our engine
+    await window._auto_refresh_selected_run()
+    assert calls["n"] == 0

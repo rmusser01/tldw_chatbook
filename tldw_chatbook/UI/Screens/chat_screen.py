@@ -16811,15 +16811,9 @@ class ChatScreen(BaseAppScreen):
         search_params: dict = {}
         paper_search_fn = None
         try:
-            from tldw_chatbook.Tools.web_tool_impls import _deep_search_settings
+            from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
 
-            settings = _deep_search_settings()
-            relevance_llm = settings.get("relevance_analysis_llm")
-            final_llm = settings.get("final_answer_llm")
-            if final_llm:
-                search_params["final_answer_llm"] = final_llm
-            if relevance_llm:
-                search_params["relevance_analysis_llm"] = relevance_llm
+            search_params = deep_search_pipeline_params()
             if getattr(app, "research_window_academic_enabled", False):
                 from tldw_chatbook.Research_Interop.academic_providers import (
                     search_papers,

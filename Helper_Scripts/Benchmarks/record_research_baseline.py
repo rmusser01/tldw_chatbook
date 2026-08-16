@@ -93,7 +93,10 @@ def _build_search_params(
 ) -> dict:
     """Assemble engine search params exactly like the web_deep_search tool
     does, so the baseline measures the shipped pipeline configuration."""
-    from tldw_chatbook.Tools.web_tool_impls import _deep_search_settings
+    from tldw_chatbook.Tools.web_tool_impls import (
+        _deep_search_settings,
+        deep_search_pipeline_params,
+    )
 
     settings = _deep_search_settings()
     relevance_llm = llm_override or settings.get("relevance_analysis_llm")
@@ -111,22 +114,19 @@ def _build_search_params(
             + "; ".join(missing)
             + ". Configure them, or pass --engine duckduckgo (keyless)."
         )
-    return {
-        "engine": engine,
-        "content_country": "US",
-        "search_lang": "en",
-        "output_lang": "en",
-        "result_count": max_results,
-        "subquery_generation": False,  # spend bound: single query per run
-        "subquery_generation_llm": relevance_llm,
-        "relevance_analysis_llm": relevance_llm,
-        "final_answer_llm": final_llm,
-        "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
-        "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
-        "search_default_max_queries": 1,  # spend bound: no fan-out
-        "deep_search_timeout_s": settings.get("deep_search_timeout_s", 240),
-        "respect_robots_txt": True,
-    }
+    # task-16484: shared assembly with the tool; spend bounds via overrides.
+    return deep_search_pipeline_params(
+        engine=engine,
+        max_results=max_results,
+        subquery=False,  # spend bound: single query per run
+        max_queries=1,  # spend bound: no fan-out
+        respect_robots=True,
+        extra={
+            "subquery_generation_llm": relevance_llm,
+            "relevance_analysis_llm": relevance_llm,
+            "final_answer_llm": final_llm,
+        },
+    )
 
 
 async def _run_question(engine, service, question: str) -> dict | None:

@@ -2191,6 +2191,77 @@ def _run_coro_loop_safe(coro, timeout_s: float):
     return outcome["value"]
 
 
+def deep_search_pipeline_params(
+    *,
+    engine: Optional[str] = None,
+    max_results: Optional[int] = None,
+    subquery: Optional[bool] = None,
+    max_queries: Optional[int] = None,
+    respect_robots: Optional[bool] = None,
+    extra: Optional[dict] = None,
+) -> dict:
+    """Assemble the deep-search pipeline search_params from [SearchSettings]
+    (task-16484) -- ONE assembly shared by the web_deep_search tool, the
+    Console /research command, and the baseline script, with per-key
+    overrides for callers that need tighter bounds (e.g. spend-capped
+    baseline runs force subquery off and one query).
+    """
+    settings = _deep_search_settings()
+
+    try:
+        result_ceiling = int(settings.get("search_result_max", SEARCH_MAX_RESULT_COUNT))
+    except (TypeError, ValueError):
+        result_ceiling = SEARCH_MAX_RESULT_COUNT
+    if result_ceiling < 1:
+        result_ceiling = SEARCH_MAX_RESULT_COUNT
+    resolved_max_results = max_results if max_results is not None else result_ceiling
+    try:
+        resolved_max_results = max(1, min(int(resolved_max_results), result_ceiling))
+    except (TypeError, ValueError):
+        resolved_max_results = result_ceiling
+
+    deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
+
+    params: dict = {
+        "engine": engine or settings.get("search_provider_default", SEARCH_DEFAULT_ENGINE),
+        "content_country": "US",
+        "search_lang": "en",
+        "output_lang": "en",
+        "result_count": resolved_max_results,
+        "subquery_generation": bool(
+            settings.get("search_enable_subquery", False)
+            if subquery is None
+            else subquery
+        ),
+        "subquery_generation_llm": settings.get("relevance_analysis_llm"),
+        "relevance_analysis_llm": settings.get("relevance_analysis_llm"),
+        "final_answer_llm": settings.get("final_answer_llm"),
+        # CRITICAL: analyze_and_aggregate reads these two straight out of
+        # search_params -- omitting them means the config knobs silently
+        # never reach the pipeline and it falls back to its own 30s defaults.
+        "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
+        "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
+        # generate_and_search reads this to cap total fan-out.
+        "search_default_max_queries": (
+            settings.get("search_default_max_queries", 5)
+            if max_queries is None
+            else max_queries
+        ),
+        # The caller's remaining deadline (full configured timeout when the
+        # run has not started yet).
+        "phase1_time_budget_s": deadline_s,
+        "respect_robots_txt": (
+            _webfetch_settings()["respect_robots_txt"]
+            if respect_robots is None
+            else respect_robots
+        ),
+        "deep_search_timeout_s": deadline_s,
+    }
+    if extra:
+        params.update(extra)
+    return params
+
+
 def web_deep_search(question: str, engine: Optional[str] = None, max_results: Optional[int] = None) -> str:
     """Multi-query web research: sub-questions, relevance filtering, a cited answer.
 
@@ -2303,42 +2374,11 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
 
-    search_params = {
-        "engine": engine,
-        "content_country": "US",
-        "search_lang": "en",
-        "output_lang": "en",
-        "result_count": max_results,
-        "subquery_generation": bool(settings.get("search_enable_subquery", False)),
-        "subquery_generation_llm": relevance_llm,
-        "relevance_analysis_llm": relevance_llm,
-        "final_answer_llm": final_answer_llm,
-        # CRITICAL: analyze_and_aggregate reads these two straight out of
-        # search_params -- omitting them means the config knobs silently
-        # never reach the pipeline and it falls back to its own 30s defaults.
-        "relevance_llm_timeout_s": settings.get("relevance_llm_timeout_s", 30),
-        "relevance_scrape_timeout_s": settings.get("relevance_scrape_timeout_s", 30),
-        # Important 2 (final review): generate_and_search reads this to cap
-        # total fan-out (question + sub-queries) at search_default_max_queries
-        # -- resolved by _deep_search_settings() but previously never handed
-        # to the pipeline, so subquery generation could fan out far past the
-        # description's "~25 LLM calls at defaults".
-        "search_default_max_queries": settings.get("search_default_max_queries", 5),
-        # Important 3a (final review): the tool's remaining phase-1 budget,
-        # computed here at entry (phase 1 hasn't run yet, so this is the
-        # full configured deadline). generate_and_search checks it between
-        # per-query searches and stops the fan-out early on expiry -- a
-        # cheap bound on top of the per-request backend timeouts (Important
-        # 3b), covering the six engines that still have none.
-        "phase1_time_budget_s": deadline_s,
-        # task-3260: same toggle, plumbed like the timeouts above -- the
-        # pydantic-safe channel into analyze_and_aggregate/search_result_
-        # relevance, which read it from search_params (default False when
-        # absent, so the dead-wired research-service caller that never sets
-        # this key keeps today's behavior unchanged; this tool is the only
-        # user-facing caller and passes the real, configured setting).
-        "respect_robots_txt": _webfetch_settings()["respect_robots_txt"],
-    }
+    # task-16484: ONE shared assembly (this tool, the Console /research
+    # command, and the baseline script all build these params).
+    search_params = deep_search_pipeline_params(
+        engine=engine, max_results=max_results
+    )
 
     from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap
 

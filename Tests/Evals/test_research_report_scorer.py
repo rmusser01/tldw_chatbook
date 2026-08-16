@@ -177,3 +177,37 @@ def test_aggregate_averages_gate_rate_only_over_payloads_that_have_it():
     assert aggregate["sample_count"] == 3
     assert aggregate["gate_pass_rate"] == pytest.approx((0.8 + 0.4) / 2)
     assert aggregate["citation_accuracy"] == pytest.approx((1.0 + 0.5 + 1.0) / 3)
+
+
+# --- Evals-UI task registration (task-16485) --------------------------------------
+
+def test_research_report_template_loads_and_runs_end_to_end():
+    import asyncio
+    from pathlib import Path
+
+    from tldw_chatbook.Evals.dataset_loader import DatasetLoader
+    from tldw_chatbook.Evals.eval_runner import EvalRunner
+    from tldw_chatbook.Evals.specialized_runners import ResearchReportRunner
+    from tldw_chatbook.Evals.task_loader import TaskLoader
+
+    task_config = TaskLoader().create_task_from_template("research_report")
+    assert task_config.task_type == "research_report"
+    assert task_config.metadata.get("category") == "research"
+    assert Path(task_config.dataset_name).exists()
+
+    runner = EvalRunner(task_config, {"provider": "mock", "model_id": "scorer"})
+    assert isinstance(runner.runner, ResearchReportRunner)
+
+    samples = DatasetLoader.load_dataset_samples(task_config)
+    assert len(samples) == 3
+    assert all("verification" in (sample.metadata or {}) for sample in samples)
+
+    results = [
+        asyncio.run(runner.run_single_sample(task_config, sample))
+        for sample in samples
+    ]
+    by_id = {r.sample_id: r for r in results}
+    assert by_id["synthetic-clean-run"].metrics["citation_accuracy"] == 1.0
+    assert by_id["synthetic-clean-run"].metrics["gate_pass_rate"] == 1.0
+    assert by_id["synthetic-degraded-run"].metrics["citation_accuracy"] == 0.75
+    assert by_id["synthetic-gate-fallback-run"].metrics["gate_pass_rate"] == 0.6

@@ -547,6 +547,32 @@ class ResearchWindow(Vertical):
             raise ValueError("No research run is selected.")
         return str(self._record_get(self.selected_run, "id") or "")
 
+    def on_mount(self) -> None:
+        # task-16486: while a local engine run is in flight, keep the
+        # selected run's detail current without manual Refresh.
+        self.set_interval(2.0, self._auto_refresh_selected_run)
+
+    async def _auto_refresh_selected_run(self) -> None:
+        """Refresh the selected LOCAL run's detail while it is non-terminal
+        (task-16486). Payload state (bundle/artifact selections) is
+        preserved; server-source selections and terminal runs are skipped
+        (server observation already has its own streaming surface)."""
+        if self.current_source != "local" or self.selected_run is None:
+            return
+        if self._record_field(self.selected_run, "status") in {
+            "completed", "failed", "cancelled", "draft",
+        }:
+            return
+        try:
+            run_id = self._selected_run_id()
+            updated = await self.controller.get_run(self.current_source, run_id)
+        except Exception:
+            return  # transient controller errors must not spam the status line
+        if updated is None:
+            return
+        self.selected_run = updated
+        self._update_detail(updated)
+
     def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
         self.selected_run = run
         if reset_payload_state:
