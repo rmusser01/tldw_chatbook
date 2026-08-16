@@ -67,7 +67,7 @@ class UsageTokenRecorder:
         """
         # A PARTIAL report (one side unreported) is not exact: the settled
         # total is incomplete, so it must not flip the ledger's
-        # tokens_estimated flag (task-16789 follow-up).
+        # tokens_estimated flag (task-16814 follow-up).
         both_reported = prompt_tokens is not None and completion_tokens is not None
         if prompt_tokens is not None:
             self._prompt_tokens += max(0, int(prompt_tokens))

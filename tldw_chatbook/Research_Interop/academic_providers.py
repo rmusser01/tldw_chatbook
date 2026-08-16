@@ -1246,7 +1246,7 @@ async def search_papers(
             logger.warning(f"search_papers {name} lane failed: {exc}")
             return None
 
-    # task-16789: all selected providers run CONCURRENTLY (serial execution
+    # task-16814: all selected providers run CONCURRENTLY (serial execution
     # added avoidable latency); per-provider degradation lives in each lane.
     outcomes = await asyncio.gather(
         *(_lane_runner(name, lanes[name]) for name in selected)

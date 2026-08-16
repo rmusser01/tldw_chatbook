@@ -1,4 +1,4 @@
-"""Trajectory export: format, redaction, writer, validator (task-16319).
+"""Trajectory export: format, redaction, writer, validator (task-16813).
 
 Round-trip tests prove the ADR-067 contract: a real ``CharactersRAGDB``
 (temp file, real schema-v38 sidecar + real auxiliary-attempt rows) is

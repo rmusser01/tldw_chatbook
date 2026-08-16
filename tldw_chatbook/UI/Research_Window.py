@@ -91,7 +91,7 @@ def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
 
 def _parse_config_bool(value: Any) -> bool:
     """Parse a config bool that may arrive as an actual bool or a string
-    (task-16789: ``bool("false")`` is True -- truthy strings must not
+    (task-16814: ``bool("false")`` is True -- truthy strings must not
     enable the network-costing lane)."""
     if isinstance(value, bool):
         return value
@@ -433,7 +433,7 @@ class ResearchWindow(Vertical):
             try:
                 await engine.execute_run(run_id)
             except Exception as exc:  # noqa: BLE001 - worker must not crash the app
-                # task-16789: dispatch through the UI message pump rather
+                # task-16814: dispatch through the UI message pump rather
                 # than mutating widgets from worker context (async workers
                 # run on the loop, but deferring is correct for either).
                 try:

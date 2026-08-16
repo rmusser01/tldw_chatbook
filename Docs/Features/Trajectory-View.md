@@ -102,7 +102,7 @@ The export API lives in `tldw_chatbook/Chat/trajectory_export.py`
 `Chat/trajectory_import.py`. The format contract is
 [ADR-067](../../backlog/decisions/067-trajectory-export-format.md).
 
-> **Note:** an export button in the UI is not wired yet (task-16319 landed
+> **Note:** an export button in the UI is not wired yet (task-16813 landed
 > the format and writer as a library). Import via `o` is wired.
 
 ## What older conversations show

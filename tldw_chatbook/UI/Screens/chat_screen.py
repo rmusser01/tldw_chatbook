@@ -9966,7 +9966,7 @@ class ChatScreen(BaseAppScreen):
     def _current_console_conversation_id(self) -> Optional[str]:
         """Return the active native Console session's persisted conversation id.
 
-        One-line delegation to the session controller (task-16792): the
+        One-line delegation to the session controller (task-16815): the
         browser consolidation (520b1ec12) and the ``/research`` delivery
         (e1f3a4424) both call this name on the screen, but the method only
         existed on ``ConsoleSessionController`` -- every Ctrl+K switcher

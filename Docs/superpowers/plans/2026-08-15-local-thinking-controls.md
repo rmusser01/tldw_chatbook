@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, httpx (direct path), requests (adapter path), pytest, Textual (modal).
 
-**Spec:** `Docs/superpowers/specs/2026-08-15-local-thinking-controls-design.md` (argues from ADR-066: `backlog/decisions/066-local-provider-thinking-controls.md`; task: `backlog/tasks/task-16319 - Console-thinking-levels-and-budget-for-local-providers.md`)
+**Spec:** `Docs/superpowers/specs/2026-08-15-local-thinking-controls-design.md` (argues from ADR-066: `backlog/decisions/066-local-provider-thinking-controls.md`; task: `backlog/tasks/task-16812 - Console-thinking-levels-and-budget-for-local-providers.md`)
 
 ## Global Constraints
 
@@ -48,7 +48,7 @@ git stash pop || true
 # verify the four doc files are present and staged-able:
 ls Docs/superpowers/specs/2026-08-15-local-thinking-controls-design.md \
    backlog/decisions/066-local-provider-thinking-controls.md \
-   "backlog/tasks/task-16319 - Console-thinking-levels-and-budget-for-local-providers.md" \
+   "backlog/tasks/task-16812 - Console-thinking-levels-and-budget-for-local-providers.md" \
    Docs/superpowers/plans/2026-08-15-local-thinking-controls.md
 ```
 
@@ -57,7 +57,7 @@ If the stash pop conflicts, resolve by keeping the untracked doc files on the ne
 ```bash
 git add Docs/superpowers/specs/2026-08-15-local-thinking-controls-design.md \
         backlog/decisions/066-local-provider-thinking-controls.md \
-        "backlog/tasks/task-16319 - Console-thinking-levels-and-budget-for-local-providers.md" \
+        "backlog/tasks/task-16812 - Console-thinking-levels-and-budget-for-local-providers.md" \
         Docs/superpowers/plans/2026-08-15-local-thinking-controls.md
 git commit -m "docs: spec, ADR-066, and plan for local thinking controls"
 ```
@@ -1143,7 +1143,7 @@ git commit -m "feat(console): model-family thinking hints, warnings, and wire pr
 ### Task 7: Full verification and task wrap-up
 
 **Files:**
-- Modify: `backlog/tasks/task-16319 - Console-thinking-levels-and-budget-for-local-providers.md`
+- Modify: `backlog/tasks/task-16812 - Console-thinking-levels-and-budget-for-local-providers.md`
 - No production code changes expected.
 
 **Interfaces:**
@@ -1192,8 +1192,8 @@ backlog task edit 16319 -s Done --notes "Implemented per ADR-066 spec/plan; live
 - [ ] **Step 4: Final commit**
 
 ```bash
-git add "backlog/tasks/task-16319 - Console-thinking-levels-and-budget-for-local-providers.md"
-git commit -m "docs(backlog): complete task-16319 local thinking controls"
+git add "backlog/tasks/task-16812 - Console-thinking-levels-and-budget-for-local-providers.md"
+git commit -m "docs(backlog): complete task-16812 local thinking controls"
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-15
-- Related: ADR-066 (trajectory view + sidecar), task-16319 (export), task-16320 (import)
+- Related: ADR-066 (trajectory view + sidecar), task-16813 (export), task-16320 (import)
 
 ## Context
 

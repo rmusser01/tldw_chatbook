@@ -1,7 +1,7 @@
 """Trajectory import: read shared traces into read-only snapshots (task-16320).
 
 Round-trip tests build a REAL export file (real ``CharactersRAGDB`` temp
-DB via the task-16319 test fixtures, real writer) and feed it to the
+DB via the task-16813 test fixtures, real writer) and feed it to the
 import seam, proving the ADR-067 consumer contract: the shared validator
 is the only validation, mapping covers compaction + variants + usage +
 redaction, and the pure module never references the app DB.
