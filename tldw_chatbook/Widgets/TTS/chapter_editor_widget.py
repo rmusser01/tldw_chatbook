@@ -287,6 +287,47 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
                 key=str(i),
             )
 
+    def _sync_table_cursor(self) -> None:
+        """Move the DataTable cursor onto `selected_chapter_index`.
+
+        `_refresh_chapter_table` clears and repopulates the table, which
+        resets the cursor to its default position; this keeps the
+        highlighted row in sync with `selected_chapter_index` after an
+        in-place edit (task-16849).
+        """
+        if not (0 <= self.selected_chapter_index < len(self.chapters)):
+            return
+        try:
+            table = self.query_one("#chapter-table", DataTable)
+        except Exception as e:
+            logger.debug(f"Chapter table not ready for cursor sync: {e}")
+            return
+        try:
+            table.move_cursor(row=self.selected_chapter_index, animate=False)
+        except Exception as e:
+            logger.debug(f"Could not move chapter table cursor: {e}")
+
+    def _sync_after_edit(self) -> None:
+        """Move the cursor and refresh the preview after an in-place edit.
+
+        Callers force the table refresh themselves via
+        `self.mutate_reactive(ChapterEditorWidget.chapters)` right after
+        mutating the list (the same idiom `CharacterVoiceWidget` already
+        uses for this, task-15479) -- that fires `watch_chapters` ->
+        `_refresh_chapter_table` exactly once. `selected_chapter_index` is
+        updated (where it changes) via `set_reactive`, which is silent by
+        design: a numerically UNCHANGED index can still name a DIFFERENT
+        chapter object after an edit -- delete clamps to the same index,
+        and split/merge never move the index at all but do mutate that
+        chapter's content -- so `watch_selected_chapter_index`'s
+        change-detection would silently miss exactly those cases. This
+        single explicit call (mirroring what `on_mount` does for the
+        set-path) is therefore the ONLY preview refresh per edit; nothing
+        else calls `_update_preview` from these code paths.
+        """
+        self._sync_table_cursor()
+        self._update_preview()
+
     def _update_preview(self) -> None:
         """Update the preview pane with selected chapter"""
         if 0 <= self.selected_chapter_index < len(self.chapters):
@@ -385,6 +426,13 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
 
         self.chapters.insert(insert_pos, new_chapter)
         self._renumber_chapters()
+        # `chapters` mutates in place -- force the watcher (task-16849;
+        # same idiom `CharacterVoiceWidget` uses, task-15479).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Select the chapter the user just created so the table highlight
+        # and preview follow the edit.
+        self.set_reactive(ChapterEditorWidget.selected_chapter_index, insert_pos)
+        self._sync_after_edit()
         self.post_message(ChapterEditEvent(insert_pos, new_chapter, "add"))
 
     def _split_chapter(self) -> None:
@@ -417,6 +465,11 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
 
             self.chapters.insert(self.selected_chapter_index + 1, new_chapter)
             self._renumber_chapters()
+            # `chapters` mutates in place -- force the watcher (task-16849).
+            self.mutate_reactive(ChapterEditorWidget.chapters)
+            # Selection stays on the original (now-truncated) chapter --
+            # the split was made from its own preview cursor position.
+            self._sync_after_edit()
             self.post_message(
                 ChapterEditEvent(self.selected_chapter_index, chapter, "split")
             )
@@ -439,6 +492,10 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
         # Remove next chapter
         self.chapters.pop(self.selected_chapter_index + 1)
         self._renumber_chapters()
+        # `chapters` mutates in place -- force the watcher (task-16849).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Selection stays on the (now-merged) current chapter.
+        self._sync_after_edit()
         self.post_message(
             ChapterEditEvent(self.selected_chapter_index, current, "merge")
         )
@@ -455,9 +512,16 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
 
         deleted = self.chapters.pop(self.selected_chapter_index)
         self._renumber_chapters()
-        self.selected_chapter_index = min(
-            self.selected_chapter_index, len(self.chapters) - 1
-        )
+        # `chapters` mutates in place -- force the watcher (task-16849).
+        self.mutate_reactive(ChapterEditorWidget.chapters)
+        # Select the neighbor that shifted into the deleted slot (or the
+        # new last chapter, if the last one was deleted). `set_reactive`
+        # (silent) because this index can be numerically unchanged while
+        # naming a different chapter object -- `_sync_after_edit` below is
+        # the single, unconditional refresh that covers that case.
+        new_index = min(self.selected_chapter_index, len(self.chapters) - 1)
+        self.set_reactive(ChapterEditorWidget.selected_chapter_index, new_index)
+        self._sync_after_edit()
         self.post_message(
             ChapterEditEvent(self.selected_chapter_index, deleted, "delete")
         )
