@@ -198,6 +198,7 @@ from ...Library.library_notes_tree_state import (
     reconcile_library_notes_tree_identity,
 )
 from ...Library.library_prompts_state import (
+    DEFAULT_PROMPT_BROWSE_PAGE_SIZE,
     PromptBrowseResult,
     PromptBrowseScope,
     PromptEditorState,
@@ -5699,6 +5700,42 @@ class LibraryScreen(BaseAppScreen):
                     self._handle_library_ingest_progress_changed
                 )
 
+    @staticmethod
+    def _restore_library_prompts_scope(state: Mapping[str, Any]) -> PromptBrowseScope:
+        """Return a dispatch-safe applied Prompt scope from screen state."""
+        saved = state.get("library_prompts_scope")
+        if isinstance(saved, PromptBrowseScope):
+            raw = dataclasses.asdict(saved)
+        elif type(saved) is dict:
+            raw = saved
+        else:
+            legacy_sort = state.get("library_prompts_sort")
+            legacy_query = state.get("library_prompts_filter")
+            raw = {
+                "query": legacy_query if type(legacy_query) is str else "",
+                "sort_by": "name" if legacy_sort == "name" else "last_modified",
+                "sort_order": "asc" if legacy_sort == "name" else "desc",
+            }
+
+        query = raw.get("query", "")
+        if type(query) is not str:
+            query = ""
+        page = raw.get("page", 1)
+        max_page = (2**63 - 1) // DEFAULT_PROMPT_BROWSE_PAGE_SIZE + 1
+        if type(page) is not int or not 1 <= page <= max_page:
+            page = 1
+        try:
+            return PromptBrowseScope(
+                query=query,
+                collection_id=raw.get("collection_id"),
+                sort_by=raw.get("sort_by", "last_modified"),
+                sort_order=raw.get("sort_order", "desc"),
+                page=page,
+                page_size=DEFAULT_PROMPT_BROWSE_PAGE_SIZE,
+            )
+        except (TypeError, ValueError):
+            return PromptBrowseScope()
+
     def save_state(self) -> dict[str, Any]:
         """Persist Library selection/view state for the next visit.
 
@@ -5720,11 +5757,10 @@ class LibraryScreen(BaseAppScreen):
         worker.
 
         The media type cycle, notes sort/filter, selected prompt id, and
-        conversations query are view/selection state. The Prompt browse scope
-        is request state instead: its query, collection, sort, and page values
-        define the exact local Prompt service request issued after restore.
-        Its immutable fields are saved as a primitive mapping; result rows are
-        fetched fresh.
+        conversations query are view/selection state. Prompt restore carries
+        only the last successfully applied scope; drafts, failures, rows, and
+        transient loading state stay with the current screen instance. Its
+        immutable fields are saved as a primitive mapping and fetched fresh.
         ``_library_notes_filter_records`` is likewise never persisted because
         it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
@@ -5755,8 +5791,9 @@ class LibraryScreen(BaseAppScreen):
         state["library_media_type_filter"] = self._library_media_type_filter
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
+        applied_prompts = self._library_prompt_browse_controller.applied_result
         state["library_prompts_scope"] = dataclasses.asdict(
-            self._library_prompt_browse_controller.scope
+            applied_prompts.scope if applied_prompts is not None else PromptBrowseScope()
         )
         state["selected_prompt_id"] = self._selected_prompt_id
         conversation_applied = self._library_conversation_freshness != "uninitialized"
@@ -5904,24 +5941,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = (
             notes_filter if isinstance(notes_filter, str) else ""
         )
-        prompts_scope = state.get("library_prompts_scope")
-        if isinstance(prompts_scope, PromptBrowseScope):
-            # In-memory compatibility with snapshots made before TASK-16227.
-            restored_prompts_scope = prompts_scope
-        elif type(prompts_scope) is dict:
-            try:
-                restored_prompts_scope = PromptBrowseScope(**prompts_scope)
-            except (TypeError, ValueError):
-                restored_prompts_scope = PromptBrowseScope()
-        else:
-            # In-memory compatibility with pre-TASK-198 saved screen state.
-            legacy_sort = state.get("library_prompts_sort")
-            legacy_query = state.get("library_prompts_filter")
-            restored_prompts_scope = PromptBrowseScope(
-                query=legacy_query if isinstance(legacy_query, str) else "",
-                sort_by="name" if legacy_sort == "name" else "last_modified",
-                sort_order="asc" if legacy_sort == "name" else "desc",
-            )
+        restored_prompts_scope = self._restore_library_prompts_scope(state)
         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
         selected_prompt_id = state.get("selected_prompt_id")
         self._selected_prompt_id = (
@@ -9537,7 +9557,9 @@ class LibraryScreen(BaseAppScreen):
                 elif shell.canvas_kind == "prompts":
                     yield LibraryPromptsListCanvas(
                         self._build_library_prompts_state(),
-                        browse_result=self._library_prompt_browse_controller.result,
+                        browse_result=(
+                            self._library_prompt_browse_controller.visible_result
+                        ),
                         sort_mode=(
                             "name"
                             if self._library_prompt_browse_controller.scope.sort_by
@@ -10892,7 +10914,7 @@ class LibraryScreen(BaseAppScreen):
                 "state": self._build_library_prompts_state(),
                 "sort_mode": "name" if scope.sort_by == "name" else "newest",
                 "filter_value": scope.query,
-                "browse_result": self._library_prompt_browse_controller.result,
+                "browse_result": self._library_prompt_browse_controller.visible_result,
                 "import_open": self._library_prompts_import_open,
                 "import_path": self._library_prompts_import_path,
                 "import_status": self._library_prompts_import_status,
@@ -10970,12 +10992,14 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
 
-        Rows and order come exclusively from the immutable exact browse
-        result. The local-source snapshot retains only the rail count seam.
+        Rows and order come exclusively from the controller's validated
+        retained page. The broad local-source snapshot remains a rail seam.
         """
+        controller = self._library_prompt_browse_controller
         return build_prompt_browse_list_state(
-            self._library_prompt_browse_controller.result,
+            controller.visible_result,
             now=datetime.now(timezone.utc),
+            retained_items=controller.retained_items,
             selection=self._library_prompt_selection,
             select_mode=self._library_prompt_select_mode,
         )
@@ -16754,14 +16778,12 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_prompts_mutation_in_flight:
             return
-        scope = self._library_prompt_browse_controller.scope
-        if scope.page <= 1:
+        controller = self._library_prompt_browse_controller
+        applied = controller.applied_result
+        if applied is None or applied.page <= 1:
             return
         self._request_library_prompts_browse(
-            dataclasses.replace(
-                scope,
-                page=scope.page - 1,
-            ),
+            controller.scope_for_page(applied.page - 1),
             focus_identity="library-prompts-page-previous",
         )
 
@@ -16772,13 +16794,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_prompts_mutation_in_flight:
             return
         controller = self._library_prompt_browse_controller
-        if controller.scope.page >= controller.result.total_pages:
+        applied = controller.applied_result
+        if applied is None or applied.page >= applied.total_pages:
             return
         self._request_library_prompts_browse(
-            dataclasses.replace(
-                controller.scope,
-                page=controller.scope.page + 1,
-            ),
+            controller.scope_for_page(applied.page + 1),
             focus_identity="library-prompts-page-next",
         )
 

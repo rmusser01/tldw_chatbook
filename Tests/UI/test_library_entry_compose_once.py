@@ -610,6 +610,133 @@ async def test_stale_prompt_token_is_rejected_on_the_same_route(
 
 
 @pytest.mark.asyncio
+async def test_unmounted_prompt_screen_cannot_apply_into_a_fresh_visit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    _wire_entry_prompt_service(app, tmp_path / "unmounted-prompt.db")
+    old_screen = LibraryScreen(app)
+    old_screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_PROMPTS})
+    old_controller = old_screen._library_prompt_browse_controller
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    original_load = LibraryPromptBrowseController._load
+
+    async def gated_old_load(controller, *args, **kwargs):
+        if controller is not old_controller:
+            return await original_load(controller, *args, **kwargs)
+        started.set()
+        try:
+            await release.wait()
+            return await original_load(controller, *args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(LibraryPromptBrowseController, "_load", gated_old_load)
+    host = LibraryHarness(app, screen=old_screen)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_condition(
+            pilot,
+            started.is_set,
+            message="Old Prompt screen did not reach its request gate.",
+        )
+        await host.pop_screen()
+        fresh_screen = LibraryScreen(app)
+        fresh_screen.restore_state(
+            {"library_selected_row_id": LIBRARY_ROW_BROWSE_PROMPTS}
+        )
+        await host.push_screen(fresh_screen)
+        await _wait_for_selector(fresh_screen, pilot, "#library-prompt-row-1")
+        fresh_result = fresh_screen._library_prompt_browse_controller.applied_result
+
+        release.set()
+        await _wait_for_condition(
+            pilot,
+            finished.is_set,
+            message="Old Prompt request did not finish after release.",
+        )
+        await pilot.pause()
+
+        assert old_controller.applied_result is None
+        assert fresh_screen._library_prompt_browse_controller.applied_result is fresh_result
+        assert fresh_result is not None
+        assert fresh_result.items[0]["name"] == "Entry prompt"
+
+
+@pytest.mark.asyncio
+async def test_late_broad_snapshot_cannot_replace_the_dedicated_prompt_page(
+    tmp_path: Path,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    prompts_db = PromptsDatabase(
+        tmp_path / "prompt-snapshot-isolation.db",
+        client_id="prompt-snapshot-isolation",
+    )
+    for index in range(1, 26):
+        prompts_db.add_prompt(
+            name=f"Prompt {index:02d}",
+            author="Codex",
+            details="Dedicated page",
+            system_prompt="Be exact.",
+            user_prompt=str(index),
+        )
+    app.prompts_db = prompts_db
+    app.prompt_scope_service = PromptScopeService(
+        local_service=LocalPromptService(prompts_db),
+        server_service=None,
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_PROMPTS})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active = _active_library_screen(host)
+        await _wait_for_selector(active, pilot, "#library-prompt-row-25")
+        page_two = dataclasses.replace(
+            active._library_prompt_browse_controller.applied_result.scope,
+            page=2,
+        )
+        active._request_library_prompts_browse(page_two)
+        await _wait_for_selector(active, pilot, "#library-prompt-row-5")
+        applied = active._library_prompt_browse_controller.applied_result
+
+        records = dict(active._local_source_records)
+        records["prompts"] = (
+            {
+                "id": 999,
+                "name": "Broad snapshot row",
+                "version": 1,
+            },
+        )
+        counts = dict(active._local_source_counts)
+        counts["prompts"] = 999
+        active._apply_local_source_snapshot(
+            records,
+            counts,
+            dict(active._local_source_total_known),
+            active._library_lookup_error,
+            active._library_lookup_recovery_state,
+            dict(active._library_study_counts),
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert active._library_prompt_browse_controller.applied_result is applied
+        assert [row.prompt_id for row in active._build_library_prompts_state().rows] == [
+            5,
+            4,
+            3,
+            2,
+            1,
+        ]
+        assert not active.query("#library-prompt-row-999")
+
+
+@pytest.mark.asyncio
 async def test_stale_skills_posture_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
