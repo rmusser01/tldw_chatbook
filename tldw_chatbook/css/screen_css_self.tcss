@@ -8,52 +8,6 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
-/* ===== WIDGET: ScraperBuilderWindow (UI/ScraperBuilderWindow.py) ===== */
-
-    ScraperBuilderWindow {
-        background: $background;
-    }
-    
-    /* Layout */
-
-    
-
-    
-
-    
-    /* Header styling */
-
-    
-
-    
-    /* Selector testing */
-
-    
-
-    
-
-    
-    /* Preview panel */
-
-    
-
-    
-
-    
-
-    
-    /* Action buttons */
-
-    
-    /* Status indicator */
-
-    
-    /* Rule builder */
-
-    
-
-    
-
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
     NoteSelectionDialog {
