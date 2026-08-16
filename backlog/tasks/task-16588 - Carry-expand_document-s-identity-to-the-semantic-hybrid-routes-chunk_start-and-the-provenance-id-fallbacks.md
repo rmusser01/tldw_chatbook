@@ -68,3 +68,21 @@ assumed.
 - [ ] #5 `expand_hint`'s pinned `{expandable, reason}` interface, the tool's contract, and row order/count are unchanged; `citations` and the `provenance` mapping still never leave the adapter
 - [ ] #6 The gated retrieval suite still reads "PASSED: No regression. 105 metric(s)" with every cell at (+0.000) — this is a payload addition, not a retrieval change
 <!-- AC:END -->
+
+## Notes
+
+- **AC#1 shipped early, at the unit level only (TASK-16174 fix wave,
+  2026-08-15).** The final whole-branch review called the dead `chunk_id`
+  parameter a blocker, and the wire-or-retire fix for it was to retire
+  `chunk_id` from the tool schema AND emit `chunk_start` from `_project_row`
+  whenever a row's provenance carries a usable anchor (`> 0`). So the payload
+  addition exists and is pinned by tests; what is still open on AC#1 is the
+  route MEASUREMENT in AC#3 — no `semantic`/`hybrid` run has yet shown a
+  window that actually contains the matched chunk.
+- **In-scope evidence for AC#3 (final review finding 6):** rows whose raw
+  provenance `source_type` is a canonicalization VARIANT — `media_chunk`,
+  `chat`, or a plural spelling, all of which `_SEMANTIC_SOURCE_TYPE_MAP`
+  treats as live — get no hint and therefore no identity at all under the
+  policy's singular-only `EXPANDABLE_SOURCE_TYPES`, so the route measurement
+  should count them rather than only the point-id case (carried as its own
+  finding in TASK-16688).
