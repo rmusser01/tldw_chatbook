@@ -2465,6 +2465,15 @@ class _GatedFailingSecondPromptPage(_FakePromptScopeServiceWithList):
         return await super().browse_prompts(**kwargs)
 
 
+class _ShrinkingPromptPageService(_FakePromptScopeServiceWithList):
+    """Shrink before page 2 so the real response coherently clamps to page 1."""
+
+    async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("page") == 2:
+            self._prompts = self._prompts[:5]
+        return await super().browse_prompts(**kwargs)
+
+
 async def _wait_for_prompt_browse_scope(
     screen: LibraryScreen,
     pilot,
@@ -2534,6 +2543,17 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             )
             assert controller.pager.status_copy == "Loading page 2…"
             assert len(screen.query(".library-prompt-row")) == 20
+            pane = screen.query_one("#library-canvas")
+            for selector in (
+                "#library-prompts-header",
+                "#library-prompts-page-label",
+                "#library-prompts-page-status",
+                "#library-prompts-page-previous",
+                "#library-prompts-page-next",
+            ):
+                widget = screen.query_one(selector)
+                assert pane.region.contains_region(widget.region), selector
+                assert widget in app.screen._compositor.visible_widgets, selector
             for selector in (
                 "#library-prompts-page-previous",
                 "#library-prompts-page-next",
@@ -2552,9 +2572,37 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
                 and len(screen.query("#library-prompts-retry")) == 1,
                 message="Prompt canvas never received the failed pager.",
             )
+            await _wait_for_condition(
+                pilot,
+                lambda: all(
+                    pane.region.contains_region(screen.query_one(selector).region)
+                    and screen.query_one(selector)
+                    in app.screen._compositor.visible_widgets
+                    for selector in (
+                        "#library-prompts-header",
+                        "#library-prompts-page-label",
+                        "#library-prompts-page-status",
+                        "#library-prompts-page-previous",
+                        "#library-prompts-page-next",
+                        "#library-prompts-retry",
+                    )
+                ),
+                message="Failed Prompt pager never became compositor-visible.",
+            )
             assert controller.pager.status_copy == "Couldn't load page 2."
             assert len(screen.query(".library-prompt-row")) == 20
             assert len(screen.query("#library-prompts-retry")) == 1
+            for selector in (
+                "#library-prompts-header",
+                "#library-prompts-page-label",
+                "#library-prompts-page-status",
+                "#library-prompts-page-previous",
+                "#library-prompts-page-next",
+                "#library-prompts-retry",
+            ):
+                widget = screen.query_one(selector)
+                assert pane.region.contains_region(widget.region), selector
+                assert widget in app.screen._compositor.visible_widgets, selector
             previous = screen.query_one("#library-prompts-page-previous", Button)
             next_page = screen.query_one("#library-prompts-page-next", Button)
             assert previous.disabled is True
@@ -2610,6 +2658,18 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         assert "Couldn't load prompts." in str(
             screen.query_one("#library-prompts-page-status", Static).renderable
         )
+        pane = screen.query_one("#library-canvas")
+        for selector in (
+            "#library-prompts-header",
+            "#library-prompts-page-label",
+            "#library-prompts-page-status",
+            "#library-prompts-page-previous",
+            "#library-prompts-page-next",
+            "#library-prompts-retry",
+        ):
+            widget = screen.query_one(selector)
+            assert pane.region.contains_region(widget.region), selector
+            assert widget in app.screen._compositor.visible_widgets, selector
         for selector in (
             "#library-prompts-page-previous",
             "#library-prompts-page-next",
@@ -2655,6 +2715,69 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         assert str(
             screen.query_one("#library-prompts-page-status", Static).renderable
         ) == "Filter wasn't applied; showing previous results. · Already on the first page."
+        for selector in (
+            "#library-prompts-header",
+            "#library-prompts-page-label",
+            "#library-prompts-page-status",
+            "#library-prompts-page-previous",
+            "#library-prompts-page-next",
+            "#library-prompts-retry",
+        ):
+            widget = screen.query_one(selector)
+            assert pane.region.contains_region(widget.region), selector
+            assert widget in app.screen._compositor.visible_widgets, selector
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disable():
+    """A shrinking result leaves focus on an enabled control after clamping."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _ShrinkingPromptPageService(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": f"2026-08-01T00:{index:02d}:00+00:00",
+                "version": 1,
+            }
+            for index in range(1, 26)
+        ]
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        screen = LibraryScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen.query(".library-prompt-row")) == 20,
+            message="Initial Prompt page never mounted.",
+        )
+
+        next_page = screen.query_one("#library-prompts-page-next", Button)
+        next_page.focus()
+        next_page.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.applied_result is not None
+            and screen._library_prompt_browse_controller.applied_result.page == 1
+            and screen._library_prompt_browse_controller.applied_result.total_items == 5
+            and len(screen.query(".library-prompt-row")) == 5,
+            message="Shrinking Prompt response never clamped to page 1.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.query_one("#library-prompts-filter", Input).has_focus,
+            message="Clamped Prompt pager never restored focus to the filter.",
+        )
+
+        previous = screen.query_one("#library-prompts-page-previous", Button)
+        clamped_next = screen.query_one("#library-prompts-page-next", Button)
+        assert previous.disabled is True
+        assert clamped_next.disabled is True
+        assert screen.query_one("#library-prompts-filter", Input).has_focus
 
 
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)

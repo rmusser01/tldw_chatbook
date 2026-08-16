@@ -11141,18 +11141,20 @@ class LibraryScreen(BaseAppScreen):
                     )
                 return
         try:
-            fallback_id = {
+            pager_fallback_id = {
                 "library-prompts-page-next": "#library-prompts-page-previous",
                 "library-prompts-page-previous": "#library-prompts-page-next",
-            }.get(
-                focus_identity,
+            }.get(focus_identity)
+            fallback_id = pager_fallback_id or (
                 "#library-prompts-selection-done"
                 if self._library_prompt_select_mode
-                else "#library-prompts-sort",
+                else "#library-prompts-sort"
             )
             fallback = self.query_one(fallback_id, Button)
             if not fallback.disabled:
                 fallback.focus()
+            elif pager_fallback_id:
+                self.query_one("#library-prompts-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
 
