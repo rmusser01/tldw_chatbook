@@ -602,7 +602,16 @@ async def test_the_global_cap_defers_a_headless_wake_like_any_other_send(tmp_pat
 async def test_a_busy_session_defers_a_headless_wake_until_it_goes_terminal(
     tmp_path,
 ):
-    """Per-session busy refusal applies with no Console mounted."""
+    """Per-session busy refusal applies with no Console mounted.
+
+    The refusal is asserted at the COORDINATOR's own gate, not merely by
+    the absence of a provider payload. Measured (mutation M7): bypassing
+    `send_refusal_copy` in `_attempt` left this test green, because
+    `submit_draft` refuses a busy session on its own -- the read site is
+    double-guarded, so "nothing streamed" cannot distinguish which guard
+    did it. Counting the dispatches is what owns "the wake defers before
+    it ever tries to send".
+    """
     rig = _controller_rig(tmp_path)
     chacha, app, runs_db, store, session, gateway, _bridge, controller = rig
     try:
@@ -613,6 +622,14 @@ async def test_a_busy_session_defers_a_headless_wake_until_it_goes_terminal(
             session_id=session.id,
         )
         wake = controller.fleet_wake
+        dispatches: list[str] = []
+        real_submit = controller.submit_draft
+
+        async def _counting_submit(*args, **kwargs):
+            dispatches.append(str(kwargs.get("session_id") or ""))
+            return await real_submit(*args, **kwargs)
+
+        controller.submit_draft = _counting_submit
 
         wake.on_fleet_drained(
             _drain(session.id, _survivor(run_id, session_id=session.id))
@@ -620,6 +637,10 @@ async def test_a_busy_session_defers_a_headless_wake_until_it_goes_terminal(
         assert await _quiet(lambda: gateway.payloads), (
             "a headless wake must never fire into a session whose run is in "
             "flight"
+        )
+        assert dispatches == [], (
+            "the wake tried to SEND into a busy session and relied on "
+            f"`submit_draft` to bounce it: {dispatches}"
         )
         assert wake.has_pending(session.id)
 

@@ -459,12 +459,23 @@ async def test_leaving_console_does_not_close_the_provider_gateway():
 
 
 @pytest.mark.asyncio
-async def test_the_wake_gate_still_refuses_between_visits():
-    """`_attempt`'s `_shutdown_requested` gate is untouched by this landing.
+async def test_the_visit_cancellation_event_is_set_between_visits():
+    """The per-visit Event's lifecycle: set on leave, fresh on the next attach.
 
-    Making a wake fire with no view is the NEXT task. What must hold here
-    is that leaving Console still leaves that Event set (so the gate still
-    refuses) and that returning clears it (so a mounted Console works).
+    **Renamed, deliberately, by the wake-fires-headless slice** -- the
+    assertions below are unchanged, but the old name
+    (`test_the_wake_gate_still_refuses_between_visits`) now describes a
+    property that is no longer true. `ConsoleFleetWakeCoordinator._attempt`
+    reads `_disposed`, not this Event, so a wake DOES fire between visits;
+    the tests that own that are
+    `Tests/Chat/test_console_headless_wake_invariants.py::
+    test_a_visit_that_merely_ended_does_not_refuse_the_wake` and its
+    disposed-direction sibling.
+
+    What this Event still is, and what is pinned here: the signal that
+    denies every parked approval/confirm round armed during the visit that
+    is ending (each captured it at arm time), replaced by a fresh, unset
+    one when the next view attaches so a returning Console works.
     """
     store = ConsoleChatStore()
     controller = ConsoleChatController(
@@ -475,8 +486,8 @@ async def test_the_wake_gate_still_refuses_between_visits():
 
     await asyncio.wait_for(runtime.leave_console(), timeout=2)
     assert controller._shutdown_requested.is_set(), (
-        "between visits the wake gate must still refuse -- relaxing it is "
-        "the wake-fires-headless task, not this one"
+        "leaving Console must leave this visit's Event set -- it is what "
+        "keeps every round armed during the visit denied"
     )
 
     runtime.attach_view(_View())
