@@ -5440,6 +5440,11 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
                 self.started.set()
                 try:
                     assert self.release.wait(10)
+                    # The released write still applies its side effect, as
+                    # the original HungPersistence did via super() -- a
+                    # completed write must persist what it carried (Qodo
+                    # review, PR #1726).
+                    self.durable_system = kwargs["system_prompt"]
                     return True
                 finally:
                     self.finished.set()
