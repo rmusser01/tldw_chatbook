@@ -555,7 +555,7 @@ class StudyGuideWidget(Widget):
             # Topic selection
             with Horizontal(classes="form-row"):
                 yield Label("Topic:", classes="form-label")
-                yield Select(options=[("new", "New Topic")], id="guide-topic-select")
+                yield Select(options=[("New Topic", "new")], id="guide-topic-select")
 
             yield Label("Guide Title:")
             yield Input(placeholder="Enter guide title...", id="guide-title")
