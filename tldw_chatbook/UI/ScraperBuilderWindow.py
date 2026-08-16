@@ -31,7 +31,9 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
     Collapsible,
+    Switch,
 )
+from textual.widgets.text_area import LanguageDoesNotExist
 from textual.reactive import reactive
 from textual.binding import Binding
 from rich.table import Table
@@ -41,7 +43,7 @@ from loguru import logger
 
 #
 # Local Imports
-from ..Widgets.form_components import FormBuilder, FormField, FormFieldSet
+from ..Widgets.form_components import FormField, FormFieldSet
 from ..Web_Scraping.Article_Extractor_Lib import scrape_article_sync as get_page_content
 #
 ########################################################################################################################
@@ -49,6 +51,21 @@ from ..Web_Scraping.Article_Extractor_Lib import scrape_article_sync as get_page
 # Scraper Builder Window
 #
 ########################################################################################################################
+
+
+def _syntax_text_area(**kwargs: Any) -> TextArea:
+    """Build a TextArea, degrading to plain text when a grammar is absent.
+
+    ``TextArea(language=...)`` raises LanguageDoesNotExist at construction
+    time when tree-sitter is installed but the specific grammar package is
+    not (e.g. no ``tree-sitter-html``). A missing optional grammar must cost
+    highlighting, not make the screen unopenable.
+    """
+    try:
+        return TextArea(**kwargs)
+    except LanguageDoesNotExist:
+        kwargs.pop("language", None)
+        return TextArea(**kwargs)
 
 
 class ScraperBuilderWindow(Screen):
@@ -192,7 +209,6 @@ class ScraperBuilderWindow(Screen):
         super().__init__()
         self.url = url or ""
         self.extraction_rules = []
-        self.form_builder = FormBuilder()
         self.page_html = ""
         self.page_text = ""
 
@@ -249,7 +265,7 @@ class ScraperBuilderWindow(Screen):
                 with TabbedContent():
                     # HTML Preview
                     with TabPane("HTML", id="html-preview-tab"):
-                        yield TextArea(
+                        yield _syntax_text_area(
                             id="html-preview",
                             language="html",
                             theme="monokai",
@@ -268,7 +284,7 @@ class ScraperBuilderWindow(Screen):
     def _compose_selector_builder(self) -> ComposeResult:
         """Compose selector builder section."""
         # Quick selector templates
-        with Collapsible("Common Selectors", collapsed=False):
+        with Collapsible(title="Common Selectors", collapsed=False):
             yield from self._create_selector_templates()
 
         # Custom selector testing
@@ -289,12 +305,12 @@ class ScraperBuilderWindow(Screen):
             yield Label("Add as extraction rule:")
             yield Select(
                 options=[
-                    ("title", "Title"),
-                    ("content", "Content"),
-                    ("author", "Author"),
-                    ("date", "Published Date"),
-                    ("image", "Main Image"),
-                    ("custom", "Custom Field"),
+                    ("Title", "title"),
+                    ("Content", "content"),
+                    ("Author", "author"),
+                    ("Published Date", "date"),
+                    ("Main Image", "image"),
+                    ("Custom Field", "custom"),
                 ],
                 id="rule-type-select",
             )
@@ -319,17 +335,17 @@ class ScraperBuilderWindow(Screen):
         with FormFieldSet("Page Processing"):
             yield FormField(
                 "Remove Scripts",
-                self.form_builder.create_switch("remove-scripts", default=True),
+                Switch(value=True, id="remove-scripts"),
             )
 
             yield FormField(
                 "Remove Styles",
-                self.form_builder.create_switch("remove-styles", default=True),
+                Switch(value=True, id="remove-styles"),
             )
 
             yield FormField(
                 "Preserve Links",
-                self.form_builder.create_switch("preserve-links", default=True),
+                Switch(value=True, id="preserve-links"),
             )
 
         with FormFieldSet("Content Filters"):
@@ -343,9 +359,9 @@ class ScraperBuilderWindow(Screen):
             yield Label("Text Processing:")
             yield Select(
                 options=[
-                    ("none", "No processing"),
-                    ("clean", "Clean whitespace"),
-                    ("markdown", "Convert to Markdown"),
+                    ("No processing", "none"),
+                    ("Clean whitespace", "clean"),
+                    ("Convert to Markdown", "markdown"),
                 ],
                 value="clean",
                 id="text-processing",
@@ -354,7 +370,7 @@ class ScraperBuilderWindow(Screen):
         with FormFieldSet("Advanced"):
             yield FormField(
                 "Wait for JavaScript",
-                self.form_builder.create_switch("wait-javascript", default=False),
+                Switch(value=False, id="wait-javascript"),
             )
 
             yield FormField(
@@ -513,7 +529,9 @@ class ScraperBuilderWindow(Screen):
                     {"index": i + 1, "tag": tag_name, "attrs": attrs, "text": text}
                 )
 
-            self.app.call_from_thread(self.display_selector_results, results, len(elements))
+            self.app.call_from_thread(
+                self.display_selector_results, results, len(elements)
+            )
 
         except Exception as e:
             logger.error(f"Error testing selector: {str(e)}")
