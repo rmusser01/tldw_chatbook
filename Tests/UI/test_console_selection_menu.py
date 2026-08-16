@@ -11,7 +11,8 @@ click-outside.
 import pytest
 from textual.app import App, ComposeResult
 from textual.events import MouseDown, MouseMove, MouseUp
-from textual.widgets import Markdown
+from textual.widget import Widget
+from textual.widgets import Button, Markdown, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -636,3 +637,280 @@ async def test_escape_with_composer_focus_still_restores_composer():
 
         assert not app.query(ConsoleSelectionMenu)
         assert app.focused is composer
+
+
+# --- Phase 3 task 2: feedback entries + run gating -------------------------
+
+
+NO_RUN_HINT = "No active run — start a run to send review feedback"
+
+_FEEDBACK_BUTTON_IDS = [
+    "console-selection-add-to-chat",
+    "console-selection-more-details",
+    "console-selection-ask-side-chat",
+    "console-selection-request-changes",
+    "console-selection-lgm",
+    "console-selection-comment",
+]
+
+
+class _FeedbackMenuApp(App[None]):
+    """Menu harness with the phase-3 feedback ctor knobs + event capture."""
+
+    def __init__(
+        self, *, feedback_available: bool = True, run_active: bool = False
+    ) -> None:
+        super().__init__()
+        self.feedback_available = feedback_available
+        self.run_active = run_active
+        self.request_changes_events: list[ConsoleSelectionMenu.RequestChanges] = []
+        self.lgm_events: list[ConsoleSelectionMenu.Lgm] = []
+        self.comment_events: list[ConsoleSelectionMenu.Comment] = []
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSelectionMenu(
+            screen_x=4,
+            screen_y=6,
+            feedback_available=self.feedback_available,
+            run_active=self.run_active,
+        )
+
+    def on_console_selection_menu_request_changes(
+        self, event: ConsoleSelectionMenu.RequestChanges
+    ) -> None:
+        self.request_changes_events.append(event)
+
+    def on_console_selection_menu_lgm(self, event: ConsoleSelectionMenu.Lgm) -> None:
+        self.lgm_events.append(event)
+
+    def on_console_selection_menu_comment(
+        self, event: ConsoleSelectionMenu.Comment
+    ) -> None:
+        self.comment_events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_feedback_buttons_absent_without_availability():
+    """feedback_available=False: only the three base buttons, no hint.
+
+    (The default-ctor case is guarded by the pre-existing
+    ``test_menu_offers_three_stacked_options_in_order``.)
+    """
+    app = _FeedbackMenuApp(feedback_available=False, run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        ids = [b.id for b in menu.query("Button")]
+        assert ids == [
+            "console-selection-add-to-chat",
+            "console-selection-more-details",
+            "console-selection-ask-side-chat",
+        ]
+        assert not menu.query("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_feedback_buttons_render_after_ask_side_chat_when_available():
+    """feedback_available=True renders the three feedback buttons after
+    Ask in Side Chat with the exact labels."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        buttons = list(menu.query("Button"))
+        assert [b.id for b in buttons] == _FEEDBACK_BUTTON_IDS
+        assert [str(b.label) for b in buttons[-3:]] == [
+            "Request changes",
+            "LGTM",
+            "Comment",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_run_gating_disables_request_and_lg_but_not_comment():
+    """No active run: Request changes + LGTM disabled (with the hint as
+    tooltip), Comment enabled, and the dim hint line visible."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        request = menu.query_one("#console-selection-request-changes", Button)
+        lgm = menu.query_one("#console-selection-lgm", Button)
+        comment = menu.query_one("#console-selection-comment", Button)
+        assert request.disabled
+        assert lgm.disabled
+        assert not comment.disabled
+        assert request.tooltip == NO_RUN_HINT
+        assert lgm.tooltip == NO_RUN_HINT
+        hint = menu.query_one("#console-selection-feedback-hint", Static)
+        assert hint.display
+        assert hint.renderable == NO_RUN_HINT
+
+
+@pytest.mark.asyncio
+async def test_run_active_enables_all_feedback_buttons_and_hides_hint():
+    """Active run: all three feedback buttons enabled and no hint line."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        del pilot
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert not menu.query_one("#console-selection-request-changes").disabled
+        assert not menu.query_one("#console-selection-lgm").disabled
+        assert not menu.query_one("#console-selection-comment").disabled
+        assert not menu.query("#console-selection-feedback-hint")
+
+
+@pytest.mark.asyncio
+async def test_key_navigation_down_cycle_skips_disabled_buttons():
+    """Down-cycling must never land on a disabled button (and must still
+    reach every enabled one)."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        menu = app.query_one(ConsoleSelectionMenu)
+        buttons = list(menu.query(Button))
+        assert [b.id for b in buttons if b.disabled] == [
+            "console-selection-request-changes",
+            "console-selection-lgm",
+        ]
+        focused_ids: set[str | None] = set()
+        for _ in range(2 * len(buttons)):
+            await pilot.press("down")
+            focused = app.focused
+            assert focused is not None
+            assert not focused.disabled, f"focus landed on disabled {focused.id}"
+            focused_ids.add(focused.id)
+        assert focused_ids == {
+            "console-selection-add-to-chat",
+            "console-selection-more-details",
+            "console-selection-ask-side-chat",
+            "console-selection-comment",
+        }
+
+
+@pytest.mark.asyncio
+async def test_key_navigation_up_wrap_skips_disabled_buttons():
+    """Up from the first button wraps to the LAST enabled button (Comment),
+    not the disabled LGTM."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        menu = app.query_one(ConsoleSelectionMenu)
+        del menu
+        await pilot.pause()
+        assert app.focused.id == "console-selection-add-to-chat"  # mount focuses first
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused.id == "console-selection-comment"
+
+
+@pytest.mark.asyncio
+async def test_enabled_feedback_buttons_post_messages():
+    """With an active run each feedback button posts its own message."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.click("#console-selection-request-changes")
+        await pilot.pause()
+        assert len(app.request_changes_events) == 1
+        assert app.lgm_events == []
+        assert app.comment_events == []
+
+        await pilot.click("#console-selection-lgm")
+        await pilot.pause()
+        assert len(app.lgm_events) == 1
+        assert len(app.request_changes_events) == 1
+        assert app.comment_events == []
+
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+        assert len(app.comment_events) == 1
+        assert len(app.request_changes_events) == 1
+        assert len(app.lgm_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_comment_posts_when_run_gated():
+    """Gated menu still lets Comment through (keyboard users without a run)."""
+    app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+        assert len(app.comment_events) == 1
+        assert app.request_changes_events == []
+        assert app.lgm_events == []
+
+
+@pytest.mark.asyncio
+async def test_disabled_feedback_buttons_do_not_post():
+    """Clicking a run-gated button posts nothing."""
+    for selector in ("#console-selection-request-changes", "#console-selection-lgm"):
+        app = _FeedbackMenuApp(feedback_available=True, run_active=False)
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.click(selector)
+            await pilot.pause()
+            assert app.request_changes_events == []
+            assert app.lgm_events == []
+            assert app.comment_events == []
+
+
+class _OwnerCapture(Widget):
+    """Sibling-of-menu owner: only direct posting (not bubbling) reaches it."""
+
+    def __init__(self) -> None:
+        super().__init__(id="feedback-owner")
+        self.received: list[tuple[str, object]] = []
+
+    def on_console_selection_menu_request_changes(self, event) -> None:
+        self.received.append(("request-changes", event))
+
+    def on_console_selection_menu_lgm(self, event) -> None:
+        self.received.append(("lgm", event))
+
+    def on_console_selection_menu_comment(self, event) -> None:
+        self.received.append(("comment", event))
+
+
+class _OwnerMenuApp(App[None]):
+    """Mounts the menu with an explicit owner (transcript-like routing)."""
+
+    def __init__(self, *, run_active: bool = True) -> None:
+        super().__init__()
+        self.run_active = run_active
+        self.owner = _OwnerCapture()
+
+    def compose(self) -> ComposeResult:
+        yield self.owner
+        yield ConsoleSelectionMenu(
+            screen_x=2,
+            screen_y=2,
+            feedback_available=True,
+            run_active=self.run_active,
+            owner=self.owner,
+        )
+
+
+@pytest.mark.asyncio
+async def test_feedback_messages_post_to_owner_when_provided():
+    """Feedback buttons post to the owner when one was passed (the owner is
+    a menu SIBLING, so bubbling alone could never reach it)."""
+    app = _OwnerMenuApp(run_active=True)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.click("#console-selection-request-changes")
+        await pilot.pause()
+        await pilot.click("#console-selection-lgm")
+        await pilot.pause()
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+        assert [kind for kind, _ in app.owner.received] == [
+            "request-changes",
+            "lgm",
+            "comment",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_feedback_messages_owner_routed_when_gated_comment():
+    """Owner routing works for the always-enabled Comment under gating."""
+    app = _OwnerMenuApp(run_active=False)
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+        assert [kind for kind, _ in app.owner.received] == ["comment"]

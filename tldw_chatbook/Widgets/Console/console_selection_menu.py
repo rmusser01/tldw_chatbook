@@ -12,7 +12,13 @@ region, so paint, clipping, and hit-testing all agree.
 
 Escape and click-outside dismiss with no side effects (task-16211 modal
 contract, recorded by ADR-068). Keyboard navigation: up/down cycles the
-action buttons, Enter activates the focused one, Escape closes.
+action buttons (skipping disabled ones), Enter activates the focused one,
+Escape closes.
+
+Phase 3 task 2: when ``feedback_available`` (selection in agent output)
+the menu also offers ``Request changes | LGTM | Comment``; without an
+active run the first two render disabled with a dim hint line (Comment
+stays reachable).
 """
 
 from __future__ import annotations
@@ -26,7 +32,11 @@ from textual.events import Click, Key
 from textual.geometry import Offset
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Static
+
+#: Shown (dim, inside the menu) and carried on the disabled buttons'
+#: tooltips when Request changes / LGTM are run-gated (phase 3 task 2).
+_NO_RUN_HINT = "No active run — start a run to send review feedback"
 
 
 class ConsoleSelectionQuoteRequested(Message):
@@ -69,6 +79,10 @@ class ConsoleSelectionMenu(Vertical):
         background: $surface;
         padding: 0 1;
     }
+    ConsoleSelectionMenu #console-selection-feedback-hint {
+        color: $text-muted;
+        text-style: dim;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "dismiss", show=False)]
@@ -82,6 +96,19 @@ class ConsoleSelectionMenu(Vertical):
     class AskInSideChat(Message):
         """User chose 'Ask in Side Chat' (freeform) for the selection."""
 
+    class RequestChanges(Message):
+        """User chose 'Request changes' review feedback for the selection.
+
+        Phase 3 task 2: posted only when a run is active (run-gated); the
+        owning transcript composes the structured feedback message.
+        """
+
+    class Lgm(Message):
+        """User chose 'LGTM' review feedback for the selection (run-gated)."""
+
+    class Comment(Message):
+        """User chose 'Comment' feedback for the selection (always enabled)."""
+
     def __init__(
         self,
         *,
@@ -89,6 +116,8 @@ class ConsoleSelectionMenu(Vertical):
         screen_y: int,
         has_add_to_chat: bool = True,
         owner: Widget | None = None,
+        feedback_available: bool = False,
+        run_active: bool = False,
     ) -> None:
         """Anchor the menu at screen coordinates.
 
@@ -105,11 +134,18 @@ class ConsoleSelectionMenu(Vertical):
                 owner instead of bubbling -- screen-level bubbling would
                 never reach the transcript's handlers. ``None`` falls back
                 to normal bubbling (bare test harnesses).
+            feedback_available: Whether the selection sits in agent output
+                (tool/diff rows), offering the review-feedback actions.
+            run_active: Whether a console run is currently active; when
+                False, Request changes / LGTM render disabled with the
+                no-run hint (Comment stays enabled).
         """
         super().__init__(id="console-selection-menu", classes="console-selection-menu")
         self._anchor = (screen_x, screen_y)
         self._owner = owner
         self._has_add_to_chat = has_add_to_chat
+        self._feedback_available = feedback_available
+        self._run_active = run_active
         #: Widget holding focus before the menu grabbed it (captured in
         #: ``on_mount`` BEFORE focusing the first button); ``None`` =
         #: nothing was focused (or the capture raced teardown), so unmount
@@ -121,6 +157,24 @@ class ConsoleSelectionMenu(Vertical):
             yield Button("Add to chat", id="console-selection-add-to-chat", variant="primary")
         yield Button("More Details", id="console-selection-more-details")
         yield Button("Ask in Side Chat", id="console-selection-ask-side-chat")
+        if self._feedback_available:
+            gated = not self._run_active
+            request = Button(
+                "Request changes",
+                id="console-selection-request-changes",
+                disabled=gated,
+            )
+            lgm = Button("LGTM", id="console-selection-lgm", disabled=gated)
+            if gated:
+                request.tooltip = _NO_RUN_HINT
+                lgm.tooltip = _NO_RUN_HINT
+            yield request
+            yield lgm
+            # Comment is never run-gated: it routes the same way but stays
+            # reachable without an active run (phase 3: routing only).
+            yield Button("Comment", id="console-selection-comment")
+            if gated:
+                yield Static(_NO_RUN_HINT, id="console-selection-feedback-hint")
 
     def on_mount(self) -> None:
         # Capture the pre-mount focus holder BEFORE focusing a menu button:
@@ -136,7 +190,9 @@ class ConsoleSelectionMenu(Vertical):
         # measured it, or a release near the bottom edge anchors the lower
         # buttons off-screen (pilot/OutOfBounds; real terminal: unreachable).
         self.call_after_refresh(self._clamp_within_screen)
-        buttons = list(self.query(Button))
+        # Skip disabled buttons (run-gated feedback actions): focusing one
+        # would drop focus entirely (disabled widgets are not focusable).
+        buttons = [b for b in self.query(Button) if b.display and not b.disabled]
         if buttons:
             # scroll_visible=False: focusing must not scroll the screen to
             # the menu (it shifted the transcript out from under the
@@ -180,7 +236,10 @@ class ConsoleSelectionMenu(Vertical):
         if event.key in ("up", "down"):
             event.stop()
             event.prevent_default()
-            buttons = [b for b in self.query(Button) if b.display]
+            # Skip disabled buttons (run-gated Request changes / LGTM):
+            # focusing a disabled widget is a no-op that DROPS focus, which
+            # would strand keyboard navigation.
+            buttons = [b for b in self.query(Button) if b.display and not b.disabled]
             if not buttons:
                 return
             focused = next((b for b in buttons if b.has_focus), buttons[0])
@@ -202,6 +261,18 @@ class ConsoleSelectionMenu(Vertical):
     @on(Button.Pressed, "#console-selection-ask-side-chat")
     def _ask_side_chat(self) -> None:
         self._post(self.AskInSideChat())
+
+    @on(Button.Pressed, "#console-selection-request-changes")
+    def _request_changes(self) -> None:
+        self._post(self.RequestChanges())
+
+    @on(Button.Pressed, "#console-selection-lgm")
+    def _lgm(self) -> None:
+        self._post(self.Lgm())
+
+    @on(Button.Pressed, "#console-selection-comment")
+    def _comment(self) -> None:
+        self._post(self.Comment())
 
     class Dismissed(Message):
         """Escape dismissal: the owning transcript clears the selection UI."""
