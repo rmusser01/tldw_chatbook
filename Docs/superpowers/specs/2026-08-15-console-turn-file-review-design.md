@@ -131,8 +131,11 @@ message rows" test convention.
 
 ### 5. Mounting and restore
 
-- **Live**: the run-terminal handler builds the state when a run reaches
-  COMPLETED/FAILED/CANCELLED and mounts one card into the run's
+- **Live**: the run-terminal handler builds the state from the
+  **in-memory `RunOutcome.steps`** the service hands it (verified: the
+  completion path carries the full step list) — never a DB read-back,
+  which could race `append_steps` — when a run reaches
+  COMPLETED/FAILED/CANCELLED, and mounts one card into the run's
   **owning session** transcript (per-session, never "the active session"
   — the parallel-agents §2 single-slot family), filtered to **top-level
   runs only** (sub-agent terminals mount nothing in V1; the concrete
@@ -144,7 +147,25 @@ message rows" test convention.
   conversation's runs, builds card states from their steps, and attaches
   cards to their owning messages.
 
+### 6. Boundaries the implementation must not cross
+
+- **The card is never persisted as a conversation message.** ChaChaNotes
+  stays the truth for messages; AgentRuns stays the only source for
+  cards. Mounting the card must not enter any message-save path (a
+  dual-persistence card would drift from its own source on re-derive).
+- **Conversation exports/copy-all exclude the card** — it is derived
+  presentation, not content (`document_generator` and the transcript
+  copy flows skip it).
+- **Kill switch**: `[console] turn_file_cards`, default ON — the
+  console-markdown precedent for transcript-rendering additions. OFF
+  suppresses card *mounting* only; capture/persistence still run, so
+  turning it back on retroactively shows past turns' cards.
+
 ## Testing
+
+Verified at spec time (not deferred to planning): the provider holds
+`workspace_root` and every impl funnels through the shared
+`resolve_workspace_path()` — capture imports the same function.
 
 - **Pure**: per-tool records (create/modify, multi-file patch), `None`
   before-digest on create, binary/size guard, per-record cap + per-run
@@ -165,6 +186,9 @@ message rows" test convention.
   session.
 - **Mutation checks**: delete the runtime→step forwarding → integration
   red; clear a spec's `capture_file_changes` flag → pure red.
+- **Boundary tests**: kill switch OFF → no card mounts, capture still
+  persists; a conversation export of a turn with a card contains no card
+  content.
 
 ## Out of scope (backlog seeds)
 
