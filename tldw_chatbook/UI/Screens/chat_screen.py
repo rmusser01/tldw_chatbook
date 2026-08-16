@@ -19901,12 +19901,12 @@ class ChatScreen(BaseAppScreen):
         ``push_screen_wait`` raises ``NoActiveWorker`` outside one (see
         ``EvalsScreen._on_delete_bench_pressed``'s identical note); the
         action/quote are captured here, before the worker's first line
-        runs. The modal returns the stripped comment, or ``None`` for
-        Cancel/Escape/backdrop AND an empty submitted comment -- every
-        ``None`` path abandons the whole feedback (plan task 5: modal
-        escape dispatches nothing). ``event.stop()`` because nothing
-        above this screen subscribes -- the transcript already consumed
-        the originating menu action.
+        runs. The modal returns the stripped comment — ``""`` for a
+        comment-less submit (feedback still flows, no comment block) —
+        or ``None`` for Cancel/Escape/backdrop, which abandons the whole
+        feedback (plan task 5: modal escape dispatches nothing).
+        ``event.stop()`` because nothing above this screen subscribes --
+        the transcript already consumed the originating menu action.
         """
         event.stop()
         if not event.quote.strip():

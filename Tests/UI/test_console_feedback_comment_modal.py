@@ -1,8 +1,9 @@
 """Console selection feedback comment modal (selection phase 3, task 4).
 
-Covers: Cancel ≡ Escape ≡ backdrop (all dismiss ``None`` = no feedback sent),
-Submit button and Enter both returning the stripped comment, an empty or
-whitespace-only comment dismissing ``None`` (comment omitted), the read-only
+Covers: Cancel ≡ Escape ≡ backdrop (all dismiss ``None`` = feedback
+abandoned), Submit button and Enter both returning the stripped comment,
+an empty or whitespace-only comment dismissing ``""`` (feedback sent
+WITHOUT a comment — the comment is optional, spec §3), the read-only
 quote preview (short quotes verbatim, oversized quotes capped with the
 truncation marker), and the action string driving the header copy.
 """
@@ -115,7 +116,12 @@ async def test_enter_returns_comment_text() -> None:
 
 
 @pytest.mark.parametrize("value", ["", "   ", "\t"])
-async def test_blank_comment_submits_none(value: str) -> None:
+async def test_blank_comment_submits_empty_string(value: str) -> None:
+    """Submitting without a comment sends feedback anyway (comment optional).
+
+    ``""`` means "submit, no comment"; only Cancel/Escape/backdrop return
+    ``None`` and abandon the feedback.
+    """
     app = _CommentModalApp()
     modal = _modal()
 
@@ -127,7 +133,7 @@ async def test_blank_comment_submits_none(value: str) -> None:
         await pilot.click("#console-feedback-comment-submit")
         await pilot.pause()
 
-    assert app.results == [None]
+    assert app.results == [""]
 
 
 # ---------------------------------------------------------------------------

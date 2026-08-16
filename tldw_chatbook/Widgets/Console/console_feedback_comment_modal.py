@@ -35,9 +35,11 @@ def _preview_text(quote: str) -> str:
 class ConsoleFeedbackCommentModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Collect an optional comment for a selection feedback action.
 
-    Dismisses the stripped comment on Submit/Enter, or ``None`` when the
-    comment is empty (comment omitted) or the modal is cancelled
-    (Cancel/Escape/backdrop via ``SafeModalDismissMixin``).
+    Dismisses the stripped comment on Submit/Enter — ``""`` when the input
+    is empty or whitespace-only, meaning "submit WITHOUT a comment" (the
+    comment is optional, spec §3; feedback still flows). ``None`` is
+    cancel-only: Cancel/Escape/backdrop via ``SafeModalDismissMixin``
+    abandon the feedback entirely.
     """
 
     DEFAULT_CSS = """
@@ -134,4 +136,6 @@ class ConsoleFeedbackCommentModal(SafeModalDismissMixin, ModalScreen[str | None]
 
     def _submit(self) -> None:
         comment = self.query_one("#console-feedback-comment-input", Input).value
-        self.dismiss(comment.strip() or None)
+        # "" (not None): submitting without a comment still sends the
+        # feedback; None stays reserved for Cancel/Escape/backdrop.
+        self.dismiss(comment.strip())

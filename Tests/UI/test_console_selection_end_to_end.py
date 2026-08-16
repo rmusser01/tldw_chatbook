@@ -826,6 +826,34 @@ async def test_feedback_real_modal_submit_dispatches_composed_text():
 
 
 @pytest.mark.asyncio
+async def test_feedback_real_modal_empty_submit_omits_comment_block():
+    """Full loop with the real modal: request -> empty Submit -> queue.
+
+    The comment is optional (spec §3): an empty submit dismisses ``""`` (NOT
+    ``None``), so the feedback still dispatches — header + quote only, no
+    comment block. This keeps the modal's `if comment:` branch live through
+    the real loop, not just via the stubbed-modal tests above.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        screen.post_message(
+            ConsoleSelectionFeedbackRequested(action="lgm", quote="ship it")
+        )
+        await pilot.pause()
+
+        modal = pilot.app.screen
+        assert isinstance(modal, ConsoleFeedbackCommentModal)
+        assert modal.query_one("#console-feedback-comment-input", Input).value == ""
+        await pilot.click("#console-feedback-comment-submit")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert queue.dispatched == ["[LGTM]\n> ship it"]
+
+
+@pytest.mark.asyncio
 async def test_feedback_real_modal_escape_dispatches_nothing():
     """Full loop with the real modal: request -> Escape -> nothing sent."""
     async with make_console_pilot() as pilot:
