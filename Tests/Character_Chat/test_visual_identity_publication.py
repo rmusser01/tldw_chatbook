@@ -2034,8 +2034,11 @@ def test_posix_staging_cleanup_candidate_is_consumable(
     assert not (environment["user_root"] / "visual_identities" / relpath).exists()
 
 
+@pytest.mark.parametrize("reference_column", ["storage_relpath", "preview_relpath"])
 def test_cleanup_holds_write_reservation_until_reference_recheck(
-    publication_environment, monkeypatch: pytest.MonkeyPatch
+    publication_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    reference_column: str,
 ) -> None:
     environment = publication_environment
     db = environment["db"]
@@ -2062,12 +2065,21 @@ def test_cleanup_holds_write_reservation_until_reference_recheck(
         nonlocal injected
         if not injected:
             injected = True
-            db.execute_query(
+            update_reference = (
                 """
+                UPDATE visual_identity_assets
+                   SET preview_relpath = ?
+                 WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
+                """
+                if reference_column == "preview_relpath"
+                else """
                 UPDATE visual_identity_assets
                    SET storage_relpath = ?
                  WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
-                """,
+                """
+            )
+            db.execute_query(
+                update_reference,
                 (f"{relpath}/manifest.json",),
             )
             return True
@@ -2086,8 +2098,11 @@ def test_cleanup_holds_write_reservation_until_reference_recheck(
         )
 
 
+@pytest.mark.parametrize("reference_column", ["storage_relpath", "preview_relpath"])
 def test_new_reference_writer_cannot_enter_during_cleanup(
-    publication_environment, monkeypatch: pytest.MonkeyPatch
+    publication_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    reference_column: str,
 ) -> None:
     environment = publication_environment
     db = environment["db"]
@@ -2124,12 +2139,21 @@ def test_new_reference_writer_cannot_enter_during_cleanup(
             writer_attempting.set()
             connection.execute("BEGIN IMMEDIATE")
             writer_entered.set()
-            connection.execute(
+            update_reference = (
                 """
+                UPDATE visual_identity_assets
+                   SET preview_relpath = ?
+                 WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
+                """
+                if reference_column == "preview_relpath"
+                else """
                 UPDATE visual_identity_assets
                    SET storage_relpath = ?
                  WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
-                """,
+                """
+            )
+            connection.execute(
+                update_reference,
                 (f"{relpath}/manifest.json",),
             )
             connection.rollback()
@@ -2327,3 +2351,92 @@ def test_cleanup_rejects_caller_owned_transaction(
         )
 
     assert (environment["user_root"] / "visual_identities" / relpath).is_dir()
+
+
+@pytest.mark.parametrize("preview_suffix", ["", "/preview.webp"])
+def test_cleanup_refuses_preview_only_live_reference(
+    publication_environment,
+    monkeypatch: pytest.MonkeyPatch,
+    preview_suffix: str,
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((57, 57, 57)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+    with db.transaction():
+        db.execute_query(
+            """
+            UPDATE visual_identity_assets
+               SET preview_relpath = ?
+             WHERE id = (SELECT MIN(id) FROM visual_identity_assets)
+            """,
+            (f"{relpath}{preview_suffix}",),
+        )
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_referenced"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+
+    assert (environment["user_root"] / "visual_identities" / relpath).is_dir()
+
+
+def test_cleanup_fails_closed_when_name_swaps_during_enumeration(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    db = environment["db"]
+    candidate = create_visual_identity_candidate(
+        db, actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((58, 58, 58)))
+    monkeypatch.setattr(
+        VisualIdentityRepository,
+        "activate_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError()),
+    )
+    with pytest.raises(VisualIdentityPublicationError) as caught:
+        publish_visual_identity_candidate(
+            db, candidate, user_data_dir=environment["user_root"]
+        )
+    relpath = caught.value.cleanup_candidate_relpath
+    assert relpath is not None
+    candidate_path = environment["user_root"] / "visual_identities" / relpath
+    detached = candidate_path.with_name(".detached-mid-cleanup")
+    original_listdir = os.listdir
+    swapped = False
+
+    def swap_name_then_enumerate(directory_fd):
+        nonlocal swapped
+        filenames = original_listdir(directory_fd)
+        if not swapped:
+            swapped = True
+            os.rename(candidate_path, detached)
+            candidate_path.mkdir()
+        return filenames
+
+    monkeypatch.setattr(os, "listdir", swap_name_then_enumerate)
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_cleanup_denied"
+    ):
+        visual_identity_module.cleanup_visual_identity_publication_candidate(
+            db, relpath, user_data_dir=environment["user_root"]
+        )
+
+    assert detached.is_dir()
+    assert candidate_path.is_dir()

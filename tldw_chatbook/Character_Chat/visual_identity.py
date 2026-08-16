@@ -2219,12 +2219,20 @@ def cleanup_visual_identity_publication_candidate(
         referenced = connection.execute(
             """
             SELECT 1
-              FROM visual_identity_assets
+             FROM visual_identity_assets
              WHERE owner_user_id = 0
-               AND (storage_relpath = ? OR storage_relpath LIKE ?)
+               AND (
+                    storage_relpath = ? OR storage_relpath LIKE ?
+                    OR preview_relpath = ? OR preview_relpath LIKE ?
+               )
              LIMIT 1
             """,
-            (cleanup_candidate_relpath, f"{cleanup_candidate_relpath}/%"),
+            (
+                cleanup_candidate_relpath,
+                f"{cleanup_candidate_relpath}/%",
+                cleanup_candidate_relpath,
+                f"{cleanup_candidate_relpath}/%",
+            ),
         ).fetchone()
         if referenced is not None:
             raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
@@ -2236,12 +2244,20 @@ def cleanup_visual_identity_publication_candidate(
         referenced = connection.execute(
             """
             SELECT 1
-              FROM visual_identity_assets
+             FROM visual_identity_assets
              WHERE owner_user_id = 0
-               AND (storage_relpath = ? OR storage_relpath LIKE ?)
+               AND (
+                    storage_relpath = ? OR storage_relpath LIKE ?
+                    OR preview_relpath = ? OR preview_relpath LIKE ?
+               )
              LIMIT 1
             """,
-            (cleanup_candidate_relpath, f"{cleanup_candidate_relpath}/%"),
+            (
+                cleanup_candidate_relpath,
+                f"{cleanup_candidate_relpath}/%",
+                cleanup_candidate_relpath,
+                f"{cleanup_candidate_relpath}/%",
+            ),
         ).fetchone()
         if referenced is not None:
             raise VisualIdentityPublicationError("visual_identity_cleanup_referenced")
@@ -2742,6 +2758,8 @@ def _discard_pinned_directory(parent_fd: int, entry_name: str, pinned_fd: int) -
             if stat.S_ISDIR(child_stat.st_mode):
                 return False
             os.unlink(filename, dir_fd=pinned_fd)
+        if not _entry_matches_fd(parent_fd, entry_name, pinned_fd):
+            return False
         os.rmdir(entry_name, dir_fd=parent_fd)
         return True
     except OSError:
