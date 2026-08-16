@@ -137,6 +137,8 @@ from ...Library.library_ingest_state import (
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
+    MediaBrowseScope,
+    build_library_media_browse_state,
     build_library_media_state,
     build_library_media_trash_state,
 )
@@ -441,6 +443,9 @@ from ..Library_Modules import (
     LibraryPromptCollectionsController,
     LibraryPromptHistoryController,
     LibraryPromptHistoryRegion,
+)
+from ..Library_Modules.library_media_browse_controller import (
+    LibraryMediaBrowseController,
 )
 from ..Library_Modules.library_snapshot_cache import (
     clone_library_source_snapshot,
@@ -2968,7 +2973,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_request_generation = 0
         self._library_conversations_select_mode: bool = False
         self._library_conversations_row_selection = RowSelection("conversations")
-        self._library_media_type_filter: str = "All"
+        self._library_media_type_filter: str | None = None
+        self._library_media_selection_notice = ""
         self._selected_media_id: str = ""
         self._library_media_select_mode: bool = False
         self._library_media_row_selection = RowSelection("media")
@@ -3129,6 +3135,18 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id
                 in {LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT}
                 and self._library_prompts_view == "list"
+            ),
+        )
+        self._library_media_browse_controller = LibraryMediaBrowseController(
+            screen=self,
+            run_service_call=lambda: self._run_library_service_call,
+            media_service=lambda: getattr(
+                self.app_instance, "media_reading_scope_service", None
+            ),
+            sync_view=lambda: self._sync_library_media_browse_state,
+            request_is_active=lambda: (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "list"
             ),
         )
         self._library_prompt_collections_controller = (
@@ -5546,6 +5564,16 @@ class LibraryScreen(BaseAppScreen):
                 self._library_conversation_requested_page,
                 self._library_conversation_requested_query,
             )
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._pending_library_source_open is None
+        ):
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity=None,
+            )
+            self._request_library_media_facets()
         self._refresh_local_source_snapshot()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -5677,6 +5705,7 @@ class LibraryScreen(BaseAppScreen):
         # before any awaited shutdown work can yield back to its completion.
         self._library_conversation_request_generation += 1
         self._invalidate_library_prompts_browse()
+        self._library_media_browse_controller.invalidate()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
@@ -5788,7 +5817,10 @@ class LibraryScreen(BaseAppScreen):
         state["library_rag_answer"] = self._library_rag_answer
         state["library_rag_answer_query"] = self._library_rag_answer_query
         state["library_rag_answer_mode"] = self._library_rag_answer_mode
-        state["library_media_type_filter"] = self._library_media_type_filter
+        applied_media = self._library_media_browse_controller.applied_result
+        state["library_media_scope"] = dataclasses.asdict(
+            applied_media.scope if applied_media is not None else MediaBrowseScope()
+        )
         state["library_notes_sort"] = self._library_notes_sort
         state["library_notes_filter"] = self._library_notes_filter
         applied_prompts = self._library_prompt_browse_controller.applied_result
@@ -5927,12 +5959,9 @@ class LibraryScreen(BaseAppScreen):
         # answer worker running, so restoring an in-flight "answering"
         # status would be a dangling one nothing could ever resolve.
 
-        media_type_filter = state.get("library_media_type_filter")
-        self._library_media_type_filter = (
-            media_type_filter
-            if isinstance(media_type_filter, str) and media_type_filter
-            else "All"
-        )
+        restored_media_scope = self._restore_library_media_scope(state)
+        self._library_media_browse_controller.invalidate(restored_media_scope)
+        self._library_media_type_filter = restored_media_scope.media_type
         notes_sort = state.get("library_notes_sort")
         self._library_notes_sort = (
             notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
@@ -6381,6 +6410,8 @@ class LibraryScreen(BaseAppScreen):
         if target_row_id is None:
             return
         self._library_navigation_context_generation += 1
+        if target_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            self._library_media_browse_controller.invalidate()
         generation = self._library_navigation_context_generation
         if (
             self.is_mounted
@@ -10228,10 +10259,23 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
-        """Build the media canvas display state from local records."""
-        state = build_library_media_state(
-            self._local_source_records.get("media", ()),
-            active_type=self._library_media_type_filter,
+        """Build Media rows only from the controller's retained exact page."""
+        controller = self._library_media_browse_controller
+        if controller.applied_result is None:
+            return build_library_media_state(
+                (),
+                active_type=self._library_media_type_filter or "All",
+                selected_id=self._selected_media_id,
+                select_mode=self._library_media_select_mode,
+                selected_ids=self._library_media_row_selection.ids,
+                confirming_bulk_delete=self._library_media_confirming_bulk_delete,
+                delete_receipt_count=len(self._library_media_delete_receipt_ids),
+                type_choices_visible=self._library_media_type_choices_visible,
+            )
+        state = build_library_media_browse_state(
+            controller.applied_result,
+            type_options=controller.type_options,
+            retained_items=controller.retained_items,
             selected_id=self._selected_media_id,
             select_mode=self._library_media_select_mode,
             selected_ids=self._library_media_row_selection.ids,
@@ -10242,6 +10286,123 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
+
+    @staticmethod
+    def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
+        """Return one strict dispatch-safe applied Media scope from saved state."""
+        saved = state.get("library_media_scope")
+        raw = saved if type(saved) is dict else {}
+        query = raw.get("query", "")
+        media_type = raw.get("media_type")
+        sort_by = raw.get("sort_by", "last_modified_desc")
+        page = raw.get("page", 1)
+        if type(query) is not str:
+            query = ""
+        if media_type is not None and type(media_type) is not str:
+            media_type = None
+        if type(sort_by) is not str:
+            sort_by = "last_modified_desc"
+        if type(page) is not int:
+            page = 1
+        try:
+            return MediaBrowseScope(
+                query=query,
+                media_type=media_type,
+                sort_by=sort_by,
+                page=page,
+            )
+        except (TypeError, ValueError):
+            return MediaBrowseScope()
+
+    def _sync_library_media_browse_state(
+        self, focus_identity: str | None
+    ) -> None:
+        """Project accepted Media page/facet state into the mounted list."""
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            or self._library_media_view != "list"
+        ):
+            return
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is not None:
+            self._library_media_type_filter = applied.media_type
+        media_state = self._build_library_media_state()
+        self._selected_media_id = media_state.selected_id
+        focused = self.focused
+        focused_id = getattr(focused, "id", None)
+        if (
+            isinstance(focused_id, str)
+            and focused_id
+            and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
+        ):
+            focus_identity = f"#{focused_id}"
+        elif self._library_pending_list_entry_focus:
+            focus_identity = "#library-media-row-0"
+        then = (
+            (lambda: self._focus_library_control(focus_identity))
+            if focus_identity
+            else None
+        )
+        _sync_library_canvas(self, "media", then=then)
+
+    def _request_library_media_browse(
+        self,
+        scope: MediaBrowseScope,
+        *,
+        focus_identity: str | None,
+    ) -> Any | None:
+        return self._library_media_browse_controller.request(
+            scope, focus_identity=focus_identity
+        )
+
+    def _request_library_media_facets(self) -> Any | None:
+        return self._library_media_browse_controller.request_facets(
+            fingerprint=self._library_media_browse_controller.requested_scope.fingerprint
+        )
+
+    def _clear_library_media_selection_for_scope_change(self) -> None:
+        """End page-local selection before changing the exact Media scope."""
+        changed = (
+            self._library_media_select_mode
+            or self._library_media_row_selection.count > 0
+            or self._library_media_confirming_bulk_delete
+        )
+        if not changed:
+            return
+        self._exit_library_media_select_mode(announce_discard=False)
+        self._library_media_selection_notice = "Selection cleared."
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(self._library_media_selection_notice)
+
+    def _request_library_media_page(
+        self, page: int, *, focus_identity: str | None
+    ) -> Any | None:
+        """Request one page from the complete last-applied Media scope."""
+        self._clear_library_media_selection_for_scope_change()
+        return self._request_library_media_browse(
+            self._library_media_browse_controller.scope_for_page(page),
+            focus_identity=focus_identity,
+        )
+
+    def _request_library_media_type(
+        self, media_type: str | None, *, focus_identity: str | None
+    ) -> Any | None:
+        """Request page one after changing only the applied Media type scope."""
+        self._clear_library_media_selection_for_scope_change()
+        applied = self._library_media_browse_controller.mutation_refresh_scope
+        return self._request_library_media_browse(
+            dataclasses.replace(applied, media_type=media_type, page=1),
+            focus_identity=focus_identity,
+        )
+
+    def _retry_library_media_browse(
+        self, *, focus_identity: str | None
+    ) -> Any | None:
+        """Retry the latest requested Media draft with a fresh generation."""
+        return self._library_media_browse_controller.retry(
+            focus_identity=focus_identity
+        )
 
     def _build_library_media_trash_state(self) -> LibraryMediaTrashState:
         """Build the media Trash view display state (task-4025)."""
@@ -11492,6 +11653,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                 self.refresh(recompose=True)
             return None
+        resolved_service_media_id = self._library_media_backing_id(media_id)
         try:
             detail = await self._run_library_service_call(
                 get_media_item,
@@ -11499,7 +11661,7 @@ class LibraryScreen(BaseAppScreen):
                 # server's library, so resolving it locally would find nothing
                 # (task-700). Every other route into this viewer is local.
                 mode="server" if self._library_media_detail_is_remote else "local",
-                media_id=media_id,
+                media_id=resolved_service_media_id,
                 include_content=True,
                 include_versions=True,
                 isolate_in_worker=True,
@@ -11523,7 +11685,9 @@ class LibraryScreen(BaseAppScreen):
             )
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        highlights = await self._fetch_library_media_highlights(media_id)
+        highlights = await self._fetch_library_media_highlights(
+            str(resolved_service_media_id)
+        )
         if (
             media_id != self._selected_media_id
             or self._library_media_view != "viewer"
@@ -15219,6 +15383,8 @@ class LibraryScreen(BaseAppScreen):
         if not await self._flush_library_skill_save():
             self._notify_skill_dirty_veto()
             return
+        if row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            self._library_media_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
         if (
             self._pending_library_source_open is not None
@@ -15369,6 +15535,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = shell.selected_row_id
         if not await self._replace_library_browse_canvas(shell):
             await self.recompose()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            self._request_library_media_browse(
+                self._library_media_browse_controller.mutation_refresh_scope,
+                focus_identity="#library-media-row-0",
+            )
+            self._request_library_media_facets()
         # task-2856 AC1: a rail-row press landing on one of the four list
         # canvases focuses its primary list's first row -- the entry-point
         # half of the same seam ``_exit_library_skill_editor_guarded`` /
@@ -15557,16 +15729,18 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a type-strip option.
         """
         event.stop()
-        requested = str(getattr(event.button, "choice_value", "") or "")
+        requested = getattr(event.button, "choice_value", None)
+        if requested is not None and type(requested) is not str:
+            return
         self._library_media_type_choices_visible = False
         type_options = self._build_library_media_state().type_options
         if requested in type_options and requested != self._library_media_type_filter:
             self._library_media_type_filter = requested
-            # task-2853 AC4: routes through the shared exit helper so this
-            # side-effect select-mode reset can't strand a pending
-            # bulk-delete confirmation either, and states the discard like
-            # every other exit.
-            self._exit_library_media_select_mode(announce_discard=True)
+            self._request_library_media_type(
+                requested,
+                focus_identity="#library-media-type-filter",
+            )
+            return
         _sync_library_canvas(
             self,
             "media",
@@ -16414,6 +16588,7 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._library_media_view = "viewer"
+        self._library_media_browse_controller.invalidate()
         # task-14902: an open type strip must not survive the trip through
         # the viewer and reappear (stale) on the way back.
         self._library_media_type_choices_visible = False
@@ -16436,6 +16611,19 @@ class LibraryScreen(BaseAppScreen):
                 group="library_media_detail",
             )
         self.refresh(recompose=True)
+
+    def _library_media_backing_id(self, media_id: str) -> int | str:
+        """Resolve a canonical list identity to the positive local backing id."""
+        prefix = "local:media:"
+        if media_id.startswith(prefix):
+            raw = media_id[len(prefix) :]
+            try:
+                backing_id = int(raw)
+            except ValueError:
+                return media_id
+            if backing_id > 0:
+                return backing_id
+        return media_id
 
     @on(Button.Pressed, "#library-notes-sort")
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:

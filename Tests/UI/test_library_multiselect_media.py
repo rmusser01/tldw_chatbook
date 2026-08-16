@@ -4,7 +4,6 @@ import types
 from types import SimpleNamespace
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -37,6 +36,7 @@ def _media_fake(
         # press, never a double one, and the guard would otherwise reject
         # every scripted confirm press unconditionally.
         _library_media_bulk_delete_in_flight=bulk_delete_in_flight,
+        _library_media_selection_notice="",
         app_instance=SimpleNamespace(
             notify=lambda msg, **k: notified.append((msg, k))
         ),
@@ -61,6 +61,9 @@ def _media_fake(
     # implementation rather than a hand-rolled stub duplicating its logic.
     fake._exit_library_media_select_mode = types.MethodType(
         LibraryScreen._exit_library_media_select_mode, fake
+    )
+    fake._clear_library_media_selection_for_scope_change = types.MethodType(
+        LibraryScreen._clear_library_media_selection_for_scope_change, fake
     )
     fake._notify_library_media_selection_discarded = types.MethodType(
         LibraryScreen._notify_library_media_selection_discarded, fake
@@ -678,6 +681,9 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
     # A strip pick applies the value and routes through the shared exit
     # helper -- the original task-2853 pin, one seam over.
     fake._library_media_type_choices_visible = True
+    fake._request_library_media_type = (
+        lambda *_args, **_kwargs: fake._clear_library_media_selection_for_scope_change()
+    )
     pick = SimpleNamespace(
         stop=lambda: None,
         button=SimpleNamespace(choice_value="video"),
@@ -689,6 +695,7 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
     assert fake._library_media_confirming_bulk_delete is False
     assert fake._library_media_row_selection.count == 0
     assert len(fake._notified) == 1
+    assert fake._notified[0][0] == "Selection cleared."
 
 
 # ---------------------------------------------------------------------------

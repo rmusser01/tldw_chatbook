@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Mapping
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -60,6 +61,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagPanelState,
 )
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
+from tldw_chatbook.Library.library_media_state import MediaBrowseScope
 from tldw_chatbook.Library.library_prompts_state import (
     PromptSelectionBasket,
     PromptSelectionEntry,
@@ -140,6 +142,114 @@ from Tests.UI.app_factory import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
 CONVERSATION_PAGER_TEST_SIZES = ((100, 30), (170, 48))
+
+
+_LegacyStaticLibraryMediaScopeService = StaticLibraryMediaScopeService
+
+
+class StaticLibraryMediaScopeService(_LegacyStaticLibraryMediaScopeService):
+    """Production-shaped exact Media page/facet seam for Library tests."""
+
+    def __init__(self, media_items, highlights=None):
+        super().__init__(media_items, highlights=highlights)
+        self.search_calls: list[dict[str, object]] = []
+        self.type_calls: list[dict[str, object]] = []
+
+    @staticmethod
+    def _backing_id(item: Mapping[str, object], index: int) -> int:
+        raw = item.get("backing_media_id", item.get("id"))
+        if type(raw) is int and raw > 0:
+            return raw
+        match = re.search(r"(\d+)$", str(raw or ""))
+        return int(match.group(1)) if match else index + 1
+
+    async def search_media(self, **kwargs):
+        self.search_calls.append(dict(kwargs))
+        rows = list(self.media_items)
+        query = str(kwargs.get("query") or "").casefold()
+        if query:
+            rows = [row for row in rows if query in str(row.get("title") or "").casefold()]
+        media_types = kwargs.get("media_types")
+        if isinstance(media_types, list):
+            rows = [row for row in rows if row.get("type") in media_types]
+        sort_by = kwargs.get("sort_by")
+        if sort_by == "title_asc":
+            rows.sort(key=lambda row: str(row.get("title") or "").casefold())
+        elif sort_by == "title_desc":
+            rows.sort(
+                key=lambda row: str(row.get("title") or "").casefold(), reverse=True
+            )
+        else:
+            rows.sort(key=lambda row: str(row.get("last_modified") or ""), reverse=True)
+        total = len(rows)
+        offset = kwargs["offset"]
+        limit = kwargs["limit"]
+        page = rows[offset : offset + limit]
+        return {
+            "items": [
+                {
+                    "id": f"local:media:{self._backing_id(row, index)}",
+                    "backing_media_id": self._backing_id(row, index),
+                    "title": row.get("title"),
+                    "media_type": row.get("type"),
+                    "updated_at": row.get("last_modified"),
+                }
+                for index, row in enumerate(page, start=offset)
+            ],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+
+    async def list_library_media_types(self, **kwargs):
+        self.type_calls.append(dict(kwargs))
+        return sorted(
+            {
+                str(row["type"])
+                for row in self.media_items
+                if row.get("type") not in (None, "")
+            }
+        )
+
+    async def get_media_item(self, *, media_id, **kwargs):
+        self.detail_calls.append({"media_id": media_id, **kwargs})
+        for index, item in enumerate(self.media_items):
+            if self._backing_id(item, index) == media_id:
+                return dict(item)
+        return await super().get_media_item(media_id=media_id, **kwargs)
+
+
+class GatedLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Gate the first page and facet reads without parking a test forever."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.page_entered = threading.Event()
+        self.page_release = threading.Event()
+        self.facet_entered = threading.Event()
+        self.facet_release = threading.Event()
+        self._page_calls = 0
+        self._facet_calls = 0
+
+    async def search_media(self, **kwargs):
+        self._page_calls += 1
+        if self._page_calls == 1:
+            self.page_entered.set()
+            await asyncio.to_thread(
+                self.page_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
+        return await super().search_media(**kwargs)
+
+    async def list_library_media_types(self, **kwargs):
+        self.type_calls.append(dict(kwargs))
+        self._facet_calls += 1
+        if self._facet_calls == 1:
+            self.facet_entered.set()
+            await asyncio.to_thread(
+                self.facet_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
+            return ["obsolete"]
+        return ["audio", "video"]
 
 
 def _open_source_test_app() -> SimpleNamespace:
@@ -4038,9 +4148,6 @@ async def test_library_shell_media_type_filter_narrows_list():
         assert len(rows) == 1
         assert "Interview Recording" in str(rows[0].label)
 
-        status = str(screen.query_one("#library-media-status").renderable)
-        assert "type: audio" in status
-
         await _pick_media_type(screen, pilot, "video")
         assert screen._library_media_type_filter == "video"
         filter_button = screen.query_one("#library-media-type-filter", Button)
@@ -4048,14 +4155,6 @@ async def test_library_shell_media_type_filter_narrows_list():
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Product Demo Video" in str(rows[0].label)
-
-        await _pick_media_type(screen, pilot, "All")
-        assert screen._library_media_type_filter == "All"
-        filter_button = screen.query_one("#library-media-type-filter", Button)
-        assert str(filter_button.label) == "type: All"
-        rows = list(screen.query(".library-media-row"))
-        assert len(rows) == 2
-
 
 @pytest.mark.asyncio
 async def test_library_shell_media_row_switches_selection():
@@ -4081,14 +4180,15 @@ async def test_library_shell_media_row_switches_selection():
             screen.query_one("#library-media-preview-lines").renderable
         )
         assert "Product Demo Video" in preview_before
-        assert screen._selected_media_id == "media-2"
+        assert screen._selected_media_id == "local:media:2"
 
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
 
-        assert screen._selected_media_id == "media-1"
+        assert screen._selected_media_id == "local:media:1"
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
+        assert app.media_reading_scope_service.detail_calls[-1]["media_id"] == 1
 
 
 @pytest.mark.asyncio
@@ -4526,9 +4626,8 @@ async def _open_media_edit_and_save_title(screen, pilot, new_title):
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_edit_save_updates_list_snapshot_cache():
-    """Saving a metadata edit updates the cached list snapshot, so the media
-    list shows the new title immediately instead of the pre-edit value."""
+async def test_library_shell_media_edit_save_does_not_overwrite_applied_page():
+    """A broad-cache mutation cannot forge a new authoritative Media page."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -4539,17 +4638,11 @@ async def test_library_shell_media_edit_save_updates_list_snapshot_cache():
 
         await _open_media_edit_and_save_title(screen, pilot, "Renamed In List")
 
-        # The cached list snapshot record now carries the new title.
-        cached = {
-            screen._source_record_id(r): r
-            for r in screen._local_source_records.get("media", ())
-        }
-        assert cached["media-1"]["title"] == "Renamed In List"
-
-        # ...and the list view reflects it after navigating back.
+        # The exact retained page remains authoritative until its own refresh;
+        # a broad snapshot patch cannot forge a successful page response.
         screen.query_one("#library-media-back").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
-        assert "Renamed In List" in _visible_text(screen)
+        assert "Interview Recording" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -4601,7 +4694,7 @@ async def test_library_shell_media_detail_race_discards_stale_fetch():
             await pilot.pause(0.02)
         else:
             raise AssertionError("media-1 detail never loaded.")
-        assert screen._selected_media_id == "media-1"
+        assert screen._selected_media_id == "local:media:1"
 
         # Simulate a slower in-flight fetch for the previously-selected media-2
         # completing now: it must not overwrite media-1's detail.
@@ -4839,7 +4932,7 @@ async def test_library_shell_media_viewer_renders_seeded_highlight():
         app,
         _two_conversations(),
         media=_two_media_items(),
-        highlights=[("media-1", "Important sentence", "Check this", "yellow")],
+        highlights=[("1", "Important sentence", "Check this", "yellow")],
     )
     host = LibraryHarness(app)
 
@@ -4877,7 +4970,7 @@ async def test_library_shell_media_highlight_non_rich_color_does_not_crash_rende
         app,
         _two_conversations(),
         media=_two_media_items(),
-        highlights=[("media-1", "Fragile quote", None, "transparent")],
+        highlights=[("1", "Fragile quote", None, "transparent")],
     )
     host = LibraryHarness(app)
 
@@ -4957,7 +5050,7 @@ async def test_library_shell_media_highlight_delete_removes_it():
         app,
         _two_conversations(),
         media=_two_media_items(),
-        highlights=[("media-1", "Doomed highlight", None, None)],
+        highlights=[("1", "Doomed highlight", None, None)],
     )
     host = LibraryHarness(app)
 
@@ -6363,6 +6456,234 @@ async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(
         assert active_screen._library_loaded is False
         assert active_screen.query_one("#library-canvas-loading")
         assert not active_screen.query("#library-media-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_browse_controller.applied_result is not None
+            and not screen._library_media_browse_controller.facet_loading,
+            message="Exact Media page and complete facets never settled.",
+        )
+        service = app.media_reading_scope_service
+        assert len(service.search_calls) == 1
+        assert len(service.type_calls) == 1
+        assert [
+            row.media_id for row in screen._build_library_media_state().rows
+        ] == ["local:media:2", "local:media:1"]
+
+        screen._local_source_records["media"] = (
+            {"id": "broad-only", "title": "Must not render", "type": "audio"},
+        )
+        assert [
+            row.media_id for row in screen._build_library_media_state().rows
+        ] == ["local:media:2", "local:media:1"]
+
+
+@pytest.mark.asyncio
+async def test_library_media_newer_page_and_facet_generations_win() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    service = GatedLibraryMediaScopeService(_two_media_items())
+    app.media_reading_scope_service = service
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_condition(
+                pilot,
+                lambda: service.page_entered.is_set()
+                and service.facet_entered.is_set(),
+                message="Initial Media page/facet reads never reached their gates.",
+            )
+            controller = screen._library_media_browse_controller
+            assert controller.loading is True
+            assert controller.applied_result is None
+            assert screen._build_library_media_state().rows == ()
+
+            screen._request_library_media_type("audio", focus_identity=None)
+            screen._request_library_media_facets()
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.applied_scope
+                == MediaBrowseScope(media_type="audio")
+                and controller.type_options == ("audio", "video"),
+                message="Newer Media page/facet generations never applied.",
+            )
+            service.page_release.set()
+            service.facet_release.set()
+            await pilot.pause()
+            await pilot.pause()
+
+            assert controller.applied_scope == MediaBrowseScope(media_type="audio")
+            assert controller.type_options == ("audio", "video")
+    finally:
+        service.page_release.set()
+        service.facet_release.set()
+
+
+@pytest.mark.asyncio
+async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    service = GatedLibraryMediaScopeService(_two_media_items())
+    app.media_reading_scope_service = service
+    screen = LibraryScreen(app)
+    screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_condition(
+                pilot,
+                lambda: service.page_entered.is_set()
+                and service.facet_entered.is_set(),
+                message="Initial Media reads never reached their gates.",
+            )
+            old_controller = screen._library_media_browse_controller
+            await screen.on_unmount()
+            assert old_controller.loading is False
+            service.page_release.set()
+            service.facet_release.set()
+            await pilot.pause()
+            await pilot.pause()
+            assert old_controller.applied_result is None
+            assert old_controller.type_options == ()
+            assert (
+                LibraryScreen(app)._library_media_browse_controller
+                is not old_controller
+            )
+    finally:
+        service.page_release.set()
+        service.facet_release.set()
+
+
+def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_media_scope": {
+                "query": "needle",
+                "media_type": "All",
+                "sort_by": "title_asc",
+                "page": 3,
+            },
+            "library_media_rows": ("must", "not", "restore"),
+            "library_media_loading": True,
+            "library_media_error": "private",
+        }
+    )
+
+    controller = screen._library_media_browse_controller
+    assert controller.requested_scope == MediaBrowseScope(
+        query="needle", media_type="All", sort_by="title_asc", page=3
+    )
+    assert controller.applied_result is None
+    assert controller.retained_items == ()
+    assert controller.loading is False
+    assert controller.error_copy == ""
+
+    invalid = LibraryScreen(app)
+    invalid.restore_state(
+        {"library_media_scope": {"query": 7, "media_type": [], "page": True}}
+    )
+    assert invalid._library_media_browse_controller.requested_scope == MediaBrowseScope()
+
+
+def test_library_media_scope_change_clears_page_selection_with_notice() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_media_select_mode = True
+    screen._library_media_confirming_bulk_delete = True
+    screen._library_media_row_selection.toggle("local:media:1")
+
+    screen._clear_library_media_selection_for_scope_change()
+
+    assert screen._library_media_select_mode is False
+    assert screen._library_media_confirming_bulk_delete is False
+    assert screen._library_media_row_selection.count == 0
+    assert screen._library_media_selection_notice == "Selection cleared."
+
+
+@pytest.mark.asyncio
+async def test_library_media_mounted_type_change_clears_page_selection() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    notified: list[str] = []
+    app.notify = lambda message, **_kwargs: notified.append(message)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-select-toggle").press()
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await pilot.pause()
+        assert screen._library_media_row_selection.count == 1
+
+        screen._request_library_media_type("audio", focus_identity=None)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_browse_controller.applied_scope
+            == MediaBrowseScope(media_type="audio"),
+            message="Media type scope never applied.",
+        )
+
+        assert screen._library_media_select_mode is False
+        assert screen._library_media_row_selection.count == 0
+        assert "Selection cleared." in notified
+
+
+def test_library_media_canonical_identity_resolves_raw_backing_detail_id() -> None:
+    screen = LibraryScreen(_build_test_app())
+
+    assert screen._library_media_backing_id("local:media:42") == 42
+    assert screen._library_media_backing_id("local:media:not-an-int") == (
+        "local:media:not-an-int"
+    )
+
+
+@pytest.mark.parametrize(
+    ("choice", "initial"),
+    [(None, "video"), ("All", None)],
+)
+def test_library_media_type_handler_preserves_none_and_literal_all(
+    choice: str | None, initial: str | None
+) -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_media_type_filter = initial
+    screen._build_library_media_state = lambda: SimpleNamespace(
+        type_options=(None, "All", "video")
+    )
+    requested: list[str | None] = []
+    screen._request_library_media_type = lambda value, **_kwargs: requested.append(
+        value
+    )
+    screen._exit_library_media_select_mode = lambda **_kwargs: None
+    event = SimpleNamespace(
+        button=SimpleNamespace(choice_value=choice),
+        stop=lambda: None,
+    )
+
+    LibraryScreen.handle_library_media_type_choice(screen, event)
+
+    assert screen._library_media_type_filter is choice
+    assert requested == [choice]
 
 
 @pytest.mark.asyncio
@@ -20239,7 +20560,12 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
         assert active_type != "All"
         state = screen.save_state()
 
-    assert state["library_media_type_filter"] == active_type
+    assert state["library_media_scope"] == {
+        "query": "",
+        "media_type": active_type,
+        "sort_by": "last_modified_desc",
+        "page": 1,
+    }
 
     restored = LibraryScreen(app)
     restored.restore_state(state)
