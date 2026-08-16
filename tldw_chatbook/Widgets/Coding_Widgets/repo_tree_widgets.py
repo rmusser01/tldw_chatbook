@@ -48,9 +48,6 @@ class TreeNode(Widget):
     """A single node in the repository tree view."""
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     TreeNode {
         height: 3;
@@ -105,11 +102,10 @@ class TreeNode(Widget):
         background: $panel-lighten-1;
     }
     
-    .tree-node-selected {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* .tree-node-selected styling lives in css/features/_code_repo.tcss,
+       already in the bundle with the real $ds-focus-* tokens -- the copy
+       that used to sit here was dead weight the bundle always beat, and
+       its local `$var:` fallbacks shadowed the tokens (TASK-16811). */
     """
 
     def __init__(

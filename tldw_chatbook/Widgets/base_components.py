@@ -573,9 +573,6 @@ class NavigationButton(Button):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     NavigationButton {
         width: 100%;
@@ -593,20 +590,9 @@ class NavigationButton(Button):
         color: $text;
     }
     
-    NavigationButton.active {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-        border: none;
-    }
-    
-    NavigationButton:focus,
-    NavigationButton.active:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-        outline: none;
-    }
+    /* .active/:focus styling lives in css/components/_navigation.tcss --
+       it needs the bundle's $ds-focus-* tokens, and a local `$var:`
+       fallback here would shadow them for this whole source (TASK-16811). */
     """
 
     is_active = reactive(False)
