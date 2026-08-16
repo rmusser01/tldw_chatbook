@@ -5676,13 +5676,13 @@ class LibraryScreen(BaseAppScreen):
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
         self._library_conversation_request_generation += 1
+        self._invalidate_library_prompts_browse()
         workspace = self._library_file_notes_workspace
         if workspace is not None:
             await workspace.shutdown()
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
-        self._invalidate_library_prompts_browse()
         self._library_prompt_collections_controller.invalidate()
         self._clear_library_prompt_selection(announce=False)
         self._library_prompt_mutation_disabled_states.clear()
@@ -9555,23 +9555,22 @@ class LibraryScreen(BaseAppScreen):
                             id="library-prompts-canvas",
                         )
                 elif shell.canvas_kind == "prompts":
+                    prompt_controller = self._library_prompt_browse_controller
+                    display_scope = prompt_controller.visible_result.scope
                     yield LibraryPromptsListCanvas(
                         self._build_library_prompts_state(),
-                        browse_result=(
-                            self._library_prompt_browse_controller.visible_result
-                        ),
+                        browse_result=prompt_controller.visible_result,
                         sort_mode=(
                             "name"
-                            if self._library_prompt_browse_controller.scope.sort_by
-                            == "name"
+                            if display_scope.sort_by == "name"
                             else "newest"
                         ),
-                        filter_value=self._library_prompt_browse_controller.scope.query,
+                        filter_value=prompt_controller.scope.query,
                         import_open=self._library_prompts_import_open,
                         import_path=self._library_prompts_import_path,
                         import_status=self._library_prompts_import_status,
                         collection_label=self._library_prompt_collections_controller.collection_label(
-                            self._library_prompt_browse_controller.scope.collection_id
+                            display_scope.collection_id
                         ),
                         sort_choices_visible=(
                             self._library_prompts_sort_choices_visible
@@ -10908,18 +10907,22 @@ class LibraryScreen(BaseAppScreen):
                 )
             return values
 
-        scope = self._library_prompt_browse_controller.scope
+        controller = self._library_prompt_browse_controller
+        requested_scope = controller.scope
+        display_scope = controller.visible_result.scope
         values.update(
             {
                 "state": self._build_library_prompts_state(),
-                "sort_mode": "name" if scope.sort_by == "name" else "newest",
-                "filter_value": scope.query,
-                "browse_result": self._library_prompt_browse_controller.visible_result,
+                "sort_mode": (
+                    "name" if display_scope.sort_by == "name" else "newest"
+                ),
+                "filter_value": requested_scope.query,
+                "browse_result": controller.visible_result,
                 "import_open": self._library_prompts_import_open,
                 "import_path": self._library_prompts_import_path,
                 "import_status": self._library_prompts_import_status,
                 "collection_label": self._library_prompt_collections_controller.collection_label(
-                    scope.collection_id
+                    display_scope.collection_id
                 ),
                 "sort_choices_visible": self._library_prompts_sort_choices_visible,
             }
@@ -11067,7 +11070,7 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         label = self._library_prompt_collections_controller.collection_label(
-            self._library_prompt_browse_controller.scope.collection_id
+            self._library_prompt_browse_controller.visible_result.scope.collection_id
         )
         # AC#5/task-14902: the in-place patcher must build the SAME chooser
         # label the canvas composes (recompose discipline).
@@ -15321,7 +15324,7 @@ class LibraryScreen(BaseAppScreen):
             self._refresh_library_skills_trust_posture()
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS:
             self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.scope,
+                self._library_prompt_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
         if (
@@ -20765,7 +20768,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
-            self._library_prompt_browse_controller.scope,
+            self._library_prompt_browse_controller.mutation_refresh_scope,
             focus_identity=None,
         )
         self._refresh_local_source_snapshot()
@@ -21654,7 +21657,7 @@ class LibraryScreen(BaseAppScreen):
         )
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
-            self._library_prompt_browse_controller.scope,
+            self._library_prompt_browse_controller.mutation_refresh_scope,
             focus_identity=focus_identity,
         )
         self._refresh_local_source_snapshot()
@@ -21697,7 +21700,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         self._reset_library_prompt_editor_state()
         self._request_library_prompts_browse(
-            self._library_prompt_browse_controller.scope,
+            self._library_prompt_browse_controller.mutation_refresh_scope,
             focus_identity=None,
         )
         self._refresh_local_source_snapshot()

@@ -3190,7 +3190,12 @@ async def test_library_prompts_failed_filter_keeps_requested_input_and_applied_p
         await _wait_for_selector(screen, pilot, "#library-prompt-row-25")
         applied = screen._library_prompt_browse_controller.applied_result
 
-        failed_scope = PromptBrowseScope(query="requested filter")
+        failed_scope = PromptBrowseScope(
+            query="requested filter",
+            collection_id=7,
+            sort_by="name",
+            sort_order="asc",
+        )
         screen._request_library_prompts_browse(
             failed_scope,
             focus_identity="library-prompts-filter",
@@ -3210,6 +3215,130 @@ async def test_library_prompts_failed_filter_keeps_requested_input_and_applied_p
             screen.query_one("#library-prompts-header", Static).renderable
         ) == "Prompts (25)"
         assert screen.query_one("#library-prompt-row-25", Button)
+        canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        assert canvas.filter_value == "requested filter"
+        assert canvas.sort_mode == "newest"
+        assert canvas.collection_label == "All prompts"
+        screen._sync_library_prompt_collection_label()
+        assert "All prompts" in str(
+            screen.query_one("#library-prompts-collection", Button).label
+        )
+        screen.refresh(recompose=True)
+        await pilot.pause()
+        canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        assert canvas.filter_value == "requested filter"
+        assert canvas.sort_mode == "newest"
+        assert canvas.collection_label == "All prompts"
+
+
+@pytest.mark.asyncio
+async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutdown():
+    """Prompt apply authority closes before an awaited workspace shutdown."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _GatedWorkspace:
+        async def shutdown(self) -> None:
+            started.set()
+            await release.wait()
+
+    screen._library_file_notes_workspace = _GatedWorkspace()
+    controller = screen._library_prompt_browse_controller
+    scope = PromptBrowseScope()
+    token = controller.begin(scope)
+    late_result = _browse_result(
+        items=[
+            {
+                "id": "local:prompt:1",
+                "local_id": 1,
+                "name": "Late prompt",
+                "version": 1,
+            }
+        ],
+        request_token=token,
+    )
+
+    unmount = asyncio.create_task(screen.on_unmount())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    try:
+        late_applied = controller.apply(late_result, focus_identity=None)
+    finally:
+        release.set()
+        await unmount
+
+    assert late_applied is False
+    assert controller.applied_result is None
+
+
+@pytest.mark.asyncio
+async def test_library_prompt_back_restores_applied_scope_after_failed_request(
+    tmp_path,
+    monkeypatch,
+):
+    """Opening a retained row cannot make Back retry a failed draft scope."""
+    db, service = _real_prompt_scope_service(tmp_path)
+    prompt_id, _uuid, _message = db.add_prompt(
+        name="Retained after failure",
+        author="Author",
+        details="Applied row",
+    )
+    original_browse = service.browse_prompts
+
+    async def fail_requested_scope(**kwargs: Any):
+        if kwargs.get("query") == "requested filter":
+            raise RuntimeError("controlled request failure")
+        return await original_browse(**kwargs)
+
+    service.browse_prompts = fail_requested_scope
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, f"#library-prompt-row-{prompt_id}")
+        applied_scope = screen._library_prompt_browse_controller.applied_result.scope
+        screen._request_library_prompts_browse(
+            PromptBrowseScope(
+                query="requested filter",
+                collection_id=7,
+                sort_by="name",
+                sort_order="asc",
+            )
+        )
+        for _ in range(200):
+            if screen._library_prompt_browse_controller.result.status == "error":
+                break
+            await pilot.pause(0.02)
+        assert screen._library_prompt_browse_controller.result.status == "error"
+
+        screen.query_one(f"#library-prompt-row-{prompt_id}", Button).press()
+        for _ in range(150):
+            if screen._library_prompt_detail is not None:
+                break
+            await pilot.pause(0.02)
+        assert screen._library_prompt_detail is not None
+
+        requests: list[tuple[PromptBrowseScope, str | None]] = []
+
+        def record_request(scope, *, focus_identity=None):
+            requests.append((scope, focus_identity))
+
+        monkeypatch.setattr(screen, "_request_library_prompts_browse", record_request)
+        screen.query_one("#library-prompt-back", Button).press()
+        for _ in range(100):
+            if requests:
+                break
+            await pilot.pause(0.02)
+
+        assert requests == [(applied_scope, None)]
 
 
 @pytest.mark.asyncio
