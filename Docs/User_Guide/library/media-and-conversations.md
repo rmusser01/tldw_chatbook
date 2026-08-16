@@ -305,6 +305,10 @@ navigation keys live in the [guide index](../index.md).
   Library's own Media surface.
 - **Conversations are paged 20 at a time**, newest first. The filter searches
   the complete source before paging, so older matches remain reachable.
+- **Prompts use the same fixed 20-item page grammar.** Their search, sort, and
+  collection scopes apply before paging; selections retain captured versions
+  across pages, and a failed refresh keeps the last applied rows read-only with
+  an exact Retry action. See [Library prompts](prompts.md).
 - **"Open in Console" can refuse with "Copy or link blocked Library
   sources into the active workspace before using them in Console."** The
   handoff requires the conversation to be eligible for the active

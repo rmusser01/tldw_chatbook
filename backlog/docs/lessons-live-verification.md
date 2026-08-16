@@ -1141,7 +1141,6 @@ that must keep working in the same batch — Opus 4.6, Sonnet 4.5 and Haiku 4.5 
 200 for the identical payload is what turned "don't break older models" from an
 intention into evidence. Keep this out of the app's config path entirely: a standalone
 `curl` imports no `tldw_chatbook` module and cannot touch the live config.
-
 ---
 
 ## An "unchanged behavior" AC can faithfully pin behavior that is already broken — run the control leg live
@@ -1166,3 +1165,25 @@ pass as the fixed leg — it is one extra call, and it is the only thing that ca
 distinguish "preserved" from "preserved a fossil". If the control fails live,
 probe the minimal shapes standalone, and file the discovery against its own
 task instead of mutating the payloads your current AC pins.
+
+---
+
+## A Textual live harness needs screen, event, and paint readiness (TASK-16482, 2026-08-16)
+
+**Incident.** The first Prompt-pagination live attempts failed even though the
+mounted product state was correct. The harness treated app-level `_ui_ready` as
+Library readiness, called Textual 8's async `Input.action_submit()` without
+awaiting it, and sampled the compositor in the same cycle that focus/scroll was
+scheduled. Those three harness errors respectively lost the initial rail action,
+never posted `Input.Submitted`, and reported a reachable row as unpainted. A later
+real run exposed the inverse product race: loading recomposed disabled pager
+buttons and moved focus before the ready page could restore the invoking button.
+
+**What to do.** A live Textual check must wait at each boundary for all three
+layers it claims: authoritative screen state, the freshly mounted DOM, and the
+compositor text/geometry. Read the installed Textual method contract before
+driving it (`Button.press()` and `focus()` are synchronous schedulers;
+`Input.action_submit()` is async), re-query widgets after recomposition, and
+settle then re-check side-effect-free predicates. App startup readiness does not
+prove a destination screen has loaded. A correct harness can then reveal a real
+focus race instead of manufacturing one.
