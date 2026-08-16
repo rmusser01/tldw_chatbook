@@ -140,9 +140,9 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
     # Confirmed live: with `recompose=True` restored, a fresh
     # `#character-table` query after settling reports `row_count == 0` even
     # though `self.characters` holds the added item.
-    characters = reactive([])
+    characters = reactive(list)
     selected_character_index = reactive(-1)
-    voice_assignments = reactive({})
+    voice_assignments = reactive(dict)
     provider = reactive("openai")
 
     def __init__(self, provider: str = "openai", **kwargs):

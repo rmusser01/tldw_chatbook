@@ -254,7 +254,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     #: the debounced reload from destroying the search box the user is
     #: still typing into 0.3 s later. `runtime_backend` is read by nothing
     #: in `compose()` at all; it was rebuilding the pane for free.
-    items = reactive[list[dict[str, Any]]]([])
+    items = reactive[list[dict[str, Any]]](list)
     selected_item = reactive[dict[str, Any] | None](None)
     status_filter = reactive("all")
     search_query = reactive("")

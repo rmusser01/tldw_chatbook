@@ -126,7 +126,7 @@ class ChapterEditorWidget(RecomposeCaptureGuard, Widget):
     """
 
     # Reactive properties
-    chapters = reactive([], recompose=True)
+    chapters = reactive(list, recompose=True)
     selected_chapter_index = reactive(-1)
     preview_content = reactive("")
 

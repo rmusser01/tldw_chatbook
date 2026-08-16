@@ -155,7 +155,7 @@ class MediaListPanel(Container):
     """
 
     # Reactive properties
-    items: reactive[List[Dict[str, Any]]] = reactive([])
+    items: reactive[List[Dict[str, Any]]] = reactive(list)
     current_page: reactive[int] = reactive(1)
     total_pages: reactive[int] = reactive(1)
     selected_id: reactive[Optional[str]] = reactive(None)

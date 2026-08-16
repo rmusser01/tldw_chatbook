@@ -97,7 +97,7 @@ class WizardStep(Container):
     is_valid = reactive(True)
 
     # Validation
-    validation_errors: reactive[List[str]] = reactive([])
+    validation_errors: reactive[List[str]] = reactive(list)
 
     def __init__(
         self,
@@ -321,7 +321,7 @@ class WizardProgress(Horizontal):
 
     current_step = reactive(1)
     total_steps = reactive(1)
-    step_titles: reactive[List[str]] = reactive([])
+    step_titles: reactive[List[str]] = reactive(list)
 
     def compose(self) -> ComposeResult:
         """Compose progress indicators."""

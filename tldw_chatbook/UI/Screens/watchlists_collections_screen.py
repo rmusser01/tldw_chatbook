@@ -525,7 +525,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # (see `_update_item_status`'s `refresh=False` path, which exists solely
     # to dodge it). `watch_overview_data` pushes the payload into the three
     # live surfaces that read it instead.
-    overview_data = reactive({})
+    overview_data = reactive(dict)
     # Through Phase C, CONTENT held only a placeholder stub and started
     # collapsed to avoid spending screen space on it. Phase D wires a real
     # reader (`ContentPane`) into CONTENT, so it now starts expanded like
