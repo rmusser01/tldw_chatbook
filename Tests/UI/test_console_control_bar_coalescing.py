@@ -3,6 +3,24 @@
 cProfile (post-task-3011): `_sync_console_control_bar` executed 14 times
 during one screen push at ~47ms each — 0.65s of a ~1.2s settled push, every
 caller individually justified, nothing deduplicating them.
+
+KNOWN FLAKE (task-15766, documented 2026-08-15): this file failed 2/3 on dev
+at 48a54ed9c/762596846 (task-3070 notes, 2026-08-10) with no code change
+involved, and passed 18/18 file-runs at 48ad9e7de across unloaded, 10-process
+CPU-loaded (2.5x slowdown), and default-plugin conditions — the mechanism was
+NOT changed in between (`git log -S` on `_run_coalesced_control_bar_sync`,
+`_console_sync_requested`, and the mount-time `call_after_refresh` scheduling
+is empty over that range). Identified trigger condition, still live in the
+code: both tests settle on a fixed pause-count heuristic, not a quiescence
+fence. If a mount-driven `_sync_native_console_chat_ui` is still in flight
+when the window closes, (a) an overlapping request sets
+`_console_sync_requested`, whose finally-block re-dispatch
+(chat_screen.py `_sync_native_console_chat_ui`) runs one EXTRA
+`_sync_console_control_bar`, which can breach test 1's `<= 6` bound, and
+(b) a trailing execution can land after test 2 captures `settled`, breaking
+its exactly-one assertion. If this file goes red intermittently with counts
+one or two above the bound, suspect scheduler pressure widening the mount
+window past the pause heuristic before suspecting the coalescer itself.
 """
 
 from __future__ import annotations
