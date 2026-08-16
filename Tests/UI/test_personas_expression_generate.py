@@ -2297,6 +2297,41 @@ async def test_cancelled_reaction_reconciliation_releases_operation_guards(
     assert notifications == []
 
 
+async def test_cancelled_reaction_publication_preserves_unpublished_candidate(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    assert await screen._stage_visual_identity_replacement(
+        asset, _valid_png(), source="upload"
+    )
+    authoring = screen._visual_identity_authoring
+    staged = dict(browser._staged)
+
+    def cancel_publication(*_args, **_kwargs):
+        raise asyncio.CancelledError("publication-cancelled")
+
+    invalidate = AsyncMock()
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", cancel_publication
+    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(screen._save_visual_identity_pack(browser.pack), 2)
+
+    invalidate.assert_not_awaited()
+    refresh.assert_not_awaited()
+    assert screen._visual_identity_authoring is authoring
+    assert browser._staged == staged
+    assert not screen._visual_identity_publication_inflight
+    assert screen._visual_identity_operation_task is None
+
+
 async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reaches_it(
     personas_editor_with_bound_pack, monkeypatch
 ):
@@ -3118,7 +3153,12 @@ async def test_cancelled_character_save_drains_commit_before_reconcile_and_relea
     if stale_session:
         reconcile.assert_not_awaited()
     else:
-        reconcile.assert_awaited_once_with(str(char_id), "Packed")
+        reconcile.assert_awaited_once()
+        args, kwargs = reconcile.await_args
+        assert args == (str(char_id), "Packed")
+        assert isinstance(
+            kwargs["authority"], personas_screen_module._CharacterSaveAuthority
+        )
     admission = screen._begin_visual_identity_operation(snapshot)
     assert admission is not None
     task, _event = admission
@@ -3173,7 +3213,8 @@ async def test_cancelled_character_save_drains_post_commit_reconciliation(
         order.append("persist")
         return True
 
-    async def reconcile(saved_id, submitted_name):
+    async def reconcile(saved_id, submitted_name, *, authority):
+        assert isinstance(authority, personas_screen_module._CharacterSaveAuthority)
         order.append(("reconcile-start", saved_id, submitted_name))
         reconciliation_entered.set()
         await release_reconciliation.wait()
@@ -3229,7 +3270,8 @@ async def test_cancelled_character_reconciliation_releases_save_guard(
         lambda *_args, **_kwargs: True,
     )
 
-    async def cancel_reconciliation(_saved_id, _submitted_name):
+    async def cancel_reconciliation(_saved_id, _submitted_name, *, authority):
+        assert isinstance(authority, personas_screen_module._CharacterSaveAuthority)
         raise asyncio.CancelledError("character-reconcile-cancelled")
 
     monkeypatch.setattr(screen, "_after_character_save", cancel_reconciliation)
@@ -3245,6 +3287,112 @@ async def test_cancelled_character_reconciliation_releases_save_guard(
 
     assert not screen._character_save_inflight
     assert notifications == []
+
+
+async def test_cancelled_character_persist_never_reconciles_none_result(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    before_data = editor.get_character_data()
+    before_selection = screen.state.selected_entity_id
+
+    def cancel_persist(*_args, **_kwargs):
+        raise asyncio.CancelledError("persist-cancelled")
+
+    reconcile = AsyncMock()
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler, "update_character", cancel_persist
+    )
+    monkeypatch.setattr(screen, "_after_character_save", reconcile)
+    screen._character_save_inflight = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(
+            personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+                screen, {"name": "Packed"}, str(char_id), "edit"
+            ),
+            2,
+        )
+
+    reconcile.assert_not_awaited()
+    assert editor.get_character_data() == before_data
+    assert screen.state.selected_entity_id == before_selection
+    assert not screen._character_save_inflight
+
+
+@pytest.mark.parametrize("barrier", ("refresh", "fetch"))
+async def test_character_save_reconciliation_never_repaints_new_session(
+    personas_editor_with_bound_pack, monkeypatch, barrier
+):
+    _app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    entered = Event()
+    release = Event()
+    fetch_calls: list[str] = []
+
+    monkeypatch.setattr(
+        personas_screen_module.ccp_character_handler,
+        "update_character",
+        lambda *_args, **_kwargs: True,
+    )
+    if barrier == "refresh":
+
+        async def block_refresh():
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 2)
+
+        monkeypatch.setattr(
+            screen.character_handler, "refresh_character_list", block_refresh
+        )
+
+        def record_fetch(character_id):
+            fetch_calls.append(str(character_id))
+            return {"id": char_id, "name": "Old saved session", "version": 2}
+
+        monkeypatch.setattr(
+            personas_screen_module.ccp_character_handler,
+            "fetch_character_by_id",
+            record_fetch,
+        )
+    else:
+
+        def block_fetch(_character_id):
+            entered.set()
+            assert release.wait(2)
+            return {"id": char_id, "name": "Old saved session", "version": 2}
+
+        monkeypatch.setattr(
+            personas_screen_module.ccp_character_handler,
+            "fetch_character_by_id",
+            block_fetch,
+        )
+
+    screen._character_save_inflight = True
+    save = asyncio.create_task(
+        personas_screen_module.PersonasScreen._save_character_worker.__wrapped__(
+            screen, {"name": "Old saved session"}, str(char_id), "edit"
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 2)
+
+    await screen._begin_create_character()
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    editor._input("name").value = "New draft"
+    editor._area("description").text = "new session bytes"
+    new_data = editor.get_character_data()
+    new_generation = screen._character_editor_generation
+    new_token = editor.visual_identity_session_token
+    release.set()
+    await save
+
+    assert editor.get_character_data() == new_data
+    assert screen.state.selected_entity_id is None
+    assert screen._edit_mode == "create"
+    assert screen._character_editor_generation == new_generation
+    assert editor.visual_identity_session_token == new_token
+    if barrier == "refresh":
+        assert fetch_calls == []
+    assert not screen._character_save_inflight
 
 
 async def test_generate_all_restores_missing_canonical_asset_and_direction(

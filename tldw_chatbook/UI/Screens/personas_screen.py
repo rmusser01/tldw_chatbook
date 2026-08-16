@@ -544,6 +544,7 @@ class _CharacterSaveAuthority:
 class _DrainedTaskResult:
     """One task result observed after every outer cancellation is drained."""
 
+    completed: bool = False
     value: Any = None
     error: Exception | None = None
     cancellation: asyncio.CancelledError | None = None
@@ -559,7 +560,9 @@ async def _drain_async(
     while True:
         try:
             return _DrainedTaskResult(
-                value=await asyncio.shield(task), cancellation=cancellation
+                completed=True,
+                value=await asyncio.shield(task),
+                cancellation=cancellation,
             )
         except asyncio.CancelledError as exc:
             if task.done() and task.cancelled():
@@ -7899,6 +7902,14 @@ class PersonasScreen(BaseAppScreen):
                     )
             elif error is not None:
                 unexpected_error = error
+            elif not outcome.completed:
+                pass
+            elif not isinstance(outcome.value, VisualIdentityPublicationResult):
+                if self._visual_identity_author_snapshot_is_current(state.snapshot):
+                    self._notify(
+                        "Reaction pack was not saved (visual_identity_save_failed).",
+                        "error",
+                    )
             else:
                 result = outcome.value
                 published = True
@@ -10869,10 +10880,18 @@ class PersonasScreen(BaseAppScreen):
                 logger.error("Character save failed (category=persistence_failed).")
                 if current:
                     self._notify("Character save failed.", "error")
+            elif not outcome.completed:
+                pass
+            elif not isinstance(outcome.value, str) or not outcome.value:
+                logger.error("Character save failed (category=persistence_failed).")
+                if current:
+                    self._notify("Character save failed.", "error")
             elif current:
                 reconciliation = await _drain_async(
                     self._after_character_save(
-                        str(outcome.value), str(data.get("name") or "")
+                        str(outcome.value),
+                        str(data.get("name") or ""),
+                        authority=authority,
                     ),
                     task_name="personas-character-save-reconcile",
                 )
@@ -10918,9 +10937,20 @@ class PersonasScreen(BaseAppScreen):
         )
 
     async def _after_character_save(
-        self, saved_id: str, submitted_name: str = ""
+        self,
+        saved_id: str,
+        submitted_name: str = "",
+        *,
+        authority: _CharacterSaveAuthority | None = None,
     ) -> None:
-        if not self._local_character_actions_allowed():
+        reconciliation_authority = authority
+
+        def is_current() -> bool:
+            return reconciliation_authority is None or (
+                self._character_save_authority_is_current(reconciliation_authority)
+            )
+
+        if not is_current() or not self._local_character_actions_allowed():
             self._character_save_inflight = False
             return
         if not self.is_mounted or self.state.active_mode != "characters":
@@ -10938,9 +10968,10 @@ class PersonasScreen(BaseAppScreen):
                     "Could not refresh characters after a late save."
                 )
             return
-        self._character_editor_generation += 1
-        self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
+        if not is_current():
+            self._character_save_inflight = False
+            return
         # Re-read the just-persisted record (authoritative version - carries
         # the incremented optimistic-lock version) directly off the UI
         # thread. character_handler.load_character() below only SCHEDULES a
@@ -10958,6 +10989,20 @@ class PersonasScreen(BaseAppScreen):
                 "to the card view."
             )
             saved_record = None
+        if not is_current():
+            self._character_save_inflight = False
+            return
+
+        # All state changes through load_character() are synchronous. Apply
+        # them only after detached reads complete, with no await that could
+        # let a newer editor session interleave halfway through this block.
+        self._character_editor_generation += 1
+        if reconciliation_authority is not None:
+            reconciliation_authority = dataclasses.replace(
+                reconciliation_authority,
+                screen_generation=self._character_editor_generation,
+            )
+        self._set_active_row_unsaved(False)
         if saved_record:
             # Keep the handler's cache in sync so other _full_character_record
             # readers (Edit-again, world-book/dictionary refreshes) see the
@@ -10987,6 +11032,9 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         await self.character_handler.load_character(saved_id)
+        if not is_current():
+            self._character_save_inflight = False
+            return
         self._queue_character_tts_refresh()
         editor = self.query_one(PersonasCharacterEditorWidget)
         if saved_record is None:
@@ -11007,6 +11055,13 @@ class PersonasScreen(BaseAppScreen):
             self._edit_mode = "edit"  # create -> edit stays in the editor
             editor.mark_saved(saved_record)
             self._show_center("#ccp-character-editor-view")
+            if reconciliation_authority is not None:
+                reconciliation_authority = dataclasses.replace(
+                    reconciliation_authority,
+                    selected_id=saved_id,
+                    edit_mode="edit",
+                    editor_session_token=editor.visual_identity_session_token,
+                )
             # This method already bumped _character_editor_generation above,
             # which invalidates (drops) any render still in flight from
             # before the save - so re-render now with the new token or the
@@ -11018,6 +11073,9 @@ class PersonasScreen(BaseAppScreen):
             await self._render_all_character_editor_thumbnails(
                 editor.expression_character_id()
             )
+            if not is_current():
+                self._character_save_inflight = False
+                return
         self._character_save_inflight = False
         self._sync_title_and_console_actions()
         self._notify("Character saved.", severity="information")
