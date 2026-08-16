@@ -1,11 +1,12 @@
 ---
 id: TASK-16588
 title: >-
-  Carry expand_document's identity to the semantic/hybrid routes:
-  chunk_start and the provenance id fallbacks
-status: To Do
+  Carry expand_document's identity to the semantic/hybrid routes: chunk_start
+  and the provenance id fallbacks
+status: In Progress
 assignee: []
 created_date: '2026-08-15 23:55'
+updated_date: '2026-08-16 14:17'
 labels:
   - rag
   - agents
@@ -68,6 +69,14 @@ assumed.
 - [ ] #5 `expand_hint`'s pinned `{expandable, reason}` interface, the tool's contract, and row order/count are unchanged; `citations` and the `provenance` mapping still never leave the adapter
 - [ ] #6 The gated retrieval suite still reads "PASSED: No regression. 105 metric(s)" with every cell at (+0.000) — this is a payload addition, not a retrieval change
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Spec: Docs/superpowers/specs/2026-08-16-rag-semantic-identity-design.md (corrected at 279619d86). Plan: Docs/superpowers/plans/2026-08-16-rag-semantic-identity.md.
+1. Task 1 - payload addition: RED-first unit pins in Tests/Agents/test_library_tool_provider.py (fallbacks projected verbatim; absent when provenance lacks them; ride the hint precondition; empty dropped; media_id never projected; sealed ten-row payload survives with the strip-and-reserialize byte cost stated), then a small helper in Agents/library_rag_tool_provider.py mirroring _chunk_start's shape (string-coerce, drop empty) called in the same 'if hint is not None' block. Gate: RAG_EVAL=1 pytest Tests/RAG_Eval/ reads 105 metric(s) verbatim.
+2. Task 2 - dual-index route probe (canonical + non-canonical seeds, semantic + hybrid routes, direct expand per declared-expandable row, pre/post-fix arms), report.md, then closure of all six ACs on evidence.
+<!-- SECTION:PLAN:END -->
 
 ## Notes
 
