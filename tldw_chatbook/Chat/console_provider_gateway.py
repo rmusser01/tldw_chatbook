@@ -58,8 +58,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.console_provider_support import (
+    build_local_thinking_payload_fields,
     resolve_console_provider_identity,
 )
+from tldw_chatbook.Chat.llamacpp_think_filter import StartAnchoredThinkFilter
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -855,6 +857,8 @@ def build_llamacpp_chat_payload(
     seed: int | None = None,
     presence_penalty: float | None = None,
     frequency_penalty: float | None = None,
+    reasoning_effort: str | None = None,
+    thinking_budget_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Build the OpenAI-compatible llama.cpp chat completion payload.
 
@@ -870,6 +874,11 @@ def build_llamacpp_chat_payload(
         seed: Optional deterministic generation seed.
         presence_penalty: Optional presence penalty value.
         frequency_penalty: Optional frequency penalty value.
+        reasoning_effort: Optional thinking level forwarded as llama.cpp
+            ``chat_template_kwargs.reasoning_effort`` (``none`` additionally
+            sets ``enable_thinking`` false).
+        thinking_budget_tokens: Optional thinking token budget sent as the
+            top-level ``reasoning_budget_tokens`` field.
 
     Returns:
         Request payload for the llama.cpp chat completions endpoint.
@@ -887,7 +896,11 @@ def build_llamacpp_chat_payload(
     incoherent with a thinking-first template regardless. Prefilled
     requests therefore disable thinking mode via ``chat_template_kwargs``,
     which templates that lack the kwarg -- and older servers that drop
-    unknown fields -- simply ignore.
+    unknown fields -- simply ignore. When both a prefill and explicit
+    thinking controls are present the precedence is
+    ``prefill > none > effort``: the prefill's ``enable_thinking: False``
+    always wins over the requested effort level, and an effort of ``none``
+    itself disables thinking.
     """
     payload: dict[str, Any] = {
         "model": model,
@@ -910,8 +923,15 @@ def build_llamacpp_chat_payload(
         payload["presence_penalty"] = presence_penalty
     if frequency_penalty is not None:
         payload["frequency_penalty"] = frequency_penalty
+    payload.update(
+        build_local_thinking_payload_fields(
+            "llama_cpp", reasoning_effort, thinking_budget_tokens
+        )
+    )
     if messages and messages[-1].get("role") == "assistant":
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        template_kwargs = dict(payload.get("chat_template_kwargs") or {})
+        template_kwargs["enable_thinking"] = False
+        payload["chat_template_kwargs"] = template_kwargs
     return payload
 
 
@@ -1803,6 +1823,8 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
@@ -1816,6 +1838,10 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            reasoning_effort: Optional thinking level forwarded as
+                ``chat_template_kwargs.reasoning_effort``.
+            thinking_budget_tokens: Optional thinking token budget sent as
+                the top-level ``reasoning_budget_tokens`` field.
 
         Yields:
             Assistant-visible content chunks.
@@ -1833,8 +1859,12 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
         )
+        think_filter = StartAnchoredThinkFilter()
         emitted_content = False
+        received_content = False
         stream_error: httpx.HTTPError | None = None
         try:
             async with self._active_http_client().stream(
@@ -1847,14 +1877,26 @@ class ConsoleProviderGateway:
                 async for line in response.aiter_lines():
                     chunk = self._content_from_sse_line(line)
                     if chunk:
-                        emitted_content = True
-                        yield chunk
+                        received_content = True
+                        visible = think_filter.feed(chunk)
+                        if visible:
+                            emitted_content = True
+                            yield visible
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
             stream_error = exc
 
         if emitted_content:
+            # flush() contractually returns "" (unterminated start-anchored
+            # think tails are dropped), so there is no tail to yield.
+            return
+        if received_content:
+            # Think-only reply: the filter removed every chunk, so a
+            # non-streaming retry would return the same text — skip it and
+            # surface any stream error that followed the content instead.
+            if stream_error is not None:
+                raise stream_error
             return
 
         fallback = await self.complete_llamacpp_chat(
@@ -1866,6 +1908,8 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
         )
         if fallback:
@@ -1888,6 +1932,8 @@ class ConsoleProviderGateway:
         seed: int | None = None,
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
+        reasoning_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
         strict_response: bool = False,
         api_key: str | None = None,
     ) -> str:
@@ -1905,6 +1951,10 @@ class ConsoleProviderGateway:
             seed: Optional deterministic generation seed.
             presence_penalty: Optional presence penalty value.
             frequency_penalty: Optional frequency penalty value.
+            reasoning_effort: Optional thinking level forwarded as
+                ``chat_template_kwargs.reasoning_effort``.
+            thinking_budget_tokens: Optional thinking token budget sent as
+                the top-level ``reasoning_budget_tokens`` field.
             strict_response: Raise when the provider response has no supported
                 assistant-content shape instead of treating it as empty.
 
@@ -1928,6 +1978,8 @@ class ConsoleProviderGateway:
             seed=seed,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
         )
         client = self._active_http_client()
         response = (
@@ -1951,7 +2003,8 @@ class ConsoleProviderGateway:
                 "Provider returned an unsupported auxiliary response.",
                 provider="llama_cpp",
             )
-        return content or ""
+        think_filter = StartAnchoredThinkFilter()
+        return think_filter.feed(content or "") + think_filter.flush()
 
     @staticmethod
     async def _post_without_high_level_http_log(
@@ -2000,11 +2053,11 @@ class ConsoleProviderGateway:
         try:
             with sensitive_llm_request():
                 if resolution.provider in {"llama_cpp", "local_llamacpp"}:
-                    # llama.cpp's OpenAI-compatible chat endpoint accepts these
-                    # standard samplers and penalties. Provider-specific
-                    # reasoning/thinking/verbosity controls and response_format
-                    # are deliberately omitted because this direct endpoint does
-                    # not define them consistently.
+                    # Thinking controls follow ADR-066: level via
+                    # chat_template_kwargs, budget via top-level
+                    # reasoning_budget_tokens. Auxiliary requests inherit session
+                    # thinking settings (documented parity with cloud
+                    # providers).
                     text = await self.complete_llamacpp_chat(
                         base_url=resolution.base_url,
                         model=model,
@@ -2017,6 +2070,8 @@ class ConsoleProviderGateway:
                         seed=resolution.seed,
                         presence_penalty=resolution.presence_penalty,
                         frequency_penalty=resolution.frequency_penalty,
+                        reasoning_effort=resolution.reasoning_effort,
+                        thinking_budget_tokens=resolution.thinking_budget_tokens,
                         strict_response=True,
                         api_key=resolution.api_key,
                     )
@@ -2225,6 +2280,8 @@ class ConsoleProviderGateway:
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
                         max_tokens=effective_resolution.max_tokens,
+                        reasoning_effort=resolution.reasoning_effort,
+                        thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
                     )
                     if completion:
@@ -2239,6 +2296,8 @@ class ConsoleProviderGateway:
                     min_p=resolution.min_p,
                     top_k=resolution.top_k,
                     max_tokens=effective_resolution.max_tokens,
+                    reasoning_effort=resolution.reasoning_effort,
+                    thinking_budget_tokens=resolution.thinking_budget_tokens,
                     api_key=resolution.api_key,
                 ):
                     yield chunk

@@ -24,6 +24,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_model_options,
     build_console_provider_options,
+    console_settings_warnings,
+    reasoning_effort_hint_for_model,
     validate_console_session_settings,
 )
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
@@ -2205,3 +2207,78 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             )
     finally:
         release.set()
+
+
+class TestReasoningEffortHints:
+    def test_dotted_qwen_generations_are_effort_capable(self):
+        # "none" is included: it is consumed via our enable_thinking=false
+        # mapping on dotted Qwens (live-verified). "high" is included: the
+        # template aliases it to "xhigh" (live-verified), so warning on it
+        # would be a false positive against the actual wire behavior.
+        for model in ("Qwen3.8-27B", "qwen3.5-397b-gguf:q4"):
+            assert reasoning_effort_hint_for_model(model) == frozenset(
+                {"low", "medium", "high", "xhigh", "none"}
+            )
+
+    def test_original_qwen3_is_toggle_only(self):
+        assert reasoning_effort_hint_for_model("Qwen3-32B") == frozenset({"none"})
+
+    def test_gpt_oss(self):
+        assert reasoning_effort_hint_for_model("gpt-oss-120b") == frozenset(
+            {"low", "medium", "high"}
+        )
+
+    def test_unknown_model_has_no_hint(self):
+        assert reasoning_effort_hint_for_model("llama-3-8b") is None
+        assert reasoning_effort_hint_for_model(None) is None
+        assert reasoning_effort_hint_for_model("") is None
+
+
+class TestConsoleSettingsWarnings:
+    def _settings(self, **overrides):
+        base = dict(provider="llama_cpp", model="Qwen3.8-27B")
+        base.update(overrides)
+        return ConsoleSessionSettings(**base)
+
+    def test_value_outside_hint_warns(self):
+        # Non-llama.cpp provider isolates the hint logic (the llama.cpp base
+        # fixture would also add the --jinja requirements note). "minimal" is
+        # genuinely unconsumed on dotted Qwens: the wire composer's
+        # template-safe guard drops it rather than sending it.
+        settings = self._settings(provider="openai", reasoning_effort="minimal")
+        warnings = console_settings_warnings(settings)
+        assert len(warnings) == 1
+        assert "minimal" in warnings[0]
+        assert "xhigh" in warnings[0]
+
+    def test_value_inside_hint_does_not_warn(self):
+        settings = self._settings(provider="openai", reasoning_effort="xhigh")
+        assert console_settings_warnings(settings) == []
+
+    def test_unknown_model_does_not_warn(self):
+        settings = self._settings(
+            provider="openai", model="llama-3-8b", reasoning_effort="high"
+        )
+        assert console_settings_warnings(settings) == []
+
+    def test_llama_family_thinking_note_included(self):
+        settings = self._settings(reasoning_effort="low")
+        warnings = console_settings_warnings(settings)
+        assert any("--jinja" in w for w in warnings)
+
+    def test_local_llm_thinking_note_included(self):
+        # local-llm sends compose llama.cpp-family wire fields, so its users
+        # need the --jinja/b9982 requirements note too.
+        settings = self._settings(provider="local_llm", reasoning_effort="low")
+        warnings = console_settings_warnings(settings)
+        assert any("--jinja" in w for w in warnings)
+
+    def test_llama_family_note_requires_a_thinking_value(self):
+        settings = self._settings()
+        assert console_settings_warnings(settings) == []
+
+    def test_none_effort_on_dotted_qwen_does_not_warn(self):
+        # "none" is consumed by dotted Qwens via our enable_thinking=false
+        # mapping, so it must not warn as unconsumed.
+        settings = self._settings(provider="openai", reasoning_effort="none")
+        assert console_settings_warnings(settings) == []

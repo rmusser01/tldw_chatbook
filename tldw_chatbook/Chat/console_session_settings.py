@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
     DIRECT_CONSOLE_PROVIDER_KEYS,
+    build_local_thinking_payload_fields,
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
@@ -110,6 +112,30 @@ _THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "m
 _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }
+# Generation-aware: dotted Qwen3.x generations consume effort levels;
+# original Qwen3 is a thinking toggle only. The dotted-Qwen regex in
+# reasoning_effort_hint_for_model enforces generation specificity; needle
+# order within this table is immaterial (no needle contains another).
+_REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("gpt-oss", frozenset({"low", "medium", "high"})),
+    ("qwen3", frozenset({"none"})),
+)
+# "none" and "high" are live-verified on dotted Qwens: "none" is consumed
+# via our enable_thinking=false mapping, and the template aliases "high" to
+# "xhigh" — neither must warn as unconsumed.
+_QWEN_DOTTED_EFFORT_VALUES = frozenset(
+    {"low", "medium", "high", "xhigh", "none"}
+)
+# local-llm sends compose llama.cpp-family wire fields (chat_template_kwargs
+# reasoning/enable_thinking + reasoning_budget_tokens), so its users need the
+# --jinja/b9982 requirements note too.
+_LLAMA_CPP_FAMILY_PROVIDERS = frozenset(
+    {"llama_cpp", "local_llamacpp", "local_llamafile", "local_llm"}
+)
+_LLAMACPP_THINKING_REQUIREMENTS_NOTE = (
+    "Thinking controls on llama.cpp need llama-server started with --jinja; "
+    "per-request reasoning_budget_tokens needs llama.cpp b9982 or newer."
+)
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -500,6 +526,59 @@ def build_canonical_chat_defaults_mutation(
     return {"chat_defaults": chat_defaults}
 
 
+def reasoning_effort_hint_for_model(model: str | None) -> frozenset[str] | None:
+    """Return the effort values this model family's template consumes.
+
+    Args:
+        model: Model identifier as selected in the Console (e.g.
+            ``"Qwen3.8-27B"``). Case-insensitive; ``None``/blank allowed.
+
+    Returns:
+        The set of ``reasoning_effort`` values the model family's chat
+        template consumes, or ``None`` when the family is unknown and no
+        hint should be shown.
+    """
+    lowered = str(model or "").strip().lower()
+    if not lowered:
+        return None
+    if re.search(r"qwen3\.\d", lowered):
+        return _QWEN_DOTTED_EFFORT_VALUES
+    for needle, values in _REASONING_EFFORT_MODEL_HINTS:
+        if needle in lowered:
+            return values
+    return None
+
+
+def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
+    """Return non-blocking warnings for the Console settings modal.
+
+    Warnings never block a save or send (ADR-066); blocking validation
+    lives in :func:`validate_console_session_settings`.
+
+    Args:
+        settings: The freshly parsed Console session settings.
+
+    Returns:
+        Zero or more user-facing warning strings: an effort value the
+        selected model family does not consume, and — for llama.cpp-family
+        providers with a thinking value set — the server requirements note
+        (``--jinja``; per-request budget needs llama.cpp b9982+).
+    """
+    warnings: list[str] = []
+    effort = str(settings.reasoning_effort or "").strip().lower()
+    has_thinking_value = bool(effort) or settings.thinking_budget_tokens is not None
+    if effort:
+        hint = reasoning_effort_hint_for_model(settings.model)
+        if hint is not None and effort not in hint:
+            warnings.append(
+                f"Reasoning effort '{effort}' is not consumed by this model "
+                f"family; expected one of: {', '.join(sorted(hint))}."
+            )
+    if has_thinking_value and settings.provider in _LLAMA_CPP_FAMILY_PROVIDERS:
+        warnings.append(_LLAMACPP_THINKING_REQUIREMENTS_NOTE)
+    return warnings
+
+
 def validate_console_session_settings(
     settings: ConsoleSessionSettings,
     *,
@@ -770,6 +849,32 @@ def build_console_settings_summary_state(
         sampling_parts.append(f"reasoning {settings.reasoning_effort}")
     elif settings.thinking_effort:
         sampling_parts.append(f"thinking {settings.thinking_effort}")
+    if settings.thinking_budget_tokens is not None:
+        sampling_parts.append(f"think budget {settings.thinking_budget_tokens}")
+    if settings.reasoning_effort or settings.thinking_budget_tokens is not None:
+        identity = resolve_console_provider_identity(settings.provider)
+        wire_fields = build_local_thinking_payload_fields(
+            identity.execution_key,
+            settings.reasoning_effort,
+            settings.thinking_budget_tokens,
+        )
+        if wire_fields:
+            wire_parts = []
+            template_kwargs = wire_fields.get("chat_template_kwargs")
+            if template_kwargs:
+                rendered = ", ".join(
+                    f"{k}={v}" for k, v in sorted(template_kwargs.items())
+                )
+                wire_parts.append(f"chat_template_kwargs[{rendered}]")
+            if "reasoning_budget_tokens" in wire_fields:
+                wire_parts.append(
+                    f"reasoning_budget_tokens={wire_fields['reasoning_budget_tokens']}"
+                )
+            if "reasoning_effort" in wire_fields:
+                wire_parts.append(
+                    f"reasoning_effort={wire_fields['reasoning_effort']}"
+                )
+            sampling_parts.append("wire: " + "; ".join(wire_parts))
 
     character_label = sanitize_character_display_label(
         settings.character_label,
