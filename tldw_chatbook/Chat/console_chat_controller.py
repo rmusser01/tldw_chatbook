@@ -8526,12 +8526,14 @@ class ConsoleChatController:
             self._context_repository is not None
             and owner.persisted_conversation_id is not None
         ):
-            memory = select_valid_memory(
-                self._context_repository.list_active_memories(
-                    owner.persisted_conversation_id
-                ),
-                self._durable_context_snapshots(session_id),
-            )
+            snapshots = self._durable_context_snapshots(session_id)
+            if snapshots:
+                memory = select_valid_memory(
+                    self._context_repository.list_active_memories(
+                        owner.persisted_conversation_id
+                    ),
+                    snapshots,
+                )
         return owner.context_policy_overrides, global_overrides, memory
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
@@ -8546,9 +8548,12 @@ class ConsoleChatController:
             or owner.persisted_conversation_id is None
         ):
             return None
+        snapshots = self._durable_context_snapshots(session_id)
+        if not snapshots:
+            return None
         memory = select_valid_memory(
             repository.list_active_memories(owner.persisted_conversation_id),
-            self._durable_context_snapshots(session_id),
+            snapshots,
         )
         if memory is None:
             return None
