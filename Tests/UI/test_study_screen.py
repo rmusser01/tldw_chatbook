@@ -748,8 +748,149 @@ async def test_structured_learning_pane_composes_no_orphaned_add_topic_controls(
         await pilot.pause()
 
         study_window = app.screen.query_one(StudyWindow)
-        # The pane itself still renders: the topic tree is composed...
-        study_window.query_one("#topic-tree", Tree)
-        # ...but the orphaned add-topic affordance is gone end-to-end.
+        # ...the orphaned add-topic affordance is gone end-to-end.
         assert not study_window.query("#add-topic-btn")
         assert not study_window.query("#new-topic-title")
+        # task-16845: the pane's placeholder tree + disabled content preview
+        # were dead chrome too (topics have no read path, and nothing
+        # dispatches Tree.NodeSelected since task-16196 deleted the legacy
+        # module) -- replaced with an honest empty-state notice.
+        assert not study_window.query("#topic-tree")
+        assert not study_window.query("#topic-content")
+        empty_state = study_window.query_one("#structured-learning-empty-state", Static)
+        assert "no way to" in _text(empty_state).lower()
+
+
+@pytest.mark.asyncio
+async def test_mindmaps_pane_composes_no_orphaned_add_child_button():
+    """task-16845: `#add-child-btn` (task-16196's per-symbol sweep confirmed
+    `handle_add_mindmap_child` was dead) has no dispatcher anywhere, and
+    ChaChaNotes_DB's `create_mindmap`/`add_mindmap_node` are write-only with
+    no read/list method -- the mindmap tree can never show what the button
+    would write. `#add-sibling-btn` is a separate, equally-undispatched
+    button out of this task's scope, and shares `#node-text` with the
+    removed button, so that input must survive the removal."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#view-mindmaps-btn", Button).press()
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        assert not study_window.query("#add-child-btn")
+        # Out-of-scope siblings, and the input they share, still compose.
+        study_window.query_one("#mindmap-tree", Tree)
+        study_window.query_one("#node-text")
+        study_window.query_one("#add-sibling-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_course_creation_pane_composes_no_orphaned_create_course_form():
+    """task-16845: `#create-course-btn` has no dispatcher anywhere, and no
+    `course`/`courses` table exists in ChaChaNotes_DB at all (zero schema
+    support, unlike the other three buttons which at least have a
+    write-only sink) -- so the "Course Details" form (title/description/
+    level/prerequisites) that existed solely to feed this one dead button
+    is removed with it. Course Modules and Export Options are separate,
+    equally-undispatched sections out of this task's scope and still
+    compose."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#view-course-btn", Button).press()
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        assert not study_window.query("#create-course-btn")
+        assert not study_window.query("#course-title")
+        assert not study_window.query("#course-description")
+        assert not study_window.query("#course-level")
+        assert not study_window.query("#course-prerequisites")
+        # Out-of-scope sections still compose.
+        study_window.query_one("#module-list")
+        study_window.query_one("#add-module-btn", Button)
+        study_window.query_one("#export-pdf-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_study_guide_pane_composes_no_orphaned_generate_guide_button():
+    """task-16845: `#generate-guide-btn` ("Generate from Topic") has no
+    dispatcher anywhere, and `#guide-topic-select` is hard-coded to a
+    single static "New Topic" option with no code populating it from the
+    (write-only, unreadable) topics table -- there is no topic it could
+    ever generate from. `#generate-questions-btn`/`#save-guide-btn` are
+    separate, equally-undispatched buttons out of this task's scope."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#view-study-guide-btn", Button).press()
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        assert not study_window.query("#generate-guide-btn")
+        # Out-of-scope siblings still compose.
+        study_window.query_one("#guide-topic-select")
+        study_window.query_one("#generate-questions-btn", Button)
+        study_window.query_one("#save-guide-btn", Button)
+
+
+@pytest.mark.asyncio
+async def test_learning_map_pane_composes_no_orphaned_add_milestone_button():
+    """task-16845: `#add-milestone-btn` has no dispatcher anywhere, no
+    `milestone` concept exists in ChaChaNotes_DB's schema at all, and the
+    learning-map tree has no population code (same shape as the topic
+    tree) -- so there is no path to add or ever display a milestone.
+    `#mark-complete-btn`/`#set-dependencies-btn` are separate,
+    equally-undispatched buttons out of this task's scope."""
+    StudyScopeContext, StudyScopeType = _load_study_scope_models()
+    app_instance = SimpleNamespace(
+        scope_context=StudyScopeContext(scope_type=StudyScopeType.GLOBAL),
+        current_runtime_backend="local",
+        runtime_backend=None,
+        open_notes_workspace=Mock(),
+        open_study_screen=Mock(),
+        notify=Mock(),
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.screen.query_one("#view-learning-map-btn", Button).press()
+        await pilot.pause()
+
+        study_window = app.screen.query_one(StudyWindow)
+        assert not study_window.query("#add-milestone-btn")
+        # Out-of-scope siblings still compose.
+        study_window.query_one("#learning-map-tree", Tree)
+        study_window.query_one("#mark-complete-btn", Button)
+        study_window.query_one("#set-dependencies-btn", Button)
