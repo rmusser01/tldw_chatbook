@@ -14385,6 +14385,27 @@ class ChatScreen(BaseAppScreen):
                     return composer
         return self._console_composer_or_none()
 
+    def _console_screen_torn_down(self) -> bool:
+        """Whether this screen's message pump has begun closing.
+
+        task-15860 (cross-suite leak): ``is_mounted`` is NOT this
+        predicate. Measured on the live crash below, the removed screen's
+        ``ConsoleSessionSurface`` still reported ``is_mounted=True`` while
+        its own pump reported ``is_running=False`` and every child was
+        already gone -- so a mount check would have passed the very tick
+        that then raised ``NoMatches``.
+
+        ``_closing``/``_closed`` are the two flags Textual sets when a
+        pump is taken down (``MessagePump._close_messages``), and Textual
+        itself reads exactly this pair for ``is_parent_active``. They are
+        chosen over ``is_running`` deliberately: ``is_running`` is also
+        False *before* a pump starts, which would silently no-op the many
+        existing harnesses that call the sync tick on a hand-built,
+        never-mounted ``ChatScreen``. A never-mounted screen has both
+        flags False and is therefore treated as live, exactly as before.
+        """
+        return bool(getattr(self, "_closing", False) or getattr(self, "_closed", False))
+
     def _console_screen_displayed(self) -> bool:
         """Whether THIS screen is the one the user is looking at.
 
@@ -15772,7 +15793,33 @@ class ChatScreen(BaseAppScreen):
         status_chips.sync_run_chip(bool(active_run_copy), active_run_copy)
 
     async def _sync_native_console_chat_ui(self) -> None:
-        """Refresh visible Console-native state after send/stop transitions."""
+        """Refresh visible Console-native state after send/stop transitions.
+
+        **A torn-down screen renders nothing** (task-15860, cross-suite
+        leak). This tick is a screen-owned `console-sync` worker, and
+        Textual workers default to ``exit_on_error=True``: anything it
+        raises reaches ``App._handle_exception`` and takes the whole TUI
+        down. It also touches the DOM (``_sync_console_native_session_
+        tabs`` -> ``ConsoleSessionSurface.sync_sessions`` ->
+        ``query_one("#console-native-tab-strip")``), which is exactly what
+        a navigation away from Console removes. The two guards here --
+        the entry check and the teardown-scoped ``except`` below -- close
+        both halves of that: a tick that starts after teardown, and a tick
+        that is mid-flight when teardown arrives.
+
+        Measured, not assumed: with a wake turn in flight, navigating away
+        from Console had this tick's own ``finally`` re-arm (below)
+        schedule a FRESH worker on the screen Textual had already closed;
+        that worker ran a full sync against the removed surface, raised
+        ``NoMatches``, and killed the app -- after which every later
+        ``post_message`` was silently dropped and navigation was dead.
+        """
+        if self._console_screen_torn_down():
+            # The re-arm below is skipped for the same reason; clearing the
+            # flag keeps a resurrected screen from inheriting this one's
+            # coalesced request.
+            self._console_sync_requested = False
+            return
         if self._console_sync_in_progress:
             self._console_sync_requested = True
             return
@@ -15838,16 +15885,38 @@ class ChatScreen(BaseAppScreen):
                 self._current_console_rail_state()
             )
             self._dispatch_console_rail_preference_prune()
+        except Exception:
+            # Teardown-scoped ONLY. A tick that was mid-flight when the
+            # screen was closed is querying widgets Textual has already
+            # removed; that is not a defect to surface, and surfacing it
+            # here means killing the app (this runs in a worker whose
+            # `exit_on_error` is Textual's default True). Anything raised
+            # by a LIVE screen still propagates untouched -- narrowing to
+            # `NoMatches` would not be narrower in the way that matters,
+            # since a torn-down DOM raises several different types
+            # depending on how far the tick had got.
+            if not self._console_screen_torn_down():
+                raise
+            logger.debug(
+                "Console sync tick raced this screen's teardown; nothing to "
+                "render.",
+            )
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
-                self.run_worker(
-                    self._sync_native_console_chat_ui(),
-                    exclusive=True,
-                    group="console-sync",
-                )
+                # A dead screen must not re-arm itself: `run_worker` here
+                # runs AFTER Textual's unmount sweep
+                # (`Widget._on_unmount` -> `workers.cancel_node`), so the
+                # worker it creates is never in the cancelled set and
+                # outlives the screen that owns it.
+                if not self._console_screen_torn_down():
+                    self.run_worker(
+                        self._sync_native_console_chat_ui(),
+                        exclusive=True,
+                        group="console-sync",
+                    )
 
     def _console_fleet_unseen_ids(self) -> frozenset[str]:
         """Conversation ids carrying the durable unseen-completion mark.
