@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping, Optional
+from pathlib import PurePath
+from typing import Any, Mapping, Optional, Sequence
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
@@ -1084,3 +1085,58 @@ class ConsoleInspectorState:
 
     def to_plain_text(self) -> str:
         return "\n".join(row.text for row in self.rows)
+
+
+@dataclass(frozen=True)
+class TurnFileEntry:
+    """One changed file on a turn's transcript card (task: turn file card).
+
+    ``label`` is what the row prints: the bare relpath for a single-root
+    turn, ``<root-name>/<relpath>`` when the turn touched several roots.
+    ``path``/``root`` stay separate because the diff loader needs the
+    exact (row, path) pair the provider expects.
+    """
+
+    label: str
+    path: str
+    root: str
+    status: str
+    adds: int
+    dels: int
+
+
+def turn_file_entries(
+    rows: "Sequence[Mapping[str, Any]]",
+    changed_by_root: "Mapping[str, Sequence[Any]]",
+) -> "list[TurnFileEntry]":
+    """Assemble a turn card's file rows from its snapshot rows.
+
+    Args:
+        rows: The run's ``change_snapshots`` rows (one per root), in
+            emit order. Tracking-error rows contribute nothing — the
+            card degrades to the marker text for those.
+        changed_by_root: ``root -> ChangedFile`` list, as returned by
+            ``AgentRunsChangeReviewProvider.changed_files`` per row.
+
+    Returns:
+        Entries in row order then file order, labels root-prefixed only
+        when more than one clean root contributed.
+    """
+    clean = [r for r in rows if not r.get("tracking_error")]
+    multi_root = len({str(r["root"]) for r in clean}) > 1
+    entries: list[TurnFileEntry] = []
+    for row in clean:
+        root = str(row["root"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in changed_by_root.get(root, ()):  # ChangedFile
+            entries.append(
+                TurnFileEntry(
+                    label=f"{prefix}{changed.path}",
+                    path=changed.path,
+                    root=root,
+                    status=str(changed.status),
+                    adds=int(changed.adds),
+                    dels=int(changed.dels),
+                )
+            )
+    return entries
