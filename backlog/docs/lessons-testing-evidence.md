@@ -4390,6 +4390,39 @@ sync triggers after replay — a corruption no per-test fixture would ever
 notice, caught only because the sweep asserts parity with a fresh DB rather
 than "the test I care about passes".
 
+**Final shape (task-16840, 2026-08-16): the registry was itself the debt, and
+the durable end state is no second copy at all.** Within a week of shipping,
+the registry had grown hand-written v38/v39 entries — the ratchet was
+enforcing exactly the toil the guard existed to remove. The replacement is
+the knowledge-free primitive that already lived in the repo: patch
+`_CURRENT_SCHEMA_VERSION` to N and bootstrap, and the production chain itself
+builds a genuinely vN-shaped DB (`Tests/ChaChaNotesDB/historical_bootstrap.py`)
+— real sync triggers, zero future artifacts, so the "already exists"
+collision class is impossible by construction and a schema bump costs
+nothing anywhere. Three generalisable findings from the replacement:
+(1) **a parity oracle derived from the system under test is the identity on
+that system's deterministic defects** — the old sweep caught its mutations
+only because the registry was a divergent SECOND copy of the knowledge;
+re-run against the single-source architecture, the review's own MUT shapes
+(emptied V35→V36 step; a `DROP COLUMN messages.usage_json` seeded into
+V37→V38) leave the bootstrap-replay-parity sweep 35/35 green while the
+migrations' CONSUMER tests red by name (9 note-folder tests; 7 usage_json
+tests) — so artifact correctness must be pinned by consumers, and the sweep's
+honest job is the genuine historical upgrade matrix (resume from every vN,
+stamp/dispatch wiring, stop-resume vs straight-through parity; an unwired
+`migration_steps` entry reds all 35 cases with "Migration path undefined").
+(2) **check the claimed-pristine baseline**: the "v4" base schema has drifted
+to bake in `conversation_local_marks` (a V17 artifact), so a bootstrap at ANY
+version carries it — a fixture whose migration-under-test must CREATE an
+artifact the base also ships has to drop that one artifact itself
+(single-migration knowledge no future bump can invalidate), or the test
+silently pins the base's copy instead of the migration's. (3) the
+genuine-shape fixtures came out STRONGER and cheaper: the v17 fixture now
+proves V17→V18 redefines LIVE sync triggers (the registry version had to
+assert them absent), and bootstrap-at-vN measured FASTER than
+bootstrap-current-then-rollback (~80-130ms vs ~220-255ms + replay) — the
+registry was never even a perf win.
+
 ## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
 
 Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
