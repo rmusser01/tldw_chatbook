@@ -40,7 +40,7 @@ def test_param_maps_forward_thinking_fields(monkeypatch):
         assert captured.get("thinking_budget_tokens") == 2048, key
 
 
-def test_shared_builder_composes_llama_wire_format(monkeypatch):
+def test_shared_builder_composes_llama_wire_format():
     from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (
         _chat_with_openai_compatible_local_server,
     )
@@ -91,7 +91,7 @@ def test_shared_builder_composes_llama_wire_format(monkeypatch):
     assert payload["reasoning_budget_tokens"] == 2048
 
 
-def test_shared_builder_composes_vllm_dual_placement(monkeypatch):
+def test_shared_builder_composes_vllm_dual_placement():
     # Same harness as above; only assertions differ. FakeResponse mirrors the
     # llama harness surface (the builder reads .status_code for metrics).
     posted = {}

@@ -1864,6 +1864,7 @@ class ConsoleProviderGateway:
         )
         think_filter = StartAnchoredThinkFilter()
         emitted_content = False
+        received_content = False
         stream_error: httpx.HTTPError | None = None
         try:
             async with self._active_http_client().stream(
@@ -1876,6 +1877,7 @@ class ConsoleProviderGateway:
                 async for line in response.aiter_lines():
                     chunk = self._content_from_sse_line(line)
                     if chunk:
+                        received_content = True
                         visible = think_filter.feed(chunk)
                         if visible:
                             emitted_content = True
@@ -1886,9 +1888,15 @@ class ConsoleProviderGateway:
             stream_error = exc
 
         if emitted_content:
-            tail = think_filter.flush()
-            if tail:
-                yield tail
+            # flush() contractually returns "" (unterminated start-anchored
+            # think tails are dropped), so there is no tail to yield.
+            return
+        if received_content:
+            # Think-only reply: the filter removed every chunk, so a
+            # non-streaming retry would return the same text — skip it and
+            # surface any stream error that followed the content instead.
+            if stream_error is not None:
+                raise stream_error
             return
 
         fallback = await self.complete_llamacpp_chat(

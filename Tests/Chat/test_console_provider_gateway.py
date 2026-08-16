@@ -1824,6 +1824,40 @@ class TestDirectPathThinkFiltering:
         )
         assert text == "Done"
 
+    @pytest.mark.asyncio
+    async def test_think_only_stream_skips_nonstreaming_fallback(self):
+        # A reply that is entirely start-anchored think text must not cost a
+        # second (non-streaming fallback) round-trip: the retry would return
+        # the same filtered-to-empty text.
+        lines = [
+            'data: {"choices":[{"delta":{"content":"<think>only"}}]}',
+            'data: {"choices":[{"delta":{"content":" pondering</think>"}}]}',
+            "data: [DONE]",
+        ]
+        body = "".join(f"{line}\n\n" for line in lines).encode()
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, content=body)
+
+        gateway = ConsoleProviderGateway(
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="http://127.0.0.1:8080",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert chunks == []
+        assert len(requests) == 1
+
 
 @pytest.mark.asyncio
 async def test_stream_chat_dispatches_llamacpp_resolution():

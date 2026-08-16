@@ -113,7 +113,9 @@ _LEGACY_CHAT_PROVIDER_ALIASES = {
     "openai_compatible": "openai",
 }
 # Generation-aware: dotted Qwen3.x generations consume effort levels;
-# original Qwen3 is a thinking toggle only. Ordered most-specific first.
+# original Qwen3 is a thinking toggle only. The dotted-Qwen regex in
+# reasoning_effort_hint_for_model enforces generation specificity; needle
+# order within this table is immaterial (no needle contains another).
 _REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
     ("gpt-oss", frozenset({"low", "medium", "high"})),
     ("qwen3", frozenset({"none"})),

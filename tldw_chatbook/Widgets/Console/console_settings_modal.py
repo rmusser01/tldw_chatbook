@@ -1475,8 +1475,6 @@ class ConsoleSettingsModal(
         result = self._validated_result_or_show_errors()
         if result is None:
             return
-        for warning in console_settings_warnings(result.settings):
-            self.notify(warning, severity="warning", timeout=8000)
         try:
             saved = await asyncio.to_thread(
                 save_settings_to_cli_config,
@@ -1489,6 +1487,11 @@ class ConsoleSettingsModal(
                 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
             )
             return
+        # Warnings surface only after the write succeeded, so a failed
+        # default-persist shows the error copy alone instead of warnings
+        # for values that were not actually persisted.
+        for warning in console_settings_warnings(result.settings):
+            self.notify(warning, severity="warning", timeout=8000)
         self.dismiss(result)
 
     @on(Button.Pressed, "#console-context-reset-overrides")

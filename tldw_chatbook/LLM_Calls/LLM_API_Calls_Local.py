@@ -1845,9 +1845,9 @@ def chat_with_custom_openai(
     frequency_penalty: Optional[float] = None,
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
+    api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
-    api_base_url: Optional[str] = None,
     *,
     api_key_resolved: bool | None = None,
 ):
@@ -2007,9 +2007,9 @@ def chat_with_custom_openai_2(
     top_logprobs: Optional[int] = None,
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
+    api_base_url: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
     thinking_budget_tokens: Optional[int] = None,
-    api_base_url: Optional[str] = None,
     *,
     api_key_resolved: bool | None = None,
 ):
