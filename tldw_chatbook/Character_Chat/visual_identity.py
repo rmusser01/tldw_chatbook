@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import stat
 import threading
 import warnings
@@ -328,6 +329,7 @@ class VisualIdentityCandidate:
     title: str
     description: str
     default_expression_key: str
+    original_default_expression_key: str
     source_context: dict[str, Any]
     assets: tuple[dict[str, Any], ...] = field(repr=False)
     _replacements: dict[str, tuple[bytes, str]] = field(
@@ -389,6 +391,7 @@ class VisualIdentityCandidate:
                 raise VisualIdentityPublicationError("visual_identity_budget_exceeded")
             self._replacements[key] = (data, source)
             self._cleared.discard(key)
+            self._recompute_default()
 
     def stage_clear(self, expression_key: str) -> None:
         """Stage one omission without changing the active immutable version."""
@@ -406,10 +409,7 @@ class VisualIdentityCandidate:
                 raise VisualIdentityPublicationError("visual_identity_candidate_empty")
             self._replacements.pop(key, None)
             self._cleared.add(key)
-            if self.default_expression_key == key:
-                self.default_expression_key = (
-                    "neutral" if "neutral" in retained else retained[0]
-                )
+            self._recompute_default()
 
     def cancel(self) -> None:
         """Make the candidate permanently unpublished."""
@@ -439,6 +439,19 @@ class VisualIdentityCandidate:
         self._ensure_editable()
         if self._publishing:
             raise VisualIdentityPublicationError("visual_identity_candidate_publishing")
+
+    def _recompute_default(self) -> None:
+        retained = [
+            str(asset["expression_key"])
+            for asset in self.assets
+            if str(asset["expression_key"]) not in self._cleared
+        ]
+        if self.original_default_expression_key in retained:
+            self.default_expression_key = self.original_default_expression_key
+        elif "neutral" in retained:
+            self.default_expression_key = "neutral"
+        else:
+            self.default_expression_key = retained[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1785,6 +1798,7 @@ def create_visual_identity_candidate(
         title=str(pack["title"]),
         description=str(pack["description"]),
         default_expression_key=str(graph["version"]["default_expression_key"]),
+        original_default_expression_key=str(graph["version"]["default_expression_key"]),
         source_context=dict(source_context),
         assets=tuple(dict(asset) for asset in graph["assets"]),
     )
@@ -1805,7 +1819,7 @@ def publish_visual_identity_candidate(
     if not isinstance(candidate, VisualIdentityCandidate):
         raise VisualIdentityPublicationError("visual_identity_candidate_invalid")
     with candidate._lock:
-        candidate._ensure_editable()
+        candidate._ensure_stageable()
         if not candidate._replacements and not candidate._cleared:
             raise VisualIdentityPublicationError("visual_identity_candidate_clean")
         if not callable(atomic_replace):
@@ -1817,7 +1831,14 @@ def publish_visual_identity_candidate(
         live = repository.get_active_actor_pack(
             candidate.actor_kind, candidate.actor_id
         )
-    except (CharactersRAGDBError, OSError, RuntimeError, TypeError, ValueError):
+    except (
+        CharactersRAGDBError,
+        sqlite3.Error,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ):
         _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError(
             "visual_identity_database_failed"
@@ -1847,6 +1868,10 @@ def publish_visual_identity_candidate(
     staging_dir = versions_root / staging_name
     final_dir = versions_root / final_name
     final_relpath = final_dir.relative_to(assets_root).as_posix()
+    posix_guards = _publication_posix_guards_available()
+    chain: list[tuple[int, str, int, Path]] = []
+    secured_identities: dict[Path, tuple[int, int]] = {}
+    staging_identity: tuple[int, int] | None = None
     versions_fd = -1
     staging_fd = -1
     files_published = False
@@ -1858,24 +1883,51 @@ def publish_visual_identity_candidate(
             versions_root.parent,
             versions_root,
         ):
-            if not secure_private_directory(
+            privacy = secure_private_directory(
                 directory, create=True, application_owned=True
-            ).verified_private:
+            )
+            if not (privacy.verified_private if posix_guards else privacy.usable):
                 raise PermissionError
-        versions_fd = _open_private_directory(versions_root)
-        if not secure_private_directory(
+            secured_identities[directory] = _path_identity(directory)
+        if posix_guards:
+            try:
+                chain = _open_publication_chain(versions_root)
+            except OSError:
+                raise PermissionError from None
+            versions_fd = chain[-1][2]
+            if not _publication_chain_matches(chain, secured_identities):
+                raise PermissionError
+        staging_privacy = secure_private_directory(
             staging_dir, create=True, application_owned=True
-        ).verified_private:
-            raise PermissionError
-        staging_fd = os.open(
-            staging_name,
-            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=versions_fd,
         )
+        if not (
+            staging_privacy.verified_private if posix_guards else staging_privacy.usable
+        ):
+            raise PermissionError
+        staging_identity = _path_identity(staging_dir)
+        if posix_guards:
+            staging_fd = os.open(
+                staging_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=versions_fd,
+            )
+            write_file = lambda name, data: _write_private_publication_file(
+                staging_fd, name, data
+            )
+            read_file = lambda name, limit: _read_private_publication_file(
+                staging_fd, name, max_bytes=limit
+            )
+        else:
+            write_file = lambda name, data: _write_private_publication_path(
+                staging_dir, name, data
+            )
+            read_file = lambda name, limit: _read_private_publication_path(
+                staging_dir, name, limit
+            )
 
         assets, manifest = _materialize_visual_identity_candidate(
             candidate,
-            staging_fd=staging_fd,
+            write_file=write_file,
             final_relpath=final_relpath,
             profile_pack_token=profile_pack_token,
             user_data_dir=profile_root,
@@ -1887,25 +1939,46 @@ def publish_visual_identity_candidate(
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        _write_private_publication_file(staging_fd, "manifest.json", manifest_raw)
-        _verify_materialized_candidate(staging_fd, assets)
+        write_file("manifest.json", manifest_raw)
+        _verify_materialized_candidate(read_file, assets)
+        _sync_publication_directory(staging_fd if posix_guards else staging_dir)
         with candidate._lock:
             candidate._ensure_editable()
-            if not _directory_fd_matches_path(versions_fd, versions_root):
-                raise PermissionError
-            atomic_replace(
-                staging_name,
-                final_name,
-                src_dir_fd=versions_fd,
-                dst_dir_fd=versions_fd,
+            namespace_current = (
+                _publication_chain_matches(chain, secured_identities)
+                if posix_guards
+                else _path_chain_matches(secured_identities, profile_root=profile_root)
             )
+            if not namespace_current:
+                raise PermissionError
+            if posix_guards:
+                atomic_replace(
+                    staging_name,
+                    final_name,
+                    src_dir_fd=versions_fd,
+                    dst_dir_fd=versions_fd,
+                )
+            else:
+                atomic_replace(staging_dir, final_dir)
             files_published = True
-            if not _directory_fd_matches_path(versions_fd, versions_root):
-                _discard_pinned_directory(versions_fd, final_name, staging_fd)
+            namespace_current = (
+                _publication_chain_matches(chain, secured_identities)
+                and _entry_matches_fd(versions_fd, final_name, staging_fd)
+                if posix_guards
+                else _path_chain_matches(secured_identities, profile_root=profile_root)
+                and staging_identity is not None
+                and _path_matches_identity(final_dir, staging_identity)
+            )
+            if not namespace_current:
+                if posix_guards:
+                    _discard_pinned_directory(versions_fd, final_name, staging_fd)
+                elif staging_identity is not None:
+                    _discard_path_directory(final_dir, staging_identity)
                 files_published = False
                 raise VisualIdentityPublicationError(
                     "visual_identity_publication_denied"
                 )
+            _sync_publication_directory(versions_fd if posix_guards else versions_root)
             try:
                 if candidate.source_kind == "builtin":
                     graph = repository.activate_pack(
@@ -1951,7 +2024,13 @@ def publish_visual_identity_candidate(
                     category,
                     cleanup_candidate_relpath=final_relpath,
                 ) from None
-            except (CharactersRAGDBError, OSError, RuntimeError, TypeError):
+            except (
+                CharactersRAGDBError,
+                sqlite3.Error,
+                OSError,
+                RuntimeError,
+                TypeError,
+            ):
                 raise VisualIdentityPublicationError(
                     "visual_identity_database_failed",
                     cleanup_candidate_relpath=final_relpath,
@@ -1959,20 +2038,29 @@ def publish_visual_identity_candidate(
             candidate._published = True
             candidate._publishing = False
     except VisualIdentityPublicationError:
-        if not files_published and versions_fd >= 0:
-            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        if not files_published:
+            if posix_guards and versions_fd >= 0:
+                _discard_staging_directory(versions_fd, staging_name, staging_fd)
+            elif staging_identity is not None:
+                _discard_path_directory(staging_dir, staging_identity)
         _reset_candidate_publication(candidate)
         raise
     except PermissionError:
-        if not files_published and versions_fd >= 0:
-            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        if not files_published:
+            if posix_guards and versions_fd >= 0:
+                _discard_staging_directory(versions_fd, staging_name, staging_fd)
+            elif staging_identity is not None:
+                _discard_path_directory(staging_dir, staging_identity)
         _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError(
             "visual_identity_publication_denied"
         ) from None
     except (OSError, TypeError, ValueError, OverflowError):
-        if not files_published and versions_fd >= 0:
-            _discard_staging_directory(versions_fd, staging_name, staging_fd)
+        if not files_published:
+            if posix_guards and versions_fd >= 0:
+                _discard_staging_directory(versions_fd, staging_name, staging_fd)
+            elif staging_identity is not None:
+                _discard_path_directory(staging_dir, staging_identity)
         _reset_candidate_publication(candidate)
         raise VisualIdentityPublicationError(
             "visual_identity_candidate_invalid"
@@ -1980,8 +2068,8 @@ def publish_visual_identity_candidate(
     finally:
         if staging_fd >= 0:
             os.close(staging_fd)
-        if versions_fd >= 0:
-            os.close(versions_fd)
+        if chain:
+            _close_publication_chain(chain)
     return VisualIdentityPublicationResult(
         actor_kind=candidate.actor_kind,
         actor_id=candidate.actor_id,
@@ -2035,7 +2123,7 @@ def _publication_pack_token(candidate: VisualIdentityCandidate) -> str:
 def _materialize_visual_identity_candidate(
     candidate: VisualIdentityCandidate,
     *,
-    staging_fd: int,
+    write_file: Callable[[str, bytes], None],
     final_relpath: str,
     profile_pack_token: str,
     user_data_dir: Path,
@@ -2109,7 +2197,7 @@ def _materialize_visual_identity_candidate(
             "frame_count": frame_count,
             "duration_ms": duration_ms,
         }
-        _write_private_publication_file(staging_fd, filename, data)
+        write_file(filename, data)
         prepared.append(asset)
 
     manifest = {
@@ -2179,15 +2267,11 @@ def _write_private_publication_file(
 
 
 def _verify_materialized_candidate(
-    staging_fd: int, assets: list[dict[str, Any]]
+    read_file: Callable[[str, int], bytes], assets: list[dict[str, Any]]
 ) -> None:
     decoded_pixels = 0
     for asset in assets:
-        data = _read_private_publication_file(
-            staging_fd,
-            str(asset["source_filename"]),
-            max_bytes=MAX_EXPRESSION_ASSET_BYTES,
-        )
+        data = read_file(str(asset["source_filename"]), MAX_EXPRESSION_ASSET_BYTES)
         loaded = LoadedVisualIdentityAsset(
             asset=_manifest_asset_from_row(asset), data=data
         )
@@ -2200,23 +2284,190 @@ def _verify_materialized_candidate(
         )
 
 
-def _open_private_directory(path: Path) -> int:
-    return os.open(
-        path,
-        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+def _publication_posix_guards_available() -> bool:
+    return (
+        os.name == "posix"
+        and getattr(os, "O_DIRECTORY", 0) != 0
+        and getattr(os, "O_NOFOLLOW", 0) != 0
+        # CPython exposes os.replace through the same descriptor-relative
+        # implementation as os.rename, but only registers os.rename here.
+        and {os.open, os.stat, os.rename, os.unlink}.issubset(os.supports_dir_fd)
+        and os.stat in os.supports_follow_symlinks
     )
 
 
-def _directory_fd_matches_path(directory_fd: int, path: Path) -> bool:
+def _open_publication_chain(
+    path: Path,
+) -> list[tuple[int, str, int, Path]]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(os.sep, flags)
+    chain: list[tuple[int, str, int, Path]] = []
+    current_path = Path(os.sep)
     try:
-        descriptor_stat = os.fstat(directory_fd)
-        path_stat = path.stat(follow_symlinks=False)
+        for component in path.parts[1:]:
+            child_fd = os.open(component, flags, dir_fd=parent_fd)
+            current_path /= component
+            chain.append((parent_fd, component, child_fd, current_path))
+            parent_fd = child_fd
+    except BaseException:
+        _close_publication_chain(chain, root_fd=parent_fd if not chain else None)
+        raise
+    return chain
+
+
+def _close_publication_chain(
+    chain: list[tuple[int, str, int, Path]], *, root_fd: int | None = None
+) -> None:
+    descriptors = {root_fd} if root_fd is not None else set()
+    for parent_fd, _name, child_fd, _path in chain:
+        descriptors.add(parent_fd)
+        descriptors.add(child_fd)
+    for descriptor in sorted(
+        (fd for fd in descriptors if fd is not None), reverse=True
+    ):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _publication_chain_matches(
+    chain: list[tuple[int, str, int, Path]],
+    secured_identities: Mapping[Path, tuple[int, int]],
+) -> bool:
+    by_path = {path: child_fd for _parent, _name, child_fd, path in chain}
+    try:
+        for parent_fd, name, child_fd, _path in chain:
+            entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            opened = os.fstat(child_fd)
+            if not stat.S_ISDIR(entry.st_mode) or (entry.st_dev, entry.st_ino) != (
+                opened.st_dev,
+                opened.st_ino,
+            ):
+                return False
+        for path, identity in secured_identities.items():
+            opened = os.fstat(by_path[path])
+            if (opened.st_dev, opened.st_ino) != identity:
+                return False
+    except (KeyError, OSError):
+        return False
+    return True
+
+
+def _entry_matches_fd(parent_fd: int, name: str, opened_fd: int) -> bool:
+    try:
+        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        opened = os.fstat(opened_fd)
     except OSError:
         return False
-    return stat.S_ISDIR(path_stat.st_mode) and (
-        descriptor_stat.st_dev,
-        descriptor_stat.st_ino,
-    ) == (path_stat.st_dev, path_stat.st_ino)
+    return stat.S_ISDIR(entry.st_mode) and (entry.st_dev, entry.st_ino) == (
+        opened.st_dev,
+        opened.st_ino,
+    )
+
+
+def _path_identity(path: Path) -> tuple[int, int]:
+    path_stat = path.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(path_stat.st_mode):
+        raise OSError("publication path is not a directory")
+    return path_stat.st_dev, path_stat.st_ino
+
+
+def _path_chain_matches(
+    identities: Mapping[Path, tuple[int, int]], *, profile_root: Path
+) -> bool:
+    try:
+        profile_resolved = profile_root.resolve(strict=True)
+        for path, identity in identities.items():
+            if _path_identity(path) != identity:
+                return False
+            resolved = path.resolve(strict=True)
+            if path != profile_root and not resolved.is_relative_to(profile_resolved):
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _path_matches_identity(path: Path, expected_identity: tuple[int, int]) -> bool:
+    try:
+        return _path_identity(path) == expected_identity
+    except OSError:
+        return False
+
+
+def _write_private_publication_path(
+    directory: Path, filename: str, data: bytes
+) -> None:
+    if _safe_relative_parts(filename) != (filename,):
+        raise ValueError("visual_identity_candidate_invalid")
+    path = directory / filename
+    with path.open("xb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _read_private_publication_path(
+    directory: Path, filename: str, max_bytes: int
+) -> bytes:
+    if _safe_relative_parts(filename) != (filename,):
+        raise ValueError("visual_identity_candidate_invalid")
+    path = directory / filename
+    file_stat = path.stat(follow_symlinks=False)
+    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > max_bytes:
+        raise ValueError("visual_identity_candidate_invalid")
+    with path.open("rb") as stream:
+        data = stream.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("visual_identity_candidate_invalid")
+    return data
+
+
+def _discard_path_directory(path: Path, expected_identity: tuple[int, int]) -> None:
+    try:
+        entry = path.stat(follow_symlinks=False)
+        if stat.S_ISLNK(entry.st_mode):
+            return
+        if (
+            not stat.S_ISDIR(entry.st_mode)
+            or (entry.st_dev, entry.st_ino) != expected_identity
+        ):
+            return
+        for child in path.iterdir():
+            child_stat = child.stat(follow_symlinks=False)
+            if stat.S_ISDIR(child_stat.st_mode):
+                child.rmdir()
+            else:
+                child.unlink()
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def _sync_publication_directory(directory: int | Path) -> None:
+    descriptor = directory if isinstance(directory, int) else -1
+    try:
+        if descriptor < 0:
+            if os.name == "nt":
+                return
+            descriptor = os.open(
+                directory,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+        os.fsync(descriptor)
+    except OSError as error:
+        unsupported = {
+            errno.EBADF,
+            errno.EINVAL,
+            getattr(errno, "ENOTSUP", errno.EINVAL),
+            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+        }
+        if error.errno not in unsupported:
+            raise
+    finally:
+        if not isinstance(directory, int) and descriptor >= 0:
+            os.close(descriptor)
 
 
 def _read_private_publication_file(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -23,6 +24,7 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Utils.private_paths import PrivatePathResult, PrivatePathStatus
 
 
 def _png_bytes(color: tuple[int, int, int]) -> bytes:
@@ -954,3 +956,411 @@ def test_initial_database_failure_is_normalized_without_private_detail(
 
     assert "Users" not in str(caught.value)
     assert caught.value.cleanup_candidate_relpath is None
+
+
+def test_profile_pack_ancestor_alias_outside_profile_is_rejected(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((18, 18, 18)))
+
+    def escape_pack_then_replace(source, destination, **kwargs):
+        pack_dir = next(environment["user_root"].rglob("profile-*"))
+        escaped = environment["user_root"].parent / "escaped-profile-pack"
+        os.rename(pack_dir, escaped)
+        os.symlink(escaped, pack_dir, target_is_directory=True)
+        os.replace(source, destination, **kwargs)
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=escape_pack_then_replace,
+        )
+
+    assert _active_identity(environment) == before
+    assert (
+        not environment["db"]
+        .execute_query(
+            "SELECT id FROM visual_identity_packs WHERE source_kind = 'manual'"
+        )
+        .fetchall()
+    )
+
+
+@pytest.mark.parametrize("replacement_kind", ["directory", "symlink"])
+def test_swapped_final_entry_is_rejected_without_touching_replacement(
+    publication_environment, replacement_kind: str
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((19, 19, 19)))
+
+    def swap_final(source, destination, *, src_dir_fd, dst_dir_fd):
+        os.replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+        os.rename(
+            destination,
+            ".detached-final",
+            src_dir_fd=dst_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+        if replacement_kind == "directory":
+            os.mkdir(destination, dir_fd=dst_dir_fd)
+        else:
+            os.mkdir("replacement-target", dir_fd=dst_dir_fd)
+            target_fd = os.open(
+                "replacement-target",
+                os.O_RDONLY | os.O_DIRECTORY,
+                dir_fd=dst_dir_fd,
+            )
+            try:
+                sentinel = os.open(
+                    "sentinel",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                    dir_fd=target_fd,
+                )
+                os.close(sentinel)
+            finally:
+                os.close(target_fd)
+            os.symlink("replacement-target", destination, dir_fd=dst_dir_fd)
+
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=swap_final,
+        )
+
+    assert _active_identity(environment) == before
+    if replacement_kind == "symlink":
+        assert (
+            len(list(environment["user_root"].rglob("replacement-target/sentinel")))
+            == 1
+        )
+
+
+def test_initial_profile_ancestor_alias_window_is_rejected(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((20, 20, 20)))
+    original_secure = visual_identity_module.secure_private_directory
+    swapped = False
+
+    def secure_then_alias(path, *, create, application_owned):
+        nonlocal swapped
+        result = original_secure(
+            path, create=create, application_owned=application_owned
+        )
+        if Path(path).name == "versions" and not swapped:
+            swapped = True
+            escaped = environment["user_root"].parent / "escaped-profile-root"
+            os.rename(environment["user_root"], escaped)
+            os.symlink(
+                escaped,
+                environment["user_root"],
+                target_is_directory=True,
+            )
+        return result
+
+    monkeypatch.setattr(
+        visual_identity_module, "secure_private_directory", secure_then_alias
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"], candidate, user_data_dir=environment["user_root"]
+        )
+
+    assert _active_identity(environment) == before
+
+
+def test_initial_sqlite_error_is_private_and_resets_publication_state(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((21, 21, 21)))
+
+    def fail_read(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private C:\\Users\\name\\profile.db")
+
+    monkeypatch.setattr(VisualIdentityRepository, "get_active_actor_pack", fail_read)
+    with pytest.raises(
+        VisualIdentityPublicationError, match="^visual_identity_database_failed$"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"], candidate, user_data_dir=environment["user_root"]
+        )
+
+    assert "Users" not in str(caught.value)
+    assert candidate._publishing is False
+
+
+def test_post_filesystem_sqlite_error_reports_orphan_and_resets_state(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((22, 22, 22)))
+
+    def fail_commit(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private /Users/name/profile.db")
+
+    monkeypatch.setattr(VisualIdentityRepository, "activate_pack", fail_commit)
+    with pytest.raises(
+        VisualIdentityPublicationError, match="^visual_identity_database_failed$"
+    ) as caught:
+        publish_visual_identity_candidate(
+            environment["db"], candidate, user_data_dir=environment["user_root"]
+        )
+
+    assert _active_identity(environment) == before
+    assert "Users" not in str(caught.value)
+    assert caught.value.cleanup_candidate_relpath is not None
+    assert candidate._publishing is False
+
+
+def test_second_publisher_is_rejected_without_resetting_survivor(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((23, 23, 23)))
+    entered = threading.Event()
+    release = threading.Event()
+    call_lock = threading.Lock()
+    calls = 0
+    original = visual_identity_module._materialize_visual_identity_candidate
+
+    def block_first(*args, **kwargs):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+            current = calls
+        if current == 1:
+            entered.set()
+            assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        visual_identity_module,
+        "_materialize_visual_identity_candidate",
+        block_first,
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        survivor = executor.submit(
+            publish_visual_identity_candidate,
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+        )
+        assert entered.wait(5)
+        try:
+            with pytest.raises(
+                VisualIdentityPublicationError,
+                match="visual_identity_candidate_publishing",
+            ):
+                publish_visual_identity_candidate(
+                    environment["db"],
+                    candidate,
+                    user_data_dir=environment["user_root"],
+                )
+        finally:
+            release.set()
+        result = survivor.result(timeout=5)
+
+    assert result.new_version_id != candidate.old_version_id
+
+
+def test_replacing_cleared_original_default_restores_it_for_publication(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_clear("neutral")
+    assert candidate.default_expression_key != "neutral"
+
+    replacement = _png_bytes((24, 24, 24))
+    candidate.stage_replacement("neutral", replacement)
+
+    assert candidate.default_expression_key == "neutral"
+    publish_visual_identity_candidate(
+        environment["db"], candidate, user_data_dir=environment["user_root"]
+    )
+    resolved = resolve_visual_identity(
+        environment["db"],
+        actor_kind="character",
+        actor_id=environment["actor_id"],
+        requested_state="custom:missing",
+        user_data_dir=environment["user_root"],
+    )
+    assert resolved.resolved_expression_key == "neutral"
+    assert resolved.image_bytes == replacement
+
+
+def test_forced_unverified_platform_fallback_uses_paths_and_usable_privacy(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((25, 25, 25)))
+    original_secure = visual_identity_module.secure_private_directory
+
+    def unverified_secure(path, *, create, application_owned):
+        result = original_secure(
+            path, create=create, application_owned=application_owned
+        )
+        return PrivatePathResult(
+            result.lexical_path,
+            PrivatePathStatus.UNVERIFIED_PLATFORM,
+            reason="forced-fallback",
+        )
+
+    replace_calls: list[tuple[Path, Path]] = []
+
+    def path_replace(source, destination):
+        assert isinstance(source, Path) and isinstance(destination, Path)
+        replace_calls.append((source, destination))
+        os.replace(source, destination)
+
+    monkeypatch.setattr(
+        visual_identity_module, "_publication_posix_guards_available", lambda: False
+    )
+    monkeypatch.setattr(
+        visual_identity_module, "secure_private_directory", unverified_secure
+    )
+    result = publish_visual_identity_candidate(
+        environment["db"],
+        candidate,
+        user_data_dir=environment["user_root"],
+        atomic_replace=path_replace,
+    )
+
+    assert len(replace_calls) == 1
+    assert result.version_directory.is_dir()
+
+
+def test_forced_fallback_rejects_swapped_final_symlink_without_touching_target(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    before = _active_identity(environment)
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((26, 25, 25)))
+    replacement_links: list[Path] = []
+
+    def swap_final(source: Path, destination: Path) -> None:
+        os.replace(source, destination)
+        os.rename(destination, destination.with_name(".detached-final"))
+        target = destination.with_name("replacement-target")
+        target.mkdir()
+        (target / "sentinel").write_bytes(b"replacement")
+        destination.symlink_to(target, target_is_directory=True)
+        replacement_links.append(destination)
+
+    monkeypatch.setattr(
+        visual_identity_module, "_publication_posix_guards_available", lambda: False
+    )
+    with pytest.raises(
+        VisualIdentityPublicationError, match="visual_identity_publication_denied"
+    ):
+        publish_visual_identity_candidate(
+            environment["db"],
+            candidate,
+            user_data_dir=environment["user_root"],
+            atomic_replace=swap_final,
+        )
+
+    assert _active_identity(environment) == before
+    target = next(environment["user_root"].rglob("replacement-target"))
+    assert (target / "sentinel").read_bytes() == b"replacement"
+    assert replacement_links[0].is_symlink()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-native fallback contract")
+def test_windows_native_publication_uses_supported_path_operations(
+    publication_environment,
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((26, 26, 26)))
+
+    result = publish_visual_identity_candidate(
+        environment["db"], candidate, user_data_dir=environment["user_root"]
+    )
+
+    assert result.version_directory.is_dir()
+
+
+def test_directory_syncs_bracket_atomic_replace_before_database_commit(
+    publication_environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = publication_environment
+    candidate = create_visual_identity_candidate(
+        environment["db"], actor_kind="character", actor_id=environment["actor_id"]
+    )
+    candidate.stage_replacement("thinking", _png_bytes((27, 27, 27)))
+    events: list[str] = []
+    original_activate = VisualIdentityRepository.activate_pack
+
+    def sync_spy(_directory):
+        events.append("sync")
+
+    def replace_spy(source, destination, **kwargs):
+        events.append("replace")
+        os.replace(source, destination, **kwargs)
+
+    def activate_spy(self, *args, **kwargs):
+        events.append("db")
+        return original_activate(self, *args, **kwargs)
+
+    monkeypatch.setattr(visual_identity_module, "_sync_publication_directory", sync_spy)
+    monkeypatch.setattr(VisualIdentityRepository, "activate_pack", activate_spy)
+    publish_visual_identity_candidate(
+        environment["db"],
+        candidate,
+        user_data_dir=environment["user_root"],
+        atomic_replace=replace_spy,
+    )
+
+    assert events == ["sync", "replace", "sync", "db"]
