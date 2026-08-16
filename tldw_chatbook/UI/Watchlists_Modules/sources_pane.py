@@ -117,7 +117,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     #: `compose()`.
     _SELECTED_ROW_STYLE = "reverse bold"
 
-    sources = reactive[list[dict[str, Any]]]([], recompose=True)
+    sources = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_source = reactive[dict[str, Any] | None](None)
     #: TASK-2309. The source ids ("id" field, the same namespaced form
     #: `selected_source` carries) with a check currently in flight anywhere
@@ -171,7 +171,7 @@ class SourcesPane(RecomposeCaptureGuard, Vertical):
     # workbench rebuild constructs a brand new pane, and re-deriving the
     # destination from the scope there would silently overwrite a choice the
     # user had already made in a form that is still open.
-    watchlist_choices = reactive[list[dict[str, Any]]]([])
+    watchlist_choices = reactive[list[dict[str, Any]]](list)
     default_destination = reactive[Any]("unassigned")
     create_draft_destination = reactive[Any]("unassigned")
     # TASK-2302. The chosen source type, which decides whether the

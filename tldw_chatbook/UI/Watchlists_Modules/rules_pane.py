@@ -69,7 +69,7 @@ class RuleFormVisibilityChanged(Message):
 class RulesPane(RecomposeCaptureGuard, Vertical):
     """Alert rule list and editor for watchlists."""
 
-    rules = reactive[list[dict[str, Any]]]([], recompose=True)
+    rules = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_rule = reactive[dict[str, Any] | None](None)
     show_rule_form = reactive(False, recompose=True)
     runtime_backend = reactive("local", recompose=True)

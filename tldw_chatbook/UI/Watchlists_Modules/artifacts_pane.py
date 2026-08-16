@@ -49,7 +49,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, DataTable, Select, Static
 
-from ...Subscriptions.briefing_audio import audio_file_path_is_safe, briefing_audio_dir
+from ...Subscriptions.briefing_audio import audio_file_path_is_safe
 from ...Subscriptions.briefing_selection import (
     MODE_AUTO,
     MODE_AUTO_FEATURED,
@@ -652,7 +652,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     _AUDIO_FAILED_MARK = "✗"
     _AUDIO_FAILED_STYLE = "bold red"
 
-    briefings = reactive[list[dict[str, Any]]]([], recompose=True)
+    briefings = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_briefing = reactive[dict[str, Any] | None](None, recompose=True)
     #: The scope line, supplied by the screen: which watchlist these
     #: briefings belong to, or the reason there are none to show.
@@ -674,7 +674,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     selection_mode = reactive[str](MODE_AUTO_FEATURED, recompose=True)
     #: Every stored `briefing_presets` row, name-ASC (screen-supplied,
     #: watchlist-independent).
-    presets = reactive[list[dict[str, Any]]]([], recompose=True)
+    presets = reactive[list[dict[str, Any]]](list, recompose=True)
     #: The watchlist's stored `default_briefing_preset_id`, or `None` for
     #: "use the app default" -- the value `_generate_briefing` passes to
     #: `generate_briefing(..., preset_id=...)`.
@@ -703,7 +703,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: across the whole watchlist, since a script belongs to exactly one
     #: briefing and this pane only ever shows one briefing's detail at a
     #: time.
-    scripts = reactive[list[dict[str, Any]]]([], recompose=True)
+    scripts = reactive[list[dict[str, Any]]](list, recompose=True)
     #: The script whose detail is rendered below the scripts table, or
     #: `None` when nothing is selected.
     selected_script = reactive[dict[str, Any] | None](None, recompose=True)
@@ -729,7 +729,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: shape could not do: a failed synthesis rendered visually identical
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
     #: inside `_load_briefings`.
-    scripts_with_audio = reactive[dict[int, str]]({}, recompose=True)
+    scripts_with_audio = reactive[dict[int, str]](dict, recompose=True)
     #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
     #: selected script -- has at least one export-ready audio episode
     #: (`SubscriptionsDB.list_watchlist_audio_episodes`'s own `complete`
@@ -785,7 +785,7 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: `rich.text.Text`, never a bare `str`: an item title is remote text
     #: (the same reasoning `_script_turns_renderable` states for a turn),
     #: so it must never reach a markup parser.
-    citations = reactive[list[dict[str, Any]]]([], recompose=True)
+    citations = reactive[list[dict[str, Any]]](list, recompose=True)
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
