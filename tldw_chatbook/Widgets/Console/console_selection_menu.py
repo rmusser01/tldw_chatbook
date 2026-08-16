@@ -298,8 +298,11 @@ class ConsoleSelectionMenu(Vertical):
         box bottom lands it ON TOP of the selected row -- the reverse-video
         highlight strip (the evidence of the selection) hides behind the
         menu. If ``selection_top`` is known and the whole menu fits above
-        the row, place it there instead (bottom exactly at
-        ``selection_top - 1``); otherwise fall back to the bottom pin.
+        the row, place it there instead -- preferring a one-row gap (bottom
+        exactly at ``selection_top - 1``), then touching the row's top when
+        the gap alone does not fit, and only then falling back to the
+        bottom pin. The row top is clamped to the box so a stale sample
+        can never place the menu outside the owner.
         Ordering with the shrink guard below is stable: the guard fires
         only when the menu is taller than the whole box -- in that case it
         can never fit above the selection either (``selection_top`` is at
@@ -343,7 +346,18 @@ class ConsoleSelectionMenu(Vertical):
         # (Region.bottom is exclusive; the gap keeps the highlight strip
         # visually separated). Horizontal clamp unchanged.
         if shift_y and self._selection_top is not None:
-            above_y = self._selection_top - 1 - region.height
+            # Defensive bound (review follow-up): the row top is sampled
+            # pre-mount; a stale or beyond-the-box sample must never pull
+            # the menu outside the owner box -- clamp the effective row top
+            # so the containment invariant holds unconditionally.
+            selection_top = min(self._selection_top, bounds.bottom)
+            above_y = selection_top - 1 - region.height
+            if above_y < bounds.y:
+                # No room for the one-row gap: abut the row (touching)
+                # before giving up -- pinning to the box bottom instead
+                # would land the menu ON the highlight this branch exists
+                # to keep visible (reachable on boxes <= ~2x menu height).
+                above_y = selection_top - region.height
             if above_y >= bounds.y:
                 self._anchor = (
                     max(bounds.x, x - shift_x),

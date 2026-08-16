@@ -668,10 +668,11 @@ async def test_top_row_selection_bottom_overflow_pins_to_box_bottom():
 
 
 @pytest.mark.asyncio
-async def test_null_selection_row_region_keeps_bottom_pin_no_crash():
+async def test_null_selection_row_region_selection_top_none_no_crash_keeps_containment():
     """Fallback edge: when the origin row's region is NULL/unmeasured, the
-    transcript passes selection_top=None and the menu keeps the plain
-    bottom-pinned clamp -- contained, no crash."""
+    transcript passes selection_top=None -- the None plumbing must hold (no
+    crash, menu stays contained in the owner box; no above-row placement
+    happens without a row top)."""
     from unittest.mock import PropertyMock, patch
 
     from textual.geometry import Region
@@ -709,6 +710,89 @@ async def test_null_selection_row_region_keeps_bottom_pin_no_crash():
         assert region.y <= menu.region.y
         assert region.x <= menu.region.x
         assert menu.region.right <= region.right
+
+
+class _GeometryOwnerApp(App[None]):
+    """Short owner box for direct clamp-geometry tests (no transcript).
+
+    The owner is a plain 10-row Vertical at the screen top; the base menu
+    (no feedback entries) measures 5 rows. Placement inputs are exact:
+    ``selection_top`` and the anchor, so the above-row placement branches
+    are exercised without transcript scroll choreography.
+    """
+
+    def __init__(self, *, selection_top: int | None, screen_y: int) -> None:
+        super().__init__()
+        self._selection_top = selection_top
+        self._screen_y = screen_y
+        self.owner: Widget | None = None
+
+    CSS = "#owner { height: 10; }"
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Vertical
+
+        self.owner = Vertical(id="owner")
+        yield self.owner
+
+    async def mount_menu(self) -> None:
+        """Mount the menu the way the real flow does: onto an
+        already-laid-out owner (mounting it in ``compose`` races the clamp
+        against the owner's first layout -- the owner's region is still
+        NULL when the one-shot clamp runs, and the screen-size fallback
+        finds nothing to shift)."""
+        assert self.owner is not None
+        await self.mount(
+            ConsoleSelectionMenu(
+                screen_x=2,
+                screen_y=self._screen_y,
+                owner=self.owner,
+                selection_top=self._selection_top,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_touching_above_row_when_gap_does_not_fit():
+    """Review follow-up: a box too short for the one-row gap but tall enough
+    for the menu itself must ABDUT the selected row (touching placement)
+    rather than pin to the box bottom and land on top of the highlight --
+    the reachable corner on small terminals (box <= ~2x menu height)."""
+    app = _GeometryOwnerApp(selection_top=5, screen_y=10)
+    async with app.run_test(size=(80, 24)) as pilot:
+        owner = app.query_one("#owner")
+        await pilot.pause()  # owner lays out before the menu mounts
+        await app.mount_menu()
+        menu = app.query_one(ConsoleSelectionMenu)
+        await pilot.pause()
+        await pilot.pause()  # measured clamp settles
+        box = owner.region
+        assert menu.region.height == 5  # base-menu geometry pin
+        # Menu occupies rows 0..4: no gap row, but the row at y5 (and its
+        # highlight strip) stays visible below the menu.
+        assert menu.region.y == 0
+        assert menu.region.bottom == 5
+        assert box.contains_region(menu.region)
+
+
+@pytest.mark.asyncio
+async def test_selection_top_below_box_keeps_menu_contained():
+    """Defensive bound (review follow-up): a selection_top sampled beyond
+    the owner box (stale pre-mount sample, programmatic mounting) must not
+    pull the menu outside the box -- the effective row top clamps to the
+    box bottom, keeping the containment invariant unconditional."""
+    app = _GeometryOwnerApp(selection_top=20, screen_y=10)
+    async with app.run_test(size=(80, 24)) as pilot:
+        owner = app.query_one("#owner")
+        await pilot.pause()  # owner lays out before the menu mounts
+        await app.mount_menu()
+        menu = app.query_one(ConsoleSelectionMenu)
+        await pilot.pause()
+        await pilot.pause()  # measured clamp settles
+        box = owner.region
+        assert menu.region.height == 5  # base-menu geometry pin
+        assert box.contains_region(menu.region)
+        assert menu.region.bottom <= box.bottom
 
 
 @pytest.mark.asyncio
