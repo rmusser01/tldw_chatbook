@@ -163,6 +163,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    RESEARCH_COMMAND_HANDLER_ID,
+    RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
@@ -225,6 +227,7 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
+    unsaved_console_endpoint_warning,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
@@ -237,7 +240,11 @@ from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     normalize_llamacpp_base_url,
 )
-from ...Chat.console_provider_endpoints import first_configured_endpoint
+from ...Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+)
 
 from ...Chat.console_voice_input import (
     acoustic_barge_in_enabled,
@@ -2333,6 +2340,16 @@ class ChatScreen(BaseAppScreen):
                 group="console-sync",
             )
         self.app_instance.notify("Console settings saved.", severity="success")
+        # task-16473: a session endpoint with no persisted backing works for
+        # this run (llama.cpp readiness even reports "Ready") and then
+        # silently evaporates on restart -- the exact trap behind the
+        # "re-enter my llama.cpp IP:Port every boot" report.
+        endpoint_warning = unsaved_console_endpoint_warning(
+            settings,
+            app_config=self._provider_readiness_app_config(),
+        )
+        if endpoint_warning:
+            self.app_instance.notify(endpoint_warning, severity="warning")
 
     async def _refresh_console_roleplay_projections(
         self,
@@ -12830,25 +12847,62 @@ class ChatScreen(BaseAppScreen):
         choice (mirroring the settings-modal apply path) and re-evaluates the
         setup card from the fresh on-disk config (task-177 mechanics; no
         boot-time snapshots).
+
+        task-16476: a provider that already has a DIFFERENT user-configured
+        endpoint keeps it -- the endpoint write fills only when absent, and
+        the detected endpoint is applied to the session instead, so "Use
+        detected ..." stays effective without clobbering persisted config
+        (discovery is loopback-only and can never see the LAN server the
+        configured endpoint may point at).
         """
         server = self._console_detected_local_server
         if server is None:
             return
         model_id = server.model_ids[0] if server.model_ids else None
-        provider_values: dict[str, object] = {"api_url": server.base_url}
+        app_config = self._provider_readiness_app_config()
+        provider_key = provider_config_key(server.provider_key)
+        provider_settings = self._config_section(
+            self._config_section(app_config, "api_settings"),
+            provider_key,
+        )
+        configured_endpoint = first_configured_endpoint(provider_settings)
+        provider_values: dict[str, object] = {}
+        # Qodo review (PR #1720): compare connection identities, not raw
+        # strings -- a configured endpoint differing only by a trailing
+        # slash (or a llama.cpp endpoint-path suffix) is the SAME server and
+        # must not warn or skip the canonicalizing write. Same vocabulary
+        # ``_endpoint_differs_for_provider`` uses.
+        if configured_endpoint and self._adoption_endpoints_differ(
+            provider_key, configured_endpoint, server.base_url
+        ):
+            self.app_instance.notify(
+                "Keeping the saved endpoint "
+                f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
+                f"for {provider_key}; using the detected "
+                "server for this session only.",
+                severity="warning",
+            )
+        else:
+            provider_values["api_url"] = server.base_url
         chat_defaults: dict[str, object] = {"provider": server.provider_key}
         if model_id:
             provider_values["model"] = model_id
             chat_defaults["model"] = model_id
-        try:
-            saved = save_settings_to_cli_config(
-                {
-                    f"api_settings.{server.provider_key}": provider_values,
-                    "chat_defaults": chat_defaults,
-                }
-            )
-        except Exception:
-            saved = False
+        if provider_values:
+            try:
+                saved = save_settings_to_cli_config(
+                    {
+                        f"api_settings.{server.provider_key}": provider_values,
+                        "chat_defaults": chat_defaults,
+                    }
+                )
+            except Exception:
+                saved = False
+        else:
+            try:
+                saved = save_settings_to_cli_config({"chat_defaults": chat_defaults})
+            except Exception:
+                saved = False
         if not saved:
             logger.warning(
                 "Could not persist detected local server defaults to config; "
@@ -12859,8 +12913,7 @@ class ChatScreen(BaseAppScreen):
             server.provider_key,
             model_id,
         )
-        if provider_config_key(settings.provider) in {"llama_cpp", "local_llamacpp"}:
-            settings = replace(settings, base_url=None)
+        settings = replace(settings, base_url=server.base_url)
         self._session._replace_active_console_session_settings(
             replace(settings, source="user")
         )
@@ -12868,6 +12921,41 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
+
+    @staticmethod
+    def _adoption_endpoints_differ(
+        provider_key: str,
+        configured_endpoint: str,
+        detected_endpoint: str,
+    ) -> bool:
+        """Return whether adoption endpoints differ by connection identity.
+
+        Qodo review (PR #1720): raw string inequality treats a trailing
+        slash (or a llama.cpp endpoint-path suffix) as a different server,
+        warning and skipping the write for what is the same connection. Uses
+        the same normalization vocabulary as
+        ``_endpoint_differs_for_provider``.
+
+        Args:
+            provider_key: Normalized provider readiness key.
+            configured_endpoint: Persisted endpoint for the provider.
+            detected_endpoint: Discovered server base URL.
+
+        Returns:
+            ``True`` only when the two endpoints normalize to different
+            connection identities.
+        """
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            configured = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(configured_endpoint)
+            )
+            detected = normalize_generic_endpoint_for_compare(
+                normalize_llamacpp_base_url(detected_endpoint)
+            )
+            return configured != detected
+        return normalize_generic_endpoint_for_compare(
+            configured_endpoint
+        ) != normalize_generic_endpoint_for_compare(detected_endpoint)
 
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""
@@ -16503,6 +16591,7 @@ class ChatScreen(BaseAppScreen):
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
+        RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -16567,6 +16656,7 @@ class ChatScreen(BaseAppScreen):
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
+            RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -16779,6 +16869,91 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    async def _console_command_research(self, parse: CommandParse) -> None:
+        """``/research <question>``: launch a local deep-research run whose
+        completed report is delivered back into THIS conversation (task-16481).
+
+        The run executes in a worker; the handoff inserts an assistant
+        message on completion, and the existing terminal-run notification
+        remains the fallback when insertion is impossible.
+        """
+        question = (parse.args or "").strip()
+        if not question:
+            await self._append_native_console_system_message(
+                "Usage: /research <question>"
+            )
+            return
+        conversation_id = self._current_console_conversation_id()
+        if not conversation_id:
+            await self._append_native_console_system_message(
+                "Deep research needs an active conversation to deliver its "
+                "report into."
+            )
+            return
+        app = self.app
+        local_service = getattr(app, "local_research_service", None)
+        if local_service is None:
+            await self._append_native_console_system_message(
+                "Local research service is unavailable; cannot start a run."
+            )
+            return
+
+        from tldw_chatbook.Research_Interop.chat_handoff import (
+            insert_research_completion_message,
+        )
+        from tldw_chatbook.Research_Interop.local_research_engine import (
+            LocalResearchEngine,
+        )
+
+        search_params: dict = {}
+        paper_search_fn = None
+        try:
+            from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
+
+            search_params = deep_search_pipeline_params()
+            if getattr(app, "research_window_academic_enabled", False):
+                from tldw_chatbook.Research_Interop.academic_providers import (
+                    search_papers,
+                )
+
+                paper_search_fn = search_papers
+        except Exception:
+            pass
+
+        db = getattr(app, "chachanotes_db", None)
+
+        async def _run_research() -> None:
+            run = local_service.launch_run(
+                query=question,
+                chat_handoff={"conversation_id": conversation_id, "origin": "console"},
+            )
+            engine = LocalResearchEngine(
+                local_service,
+                search_params=search_params,
+                paper_search_fn=paper_search_fn,
+                completion_handoff=(
+                    (lambda payload: insert_research_completion_message(db, payload))
+                    if db is not None
+                    else None
+                ),
+            )
+            try:
+                await engine.execute_run(run["id"])
+            except Exception as exc:  # noqa: BLE001 - worker must not crash the screen
+                logger.warning(f"Console research run failed: {exc}")
+
+        self.run_worker(
+            _run_research(),
+            group="console-research",
+            exclusive=False,
+            description=f"Console research: {question[:60]}",
+        )
+        await self._append_native_console_system_message(
+            f"Deep research started: {question}\n"
+            "The report will be added to this conversation when the run "
+            "completes."
+        )
 
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Delegate the registry-bound image command to its controller."""
@@ -19118,14 +19293,21 @@ class ChatScreen(BaseAppScreen):
         model: Optional[str] = None,
         temperature: Optional[str] = None,
     ) -> None:
-        """Push sidebar control values back into the compact shell bar."""
+        """Push sidebar control values back into the compact shell bar.
+
+        task-16474: this programmatic sync no longer writes the
+        ``_console_control_provider``/``_console_control_model`` mirrors --
+        those track genuine user selections only (the mirrors outrank
+        ``chat_defaults`` when fresh session defaults are derived, so
+        ambient writes decided the provider of the next session). The bar's
+        displayed values and the session settings replacement below are
+        unchanged.
+        """
         updates: Dict[str, str] = {}
         if provider is not None:
             updates["provider"] = provider
-            self._console_control_provider = provider
         if model is not None:
             updates["model"] = model
-            self._console_control_model = model
         if temperature is not None:
             updates["temperature"] = temperature
 

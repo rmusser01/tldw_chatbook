@@ -88,6 +88,13 @@ appears above the transcript:
   "path outside allowed folders; will fail even if approved" — means the file
   path will be rejected regardless of your decision.
 
+An armed approval card does not expire — the run waits for your decision
+however long you take. Stopping the run or closing the session withdraws a
+pending card; nothing else does. If you'd rather have undecided calls
+auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
+`config.toml` (seconds; `0`, the default, waits indefinitely — the skill
+install and run-script confirm cards follow the same rule).
+
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
 comes back with a "(definition changed)" badge. Review or change a remembered

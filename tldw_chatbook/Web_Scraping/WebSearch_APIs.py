@@ -41,13 +41,14 @@ import asyncio
 import base64
 import concurrent.futures
 import json
-from html import unescape
 import random
 import re
 import threading
 import time
-from typing import Optional, Dict, Any, List, Union, Callable, TypedDict
-from urllib.parse import urlparse, urlencode, unquote
+from functools import wraps
+from html import unescape
+from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
+from urllib.parse import unquote, urlencode, urlparse
 
 #
 # 3rd-Party Imports
@@ -55,7 +56,6 @@ import requests
 from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
-from functools import wraps
 
 # Handle optional lxml dependency
 try:
@@ -70,11 +70,6 @@ except ImportError:
 
 #
 # Local Imports
-from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-from tldw_chatbook.Internal_Prompts import render_internal_prompt
-from tldw_chatbook.Utils.egress import is_public_http_url
-
 # `analyze` (LLM_Calls.Summarization_General_Lib) pulls in the summarization
 # stack (nltk/scipy/sklearn/pandas via Chunking/Chunk_Lib). It is imported
 # lazily inside search_result_relevance(), only when actually summarizing a
@@ -82,8 +77,14 @@ from tldw_chatbook.Utils.egress import is_public_http_url
 # load it (this module sits on the app.py -> Tools -> WebSearch_APIs boot
 # path via the tool-executor registry).
 from loguru import logger
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Internal_Prompts import render_internal_prompt
+from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import is_public_http_url
+from tldw_chatbook.Web_Scraping import deep_search_citations
+from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article
 
 # Handle optional defusedxml (Yandex XML parsing)
 try:
@@ -765,6 +766,14 @@ async def analyze_and_aggregate(
         },
     )
 
+    if isinstance(final_answer, dict):
+        final_answer["gate"] = {
+            "relevant": len(relevant_results),
+            "raw": len(web_search_results_dict.get("results") or []),
+            "fallback": any(
+                entry.get("gate_unverified") for entry in relevant_results.values()
+            ),
+        }
     return {
         "final_answer": final_answer,
         "relevant_results": relevant_results,
@@ -844,16 +853,18 @@ def analyze_question(question: str, api_endpoint) -> Dict:
                     "content": input_data + "\n\n" + sub_question_generation_prompt,
                 }
             ]
-            response = chat_api_call(
-                api_endpoint=api_endpoint,
-                messages_payload=messages_payload,
-                api_key=None,
-                temp=0.7,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
+            response = chat_reply_text(
+                chat_api_call(
+                    api_endpoint=api_endpoint,
+                    messages_payload=messages_payload,
+                    api_key=None,
+                    temp=0.7,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                )
             )
             if response:
                 try:
@@ -1069,6 +1080,11 @@ async def search_result_relevance(
         Dict[str, Dict]: A dictionary of relevant results, keyed by a unique ID or index.
     """
     relevant_results: Dict[str, Dict] = {}
+    # task-16333: results the gate EVALUATED and rejected (verdict False).
+    # Only these are eligible for the zero-relevant fallback -- results
+    # skipped via timeout/cancel/no-content were never judged, and promoting
+    # them would launder unevaluated evidence.
+    gate_rejected: List[tuple] = []
 
     for idx, result in enumerate(search_results):
         if cancel_event and cancel_event.is_set():
@@ -1106,7 +1122,10 @@ async def search_result_relevance(
                         api_endpoint=api_endpoint,
                         messages_payload=_mp,
                         api_key=None,
-                        temp=0.7,
+                        # Classification, not generation (task-16333): the
+                        # binary relevant/not-relevant verdict must be stable
+                        # across identical runs; 0.7 flipped verdicts.
+                        temp=_RELEVANCE_JUDGMENT_TEMP,
                         system_message=None,
                         streaming=False,
                         minp=None,
@@ -1117,7 +1136,9 @@ async def search_result_relevance(
                     )
                 )
 
-            relevancy_result = await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            relevancy_result = chat_reply_text(
+                await asyncio.wait_for(_eval_call(), timeout=llm_timeout_s)
+            )
 
             # FIXME
             logger.debug(
@@ -1294,7 +1315,9 @@ async def search_result_relevance(
                         # lazily here (chatbook precedent, see module docstring)
                         # so a plain import of this module doesn't eagerly pull in
                         # the summarization stack.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                            analyze,
+                        )
 
                         logger.info(f"Summarizing relevant result: ID={result_id}")
 
@@ -1340,6 +1363,7 @@ async def search_result_relevance(
                         )
                     else:
                         logger.info(f"Irrelevant result: {reasoning}")
+                        gate_rejected.append((idx, result, content))
 
                 else:
                     logger.warning(
@@ -1354,6 +1378,33 @@ async def search_result_relevance(
             logger.error(
                 f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
             )
+
+    # task-16333 zero-relevant fallback: the live baseline showed a strict
+    # gate silently producing NO report at all. When every EVALUATED result
+    # was rejected but raw results exist (and the run was not cancelled --
+    # a deadline hit must keep reporting the honest cutoff), keep the
+    # top-ranked rejected results as snippet-level evidence flagged
+    # gate_unverified: a flagged report beats no report. No scrape or
+    # summarization spend on fallback entries.
+    if (
+        not relevant_results
+        and gate_rejected
+        and not (cancel_event and cancel_event.is_set())
+    ):
+        for fb_idx, fb_result, fb_content in gate_rejected[:_GATE_FALLBACK_MAX_RESULTS]:
+            fb_result_id = str(fb_result.get("id", fb_idx))
+            relevant_results[fb_result_id] = {
+                "content": fb_content,
+                "original_content": fb_content,
+                "reasoning": "gate fallback: evidence not relevance-verified",
+                "url": fb_result.get("url"),
+                "title": fb_result.get("title"),
+                "gate_unverified": True,
+            }
+        logger.warning(
+            f"Relevance gate rejected all {len(gate_rejected)} evaluated result(s); "
+            f"proceeding with top {len(relevant_results)} flagged gate-unverified"
+        )
 
     return relevant_results
 
@@ -1417,6 +1468,12 @@ def review_and_select_results(
 
 ######################### Result Aggregation & Combination #########################
 #
+# task-16333: binary verdicts need determinism, not creativity.
+_RELEVANCE_JUDGMENT_TEMP = 0.1
+# task-16333: bounded zero-relevant fallback (search-rank order).
+_GATE_FALLBACK_MAX_RESULTS = 3
+
+
 class FinalAnswerDict(TypedDict):
     """Structured payload returned by the aggregation phase (port of server
     WebSearch_APIs.py :1034-1039; task-1356). `evidence` entries are dicts
@@ -1427,6 +1484,14 @@ class FinalAnswerDict(TypedDict):
     evidence: List[Dict[str, Any]]
     confidence: float
     chunks: List[Dict[str, Any]]
+    # Present ONLY on the LLM-success branch (task-16331): marker resolution
+    # and quote-check counts from deep_search_citations.verify_citations.
+    # Failure/empty branches omit it rather than fabricating a clean verdict.
+    citation_verification: NotRequired[Dict[str, Any]]
+    # Present whenever relevance outcomes are known (task-16333):
+    # {"relevant": int, "raw": int, "fallback": bool} -- fallback marks a
+    # report built from gate-unverified evidence.
+    gate: NotRequired[Dict[str, Any]]
 
 
 def _build_chunk_infos(items: List[str], max_chars: int = 6000) -> List[Dict[str, Any]]:
@@ -1576,17 +1641,18 @@ def aggregate_results(
 
     evidence_payload: List[Dict[str, Any]] = []
     for n, (_rid, res) in numbered_items:
-        evidence_payload.append(
-            {
-                "id": n,
-                "url": res.get("url"),
-                "title": res.get("title"),
-                "content": res.get("content"),
-                "original_content": res.get("original_content"),
-                "reasoning": res.get("reasoning"),
-                "chunk_index": chunk_index_by_n.get(n),
-            }
-        )
+        evidence_entry = {
+            "id": n,
+            "url": res.get("url"),
+            "title": res.get("title"),
+            "content": res.get("content"),
+            "original_content": res.get("original_content"),
+            "reasoning": res.get("reasoning"),
+            "chunk_index": chunk_index_by_n.get(n),
+        }
+        if res.get("gate_unverified"):
+            evidence_entry["gate_unverified"] = True
+        evidence_payload.append(evidence_entry)
 
     concatenated_texts = "\n\n".join(entry_texts)
 
@@ -1642,7 +1708,9 @@ def aggregate_results(
         # is explicitly told to preserve "[n]" citation markers verbatim so
         # the citation-integrity fix (adaptation 4) survives this reduce step.
         # `analyze` is imported lazily (chatbook precedent, see module docstring).
-        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze as _analyze
+        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+            analyze as _analyze,
+        )
 
         summarized_chunks: List[str] = []
         for info in chunk_infos:
@@ -1729,28 +1797,52 @@ def aggregate_results(
                 "content": input_data + "\n\n" + analyze_search_results_prompt_2,
             }
         ]
-        returned_response = chat_api_call(
-            api_endpoint=api_endpoint,
-            messages_payload=messages_payload,
-            api_key=None,
-            temp=0.7,
-            system_message=None,
-            streaming=False,
-            minp=None,
-            maxp=None,
-            model=None,
-            topk=None,
-            topp=None,
+        returned_response = chat_reply_text(
+            chat_api_call(
+                api_endpoint=api_endpoint,
+                messages_payload=messages_payload,
+                api_key=None,
+                temp=0.7,
+                system_message=None,
+                streaming=False,
+                minp=None,
+                maxp=None,
+                model=None,
+                topk=None,
+                topp=None,
+            )
         )
         logger.debug(f"Returned response from LLM: {returned_response}")
         if returned_response:
+            # Citation verification (task-16331): resolve the "[n]" markers
+            # against the numbered evidence ids and quote-check quoted spans
+            # against the scraped originals -- pure string work, no network.
+            # Unknown ids are flagged inline ("[n?]") and counted, never
+            # deleted; failure/empty branches below carry no verdict rather
+            # than a fabricated clean one.
+            cv = deep_search_citations.verify_citations(
+                returned_response, evidence_payload
+            )
             success_answer: FinalAnswerDict = {
-                "text": returned_response,
+                "text": cv["annotated_text"],
                 "evidence": evidence_payload,
                 "confidence": _estimate_confidence(
                     len(evidence_payload), len(chunk_infos), failed_chunks, has_llm=True
                 ),
                 "chunks": chunk_metadata,
+                "citation_verification": {
+                    key: cv[key]
+                    for key in (
+                        "markers_total",
+                        "markers_resolved",
+                        "unknown_marker_ids",
+                        "quotes_checked",
+                        "quotes_verified",
+                        "quotes_misquoted",
+                        "uncited_sentences",
+                        "claims",
+                    )
+                },
             }
             return success_answer
     except Exception as e:

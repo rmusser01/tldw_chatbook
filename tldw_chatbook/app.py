@@ -6993,53 +6993,12 @@ class TldwCli(
             server_service=self.server_outputs_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.local_research_service = LocalResearchService(
-                get_research_db_path(),
-                notification_dispatcher=self.notification_dispatch_service,
-                notification_app=self,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Local research service unavailable during app wiring"
-            )
-            self.local_research_service = None
-        try:
-            self.server_research_service = ServerResearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_research_service = ServerResearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_scope_service = ResearchScopeService(
-            local_service=self.local_research_service,
-            server_service=self.server_research_service,
-            policy_enforcer=self.service_policy_enforcer,
-            sync_scope_service=getattr(self, "sync_scope_service", None),
-        )
-        self.local_research_search_service = LocalResearchSearchService(
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        try:
-            self.server_research_search_service = (
-                ServerResearchSearchService.from_config(
-                    self.app_config,
-                    policy_enforcer=self.service_policy_enforcer,
-                )
-            )
-        except ValueError:
-            self.server_research_search_service = ServerResearchSearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_search_scope_service = ResearchSearchScopeService(
-            local_service=self.local_research_search_service,
-            server_service=self.server_research_search_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # Research services: ONE wiring path, not two. This used to duplicate
+        # `_wire_research_services` verbatim here (task-16332); the method's
+        # own already-wired guard makes calling it from this earlier-in-
+        # `__init__` bootstrap equivalent to the old embedded copy, and the
+        # later direct `_wire_research_services()` call then early-returns.
+        self._wire_research_services()
         self.local_chat_grammars_service = LocalChatGrammarsService(
             store_path=get_user_data_dir() / "tldw_chatbook_chat_grammars.json",
             policy_enforcer=self.service_policy_enforcer,

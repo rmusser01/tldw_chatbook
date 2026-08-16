@@ -340,8 +340,13 @@ def test_aggregate_success_typed_and_numbered(monkeypatch):
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
-    assert set(out) == {"text", "evidence", "confidence", "chunks"}
+    # Success branch carries the citation-verification verdict (task-16331);
+    # failure/empty branches (pinned by their own tests) omit the key.
+    assert set(out) == {"text", "evidence", "confidence", "chunks", "citation_verification"}
     assert out["text"] == "Answer citing [1]."
+    cv = out["citation_verification"]
+    assert cv["markers_total"] == 1 and cv["markers_resolved"] == 1
+    assert cv["unknown_marker_ids"] == []
     assert out["evidence"][0]["id"] == 1
     assert out["evidence"][0]["url"] == "https://one.example/"
     assert "[1]" in captured["prompt"]          # numbered payload shown to the LLM
@@ -1209,3 +1214,93 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_abse
 
     await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
     assert captured["respect_robots_txt"] is False
+
+
+# --- relevance gate robustness (task-16333) --------------------------------------
+
+@pytest.mark.asyncio
+async def test_relevance_judgment_runs_at_classification_temperature(monkeypatch):
+    captured = []
+
+    def fake_chat(**kwargs):
+        captured.append(kwargs)
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", failing_scrape_noop)
+    results = [_std_result("T", "https://e.example/", "c")]
+    await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+
+    eval_calls = [
+        c for c in captured
+        if str(c["messages_payload"][0]["content"]).startswith("Evaluate the relevance")
+    ]
+    assert eval_calls, "the judgment call must be identifiable by its input"
+    assert all(c["temp"] <= 0.2 for c in eval_calls)
+
+
+async def failing_scrape_noop(url, **k):
+    raise RuntimeError("no scrape")
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: False\nReasoning: off-topic"] * 5))
+    results = [_std_result(f"T{i}", f"https://e{i}.example/", f"snippet {i}") for i in range(5)]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+
+    assert out, "all-rejected must not produce an empty evidence set when raw results exist"
+    assert len(out) <= 3  # bounded fallback
+    first = next(iter(out.values()))
+    assert first["gate_unverified"] is True
+    assert first["url"] == "https://e0.example/"  # original rank order
+    assert "snippet 0" in (first["content"] or "")  # snippet-level, no summarize spend
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
+    import asyncio
+    evt = asyncio.Event()
+
+    def fake_chat(**kwargs):
+        evt.set()
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    results = [_std_result("T", "https://e.example/", "c")]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", cancel_event=evt)
+
+    assert out == {}  # a cancelled/deadline run reports honestly, no fallback
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
+    import time as _t
+
+    def hanging_chat(**kwargs):
+        _t.sleep(0.3)
+        return "Selected Answer: True\nReasoning: slow"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", hanging_chat)
+    results = [_std_result("T", "https://e.example/", "c")]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", llm_timeout_s=0.05)
+
+    assert out == {}  # never-evaluated results are not promoted (existing pin, unchanged)
+
+
+@pytest.mark.asyncio
+async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "A[1].")
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "s")
+
+    out = WebSearch_APIs.aggregate_results(
+        {"1": {"content": "c", "original_content": "o", "reasoning": "gate fallback",
+               "url": "https://e.example/", "title": "T", "gate_unverified": True}},
+        "q", [], "openai",
+    )
+    assert out["evidence"][0]["gate_unverified"] is True

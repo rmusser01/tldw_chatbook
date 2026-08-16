@@ -410,6 +410,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "koboldcpp": {
         "api_key": "api_key",
@@ -481,6 +483,8 @@ PROVIDER_PARAM_MAP = {
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local-llm": {
         "messages_payload": "input_data",
@@ -494,6 +498,8 @@ PROVIDER_PARAM_MAP = {
         "max_tokens": "max_tokens",
         "seed": "seed",
         "stop": "stop",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "ollama": {  # api_url consideration
         "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
@@ -556,6 +562,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "custom-openai-api-2": {
         "api_key": "api_key",
@@ -578,6 +586,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "mlx_lm": {
         "api_key": "api_key",  # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
@@ -626,6 +636,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_llamafile": {
         "api_key": "api_key",
@@ -645,6 +657,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_ollama": {
         "api_key": "api_key",
@@ -682,6 +696,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_mlx_lm": {
         "api_key": "api_key",
@@ -706,6 +722,8 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "tools": "tools",
         "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "moonshot": {
         "api_key": "api_key",
@@ -977,10 +995,76 @@ def chat_api_call(
         )
         log_counter("chat_api_call_success", labels={"api_endpoint": endpoint_lower})
 
+        # Provider handlers disagree on return shape: cloud and local
+        # OpenAI-compatible handlers return the raw normalized response DICT
+        # (tool_calls, finish_reason, usage -- the Console gateway parses
+        # all of these), so chat_api_call must pass dicts through UNCHANGED
+        # (an earlier normalization to content strings here broke the
+        # Console's tool/continuation paths). String-expecting consumers
+        # extract content via ``chat_reply_text`` (task-16331 correction).
+        # Usage recording reads the dict without altering it.
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str):
+                    usage = response.get("usage")
+                    if not isinstance(usage, dict):
+                        usage = {}  # absent usage -> estimates path, not an AttributeError
+                    try:
+                        from .usage_recorder import active_recorder
+
+                        recorder = active_recorder()
+                        # Providers normalize to the OpenAI chat shape but
+                        # may keep their own usage field names (Anthropic:
+                        # input_tokens/output_tokens); OpenAI names win when
+                        # both are present (task-16335). Exact counts when
+                        # the provider reported usage, estimates otherwise.
+                        usage_prompt = usage.get("prompt_tokens")
+                        if usage_prompt is None:
+                            usage_prompt = usage.get("input_tokens")
+                        usage_completion = usage.get("completion_tokens")
+                        if usage_completion is None:
+                            usage_completion = usage.get("output_tokens")
+                        if recorder is not None and isinstance(usage, dict) and (
+                            usage_prompt is not None or usage_completion is not None
+                        ):
+                            recorder.record_usage(
+                                prompt_tokens=usage_prompt,
+                                completion_tokens=usage_completion,
+                            )
+                        elif recorder is not None:
+                            recorder.record_exchange(
+                                prompt_text=_estimate_prompt_text(
+                                    messages_payload, system_message
+                                ),
+                                completion_text=content,
+                            )
+                    except Exception:  # noqa: BLE001 - accounting must never break a call
+                        logger.debug("usage recording skipped", exc_info=True)
+
         if isinstance(response, str):
             logger.debug(
                 f"Debug - Chat API Call - Response type=str; length={len(response)}"
             )
+            # task-16329: token-usage plumbing. When a usage scope is active
+            # (research budget ledger), record estimated prompt/completion
+            # tokens for this exchange. One contextvar get when no scope is
+            # active -- zero behavior change for every other caller.
+            try:
+                from .usage_recorder import active_recorder
+
+                recorder = active_recorder()
+                if recorder is not None:
+                    recorder.record_exchange(
+                        prompt_text=_estimate_prompt_text(
+                            messages_payload, system_message
+                        ),
+                        completion_text=response,
+                    )
+            except Exception:  # noqa: BLE001 - accounting must never break a call
+                logger.debug("usage recording skipped", exc_info=True)
         elif hasattr(response, "__iter__") and not isinstance(
             response, (str, bytes, dict)
         ):
@@ -1122,6 +1206,61 @@ def chat_api_call(
             ),
             status_code=500,
         )
+
+
+def _estimate_prompt_text(
+    messages_payload: Any, system_message: Optional[str]
+) -> str:
+    """Text used for ESTIMATED prompt tokens (task-16789): the system
+    message is part of the prompt and must count; multimodal content lists
+    contribute only their text parts so base64 image payloads cannot
+    explode the estimate."""
+    parts: list = []
+    if system_message:
+        parts.append(str(system_message))
+    for message in messages_payload or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+    return "\n".join(part for part in parts if part)
+
+
+def chat_reply_text(response: Any) -> str:
+    """Best-effort assistant text out of one ``chat_api_call`` reply
+    (task-16331 correction).
+
+    Provider handlers disagree on shape: handlers returning strings pass
+    through; handlers returning OpenAI-shaped response dicts (cloud AND
+    local OpenAI-compatible providers -- tool_calls/finish_reason/usage for
+    the Console gateway) extract ``choices[0].message.content`` (or the
+    legacy ``choices[0].text``). Anything unparseable yields "" so string
+    consumers' existing falsy/fallback handling applies -- never a dict
+    that would silently fail every downstream parse.
+    """
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+            text = choices[0].get("text")
+            if isinstance(text, str):
+                return text
+    return ""
 
 
 _CHAT_API_GENERIC_PARAMS = frozenset(inspect.signature(chat_api_call).parameters) - {

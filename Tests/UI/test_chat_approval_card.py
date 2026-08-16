@@ -309,3 +309,14 @@ def test_distinct_calls_get_their_own_row_and_verdict():
         "splitting them would offer a decision that cannot be honoured"
     )
     assert fence_rows[0]["count"] == 2
+
+
+def test_format_approval_deadline_hides_copy_when_no_deadline_armed():
+    """ADR-067: 0/None deadline (the new shipped default) renders NO
+    countdown copy. Pins the TASK-1844 behavior now that 0 is the norm."""
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_deadline,
+    )
+
+    assert format_approval_deadline(0) == ""
+    assert format_approval_deadline(None) == ""

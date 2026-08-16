@@ -65,6 +65,11 @@ REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
 
+# Help text: "Run deep research in the background: /research <question>"
+RESEARCH_COMMAND_NAME = "research"
+RESEARCH_COMMAND_ARGUMENT_HINT = "<question>"
+RESEARCH_COMMAND_HANDLER_ID = "research"
+
 
 @dataclass(frozen=True)
 class ConsoleCommand:
@@ -245,6 +250,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=REWIND_COMMAND_NAME,
             argument_hint=REWIND_COMMAND_ARGUMENT_HINT,
             handler_id=REWIND_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=RESEARCH_COMMAND_NAME,
+            argument_hint=RESEARCH_COMMAND_ARGUMENT_HINT,
+            handler_id=RESEARCH_COMMAND_HANDLER_ID,
         )
     )
     return registry

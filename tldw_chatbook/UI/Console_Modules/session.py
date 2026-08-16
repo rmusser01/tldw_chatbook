@@ -1298,13 +1298,49 @@ class ConsoleSessionController:
         )
         if not fresh_readiness.native_send_supported:
             return settings
+        previous_provider_key = provider_config_key(settings.provider)
+        next_provider_key = provider_config_key(fresh_defaults.provider)
         store.replace_session_settings(
             session.id,
             fresh_defaults,
             mark_user_work=False,
             canonical_settings_baseline=fresh_defaults,
         )
+        if previous_provider_key and next_provider_key != previous_provider_key:
+            # task-16475: the convergence itself is task-177 behavior, but a
+            # session whose provider identity changes under it must not do so
+            # silently -- from the user's seat the Provider chip just flipped
+            # to a provider they never chose.
+            self._notify_stale_default_provider_swap(
+                previous_provider_key,
+                next_provider_key or str(fresh_defaults.provider),
+            )
         return fresh_defaults
+
+    def _notify_stale_default_provider_swap(
+        self,
+        previous_provider_key: str,
+        next_provider_key: str,
+    ) -> None:
+        """Announce one stale-default refresh that changed the provider.
+
+        Best-effort: the refresh runs deep inside ensure/sync paths, so a
+        notification failure must never break them.
+        """
+        copy = (
+            f"Console provider changed {previous_provider_key} -> "
+            f"{next_provider_key}: this unused session now follows your saved "
+            "defaults (Settings > Providers & Models)."
+        )
+        logger.info(
+            "Stale-default refresh swapped session provider ({} -> {})",
+            previous_provider_key,
+            next_provider_key,
+        )
+        try:
+            self.app_instance.notify(copy, severity="warning")
+        except Exception:  # noqa: BLE001 -- display-only signal
+            logger.debug("Provider-swap notice could not be shown", exc_info=True)
 
     def _replace_active_console_session_settings(
         self,

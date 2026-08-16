@@ -18,6 +18,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatBadRequestError,
     ChatConfigurationError,
 )
+from tldw_chatbook.Chat.console_provider_support import (
+    build_local_thinking_payload_fields,
+)
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
@@ -126,6 +129,9 @@ def _chat_with_openai_compatible_local_server(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     user_identifier: Optional[str] = None,  # maps to 'user' in OpenAI spec
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
+    thinking_wire_key: Optional[str] = None,
     provider_name: str = "Local OpenAI-Compatible Server",
     timeout: int = 120,
     api_retries: int = 1,
@@ -218,6 +224,18 @@ def _chat_with_openai_compatible_local_server(
             )
     if user_identifier is not None:
         payload["user"] = user_identifier
+
+    # ADR-066: merge the provider-specific thinking-control wire fields
+    # (chat_template_kwargs / reasoning_budget_tokens / reasoning_effort)
+    # selected by the caller's execution key.
+    if thinking_wire_key and (
+        reasoning_effort is not None or thinking_budget_tokens is not None
+    ):
+        payload.update(
+            build_local_thinking_payload_fields(
+                thinking_wire_key, reasoning_effort, thinking_budget_tokens
+            )
+        )
 
     # Construct full API URL for chat completions
     base_url = api_base_url.rstrip("/")
@@ -525,7 +543,37 @@ def chat_with_local_llm(
     tools: Optional[List[Dict[str, Any]]] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a local llamafile/Local-LLM OpenAI-compatible server.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -621,6 +669,9 @@ def chat_with_local_llm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="local-llm",
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
         timeout=timeout,
@@ -663,7 +714,37 @@ def chat_with_llama(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a llama.cpp server (llama_cpp/local_llamacpp/local_llamafile).
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -791,6 +872,9 @@ def chat_with_llama(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         # tools, tool_choice, user_identifier could be added if llama.cpp supports them via OpenAI compat layer
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "llama_cpp",
         provider_name="Llama.cpp",
         timeout=timeout,
         api_retries=api_retries,
@@ -1358,7 +1442,37 @@ def chat_with_vllm(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
 ):
+    """Chat with a vLLM OpenAI-compatible server (vllm/local_vllm).
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+        provider_name: Provider key for dynamic config lookup; also
+            drives ADR-066 thinking wire composition.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -1456,6 +1570,9 @@ def chat_with_vllm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "vllm",
         provider_name="vLLM",
         timeout=timeout,
         api_retries=api_retries,
@@ -1813,9 +1930,37 @@ def chat_with_custom_openai(
     logprobs: Optional[bool] = None,
     top_logprobs: Optional[int] = None,
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     *,
     api_key_resolved: bool | None = None,
 ):
+    """Chat with the first user-configured Custom OpenAI endpoint.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
 
@@ -1935,6 +2080,9 @@ def chat_with_custom_openai(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="custom-openai-api",
         # `cfg` is the settings dict — calling .capitalize() on it raised
         # AttributeError on EVERY call, making this provider unusable
         # (pre-existing; surfaced by the task-243 native-tools live gate).
@@ -1970,9 +2118,37 @@ def chat_with_custom_openai_2(
     # This custom API 2 map is missing top_k, min_p, max_p (top_p) compared to custom 1.
     # Assuming it doesn't support them or they are set server-side.
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     *,
     api_key_resolved: bool | None = None,
 ):
+    """Chat with the second user-configured Custom OpenAI endpoint.
+
+    Args:
+        input_data: OpenAI-format chat messages to send.
+        api_key: Optional bearer credential for the endpoint.
+        system_message: Optional system prompt; prepended to the messages.
+        streaming: Whether to stream the response.
+        model: Model identifier; provider config is the fallback.
+        temp: Sampling temperature.
+        max_tokens: Response token limit.
+        seed: Deterministic sampling seed.
+        stop: Stop sequence(s).
+        response_format: Optional response format constraint (e.g. JSON).
+        reasoning_effort: Thinking level for reasoning-capable models,
+            composed into the request per ADR-066 (verbatim where the
+            target consumes it, dropped where a strict chat template
+            would reject it).
+        thinking_budget_tokens: Max thinking tokens; sent as the
+            llama.cpp-family ``reasoning_budget_tokens`` field, dropped
+            where the provider has no per-request budget support.
+        api_base_url: Request-pinned endpoint override; provider config
+            is the fallback.
+
+    Returns:
+        The assistant reply text, or a streaming generator of chunks.
+    """
     if model and (model.lower() == "none" or model.strip() == ""):
         model = None
     loaded_config_data = load_settings()
@@ -2090,6 +2266,9 @@ def chat_with_custom_openai_2(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key="custom-openai-api-2",
         provider_name=cfg_section.capitalize(),
         timeout=timeout,
         api_retries=api_retries,
@@ -2135,6 +2314,8 @@ def chat_with_mlx_lm(
         str
     ] = None,  # Added to support dynamic configuration loading
     api_base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     **kwargs: Any,  # To catch any other params from API_CALL_HANDLERS
 ) -> Union[Dict[str, Any], Generator[str, None, None]]:
     """
@@ -2244,6 +2425,9 @@ def chat_with_mlx_lm(
         logprobs=current_logprobs,
         top_logprobs=current_top_logprobs,
         user_identifier=current_user_identifier,
+        reasoning_effort=reasoning_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_wire_key=provider_name or "local_mlx_lm",
         provider_name=provider_name,
         timeout=timeout,
         api_retries=api_retries,

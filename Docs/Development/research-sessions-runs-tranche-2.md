@@ -1,10 +1,11 @@
 # Research Sessions And Runs Tranche
 
-Date: 2026-04-22
+Date: 2026-04-22 (updated 2026-08-15)
 
 Source spec: `Docs/Parity/2026-04-21-capability-matrix.md`
 
-Status: first-slice landed, with live streaming and local autonomous execution still deferred.
+Status: first-slice landed; live streaming landed since; local autonomous
+execution still deferred (now tracked as task-16322).
 
 ## Landed Scope
 
@@ -13,21 +14,33 @@ Status: first-slice landed, with live streaming and local autonomous execution s
 - local research service for create, list, detail, pause, resume, cancel, artifact, and bundle operations
 - server research service wrapper over the tldw_server research-runs contract
 - source-aware research scope service with local/server routing and runtime-policy enforcement
-- dedicated Research screen and source-switched Research window for local/server run browsing, creation, and basic control
-- app bootstrap and navigation wiring so Research is a first-class destination
+- ~~dedicated Research screen and source-switched Research window~~ (the
+  screen registration was removed by task-255; see the 2026-08 update below)
+- ~~app bootstrap and navigation wiring so Research is a first-class
+  destination~~ (removed with the screen; `Research_Window` /
+  `Research_Modules` remain in-tree but are not reachable from navigation)
+- server event stream consumption and live status updates
+  (`Docs/superpowers/plans/2026-04-23-research-live-events.md`, landed
+  2026-04: `observe_run_events` SSE in `server_research_service.py`,
+  event streaming through the scope service, and the "Watch Events" UI in
+  `Research_Window`)
 
 ## Explicitly Deferred
 
-- server event stream consumption and live status updates from `/events/stream`
-- local autonomous research execution engine
+- local autonomous research execution engine — now tracked as
+  **task-16322** (a launched local run currently only writes DB rows; the
+  `web_deep_search` pipeline is not yet connected to the run lifecycle)
 - rich artifact and bundle inspection UX
-- mounted checkpoint review and patch-and-approve UI
+- mounted checkpoint review and patch-and-approve UI (local checkpoint
+  approval still uses a placeholder id; see `Research_Window.py`)
 - local/server sync, mirror, or mixed-view behavior
 - research provider administration, which remains tracked separately under `Research Search / Provider Surfaces`
 
 ## Verification
 
-Focused verification was run against the Research Sessions slice with:
+Focused verification was run against the Research Sessions slice AT THE
+TIME (2026-04; kept as a historical record — two of the referenced files
+have since been deleted):
 
 ```bash
 python3 -m pytest \
@@ -41,7 +54,10 @@ Result:
 
 - `26 passed in 3.12s`
 
-Additional syntax verification:
+Additional syntax verification (historical; `DB/Research_DB.py` and
+`UI/Screens/research_screen.py` were later deleted — the former
+`Research_DB` store is now `Research_Interop/local_research_service.py`,
+and the screen removal is recorded in task-255):
 
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/tldw-research-pycache python3 -m compileall \
@@ -57,12 +73,34 @@ Result:
 
 - compileall completed without syntax errors
 
+## 2026-08 Update
+
+- **task-255** removed the orphan `research` screen registration;
+  `Constants.TAB_RESEARCH` now aliases to the Library. The deferred
+  decision on `Research_Window.py` / `Research_Modules/` (keep and wire,
+  vs delete) is explicitly deferred to **task-16322**, whose local
+  execution engine would give the window something local to observe.
+- The **`web_deep_search` agent tool** (task-1356, gated by
+  `[tools] web_deep_search_enabled`) exposes the
+  `generate_and_search` + `analyze_and_aggregate` pipeline to agents with
+  deadline/cancellation handling and byte caps. It is NOT connected to
+  the run lifecycle — that connection is part of task-16322.
+- **task-16331** added citation verification to the pipeline: `[n]`
+  markers are resolved against evidence ids, quoted spans are checked
+  against scraped originals (verbatim-first ladder), and the counts ship
+  in the tool's honesty footer
+  (`Web_Scraping/deep_search_citations.py`).
+- **task-16332** collapsed the duplicated research service wiring in
+  `app.py` to the single `_wire_research_services` path.
+
 ## Outcome
 
 Chatbook now has a credible standalone-first Research Sessions crosswalk:
 
 - `local` mode is backed by Chatbook-owned persisted run and artifact records
 - `server` mode operates against tldw_server research runs without copying them into local authority
-- the TUI exposes Research as a first-class destination instead of burying it under evaluations or search
+- the run/event/artifact service seams and SSE observation are in place;
+  the missing pieces are the local execution engine (task-16322), the UX
+  decision that follows it, and richer bundle/checkpoint inspection.
 
 The remaining work for this domain is execution depth and observation fidelity, not first-slice CRUD/control alignment.

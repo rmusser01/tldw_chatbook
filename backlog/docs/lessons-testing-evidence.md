@@ -1843,9 +1843,6 @@ disjoint bug classes; you need both.
 
 ---
 
-
----
-
 ## An app-importing pytest probe outside `Tests/` bypasses the suite's own config isolation
 
 **TASK-3894 (P1 eval harness) Task 4, 2026-08-09.** Capturing real chunk-count numbers
@@ -4490,3 +4487,28 @@ mid-delivery). When a component has a self-healing path, the state it heals is
 untestable through the normal flow -- so a test for it has to pin a TERMINAL
 moment (quit, crash, teardown) on purpose. That is also the argument for
 keeping such a test when it looks redundant next to the happy-path one.
+---
+
+---
+
+## An unbounded wait default turns leaked test rounds into post-suite interpreter hangs
+
+**TASK-16789, 2026-08-15.** After flipping the human-prompt timeouts to a
+no-deadline default (ADR-067), `Tests/Chat/test_console_skill_script_confirm.py`
+printed "1 failed, 28 passed in 7.49s" — and then the pytest process sat at 0%
+CPU for 20+ minutes producing no output (the `| tail` wrapper hid everything
+until exit). `sample <pid>` showed the main thread in
+`wait_for_thread_shutdown`: the run was over, and the interpreter was waiting
+for a non-daemon worker thread. The failing test's assert had skipped its
+`resolve_pending_skill_script(...)` cleanup, leaving the confirm round armed;
+with the old 120s default that leaked worker self-resolved at process exit in
+≤120s (invisible), with no deadline its 1s poll loop never exits at all.
+
+**What to do.** When a wait loop's default becomes unbounded, every fixture
+that can arm a round must fail it closed on teardown — the file's
+`make_controller` now sets `_shutdown_requested` after each test, which
+resolves any still-armed round at its next poll. Diagnosis signature to
+recognize next time: pytest's own timing says the suite finished but the
+process idles at 0% CPU; macOS `sample` shows `wait_for_thread_shutdown`;
+`kill -ABRT` (with `PYTHONFAULTHANDLER=1`) dumps the stuck thread stacks into
+stderr.

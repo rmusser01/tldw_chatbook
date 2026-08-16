@@ -391,6 +391,52 @@ def test_llamacpp_payload_omits_thinking_kwarg_for_empty_messages() -> None:
     assert "chat_template_kwargs" not in payload
 
 
+class TestLlamacppThinkingPayload:
+    def test_effort_composes_chat_template_kwargs(self):
+        payload = build_llamacpp_chat_payload(
+            model="qwen", messages=[{"role": "user", "content": "hi"}],
+            stream=True, reasoning_effort="low",
+        )
+        assert payload["chat_template_kwargs"] == {"reasoning_effort": "low"}
+
+    def test_budget_composes_reasoning_budget_tokens(self):
+        payload = build_llamacpp_chat_payload(
+            model="qwen", messages=[{"role": "user", "content": "hi"}],
+            stream=False, thinking_budget_tokens=2048,
+        )
+        assert payload["reasoning_budget_tokens"] == 2048
+
+    def test_none_effort_disables_thinking(self):
+        payload = build_llamacpp_chat_payload(
+            model="qwen", messages=[{"role": "user", "content": "hi"}],
+            stream=True, reasoning_effort="none",
+        )
+        assert payload["chat_template_kwargs"]["enable_thinking"] is False
+
+    def test_prefill_overrides_effort(self):
+        payload = build_llamacpp_chat_payload(
+            model="qwen",
+            messages=[
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "Sure"},
+            ],
+            stream=True, reasoning_effort="xhigh",
+        )
+        # prefill > none > effort (llama.cpp rejects prefill + thinking)
+        assert payload["chat_template_kwargs"] == {
+            "reasoning_effort": "xhigh",
+            "enable_thinking": False,
+        }
+
+    def test_no_thinking_fields_by_default(self):
+        payload = build_llamacpp_chat_payload(
+            model="qwen", messages=[{"role": "user", "content": "hi"}],
+            stream=True,
+        )
+        assert "chat_template_kwargs" not in payload
+        assert "reasoning_budget_tokens" not in payload
+
+
 @pytest.mark.asyncio
 async def test_llamacpp_prefers_explicit_model_but_still_probes_reachability():
     seen_paths = []
@@ -1677,6 +1723,140 @@ async def test_llamacpp_stream_chat_ignores_non_object_json_sse_lines():
     ]
 
     assert chunks == ["ok"]
+
+
+def make_gateway_with_sse(lines: list[str]) -> ConsoleProviderGateway:
+    """Gateway whose llama.cpp endpoint streams the given SSE lines."""
+    body = "".join(f"{line}\n\n" for line in lines).encode()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, content=body)
+
+    return ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:8080",
+        )
+    )
+
+
+def make_gateway_with_completion(payload: dict) -> ConsoleProviderGateway:
+    """Gateway whose llama.cpp endpoint answers one non-streaming completion."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json=payload)
+
+    return ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://127.0.0.1:8080",
+        )
+    )
+
+
+class TestDirectPathThinkFiltering:
+    @pytest.mark.asyncio
+    async def test_stream_strips_start_anchored_think_block(self):
+        # SSE lines whose content deltas spell:
+        #   "<think>ponder</think>Hello"
+        lines = [
+            'data: {"choices":[{"delta":{"content":"<think>pon"}}]}',
+            'data: {"choices":[{"delta":{"content":"der</think>Hello"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_mid_reply_literal_tag(self):
+        lines = [
+            'data: {"choices":[{"delta":{"content":"XML: <think>x</think>"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "XML: <think>x</think>"
+
+    @pytest.mark.asyncio
+    async def test_stream_ignores_reasoning_content_deltas(self):
+        lines = [
+            'data: {"choices":[{"delta":{"reasoning_content":"secret"}}]}',
+            'data: {"choices":[{"delta":{"content":"Answer"}}]}',
+            "data: [DONE]",
+        ]
+        gateway = make_gateway_with_sse(lines)
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert "".join(chunks) == "Answer"
+
+    @pytest.mark.asyncio
+    async def test_complete_strips_start_anchored_think_block(self):
+        gateway = make_gateway_with_completion(
+            {"choices": [{"message": {"content": "<think>x</think>Done"}}]}
+        )
+        text = await gateway.complete_llamacpp_chat(
+            base_url="http://127.0.0.1:8080",
+            model="qwen",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert text == "Done"
+
+    @pytest.mark.asyncio
+    async def test_think_only_stream_skips_nonstreaming_fallback(self):
+        # A reply that is entirely start-anchored think text must not cost a
+        # second (non-streaming fallback) round-trip: the retry would return
+        # the same filtered-to-empty text.
+        lines = [
+            'data: {"choices":[{"delta":{"content":"<think>only"}}]}',
+            'data: {"choices":[{"delta":{"content":" pondering</think>"}}]}',
+            "data: [DONE]",
+        ]
+        body = "".join(f"{line}\n\n" for line in lines).encode()
+        requests: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, content=body)
+
+        gateway = ConsoleProviderGateway(
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="http://127.0.0.1:8080",
+            )
+        )
+        chunks = [
+            chunk
+            async for chunk in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:8080",
+                model="qwen",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        ]
+        assert chunks == []
+        assert len(requests) == 1
 
 
 @pytest.mark.asyncio
@@ -5713,6 +5893,9 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
     assert result.text == " llama exact \n"
     assert captured["url"] == "http://127.0.0.1:9099/v1/chat/completions"
     assert captured["sensitive"] is True
+    # Auxiliary requests inherit session thinking settings (ADR-066): level
+    # via chat_template_kwargs, budget via top-level
+    # reasoning_budget_tokens.
     assert captured["payload"] == {
         "model": "gpt-test",
         "messages": [
@@ -5728,6 +5911,8 @@ async def test_auxiliary_direct_llama_is_nonstreaming_exact_and_sensitive() -> N
         "seed": 42,
         "presence_penalty": 0.1,
         "frequency_penalty": 0.2,
+        "chat_template_kwargs": {"reasoning_effort": "high"},
+        "reasoning_budget_tokens": 2048,
     }
     await client.aclose()
 
