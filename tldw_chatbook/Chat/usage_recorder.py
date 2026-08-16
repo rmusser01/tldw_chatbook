@@ -47,12 +47,21 @@ class UsageTokenRecorder:
     def __init__(self) -> None:
         self._prompt_tokens = 0
         self._completion_tokens = 0
+        self._exact_tokens = 0
 
     def record_usage(self, *, prompt_tokens: int, completion_tokens: int) -> None:
-        """Record exact counts (the real-usage path for future provider
-        plumbing)."""
+        """Record exact, provider-reported counts.
+
+        Args:
+            prompt_tokens: Exact prompt tokens reported by the provider.
+            completion_tokens: Exact completion tokens reported by the
+                provider.
+        """
         self._prompt_tokens += max(0, int(prompt_tokens))
         self._completion_tokens += max(0, int(completion_tokens))
+        self._exact_tokens += max(0, int(prompt_tokens)) + max(
+            0, int(completion_tokens)
+        )
 
     def record_exchange(self, *, prompt_text: str, completion_text: str) -> None:
         """Record one non-streaming exchange by estimating both sides."""
@@ -69,6 +78,11 @@ class UsageTokenRecorder:
 
     def total_tokens(self) -> int:
         return self._prompt_tokens + self._completion_tokens
+
+    def exact_tokens(self) -> int:
+        """Settled tokens that came from provider-reported usage (not
+        estimates) -- drives the ledger's tokens_estimated flag."""
+        return self._exact_tokens
 
 
 def active_recorder() -> Optional[UsageTokenRecorder]:

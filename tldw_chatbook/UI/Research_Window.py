@@ -53,6 +53,17 @@ def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
     return limits, warnings
 
 
+def _parse_config_bool(value: Any) -> bool:
+    """Parse a config bool that may arrive as an actual bool or a string
+    (task-16789: ``bool("false")`` is True -- truthy strings must not
+    enable the network-costing lane)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
+
+
 def _academic_lane_default() -> bool:
     """Config default for the academic lane toggle: [SearchSettings]
     research_academic_lane (default False). Failures default OFF -- the
@@ -60,7 +71,9 @@ def _academic_lane_default() -> bool:
     try:
         from tldw_chatbook.config import get_cli_setting
 
-        return bool(get_cli_setting("SearchSettings", "research_academic_lane", False))
+        return _parse_config_bool(
+            get_cli_setting("SearchSettings", "research_academic_lane", False)
+        )
     except Exception:
         return False
 
@@ -326,7 +339,13 @@ class ResearchWindow(Vertical):
             try:
                 await engine.execute_run(run_id)
             except Exception as exc:  # noqa: BLE001 - worker must not crash the app
-                self._set_status(f"Local research engine error: {exc}")
+                # task-16789: dispatch through the UI message pump rather
+                # than mutating widgets from worker context (async workers
+                # run on the loop, but deferring is correct for either).
+                try:
+                    self.call_later(self._set_status, f"Local research engine error: {exc}")
+                except Exception:
+                    self._set_status(f"Local research engine error: {exc}")
 
         if self.is_mounted:
             self.run_worker(

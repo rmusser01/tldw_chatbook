@@ -706,3 +706,17 @@ async def test_auto_refresh_skips_terminal_and_non_local():
     window.current_source = "server"  # server source: not our engine
     await window._auto_refresh_selected_run()
     assert calls["n"] == 0
+
+
+# --- Qodo remediation (task-16789) ------------------------------------------------
+
+def test_academic_lane_default_parses_string_booleans(monkeypatch):
+    from tldw_chatbook.UI.Research_Window import _parse_config_bool
+
+    for raw, expected in [
+        ("false", False), ("False", False), ("0", False), ("no", False),
+        ("off", False), ("", False),
+        ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True),
+        (True, True), (False, False),
+    ]:
+        assert _parse_config_bool(raw) is expected, f"{raw!r} should parse {expected}"

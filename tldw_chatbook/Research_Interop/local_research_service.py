@@ -843,6 +843,9 @@ class LocalResearchService:
         notifications because it never sets a terminal status.
         """
         if self._uses_external_db:
+            # delete_run's precedent (task-16789): raw statement inside the
+            # db's own transaction() context, per the standardized
+            # transaction-handling rule.
             fields: dict[str, Any] = {}
             if phase is not None:
                 fields["phase"] = phase
@@ -854,7 +857,16 @@ class LocalResearchService:
                 fields["status"] = status
             if control_state is not None:
                 fields["control_state"] = control_state
-            return self._as_local_run(self.db.update_run_state(run_id, **fields))
+            if not fields:
+                return self._as_local_run(self.db.get_run(run_id))
+            assignments = ", ".join(f"{key} = ?" for key in fields)
+            with self.db.transaction() as conn:
+                conn.execute(
+                    f"UPDATE research_runs SET {assignments}, "
+                    "updated_at = ?, version = version + 1 WHERE id = ?",
+                    (*fields.values(), self._now(), run_id),
+                )
+            return self._as_local_run(self.db.get_run(run_id))
         fields = {
             key: value
             for key, value in (

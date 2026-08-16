@@ -276,3 +276,46 @@ def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
         )
 
     assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (8, 9)
+
+
+# --- Qodo remediation (task-16789) ------------------------------------------------
+
+def test_estimate_includes_system_message():
+    handler = _fake_handler("answer")
+    Chat_Functions.API_CALL_HANDLERS["llama_cpp"] = handler
+    with usage_scope() as with_system:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "tiny"}],
+            api_key=None, temp=0.5, system_message="A LONG SYSTEM PROMPT " * 10,
+            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+    Chat_Functions.API_CALL_HANDLERS["llama_cpp"] = _fake_handler("answer")
+    with usage_scope() as without_system:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "tiny"}],
+            api_key=None, temp=0.5, system_message=None,
+            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert with_system.prompt_tokens() > without_system.prompt_tokens()
+
+
+def test_estimate_ignores_non_text_multimodal_content():
+    huge_b64 = "data:image/png;base64," + "A" * 100_000
+    handler = _fake_handler("answer")
+    Chat_Functions.API_CALL_HANDLERS["llama_cpp"] = handler
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": [
+                {"type": "text", "text": "describe"},
+                {"type": "image_url", "image_url": {"url": huge_b64}},
+            ]}],
+            api_key=None, temp=0.5, system_message=None,
+            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    # Base64 payloads must not explode the estimate: only the text part counts.
+    assert recorder.prompt_tokens() < 100

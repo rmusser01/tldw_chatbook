@@ -342,3 +342,10 @@ def test_verify_claims_carry_per_sentence_quote_verdicts():
 def test_verify_claims_skip_uncited_sentences():
     out = verify_citations("Cited[1]. Uncited sentence.", _EVIDENCE)
     assert [c["text"] for c in out["claims"]] == ["Cited[1]."]
+
+
+# --- Qodo remediation (task-16789) ------------------------------------------------
+
+def test_unknown_marker_sentence_is_not_counted_uncited():
+    out = verify_citations("Cited sentence[1]. Unknown citation attempt[99].", _EVIDENCE)
+    assert out["uncited_sentences"] == 0  # both sentences ATTEMPTED citations

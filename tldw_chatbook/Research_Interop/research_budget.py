@@ -70,6 +70,7 @@ class BudgetLedger:
         self.docs_used = 0
         self.tokens_reserved = 0
         self.tokens_settled = 0
+        self.tokens_settled_exact = 0
         self._start_monotonic = time.monotonic()
 
     @classmethod
@@ -96,6 +97,12 @@ class BudgetLedger:
             )
         self.searches_reserved += max(0, int(count))
 
+    def release_searches(self, count: int) -> None:
+        """Return unused reservations (task-16789): when the pipeline stops
+        its fan-out early (e.g. the phase-1 deadline), reserved-but-never-
+        executed searches must not keep counting against the budget."""
+        self.searches_reserved -= min(max(0, int(count)), self.searches_reserved)
+
     def settle_searches(self, count: int) -> None:
         count = max(0, int(count))
         # Overshoot is measured against RESERVATIONS (mole semantics:
@@ -116,15 +123,20 @@ class BudgetLedger:
     def allot_docs(self, count: int) -> int:
         """Cap a batch of fetched docs at the remaining budget (the cap
         happens BEFORE the docs are processed onward); a zero remaining
-        budget is an exhaustion error, not a silent empty batch."""
+        budget is an exhaustion error, not a silent empty batch -- unless
+        the batch itself is empty, which consumes no budget (task-16789:
+        ``allot_docs(0)`` must return 0 even on an exhausted budget)."""
+        count = int(count)
+        if count <= 0:
+            return 0
         remaining = self.remaining_docs()
         if remaining is not None:
             if remaining == 0:
                 raise ResearchLimitExceeded(
                     "max_fetched_docs", "fetched-doc budget is exhausted"
                 )
-            return min(int(count), remaining)
-        return int(count)
+            return min(count, remaining)
+        return count
 
     def settle_docs(self, count: int) -> None:
         self.docs_used += max(0, int(count))
@@ -143,8 +155,14 @@ class BudgetLedger:
             )
         self.tokens_reserved += max(0, int(count))
 
-    def settle_tokens(self, count: int) -> None:
-        self.tokens_settled += max(0, int(count))
+    def settle_tokens(self, count: int, *, exact: bool = False) -> None:
+        """Record settled token usage; ``exact`` marks whether the counts
+        came from provider-reported usage rather than estimates
+        (task-16789: the snapshot flag must reflect reality)."""
+        count = max(0, int(count))
+        self.tokens_settled += count
+        if exact:
+            self.tokens_settled_exact += count
 
     def check_tokens(self) -> None:
         """Raise when settled token usage has reached the budget (checked
@@ -189,8 +207,8 @@ class BudgetLedger:
             "docs_used": self.docs_used,
             "tokens_reserved": self.tokens_reserved,
             "tokens_settled": self.tokens_settled,
-            # Estimates from the chat_api_call seam until providers expose
-            # real usage (task-16329); the flag keeps the numbers honest.
-            "tokens_estimated": True,
+            # True when any settled usage was estimated rather than
+            # provider-reported (task-16789).
+            "tokens_estimated": self.tokens_settled_exact < self.tokens_settled,
             "runtime_elapsed_s": round(self.elapsed_seconds(), 3),
         }

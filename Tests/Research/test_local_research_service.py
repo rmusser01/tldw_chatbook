@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
@@ -259,3 +261,68 @@ def test_approve_requires_pending_checkpoint(tmp_path):
 
     with pytest.raises(ValueError, match="not pending"):
         service.patch_and_approve_checkpoint(run["id"], checkpoint["id"])
+
+
+# --- external-DB transaction (task-16789) ------------------------------------------
+
+class FakeExternalResearchDB:
+    """Minimal external-DB double: transaction() yields a real sqlite conn
+    (delete_run's precedent interface)."""
+
+    def __init__(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(
+            """
+            CREATE TABLE research_runs (
+                id TEXT PRIMARY KEY, session_id TEXT, query TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                phase TEXT NOT NULL DEFAULT 'local_planning',
+                control_state TEXT NOT NULL DEFAULT 'running',
+                progress_percent REAL, progress_message TEXT,
+                source_policy TEXT NOT NULL DEFAULT 'balanced',
+                autonomy_mode TEXT NOT NULL DEFAULT 'checkpointed',
+                limits_json TEXT NOT NULL DEFAULT '{}',
+                provider_overrides_json TEXT NOT NULL DEFAULT '{}',
+                chat_handoff_json TEXT NOT NULL DEFAULT '{}',
+                follow_up_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                deleted INTEGER NOT NULL DEFAULT 0,
+                client_id TEXT NOT NULL DEFAULT 'local',
+                version INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+
+    def transaction(self):
+        return self.conn
+
+    def get_run(self, run_id):
+        row = self.conn.execute(
+            "SELECT * FROM research_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def close(self):
+        self.conn.close()
+
+
+def test_update_run_progress_external_db_wraps_in_transaction():
+    external = FakeExternalResearchDB()
+    now = "2026-08-16T00:00:00Z"
+    external.conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('ext-run', 'External question', ?, ?)",
+        (now, now),
+    )
+    service = LocalResearchService(external)  # db object -> external mode
+
+    updated = service.update_run_progress(
+        "ext-run", phase="collecting", progress_percent=45.0,
+        event="progress", data={"phase": "collecting"},
+    )
+
+    assert updated["phase"] == "collecting"
+    assert updated["progress_percent"] == 45.0
+    assert updated["version"] == 2
+    external.close()

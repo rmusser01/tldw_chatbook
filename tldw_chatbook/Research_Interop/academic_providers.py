@@ -234,8 +234,12 @@ def search_arxiv(
 
 
 def resolve_semantic_scholar_api_key() -> str | None:
-    """Env var wins, then the ``[API] semantic_scholar_api_key`` config slot
-    (house precedence: env -> config.toml)."""
+    """Resolve the Semantic Scholar API key (house precedence).
+
+    Returns:
+        The key from the ``SEMANTIC_SCHOLAR_API_KEY`` env var when set, else
+        the ``[API] semantic_scholar_api_key`` config slot, else ``None``.
+    """
     env_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
     if env_key:
         return env_key
@@ -445,6 +449,7 @@ async def search_papers(
     nothing while the other still returns; only total failure raises (the
     engine lane turns that into a warning, never a run failure).
     """
+    import asyncio
     from asyncio import to_thread
 
     failures: list[str] = []
@@ -463,28 +468,39 @@ async def search_papers(
                 seen_dois.add(doi)
             papers.append(item)
 
-    try:
-        arxiv_out = await to_thread(
-            search_arxiv, query=topic_query, results_per_page=results_per_page
-        )
-        _collect(arxiv_out.get("items") or [])
-    except AcademicProviderError as exc:
-        failures.append(f"arxiv: {exc}")
-        logger.warning(f"search_papers arxiv lane failed: {exc}")
+    async def _arxiv_lane() -> Any:
+        try:
+            return await to_thread(
+                search_arxiv, query=topic_query, results_per_page=results_per_page
+            )
+        except AcademicProviderError as exc:
+            failures.append(f"arxiv: {exc}")
+            logger.warning(f"search_papers arxiv lane failed: {exc}")
+            return None
 
-    try:
-        s2_out = await to_thread(
-            search_semantic_scholar,
-            query=topic_query,
-            results_per_page=results_per_page,
-            api_key=semantic_scholar_api_key
-            if semantic_scholar_api_key is not None
-            else resolve_semantic_scholar_api_key(),
-        )
+    async def _s2_lane() -> Any:
+        try:
+            return await to_thread(
+                search_semantic_scholar,
+                query=topic_query,
+                results_per_page=results_per_page,
+                api_key=semantic_scholar_api_key
+                if semantic_scholar_api_key is not None
+                else resolve_semantic_scholar_api_key(),
+            )
+        except AcademicProviderError as exc:
+            failures.append(f"semantic_scholar: {exc}")
+            logger.warning(f"search_papers semantic scholar lane failed: {exc}")
+            return None
+
+    # task-16789: both providers run CONCURRENTLY (serial execution added
+    # avoidable latency, especially under timeouts/retries); per-provider
+    # degradation is preserved inside each lane.
+    arxiv_out, s2_out = await asyncio.gather(_arxiv_lane(), _s2_lane())
+    if arxiv_out is not None:
+        _collect(arxiv_out.get("items") or [])
+    if s2_out is not None:
         _collect(s2_out.get("items") or [])
-    except AcademicProviderError as exc:
-        failures.append(f"semantic_scholar: {exc}")
-        logger.warning(f"search_papers semantic scholar lane failed: {exc}")
 
     if not papers and failures:
         raise AcademicProviderError(

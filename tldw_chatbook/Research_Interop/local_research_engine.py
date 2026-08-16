@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -181,7 +182,13 @@ class LocalResearchEngine:
         with usage_scope() as recorder:
             result = await self._maybe_await(make_call())
         if ledger is not None:
-            ledger.settle_tokens(recorder.total_tokens())
+            # Exact when every settled token came from provider-reported
+            # usage rather than the estimate path (task-16789).
+            ledger.settle_tokens(
+                recorder.total_tokens(),
+                exact=recorder.total_tokens() > 0
+                and recorder.exact_tokens() == recorder.total_tokens(),
+            )
         return result
 
     def _get_run(self, run_id: str) -> dict[str, Any]:
@@ -241,8 +248,16 @@ class LocalResearchEngine:
     async def execute_run(self, run_id: str) -> dict[str, Any]:
         """Run the full phase machine for ``run_id`` to a terminal state.
 
-        Returns the final run record. Raises ``ValueError`` for a missing or
-        already-terminal run (execution must not resurrect state).
+        Args:
+            run_id: The run to execute.
+
+        Returns:
+            The final run record (terminal, paused, awaiting review, or the
+            pre-pause record for control stops).
+
+        Raises:
+            ValueError: If the run does not exist or is already terminal
+                (execution must not resurrect state).
         """
         run = self._get_run(run_id)
         status = str(run.get("status") or "")
@@ -304,6 +319,7 @@ class LocalResearchEngine:
                     0.0, ledger.max_runtime_seconds - ledger.elapsed_seconds()
                 )
             remaining = ledger.remaining_searches()
+            reserved_for_call = 0
             if remaining is not None:
                 cap = min(
                     int(params.get("search_default_max_queries", 5) or 5),
@@ -311,6 +327,7 @@ class LocalResearchEngine:
                 )
                 params["search_default_max_queries"] = cap
                 ledger.reserve_searches(cap)
+                reserved_for_call = cap
             outcome = await self._llm_bounded_call(lambda: self.search_fn(query, params))
             if isinstance(outcome, tuple) and len(outcome) == 2:
                 wsr, sqd = outcome
@@ -322,7 +339,20 @@ class LocalResearchEngine:
             sub_questions.extend(call_sub_questions)
             collected.extend(r for r in (wsr or {}).get("results") or [] if isinstance(r, dict))
             warnings.extend(w for w in (wsr or {}).get("warnings") or [])
-            ledger.settle_searches(1 + len(call_sub_questions))
+            # task-16789: settle EXECUTED searches, not the reserved cap --
+            # the pipeline can stop its fan-out early (phase-1 deadline), and
+            # reservations for never-executed searches must be released or
+            # the budget exhausts prematurely. The pipeline's own warning
+            # reports the executed count when it stopped early.
+            executed_searches = 1 + len(call_sub_questions)
+            for warning in (wsr or {}).get("warnings") or []:
+                stopped = re.search(r"searched (\d+) of (\d+) queries", str(warning))
+                if stopped:
+                    executed_searches = int(stopped.group(1))
+                    break
+            ledger.settle_searches(executed_searches)
+            if reserved_for_call > executed_searches:
+                ledger.release_searches(reserved_for_call - executed_searches)
         return collected, sub_questions, warnings
 
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
