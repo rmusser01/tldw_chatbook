@@ -3143,7 +3143,7 @@ class LibraryScreen(BaseAppScreen):
                 prompt_editor_active=lambda: self._library_prompts_view == "editor",
                 push_modal=lambda: self.app.push_screen,
                 current_browse_collection_id=lambda: (
-                    self._library_prompt_browse_controller.scope.collection_id
+                    self._library_prompt_browse_controller.visible_result.scope.collection_id
                 ),
                 apply_browse_collection=lambda: self._apply_library_prompt_collection,
                 refresh_browse_projection=lambda: (
@@ -16691,8 +16691,10 @@ class LibraryScreen(BaseAppScreen):
             return
         requested = str(getattr(event.button, "choice_value", "") or "")
         self._library_prompts_sort_choices_visible = False
-        scope = self._library_prompt_browse_controller.scope
-        current = "name" if scope.sort_by == "name" else "newest"
+        controller = self._library_prompt_browse_controller
+        scope = controller.scope
+        display_scope = controller.visible_result.scope
+        current = "name" if display_scope.sort_by == "name" else "newest"
         if requested not in {"newest", "name"} or requested == current:
             _sync_library_canvas(
                 self,
@@ -20141,7 +20143,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._reset_library_prompt_editor_state()
             self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.scope,
+                self._library_prompt_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._refresh_local_source_snapshot()
@@ -23046,7 +23048,7 @@ class LibraryScreen(BaseAppScreen):
             )
             self._reset_library_prompt_editor_state()
             self._request_library_prompts_browse(
-                self._library_prompt_browse_controller.scope,
+                self._library_prompt_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._refresh_local_source_snapshot()

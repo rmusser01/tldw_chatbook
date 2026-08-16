@@ -276,6 +276,47 @@ def _browse_result(
     )
 
 
+def _apply_then_fail_prompt_browse(
+    screen: LibraryScreen,
+    *,
+    applied_scope: PromptBrowseScope,
+    failed_scope: PromptBrowseScope,
+) -> PromptBrowseResult:
+    """Seed one applied page followed by one accepted failed request."""
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    screen._library_prompts_view = "list"
+    controller = screen._library_prompt_browse_controller
+    token = controller.begin(applied_scope)
+    applied = _browse_result(
+        items=[
+            {
+                "id": "local:prompt:1",
+                "local_id": 1,
+                "name": "Applied prompt",
+                "version": 1,
+            }
+        ],
+        query=applied_scope.query,
+        collection_id=applied_scope.collection_id,
+        sort_by=applied_scope.sort_by,
+        sort_order=applied_scope.sort_order,
+        page=applied_scope.page,
+        page_size=applied_scope.page_size,
+        request_token=token,
+    )
+    assert controller.apply(applied, focus_identity=None)
+    failed_token = controller.begin(failed_scope)
+    assert controller.apply(
+        build_prompt_browse_error(
+            failed_scope,
+            request_token=failed_token,
+            error="Couldn't load prompts.",
+        ),
+        focus_identity=None,
+    )
+    return applied
+
+
 class _CanvasHost(ConsolidatedCSSApp):
     def __init__(self, state: PromptsListState | None, **kwargs: Any) -> None:  # type: ignore[valid-type]
         super().__init__()
@@ -3339,6 +3380,121 @@ async def test_library_prompt_back_restores_applied_scope_after_failed_request(
             await pilot.pause(0.02)
 
         assert requests == [(applied_scope, None)]
+
+
+@pytest.mark.asyncio
+async def test_missing_prompt_detail_restores_applied_scope_after_failed_request(
+    monkeypatch,
+):
+    """A retained editor row disappearing cannot retry its failed draft scope."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = SimpleNamespace(get_prompt=lambda **_kwargs: None)
+    screen = LibraryScreen(app)
+    applied = _apply_then_fail_prompt_browse(
+        screen,
+        applied_scope=PromptBrowseScope(collection_id=3),
+        failed_scope=PromptBrowseScope(
+            query="requested filter",
+            collection_id=7,
+            sort_by="name",
+            sort_order="asc",
+        ),
+    )
+    screen._library_prompts_view = "editor"
+    screen._selected_prompt_id = 1
+    screen._run_library_service_call = AsyncMock(return_value=None)
+    monkeypatch.setattr(screen, "_refresh_local_source_snapshot", lambda: None)
+    requests: list[PromptBrowseScope] = []
+    monkeypatch.setattr(
+        screen,
+        "_request_library_prompts_browse",
+        lambda scope, **_kwargs: requests.append(scope),
+    )
+
+    await screen._refresh_library_prompt_detail(1)
+
+    assert requests == [applied.scope]
+
+
+@pytest.mark.asyncio
+async def test_missing_conflict_prompt_restores_applied_scope_after_failed_request(
+    monkeypatch,
+):
+    """Conflict reload disappearance returns to the last applied list scope."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = SimpleNamespace(get_prompt=lambda **_kwargs: None)
+    screen = LibraryScreen(app)
+    applied = _apply_then_fail_prompt_browse(
+        screen,
+        applied_scope=PromptBrowseScope(collection_id=3),
+        failed_scope=PromptBrowseScope(
+            query="requested filter",
+            collection_id=7,
+            sort_by="name",
+            sort_order="asc",
+        ),
+    )
+    screen._library_prompts_view = "editor"
+    screen._selected_prompt_id = 1
+    screen._library_prompt_conflict_snapshot = _structured_editor_state()
+    screen._run_library_service_call = AsyncMock(return_value=None)
+    monkeypatch.setattr(screen, "_refresh_local_source_snapshot", lambda: None)
+    requests: list[PromptBrowseScope] = []
+    monkeypatch.setattr(
+        screen,
+        "_request_library_prompts_browse",
+        lambda scope, **_kwargs: requests.append(scope),
+    )
+
+    await screen._resolve_library_prompt_conflict(overwrite=False)
+
+    assert requests == [applied.scope]
+
+
+def test_failed_prompt_choices_use_applied_active_scope_and_retry_requested_draft(
+    monkeypatch,
+) -> None:
+    """Applied choices stay active while reselecting a failed draft retries it."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    screen = LibraryScreen(app)
+    applied_scope = PromptBrowseScope(collection_id=3)
+    failed_scope = PromptBrowseScope(
+        query="requested filter",
+        collection_id=7,
+        sort_by="name",
+        sort_order="asc",
+        page=4,
+    )
+    _apply_then_fail_prompt_browse(
+        screen,
+        applied_scope=applied_scope,
+        failed_scope=failed_scope,
+    )
+    assert (
+        screen._library_prompt_collections_controller._current_browse_collection_id()
+        == 3
+    )
+    requests: list[PromptBrowseScope] = []
+    monkeypatch.setattr(
+        screen,
+        "_request_library_prompts_browse",
+        lambda scope, **_kwargs: requests.append(scope),
+    )
+
+    event = SimpleNamespace(
+        button=SimpleNamespace(choice_value="name"),
+        stop=lambda: None,
+    )
+    screen.handle_library_prompts_sort_choice(event)
+    screen._apply_library_prompt_collection(7)
+
+    assert requests == [
+        replace(failed_scope, page=1),
+        replace(failed_scope, collection_id=7, page=1),
+    ]
 
 
 @pytest.mark.asyncio
