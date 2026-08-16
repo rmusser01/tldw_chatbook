@@ -9560,6 +9560,7 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryPromptsListCanvas(
                         self._build_library_prompts_state(),
                         browse_result=prompt_controller.visible_result,
+                        pager=prompt_controller.pager,
                         sort_mode=(
                             "name"
                             if display_scope.sort_by == "name"
@@ -10867,6 +10868,7 @@ class LibraryScreen(BaseAppScreen):
             "sort_mode": "newest",
             "filter_value": "",
             "browse_result": None,
+            "pager": None,
             "mode": "list",
             "editor_state": None,
             "conflict": False,
@@ -10918,6 +10920,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 "filter_value": requested_scope.query,
                 "browse_result": controller.visible_result,
+                "pager": controller.pager,
                 "import_open": self._library_prompts_import_open,
                 "import_path": self._library_prompts_import_path,
                 "import_status": self._library_prompts_import_status,
@@ -11138,12 +11141,18 @@ class LibraryScreen(BaseAppScreen):
                     )
                 return
         try:
-            fallback_id = (
+            fallback_id = {
+                "library-prompts-page-next": "#library-prompts-page-previous",
+                "library-prompts-page-previous": "#library-prompts-page-next",
+            }.get(
+                focus_identity,
                 "#library-prompts-selection-done"
                 if self._library_prompt_select_mode
-                else "#library-prompts-sort"
+                else "#library-prompts-sort",
             )
-            self.query_one(fallback_id, Button).focus()
+            fallback = self.query_one(fallback_id, Button)
+            if not fallback.disabled:
+                fallback.focus()
         except (NoMatches, QueryError):
             pass
 

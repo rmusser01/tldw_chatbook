@@ -75,6 +75,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     prepare_prompt_artifact_save,
 )
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_DISABLED_ACTION_MARKER,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
@@ -118,6 +119,7 @@ from tldw_chatbook.UI.Library_Modules import (
     prompt_history as prompt_history_module,
 )
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Navigation.screen_state_store import (
@@ -145,6 +147,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _fake_import_dialog_result,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -154,6 +157,7 @@ from Tests.UI.app_factory import _build_test_app
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTIC_TERMINAL = REPO_ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 BUNDLED_STYLESHEET = REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+PROMPT_PAGER_TEST_SIZES = ((100, 30), (170, 48))
 
 
 def _css_block(text: str, selector: str) -> str:
@@ -900,14 +904,14 @@ async def test_prompts_canvas_select_mode_rows_are_literal_and_self_contained():
 
 
 @pytest.mark.asyncio
-async def test_prompts_canvas_select_mode_keeps_incumbent_scroll_ownership():
+async def test_prompts_canvas_select_mode_uses_the_bounded_list_scroll_owner():
     app = _CanvasHost(_selection_state())
 
     async with app.run_test() as pilot:
-        assert len(pilot.app.query(VerticalScroll)) == 0
-        list_owner = pilot.app.query_one("#library-prompts-list")
-        assert isinstance(list_owner, Vertical)
-        assert not isinstance(list_owner, VerticalScroll)
+        list_owner = pilot.app.query_one(
+            "#library-prompts-list", VerticalScroll
+        )
+        assert list_owner.parent.id == "library-prompts-canvas"
 
 
 @pytest.mark.asyncio
@@ -1749,7 +1753,7 @@ async def test_prompts_canvas_select_mode_geometry_fits_40_columns(
             assert canvas.region.contains_region(action.region), action_id
             if not action.disabled:
                 assert action in pilot.app.screen.focus_chain, action_id
-        assert list(canvas.query(VerticalScroll)) == []
+        assert canvas.query_one("#library-prompts-list", VerticalScroll)
 
 
 @pytest.mark.asyncio
@@ -1853,7 +1857,7 @@ async def test_library_shell_prompt_select_mode_geometry_matrix(
                 assert canvas.region.contains_region(action.region), selector
                 assert action.disabled is False
                 assert action in screen.focus_chain, selector
-        assert list(canvas.query(VerticalScroll)) == []
+        assert canvas.query_one("#library-prompts-list", VerticalScroll)
 
 
 @pytest.mark.asyncio
@@ -2445,6 +2449,22 @@ class _HeldQueryPromptService(_FakePromptScopeServiceWithList):
         return await super().browse_prompts(**kwargs)
 
 
+class _GatedFailingSecondPromptPage(_FakePromptScopeServiceWithList):
+    """Hold then fail page 2 so loading and recovery stay observable."""
+
+    def __init__(self, prompts) -> None:
+        super().__init__(prompts)
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    async def browse_prompts(self, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("page") == 2:
+            self.started.set()
+            assert await asyncio.to_thread(self.release.wait, 10.0)
+            raise RuntimeError("temporary page failure")
+        return await super().browse_prompts(**kwargs)
+
+
 async def _wait_for_prompt_browse_scope(
     screen: LibraryScreen,
     pilot,
@@ -2461,6 +2481,315 @@ async def _wait_for_prompt_browse_scope(
         "Prompt browse never settled: "
         f"wanted={scope!r}, got={screen._library_prompt_browse_controller.result!r}"
     )
+
+
+@pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
+@pytest.mark.asyncio
+async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> None:
+    """The mounted canvas renders the controller's loading/error pager truth."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _GatedFailingSecondPromptPage(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": "2026-08-01T00:00:00+00:00",
+                "version": 1,
+            }
+            for index in range(1, 26)
+        ]
+    )
+    app.prompt_scope_service = service
+    async with app.run_test(size=size) as pilot:
+        assert type(app) is TldwCli
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        screen = LibraryScreen(app)
+        await app.push_screen(screen)
+        try:
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts", Button).press()
+            await _wait_for_selector(screen, pilot, "#library-prompt-row-20")
+            controller = screen._library_prompt_browse_controller
+            canvas = screen.query_one(
+                "#library-prompts-canvas", LibraryPromptsListCanvas
+            )
+            assert canvas.pager == controller.pager
+
+            screen.query_one("#library-prompts-page-next", Button).press()
+            assert await asyncio.to_thread(service.started.wait, 10.0)
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.result.status == "loading"
+                and canvas.pager == controller.pager
+                and len(screen.query(".library-prompt-row")) == 20
+                and all(
+                    screen.query_one(selector, Button).disabled
+                    for selector in (
+                        "#library-prompts-page-previous",
+                        "#library-prompts-page-next",
+                    )
+                ),
+                message="Prompt canvas never received the loading pager.",
+            )
+            assert controller.pager.status_copy == "Loading page 2…"
+            assert len(screen.query(".library-prompt-row")) == 20
+            for selector in (
+                "#library-prompts-page-previous",
+                "#library-prompts-page-next",
+            ):
+                button = screen.query_one(selector, Button)
+                assert button.disabled is True
+                assert str(button.tooltip) == "Page is loading."
+
+            service.release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.result.status == "error"
+                and controller.pager.retry_visible
+                and canvas.pager == controller.pager
+                and len(screen.query(".library-prompt-row")) == 20
+                and len(screen.query("#library-prompts-retry")) == 1,
+                message="Prompt canvas never received the failed pager.",
+            )
+            assert controller.pager.status_copy == "Couldn't load page 2."
+            assert len(screen.query(".library-prompt-row")) == 20
+            assert len(screen.query("#library-prompts-retry")) == 1
+            previous = screen.query_one("#library-prompts-page-previous", Button)
+            next_page = screen.query_one("#library-prompts-page-next", Button)
+            assert previous.disabled is True
+            assert str(previous.tooltip) == controller.pager.previous_reason
+            assert next_page.disabled is False
+        finally:
+            service.release.set()
+
+
+@pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
+@pytest.mark.asyncio
+async def test_library_prompt_pager_first_and_filter_failure_states(size) -> None:
+    """Unavailable totals and retained filter failures stay truthful and focused."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": f"2026-08-01T00:{index:02d}:00+00:00",
+                "version": 1,
+            }
+            for index in range(1, 46)
+        ],
+        browse_failures=1,
+    )
+    app.prompt_scope_service = service
+
+    async with app.run_test(size=size) as pilot:
+        assert type(app) is TldwCli
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        screen = LibraryScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.result.status == "error"
+            and len(screen.query("#library-prompts-retry")) == 1,
+            message="Initial Prompt failure never reached the mounted pager.",
+        )
+
+        controller = screen._library_prompt_browse_controller
+        assert str(
+            screen.query_one("#library-prompts-header", Static).renderable
+        ) == "Prompts"
+        assert str(
+            screen.query_one("#library-prompts-page-label", Static).renderable
+        ) == "No page loaded · Total unavailable"
+        assert len(screen.query(".library-prompt-row")) == 0
+        assert len(screen.query("#library-prompts-retry")) == 1
+        assert "Couldn't load prompts." in str(
+            screen.query_one("#library-prompts-page-status", Static).renderable
+        )
+        for selector in (
+            "#library-prompts-page-previous",
+            "#library-prompts-page-next",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.disabled is True
+            assert str(button.tooltip) == "Page boundary is unknown."
+
+        screen.query_one("#library-prompts-retry", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total_items == 45
+            and len(screen.query(".library-prompt-row")) == 20,
+            message="Initial Prompt retry never applied.",
+        )
+        service._browse_failures = 1
+        prompt_filter = screen.query_one("#library-prompts-filter", Input)
+        prompt_filter.focus()
+        prompt_filter.value = "requested filter"
+        prompt_filter.cursor_position = 4
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.result.status == "error"
+            and controller.pager.status_copy
+            == "Filter wasn't applied; showing previous results."
+            and len(screen.query(".library-prompt-row")) == 20
+            and len(screen.query("#library-prompts-retry")) == 1
+            and screen.query_one("#library-prompts-filter", Input).has_focus,
+            message="Failed Prompt filter never retained its applied page.",
+        )
+
+        restored_filter = screen.query_one("#library-prompts-filter", Input)
+        assert restored_filter.value == "requested filter"
+        assert restored_filter.has_focus
+        assert str(
+            screen.query_one("#library-prompts-header", Static).renderable
+        ) == "Prompts (45)"
+        assert str(
+            screen.query_one("#library-prompts-page-label", Static).renderable
+        ) == "1-20 of 45 · Page 1 of 3"
+        assert str(
+            screen.query_one("#library-prompts-page-status", Static).renderable
+        ) == "Filter wasn't applied; showing previous results. · Already on the first page."
+
+
+@pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
+@pytest.mark.asyncio
+async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
+    """The production app keeps exact Prompt pages and pager inside its canvas."""
+    app = _build_test_app()
+    _wire_empty_non_prompt_services(app)
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": index,
+                "name": f"Prompt {index:02d}",
+                "last_modified": f"2026-08-01T00:{index:02d}:00+00:00",
+                "version": 1,
+            }
+            for index in range(1, 46)
+        ]
+    )
+
+    async with app.run_test(size=size) as pilot:
+        assert type(app) is TldwCli
+        assert app.CSS_PATH == TldwCli.CSS_PATH
+        screen = LibraryScreen(app)
+        await app.push_screen(screen)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-prompts", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-prompt-row-26")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.pager.range_copy
+            == "1-20 of 45"
+            and len(screen.query(".library-prompt-row")) == 20,
+            message="Initial Prompt page never completed its mounted projection.",
+        )
+
+        pane = screen.query_one("#library-canvas")
+        canvas = screen.query_one(
+            "#library-prompts-canvas", LibraryPromptsListCanvas
+        )
+        rows = screen.query_one("#library-prompts-list", VerticalScroll)
+        pager = screen.query_one("#library-prompts-pager", Vertical)
+        status = screen.query_one("#library-prompts-page-label", Static)
+        title = screen.query_one("#library-prompts-header", Static)
+        previous = screen.query_one("#library-prompts-page-previous", Button)
+        next_page = screen.query_one("#library-prompts-page-next", Button)
+
+        assert str(title.renderable) == "Prompts (45)"
+        assert str(status.renderable) == "1-20 of 45 · Page 1 of 3"
+        assert previous.disabled is True
+        assert previous.label.plain == f"{LIBRARY_DISABLED_ACTION_MARKER} Previous"
+        assert str(previous.tooltip) == "Already on the first page."
+        assert "Already on the first page." in str(
+            screen.query_one("#library-prompts-page-status", Static).renderable
+        )
+        for widget in (canvas, rows, pager, status, previous, next_page):
+            assert pane.region.contains_region(widget.region), widget.id
+            assert widget in app.screen._compositor.visible_widgets, widget.id
+        assert rows.region.bottom <= pager.region.y
+
+        pager_identity = pager
+        pager_region = pager.region
+        last_row = screen.query_one("#library-prompt-row-26", Button)
+        last_row.focus()
+        last_row.scroll_visible(animate=False, force=True, immediate=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: rows.scroll_y > 0
+            and last_row in app.screen._compositor.visible_widgets,
+            message="Prompt row 20 never became compositor-visible.",
+        )
+        assert screen.query_one("#library-prompts-pager") is pager_identity
+        assert pager_identity.region == pager_region
+
+        next_page.focus()
+        next_page.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.applied_result is not None
+            and screen._library_prompt_browse_controller.applied_result.page == 2
+            and len(screen.query(".library-prompt-row")) == 20
+            and screen.query_one(
+                "#library-prompts-page-next", Button
+            ).has_focus,
+            message="Prompt page 2 never applied.",
+        )
+        rows = screen.query_one("#library-prompts-list", VerticalScroll)
+        assert rows.scroll_y == 0
+        assert str(
+            screen.query_one("#library-prompts-page-label", Static).renderable
+        ) == "21-40 of 45 · Page 2 of 3"
+        assert screen.query_one("#library-prompts-page-next", Button).has_focus
+
+        screen.query_one("#library-prompts-page-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.applied_result is not None
+            and screen._library_prompt_browse_controller.applied_result.page == 3
+            and len(screen.query(".library-prompt-row")) == 5
+            and screen.query_one(
+                "#library-prompts-page-previous", Button
+            ).has_focus,
+            message="Final Prompt page never applied.",
+        )
+        assert str(
+            screen.query_one("#library-prompts-page-label", Static).renderable
+        ) == "41-45 of 45 · Page 3 of 3"
+        final_next = screen.query_one("#library-prompts-page-next", Button)
+        final_previous = screen.query_one("#library-prompts-page-previous", Button)
+        assert final_next.disabled is True
+        assert final_next.label.plain == f"{LIBRARY_DISABLED_ACTION_MARKER} Next"
+        assert str(final_next.tooltip) == "No more results."
+        assert "No more results." in str(
+            screen.query_one("#library-prompts-page-status", Static).renderable
+        )
+        assert final_previous.has_focus
+
+        final_previous.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.applied_result is not None
+            and screen._library_prompt_browse_controller.applied_result.page == 2
+            and screen.query_one(
+                "#library-prompts-page-previous", Button
+            ).has_focus,
+            message="Returning to Prompt page 2 did not restore Previous focus.",
+        )
+        screen.query_one("#library-prompts-page-previous", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_prompt_browse_controller.applied_result is not None
+            and screen._library_prompt_browse_controller.applied_result.page == 1
+            and screen.query_one("#library-prompts-page-next", Button).has_focus,
+            message="First Prompt page did not fall focus forward to Next.",
+        )
 
 
 @pytest.mark.asyncio
@@ -3587,12 +3916,15 @@ async def test_library_prompts_browse_failure_keeps_exception_details_out_of_log
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-prompts").press()
-            error = await _wait_for_selector(screen, pilot, "#library-prompts-error")
+            error = await _wait_for_selector(
+                screen, pilot, "#library-prompts-page-status"
+            )
 
             assert str(error.renderable) == (
-                "Couldn't load prompts. Check the local Library and retry."
+                "Couldn't load prompts. Check the local Library and retry. · "
+                "Page boundary is unknown."
             )
-            assert screen.query_one("#library-prompts-retry", Button)
+            assert len(screen.query("#library-prompts-retry")) == 1
     finally:
         logger.remove(sink_id)
 

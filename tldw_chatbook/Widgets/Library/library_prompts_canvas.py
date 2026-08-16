@@ -27,6 +27,7 @@ from tldw_chatbook.Library.library_prompts_state import (
     definition_state_display_label,
     prompt_editor_meta_line,
 )
+from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
 from tldw_chatbook.Library.library_shell_state import (
     library_choice_label,
     library_choice_tooltip,
@@ -145,6 +146,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         sort_mode: str = "newest",
         filter_value: str = "",
         browse_result: PromptBrowseResult | None = None,
+        pager: LibraryPagerDisplay | None = None,
         mode: str = "list",
         editor_state: PromptEditorState | None = None,
         conflict: bool = False,
@@ -175,6 +177,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.sort_choices_visible = sort_choices_visible
         self.filter_value = filter_value
         self.browse_result = browse_result
+        self.pager = pager
         self.mode = mode
         self.editor_state = editor_state
         self.conflict = conflict
@@ -218,6 +221,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         sort_mode: str,
         filter_value: str,
         browse_result: PromptBrowseResult | None,
+        pager: LibraryPagerDisplay | None,
         mode: str,
         editor_state: PromptEditorState | None,
         conflict: bool,
@@ -242,6 +246,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             sort_mode: Active prompt sort identifier.
             filter_value: Current prompt filter text.
             browse_result: Paginated prompt browse result.
+            pager: Controller-derived Prompt pager presentation.
             mode: Canvas surface to render.
             editor_state: Prompt editor snapshot.
             conflict: Whether the open prompt has an edit conflict.
@@ -263,6 +268,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         self.sort_mode = sort_mode
         self.filter_value = filter_value
         self.browse_result = browse_result
+        self.pager = pager
         self.mode = mode
         self.editor_state = editor_state
         self.conflict = conflict
@@ -286,15 +292,16 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if state is None:
             return
         browse_result = self.browse_result
-        total: int | str = state.count
-        if browse_result is not None:
+        pager = self.pager
+        total: int | str | None = pager.title_count if pager is not None else state.count
+        if pager is None and browse_result is not None:
             total = (
                 "…"
                 if browse_result.status in {"loading", "error"}
                 else browse_result.total_items
             )
         yield Static(
-            f"Prompts ({total})",
+            "Prompts" if total is None else f"Prompts ({total})",
             id="library-prompts-header",
             classes="destination-section",
             markup=False,
@@ -555,7 +562,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             )
         if self.import_open and not state.select_mode:
             yield from self._compose_import_row()
-        if browse_result is not None and browse_result.status == "loading":
+        if (
+            pager is None
+            and browse_result is not None
+            and browse_result.status == "loading"
+        ):
             yield Static(
                 "Loading prompts…",
                 id="library-prompts-loading",
@@ -563,7 +574,11 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 markup=False,
             )
             return
-        if browse_result is not None and browse_result.status == "error":
+        if (
+            pager is None
+            and browse_result is not None
+            and browse_result.status == "error"
+        ):
             yield Static(
                 browse_result.error,
                 id="library-prompts-error",
@@ -579,9 +594,16 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
             )
             return
-        if browse_result is not None and browse_result.total_pages > 1:
+        if (
+            pager is None
+            and browse_result is not None
+            and browse_result.total_pages > 1
+        ):
             yield from self._compose_paging(browse_result)
         if not state.rows:
+            if pager is not None and pager.title_count is None:
+                yield from self._compose_pager(pager)
+                return
             if browse_result is not None:
                 if browse_result.status == "empty_collection":
                     empty_copy = _EMPTY_PROMPT_COLLECTION_COPY
@@ -603,8 +625,10 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 id="library-prompts-empty",
                 markup=False,
             )
+            if pager is not None:
+                yield from self._compose_pager(pager)
             return
-        with Vertical(id="library-prompts-list"):
+        with VerticalScroll(id="library-prompts-list"):
             for row in state.rows:
                 # Button labels are parsed as Rich markup: escape the
                 # user-supplied name AND secondary line (details/description)
@@ -643,6 +667,71 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 button.artifact_type = row.artifact_type
                 button.prompt_name = row.name
                 yield button
+        if pager is not None:
+            yield from self._compose_pager(pager)
+
+    def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
+        """Render the controller-derived Prompt pager without recalculation."""
+        with Vertical(id="library-prompts-pager"):
+            copy = " · ".join(part for part in (pager.range_copy, pager.page_copy) if part)
+            yield Static(
+                copy,
+                id="library-prompts-page-label",
+                markup=False,
+            )
+            reasons = tuple(
+                dict.fromkeys(
+                    reason
+                    for reason in (pager.previous_reason, pager.next_reason)
+                    if reason
+                )
+            )
+            yield Static(
+                " · ".join((pager.status_copy, *reasons)).strip(" ·"),
+                id="library-prompts-page-status",
+                classes="destination-purpose",
+                markup=False,
+            )
+            previous_disabled = pager.previous_disabled or self.mutation_in_flight
+            next_disabled = pager.next_disabled or self.mutation_in_flight
+            toolbar = Horizontal(classes="ds-toolbar")
+            toolbar.styles.height = "auto"
+            with toolbar:
+                yield Button(
+                    library_disabled_action_label("Previous", previous_disabled),
+                    id="library-prompts-page-previous",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=previous_disabled,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else pager.previous_reason or None
+                    ),
+                )
+                yield Button(
+                    library_disabled_action_label("Next", next_disabled),
+                    id="library-prompts-page-next",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=next_disabled,
+                    tooltip=(
+                        _MUTATION_PROGRESS
+                        if self.mutation_in_flight
+                        else pager.next_reason or None
+                    ),
+                )
+            if pager.retry_visible:
+                yield Button(
+                    library_disabled_action_label("Retry", self.mutation_in_flight),
+                    id="library-prompts-retry",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=self.mutation_in_flight,
+                    tooltip=(
+                        _MUTATION_PROGRESS if self.mutation_in_flight else None
+                    ),
+                )
 
     def _compose_paging(self, result: PromptBrowseResult) -> ComposeResult:
         """Render the minimal bounded page controls required for exact browse."""
