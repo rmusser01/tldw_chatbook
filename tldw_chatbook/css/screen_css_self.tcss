@@ -129,8 +129,8 @@
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
     /* Local fallbacks so this CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
+    
+    
 
     EmojiPickerScreen { align: center middle; }
 

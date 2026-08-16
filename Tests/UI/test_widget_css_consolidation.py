@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
+from textual.css.errors import UnresolvedVariableError
 from textual.css.parse import parse
 from textual.css.stylesheet import Stylesheet, StylesheetParseError
 from textual.css.tokenize import tokenize_values
@@ -231,6 +232,146 @@ def test_top_level_variable_declarations_stay_out_of_selectors():
     assert "$fallback: $surface;" in scoped
     assert "MyWidget $fallback" not in scoped
     assert "MyWidget .thing" in scoped
+
+
+def test_isolate_local_variables_inlines_and_drops_the_declaration():
+    """A block-local ``$var`` is substituted into its own rule, then removed.
+
+    Mirrors ``EmojiPickerScreen``'s real shape (a local fallback aliasing a
+    real app/theme variable): the app variable reference itself must survive
+    untouched, only the local name disappears.
+    """
+    css = "$fallback: $surface;\n.thing { background: $fallback; }\n"
+    isolated = widget_css.isolate_local_variables(css)
+    assert "$fallback" not in isolated
+    assert "background: $surface;" in isolated
+    assert ".thing" in isolated
+
+
+def test_isolate_local_variables_resolves_chained_local_references():
+    """A local variable's value may itself reference an earlier local variable."""
+    css = "$a: red;\n$b: $a;\nFoo { color: $b; }\n"
+    isolated = widget_css.isolate_local_variables(css)
+    assert "$a" not in isolated and "$b" not in isolated
+    assert "color: red;" in isolated
+
+
+def test_isolate_local_variables_leaves_unbalanced_css_an_error():
+    """Malformed CSS fails loud here too, matching ``split_scoped_css``."""
+    with pytest.raises(ValueError):
+        widget_css.isolate_local_variables("$x: 1; Foo { color: red;")
+
+
+def test_isolate_local_variables_rejects_a_forward_reference():
+    """TASK-15993 review gap 2b: a forward reference must fail loudly, not
+    silently accept a shape Textual itself rejects.
+
+    Textual, parsing ``$a: $b;\\n$b: blue;\\nFoo { color: $a; }\\n`` standalone,
+    raises ``UnresolvedVariableError`` immediately -- its single left-to-right
+    scan hits ``$b`` inside ``$a``'s own value before ``$b: blue;`` has been
+    seen. The resolver must reject the same shape rather than silently
+    resolving to a dangling ``$b`` (which either defers the failure to
+    sheet-parse time, or -- if an unrelated global happens to share the name
+    -- resolves to the WRONG value with no error anywhere; born-red evidence
+    below).
+    """
+    css = "$a: $b;\n$b: blue;\nFoo { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$b"):
+        widget_css.isolate_local_variables(css, scope="Foo")
+
+    # Born-red for the *silent-wrong-value* half of the gap: a global variable
+    # happens to share the forward-referenced name. Before the fix this
+    # produced `Alpha { color: #800080; }` (purple) instead of "blue", with no
+    # error anywhere -- exactly the silent-misresolution class this task
+    # exists to eliminate, relocated into the new resolver. The fix must
+    # reject it at build time rather than let it reach that state.
+    shared_name_css = "$a: $fwd-shared;\n$fwd-shared: blue;\nAlpha { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$fwd-shared"):
+        widget_css.isolate_local_variables(shared_name_css, scope="Alpha")
+
+
+def test_isolate_local_variables_leaves_quoted_content_untouched():
+    """TASK-15993 review gap 2c-i: a ``$name``-shaped sequence inside a quoted
+    string must not be rewritten -- Textual's tokenizer emits a quoted string
+    as a single opaque ``string`` token, never re-scanned for a
+    ``variable_ref`` (confirmed against ``textual.css.tokenize``).
+    """
+    css = '$a: red;\nFoo { note: "price is $a dollars"; color: $a; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert 'note: "price is $a dollars";' in isolated, (
+        "the quoted string's contents must survive verbatim, $a and all"
+    )
+    assert "color: red;" in isolated
+
+
+def test_isolate_local_variables_handles_semicolon_inside_a_quoted_value():
+    """TASK-15993 review gap 2c-ii: a ``;`` inside a quoted variable *value*
+    must not end the declaration early and corrupt the rest of the block.
+    """
+    css = '$sep: "a;b";\nFoo { color: red; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert "$sep" not in isolated
+    assert "Foo { color: red; }" in isolated
+    assert 'b";' not in isolated, "the string's tail must not leak as raw text"
+
+
+def test_local_variable_definitions_do_not_leak_across_blocks():
+    """TASK-15993: a block-local ``$var`` cannot silently apply to a later
+    block's rules once both land in the same generated sheet.
+
+    Textual resolves ``$variable`` references with a single left-to-right
+    scan over whatever ONE STRING is handed to its parser, and a generated
+    sheet concatenates every block's CSS into one such string -- so a local
+    fallback meant only for parsing its own block in isolation used to stay
+    "defined" for every block rendered after it (verified: this fixture
+    parses *silently* -- no error -- against ``split_scoped_css`` output with
+    no ``isolate_local_variables`` pre-pass, exactly reproducing the bug this
+    guard pins).
+
+    ``render_stylesheets`` (which now runs ``isolate_local_variables`` per
+    block before splitting/scoping) must instead leave Bravo's reference
+    genuinely unresolved: Alpha's local definition is inlined into Alpha's
+    own rule and dropped, so it never appears in the emitted text for
+    Bravo to inherit. Parsing with Textual's own real parser -- and real
+    theme variables, so a coincidental app-var name would not mask the
+    leak -- must therefore raise for the undefined name.
+    """
+    alpha = widget_css.BundledBlock(
+        module="a.py",
+        class_name="Alpha",
+        lineno=1,
+        css="$leak-var: red;\nAlpha { color: $leak-var; }\n",
+    )
+    bravo = widget_css.BundledBlock(
+        module="b.py",
+        class_name="Bravo",
+        lineno=1,
+        css="Bravo { color: $leak-var; }\n",
+    )
+    variables = App().get_css_variables()
+    assert "leak-var" not in variables, (
+        "fixture sanity: 'leak-var' must not coincide with a real theme "
+        "variable, or a genuine leak could hide behind it resolving anyway"
+    )
+
+    own, scoped = widget_css.render_stylesheets([alpha, bravo], "fixture")
+    # Neither block's own selector needed scoping (each already names its own
+    # class), so with the default `scope_every_selector=False` everything
+    # lands in the "self" stream and "scoped" is just its (non-blank) header
+    # -- checking `sheet.strip()` alone would not catch that, so require an
+    # actual WIDGET banner before exercising a stream.
+    exercised = 0
+    for stream_name, sheet in (("self", own), ("scoped", scoped)):
+        if "===== WIDGET:" not in sheet:
+            continue
+        exercised += 1
+        stylesheet = Stylesheet(variables=variables)
+        stylesheet.add_source(sheet, read_from=(f"fixture-{stream_name}", ""))
+        with pytest.raises(UnresolvedVariableError):
+            stylesheet.parse()
+    assert exercised, (
+        "neither stream carried the fixture blocks -- the guard is vacuous"
+    )
 
 
 _BANNER_RE = re.compile(r"/\* ===== WIDGET: (\S+) \(\S+\) ===== \*/")
