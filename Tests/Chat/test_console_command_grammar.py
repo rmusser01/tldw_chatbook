@@ -101,6 +101,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "generate-video",
         "stream-video",
         "rewind",
+        "research",
     )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")

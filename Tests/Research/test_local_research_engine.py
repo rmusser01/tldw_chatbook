@@ -76,7 +76,7 @@ def _artifact_content(bundle, name):
 
 def test_engine_executes_phases_and_completes_run():
     service = _make_service()
-    run = service.launch_run(query="How do persistent agents checkpoint?")
+    run = service.launch_run(query="How do persistent agents checkpoint?", autonomy_mode="autonomous")
     search_fn, analyze_fn, calls = _make_pipeline(run["query"])
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -106,7 +106,7 @@ def test_engine_executes_phases_and_completes_run():
 
 def test_engine_artifacts_carry_plan_sources_and_citation_verdict():
     service = _make_service()
-    run = service.launch_run(query="What changed in SQLite 3.50?")
+    run = service.launch_run(query="What changed in SQLite 3.50?", autonomy_mode="autonomous")
     search_fn, analyze_fn, _ = _make_pipeline(run["query"])
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -132,7 +132,7 @@ def test_engine_artifacts_carry_plan_sources_and_citation_verdict():
 
 def test_engine_normalizes_draft_run_to_running():
     service = _make_service()
-    draft = service.create_run(query="Draft question")
+    draft = service.create_run(query="Draft question", autonomy_mode="autonomous")
     assert draft["status"] == "draft"
     search_fn, analyze_fn, _ = _make_pipeline("Draft question")
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
@@ -145,7 +145,7 @@ def test_engine_normalizes_draft_run_to_running():
 
 def test_engine_fails_run_and_keeps_partial_artifacts_on_pipeline_error():
     service = _make_service()
-    run = service.launch_run(query="Exploding question")
+    run = service.launch_run(query="Exploding question", autonomy_mode="autonomous")
 
     def search_fn(q, params):
         return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
@@ -167,7 +167,7 @@ def test_engine_fails_run_and_keeps_partial_artifacts_on_pipeline_error():
 
 def test_engine_pause_between_phases_leaves_run_resumable():
     service = _make_service()
-    run = service.launch_run(query="Pause me mid-run")
+    run = service.launch_run(query="Pause me mid-run", autonomy_mode="autonomous")
 
     def search_fn(q, params):
         service.pause_run(run["id"])  # user pauses while collecting runs
@@ -192,7 +192,7 @@ def test_engine_pause_between_phases_leaves_run_resumable():
 
 def test_engine_cancel_between_phases_resolves_cancelled_once():
     service = _make_service()
-    run = service.launch_run(query="Cancel me mid-run")
+    run = service.launch_run(query="Cancel me mid-run", autonomy_mode="autonomous")
 
     def search_fn(q, params):
         service.cancel_run(run["id"])  # user cancels while collecting runs
@@ -211,7 +211,7 @@ def test_engine_cancel_between_phases_resolves_cancelled_once():
 
 def test_engine_rejects_terminal_run():
     service = _make_service()
-    run = service.launch_run(query="Already done")
+    run = service.launch_run(query="Already done", autonomy_mode="autonomous")
     service.complete_run(run["id"])
     search_fn, analyze_fn, _ = _make_pipeline(run["query"])
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
@@ -250,7 +250,7 @@ def _budget_pipeline(question, *, results=2, captured_params=None):
 
 def test_engine_caps_search_fanout_at_budget_before_spend():
     service = _make_service()
-    run = service.launch_run(query="Budgeted", limits_json={"max_searches": 2})
+    run = service.launch_run(query="Budgeted", autonomy_mode="autonomous", limits_json={"max_searches": 2})
     captured: dict = {}
     search_fn, analyze_fn, _ = _budget_pipeline("Budgeted", captured_params=captured)
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
@@ -266,7 +266,7 @@ def test_engine_caps_search_fanout_at_budget_before_spend():
 
 def test_engine_truncates_docs_to_budget():
     service = _make_service()
-    run = service.launch_run(query="Budgeted docs", limits_json={"max_fetched_docs": 1})
+    run = service.launch_run(query="Budgeted docs", autonomy_mode="autonomous", limits_json={"max_fetched_docs": 1})
     search_fn, analyze_fn, seen = _budget_pipeline("Budgeted docs", results=3)
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -280,7 +280,7 @@ def test_engine_truncates_docs_to_budget():
 
 def test_engine_stops_cleanly_when_doc_budget_exhausted():
     service = _make_service()
-    run = service.launch_run(query="No docs allowed", limits_json={"max_fetched_docs": 0})
+    run = service.launch_run(query="No docs allowed", autonomy_mode="autonomous", limits_json={"max_fetched_docs": 0})
     search_fn, analyze_fn, seen = _budget_pipeline("No docs allowed", results=3)
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -296,7 +296,7 @@ def test_engine_stops_cleanly_when_doc_budget_exhausted():
 
 def test_engine_runtime_budget_stops_run_at_phase_boundary():
     service = _make_service()
-    run = service.launch_run(query="No time", limits_json={"max_runtime_seconds": 0})
+    run = service.launch_run(query="No time", autonomy_mode="autonomous", limits_json={"max_runtime_seconds": 0})
     search_fn, analyze_fn, seen = _budget_pipeline("No time")
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -347,7 +347,7 @@ def _iter_pipeline(question):
 
 def test_engine_single_pass_by_default_without_gap_llm():
     service = _make_service()
-    run = service.launch_run(query="Single pass")
+    run = service.launch_run(query="Single pass", autonomy_mode="autonomous")
     search_fn, analyze_fn, state = _iter_pipeline("Single pass")
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
     # No gap_fn injected and no final_answer_llm in params -> default gap
@@ -361,7 +361,7 @@ def test_engine_single_pass_by_default_without_gap_llm():
 
 def test_engine_iterates_until_gaps_resolve_within_max_iterations():
     service = _make_service()
-    run = service.launch_run(query="Iterate", limits_json={"max_iterations": 3})
+    run = service.launch_run(query="Iterate", autonomy_mode="autonomous", limits_json={"max_iterations": 3})
     search_fn, analyze_fn, state = _iter_pipeline("Iterate")
     gap_calls = []
 
@@ -394,7 +394,7 @@ def test_engine_iterates_until_gaps_resolve_within_max_iterations():
 
 def test_engine_stops_at_max_iterations_and_reports_remaining_gaps():
     service = _make_service()
-    run = service.launch_run(query="Always gappy", limits_json={"max_iterations": 2})
+    run = service.launch_run(query="Always gappy", autonomy_mode="autonomous", limits_json={"max_iterations": 2})
     search_fn, analyze_fn, state = _iter_pipeline("Always gappy")
 
     async def gap_fn(context):
@@ -418,7 +418,9 @@ def test_engine_stops_at_max_iterations_and_reports_remaining_gaps():
 def test_engine_gap_iteration_stops_cleanly_when_search_budget_exhausted():
     service = _make_service()
     run = service.launch_run(
-        query="Budgeted iteration", limits_json={"max_iterations": 5, "max_searches": 1}
+        query="Budgeted iteration",
+        autonomy_mode="autonomous",
+        limits_json={"max_iterations": 5, "max_searches": 1},
     )
     search_fn, analyze_fn, state = _iter_pipeline("Budgeted iteration")
 
@@ -483,7 +485,7 @@ def _claims_pipeline(question):
 
 def test_engine_persists_claims_artifact_with_counts():
     service = _make_service()
-    run = service.launch_run(query="Claims question")
+    run = service.launch_run(query="Claims question", autonomy_mode="autonomous")
     search_fn, analyze_fn = _claims_pipeline("Claims question")
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
 
@@ -498,7 +500,7 @@ def test_engine_persists_claims_artifact_with_counts():
 
 
 def _completed_claims_run(service):
-    run = service.launch_run(query="Claims question")
+    run = service.launch_run(query="Claims question", autonomy_mode="autonomous")
     search_fn, analyze_fn = _claims_pipeline("Claims question")
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
     asyncio.run(engine.execute_run(run["id"]))
@@ -555,7 +557,7 @@ def test_follow_up_insufficient_evidence_falls_back_explicitly():
 
 def test_follow_up_without_claims_artifact_never_calls_the_llm():
     service = _make_service()
-    run = service.launch_run(query="No claims here")
+    run = service.launch_run(query="No claims here", autonomy_mode="autonomous")
     called = {"n": 0}
 
     async def answer_fn(seed, question):
@@ -573,7 +575,7 @@ def test_follow_up_without_claims_artifact_never_calls_the_llm():
 
 def test_engine_merges_academic_papers_with_doi_dedup():
     service = _make_service()
-    run = service.launch_run(query="Papers question", limits_json={"max_iterations": 2})
+    run = service.launch_run(query="Papers question", autonomy_mode="autonomous", limits_json={"max_iterations": 2})
     search_fn, analyze_fn, state = _iter_pipeline("Papers question")
     paper_rounds = [
         [
@@ -632,7 +634,7 @@ def test_engine_settles_recorded_usage_into_ledger():
     from tldw_chatbook.Chat.usage_recorder import active_recorder
 
     service = _make_service()
-    run = service.launch_run(query="Tokens question")
+    run = service.launch_run(query="Tokens question", autonomy_mode="autonomous")
     search_fn, analyze_fn, _ = _make_pipeline("Tokens question")
 
     async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
@@ -657,7 +659,7 @@ def test_engine_enforces_max_tokens_between_llm_calls():
     from tldw_chatbook.Chat.usage_recorder import active_recorder
 
     service = _make_service()
-    run = service.launch_run(query="Token capped", limits_json={"max_tokens": 25})
+    run = service.launch_run(query="Token capped", autonomy_mode="autonomous", limits_json={"max_tokens": 25})
     search_fn, analyze_fn, _ = _make_pipeline("Token capped")
 
     async def analyze_with_usage(wsr, sqd, params, cancel_event=None):
@@ -688,3 +690,233 @@ def test_engine_enforces_max_tokens_between_llm_calls():
     names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
     assert "report_v1.md" not in names
     assert "budget_ledger.json" in names
+
+
+# --- gate block in verification summary (task-16333) -----------------------------
+
+def test_engine_verification_summary_carries_gate_block():
+    service = _make_service()
+    run = service.launch_run(query="Gate question", autonomy_mode="autonomous")
+
+    def search_fn(q, params):
+        return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
+                {"sub_questions": [], "main_goal": q})
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {
+                "text": "Answer[1].", "confidence": 0.6, "chunks": [],
+                "evidence": [{"id": 1, "url": "https://t.example/", "title": "T",
+                              "content": "c", "original_content": "o", "reasoning": "r",
+                              "chunk_index": 1, "gate_unverified": True}],
+                "gate": {"relevant": 3, "raw": 5, "fallback": True},
+            },
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    summary = _artifact_content(service.get_bundle(run["id"]), "verification_summary.json")
+    assert summary["gate"] == {"relevant": 3, "raw": 5, "fallback": True}
+
+
+# --- chat handoff on completion (task-16481) --------------------------------------
+
+def test_engine_fires_completion_handoff_with_report_bundle():
+    service = _make_service()
+    run = service.launch_run(
+        query="Handoff question",
+        autonomy_mode="autonomous",
+        chat_handoff={"conversation_id": "conv-42", "origin": "console"},
+    )
+    search_fn, analyze_fn, _ = _make_pipeline("Handoff question")
+    fired = []
+
+    def handoff(payload):
+        fired.append(payload)
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, completion_handoff=handoff
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert len(fired) == 1
+    payload = fired[0]
+    assert payload["run_id"] == run["id"]
+    assert payload["question"] == "Handoff question"
+    assert payload["chat_handoff"] == {"conversation_id": "conv-42", "origin": "console"}
+    assert "Answer citing" in payload["report_markdown"]
+    assert payload["bundle"]["query"] == "Handoff question"
+
+
+def test_engine_skips_handoff_without_chat_handoff_target():
+    service = _make_service()
+    run = service.launch_run(query="No handoff", autonomy_mode="autonomous")
+    search_fn, analyze_fn, _ = _make_pipeline("No handoff")
+    fired = []
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn,
+        completion_handoff=fired.append,
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+    assert fired == []
+
+
+def test_engine_handoff_failure_never_fails_the_run():
+    service = _make_service()
+    run = service.launch_run(
+        query="Boom handoff", autonomy_mode="autonomous",
+        chat_handoff={"conversation_id": "x"},
+    )
+    search_fn, analyze_fn, _ = _make_pipeline("Boom handoff")
+
+    def exploding_handoff(payload):
+        raise RuntimeError("handoff sink down")
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn,
+        completion_handoff=exploding_handoff,
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+    assert final["status"] == "completed"  # handoff failure is a warning only
+
+
+# --- checkpointed autonomy (task-16482) -------------------------------------------
+
+_cp_state = {"search": 0, "analyze": 0}
+
+
+def _mk_cp_engine(service, question):
+    def search_fn(q, params):
+        _cp_state["search"] += 1
+        return (
+            {"results": [{"title": "S1", "url": "https://s1.example/"},
+                         {"title": "S2", "url": "https://s2.example/"}], "warnings": []},
+            {"sub_questions": [], "main_goal": q},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        _cp_state["analyze"] += 1
+        return {
+            "final_answer": {"text": "Report[1].", "confidence": 0.6, "chunks": [],
+                             "evidence": [{"id": 1, "url": "https://s1.example/", "title": "S1",
+                                           "content": "c", "original_content": "o", "reasoning": "r",
+                                           "chunk_index": 1}]},
+            "relevant_results": {"1": {}},
+            "web_search_results_dict": wsr,
+        }
+
+    return LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+
+def test_checkpointed_run_pauses_at_plan_review():
+    service = _make_service()
+    run = service.launch_run(query="Checkpointed question")  # default: checkpointed
+    engine = _mk_cp_engine(service, "Checkpointed question")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "running"  # non-terminal
+    assert final["control_state"] == "awaiting_plan_review"
+    pending = service.latest_pending_checkpoint(run["id"])
+    assert pending["checkpoint_type"] == "plan_review"
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    assert "plan.json" in names and "report_v1.md" not in names
+    assert _cp_state["search"] == 0
+
+
+def test_approved_plan_checkpoint_advances_to_sources_review():
+    _cp_state.update(search=0, analyze=0)
+    service = _make_service()
+    run = service.launch_run(query="Checkpointed question")
+    engine = _mk_cp_engine(service, "Checkpointed question")
+    asyncio.run(engine.execute_run(run["id"]))
+    plan_cp = service.latest_pending_checkpoint(run["id"])
+    service.patch_and_approve_checkpoint(run["id"], plan_cp["id"], patch_payload={"limits": {}})
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["control_state"] == "awaiting_sources_review"
+    pending = service.latest_pending_checkpoint(run["id"])
+    assert pending["checkpoint_type"] == "sources_review"
+    assert set(pending["proposed_payload"]["source_ids"]) == {
+        "https://s1.example/", "https://s2.example/",
+    }
+    assert _cp_state["search"] == 1  # collected once
+    assert _cp_state["analyze"] == 0  # synthesis not reached
+
+
+def test_approved_sources_checkpoint_completes_and_applies_dropped():
+    _cp_state.update(search=0, analyze=0)
+    service = _make_service()
+    run = service.launch_run(query="Checkpointed question")
+    engine = _mk_cp_engine(service, "Checkpointed question")
+    asyncio.run(engine.execute_run(run["id"]))
+    service.patch_and_approve_checkpoint(
+        run["id"], service.latest_pending_checkpoint(run["id"])["id"]
+    )
+    asyncio.run(engine.execute_run(run["id"]))
+    service.patch_and_approve_checkpoint(
+        run["id"],
+        service.latest_pending_checkpoint(run["id"])["id"],
+        patch_payload={"dropped_source_ids": ["https://s2.example/"]},
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    sources = _artifact_content(service.get_bundle(run["id"]), "sources.json")
+    urls = [e.get("url") for e in sources["evidence"]]
+    assert urls == ["https://s1.example/"]
+
+
+def test_sources_recollect_loops_back_to_collecting():
+    _cp_state.update(search=0, analyze=0)
+    service = _make_service()
+    run = service.launch_run(query="Checkpointed question")
+    engine = _mk_cp_engine(service, "Checkpointed question")
+    asyncio.run(engine.execute_run(run["id"]))
+    service.patch_and_approve_checkpoint(
+        run["id"], service.latest_pending_checkpoint(run["id"])["id"]
+    )
+    asyncio.run(engine.execute_run(run["id"]))
+    service.patch_and_approve_checkpoint(
+        run["id"],
+        service.latest_pending_checkpoint(run["id"])["id"],
+        patch_payload={"recollect": {"enabled": True}},
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    # Re-collected and waiting at a NEW sources review, not completed.
+    assert _cp_state["search"] == 2
+    assert final["control_state"] == "awaiting_sources_review"
+    assert service.latest_pending_checkpoint(run["id"])["checkpoint_type"] == "sources_review"
+
+
+def test_approved_sources_checkpoint_with_empty_patch_still_passes():
+    _cp_state.update(search=0, analyze=0)
+    service = _make_service()
+    run = service.launch_run(query="Checkpointed question")
+    engine = _mk_cp_engine(service, "Checkpointed question")
+    asyncio.run(engine.execute_run(run["id"]))
+    service.patch_and_approve_checkpoint(
+        run["id"], service.latest_pending_checkpoint(run["id"])["id"]
+    )
+    asyncio.run(engine.execute_run(run["id"]))
+    # Approve with NO patch: the boundary must PASS, not re-await forever.
+    service.patch_and_approve_checkpoint(
+        run["id"], service.latest_pending_checkpoint(run["id"])["id"]
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"

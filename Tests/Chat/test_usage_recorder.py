@@ -111,3 +111,168 @@ def test_chat_api_call_records_nothing_without_active_recorder(monkeypatch):
 
     assert result == "hello world"
     assert active_recorder() is None
+
+
+# --- OpenAI-shaped dict normalization (task-16330 live-baseline unblock) --------
+
+def test_chat_api_call_passes_provider_dicts_through_unchanged(monkeypatch):
+    # The Console gateway parses tool_calls/finish_reason/usage from these
+    # dicts -- chat_api_call must NOT normalize them to content strings
+    # (task-16331 correction). String consumers use chat_reply_text.
+    payload = {
+        "choices": [
+            {"index": 0, "finish_reason": "stop",
+             "message": {"role": "assistant", "content": "the answer"}}
+        ],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    result = chat_api_call(
+        api_endpoint="llama_cpp",
+        messages_payload=[{"role": "user", "content": "prompt"}],
+        api_key=None, temp=0.5, system_message=None, streaming=False,
+        minp=None, maxp=None, model=None, topk=None, topp=None,
+    )
+
+    assert result == payload
+
+
+def test_chat_reply_text_extracts_known_shapes_and_empty_for_unknown():
+    from tldw_chatbook.Chat.Chat_Functions import chat_reply_text
+
+    assert chat_reply_text("plain") == "plain"
+    assert chat_reply_text(
+        {"choices": [{"message": {"role": "assistant", "content": "duck"}}]}
+    ) == "duck"
+    assert chat_reply_text({"choices": [{"text": "legacy"}]}) == "legacy"
+    assert chat_reply_text({"choices": [{"message": {"content": None}}]}) == ""
+    assert chat_reply_text({"error": "odd"}) == ""
+    assert chat_reply_text(None) == ""
+
+
+def test_chat_api_call_records_real_usage_from_dict_responses(monkeypatch):
+    payload = {
+        "choices": [
+            {"message": {"role": "assistant", "content": "answer text"}}
+        ],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+    }
+    handler = _fake_handler(payload)
+    monkeypatch.setitem(Chat_Functions.API_CALL_HANDLERS, "llama_cpp", handler)
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "a much longer prompt text here"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    # EXACT counts from the provider, not character estimates.
+    assert recorder.prompt_tokens() == 11
+    assert recorder.completion_tokens() == 7
+
+
+def test_chat_api_call_dict_without_usage_falls_back_to_estimates(monkeypatch):
+    payload = {"choices": [{"message": {"role": "assistant", "content": "abcde"}}]}
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    result = None
+    with usage_scope() as recorder:
+        result = chat_api_call(
+            api_endpoint="llama_cpp",
+            messages_payload=[{"role": "user", "content": "abcdefg"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert result == payload  # passthrough preserved
+    assert recorder.prompt_tokens() == estimate_tokens("abcdefg")
+    assert recorder.completion_tokens() == estimate_tokens("abcde")
+
+
+def test_chat_api_call_unknown_dict_shape_passes_through(monkeypatch):
+    payload = {"error": "odd provider payload"}
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "llama_cpp", _fake_handler(payload)
+    )
+
+    result = chat_api_call(
+        api_endpoint="llama_cpp",
+        messages_payload=[{"role": "user", "content": "prompt"}],
+        api_key=None, temp=0.5, system_message=None, streaming=False,
+        minp=None, maxp=None, model=None, topk=None, topp=None,
+    )
+
+    assert result == {"error": "odd provider payload"}
+
+
+# --- cloud provider usage key variants (task-16335) -------------------------------
+
+def test_chat_api_call_records_anthropic_style_usage_keys(monkeypatch):
+    # Anthropic normalizes its response to the OpenAI chat shape but keeps
+    # its own usage field names (input_tokens/output_tokens).
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"input_tokens": 31, "output_tokens": 13},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "a long enough prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert recorder.prompt_tokens() == 31
+    assert recorder.completion_tokens() == 13
+
+
+def test_chat_api_call_openai_style_usage_still_exact(monkeypatch):
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 6},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (5, 6)
+
+
+def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 9,
+                  "input_tokens": 100, "output_tokens": 100},
+    }
+    monkeypatch.setitem(
+        Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
+    )
+
+    with usage_scope() as recorder:
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "prompt"}],
+            api_key=None, temp=0.5, system_message=None, streaming=False,
+            minp=None, maxp=None, model=None, topk=None, topp=None,
+        )
+
+    assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (8, 9)

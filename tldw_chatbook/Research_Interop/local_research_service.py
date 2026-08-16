@@ -212,6 +212,20 @@ class LocalResearchService:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES research_runs(id)
                 );
+                CREATE TABLE IF NOT EXISTS research_checkpoints (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    checkpoint_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    resolution TEXT,
+                    proposed_payload_json TEXT NOT NULL DEFAULT '{}',
+                    user_patch_payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    FOREIGN KEY(run_id) REFERENCES research_runs(id)
+                );
                 CREATE TABLE IF NOT EXISTS research_artifacts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL,
@@ -319,6 +333,17 @@ class LocalResearchService:
             "content_type": row["content_type"],
             "content": content,
         }
+
+    @staticmethod
+    def _normalize_checkpoint(row: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(row)
+        payload["proposed_payload"] = LocalResearchService._load_json(
+            payload.pop("proposed_payload_json", None)
+        )
+        payload["user_patch"] = LocalResearchService._load_json(
+            payload.pop("user_patch_payload_json", None)
+        )
+        return payload
 
     @staticmethod
     def _normalize_event(row: dict[str, Any]) -> dict[str, Any]:
@@ -651,6 +676,151 @@ class LocalResearchService:
         if error_msg is not None:
             fields["progress_message"] = error_msg
         return self._update_run_state(run_id, "failed", **fields)
+
+    # Patch keys allowed per checkpoint type (task-16482; server
+    # checkpoint_service parity, scoped to the local engine's phases).
+    _CHECKPOINT_PATCH_KEYS = {
+        "plan_review": {"limits"},
+        "sources_review": {"pinned_source_ids", "dropped_source_ids", "recollect"},
+    }
+
+    def create_checkpoint(
+        self,
+        run_id: str,
+        *,
+        checkpoint_type: str,
+        proposed_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a pending review checkpoint for a run (task-16482)."""
+        self._require_one("research_runs", run_id, "research run")
+        checkpoint_id = f"chk-{self._new_id()}"
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO research_checkpoints (
+                    id, run_id, checkpoint_type, status,
+                    proposed_payload_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'pending', ?, ?, ?)
+                """,
+                (
+                    checkpoint_id,
+                    run_id,
+                    checkpoint_type,
+                    self._dump_json(proposed_payload),
+                    now,
+                    now,
+                ),
+            )
+            self._record_event(
+                conn,
+                run_id,
+                "checkpoint_created",
+                {"checkpoint_id": checkpoint_id, "checkpoint_type": checkpoint_type},
+            )
+        return self._normalize_checkpoint(
+            self._require_one("research_checkpoints", checkpoint_id, "research checkpoint")
+        )
+
+    def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
+        self._require_one("research_runs", run_id, "research run")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM research_checkpoints WHERE run_id = ? ORDER BY rowid ASC",
+                (run_id,),
+            ).fetchall()
+        return [self._normalize_checkpoint(dict(row)) for row in rows]
+
+    def latest_pending_checkpoint(self, run_id: str) -> dict[str, Any] | None:
+        for checkpoint in reversed(self.list_checkpoints(run_id)):
+            if checkpoint.get("status") == "pending":
+                return checkpoint
+        return None
+
+    def approved_checkpoint(
+        self, run_id: str, checkpoint_type: str
+    ) -> dict[str, Any] | None:
+        """The most recent APPROVED checkpoint of one type (the engine's
+        pass-through signal on re-execution)."""
+        for checkpoint in reversed(self.list_checkpoints(run_id)):
+            if (
+                checkpoint.get("checkpoint_type") == checkpoint_type
+                and checkpoint.get("status") == "approved"
+            ):
+                return checkpoint
+        return None
+
+    def patch_and_approve_checkpoint(
+        self,
+        run_id: str,
+        checkpoint_id: str,
+        *,
+        patch_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Approve a pending checkpoint with a type-validated patch
+        (task-16482). Raises ValueError on non-pending state, unexpected
+        patch keys, or sources patches referencing unknown/overlapping ids.
+        """
+        self._require_one("research_runs", run_id, "research run")
+        row = self._require_one(
+            "research_checkpoints", checkpoint_id, "research checkpoint"
+        )
+        if row.get("run_id") != run_id:
+            raise ValueError("research checkpoint belongs to a different run")
+        if row.get("status") != "pending":
+            raise ValueError(f"research checkpoint {checkpoint_id} is not pending")
+        patch = dict(patch_payload or {})
+        checkpoint_type = row.get("checkpoint_type")
+        allowed = self._CHECKPOINT_PATCH_KEYS.get(checkpoint_type)
+        if allowed is None:
+            raise ValueError(f"unsupported checkpoint type: {checkpoint_type!r}")
+        unexpected = set(patch) - allowed
+        if unexpected:
+            raise ValueError(
+                f"unexpected patch keys for {checkpoint_type}: {sorted(unexpected)}"
+            )
+        if checkpoint_type == "sources_review":
+            proposed_ids = set(
+                (self._load_json(row.get("proposed_payload_json")) or {}).get(
+                    "source_ids"
+                )
+                or []
+            )
+            pinned = set(patch.get("pinned_source_ids") or [])
+            dropped = set(patch.get("dropped_source_ids") or [])
+            unknown = (pinned | dropped) - proposed_ids
+            if unknown:
+                raise ValueError(
+                    f"patch references ids not in the proposed inventory: {sorted(unknown)}"
+                )
+            if pinned & dropped:
+                raise ValueError(
+                    "pinned and dropped source ids must be disjoint"
+                )
+            recollect = patch.get("recollect")
+            if recollect is not None and not isinstance(recollect, dict):
+                raise ValueError("recollect patch must be an object")
+        updates = {
+            "status": "approved",
+            "resolution": "approved",
+            "user_patch_payload_json": self._dump_json(patch),
+            "updated_at": self._now(),
+            "version": int(row["version"]) + 1,
+        }
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE research_checkpoints SET {assignments} WHERE id = ?",
+                (*updates.values(), checkpoint_id),
+            )
+            self._record_event(
+                conn, run_id, "checkpoint_approved", {"checkpoint_id": checkpoint_id}
+            )
+        return self._normalize_checkpoint(
+            self._require_one(
+                "research_checkpoints", checkpoint_id, "research checkpoint"
+            )
+        )
 
     def update_run_progress(
         self,

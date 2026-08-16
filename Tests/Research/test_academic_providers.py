@@ -313,3 +313,37 @@ def test_search_papers_raises_only_when_all_providers_fail(monkeypatch):
 
     with pytest.raises(AcademicProviderError):
         asyncio.run(search_papers("agents"))
+
+
+def test_paper_query_normalizes_questions_to_topics():
+    from tldw_chatbook.Research_Interop.academic_providers import _paper_query
+
+    assert _paper_query("What is retrieval augmented generation?") == "retrieval augmented generation"
+    assert _paper_query("What are the main differences between HTTP/2 and HTTP/3?") == "differences between HTTP/2 and HTTP/3"
+    assert _paper_query("How does SQLite FTS5 ranking work?") == "SQLite FTS5 ranking work"
+    assert _paper_query("already a topic query") == "already a topic query"
+
+
+def test_arxiv_phrases_multi_word_queries(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=_ATOM)])
+
+    search_arxiv(query="retrieval augmented generation", client=client)
+
+    sent = client.request.calls[0]["params"]
+    assert sent["search_query"] == 'all:"retrieval augmented generation"'
+
+
+def test_arxiv_single_word_queries_stay_unquoted(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=_ATOM)])
+
+    search_arxiv(query="transformers", client=client)
+
+    assert client.request.calls[0]["params"]["search_query"] == "all:transformers"

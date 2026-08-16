@@ -54,6 +54,17 @@ class _RunCancelled(Exception):
     """Internal control-flow signal: the run was cancelled between phases."""
 
 
+class _RunAwaitingReview(Exception):
+    """Internal control-flow signal: a checkpointed run paused at a review
+    boundary (task-16482); the engine exits non-terminally and the run
+    resumes when the checkpoint is approved."""
+
+    def __init__(self, run: dict[str, Any]) -> None:
+        super().__init__("run awaiting checkpoint review")
+        self.run = run
+    """Internal control-flow signal: the run was cancelled between phases."""
+
+
 class LocalResearchEngine:
     """Executes local research runs against the deep-search pipeline."""
 
@@ -66,6 +77,7 @@ class LocalResearchEngine:
         gap_fn: "GapFn | None" = None,
         search_params: dict[str, Any] | None = None,
         paper_search_fn: "Callable[[str], Any] | None" = None,
+        completion_handoff: "Callable[[dict[str, Any]], Any] | None" = None,
     ) -> None:
         self.service = local_service
         self.search_fn = search_fn or self._default_search_fn
@@ -79,6 +91,11 @@ class LocalResearchEngine:
         # Set for the duration of execute_run so _llm_bounded_call can
         # settle usage without threading the ledger through every seam.
         self._active_ledger: BudgetLedger | None = None
+        # task-16481: fired when a run that carried a chat_handoff target
+        # completes; the app wires this to insert the report into the
+        # originating conversation. Failures are warnings, never run
+        # failures -- the terminal state is already recorded.
+        self.completion_handoff = completion_handoff
 
     @staticmethod
     def _default_search_fn(question: str, params: dict[str, Any]) -> Any:
@@ -124,18 +141,22 @@ class LocalResearchEngine:
             f"Synthesized answer:\n{context.get('answer_text')}"
         )
         try:
-            response = chat_api_call(
-                api_endpoint=llm,
-                messages_payload=[{"role": "user", "content": prompt}],
-                api_key=None,
-                temp=0.2,
-                system_message=None,
-                streaming=False,
-                minp=None,
-                maxp=None,
-                model=None,
-                topk=None,
-                topp=None,
+            from ..Chat.Chat_Functions import chat_reply_text
+
+            response = chat_reply_text(
+                chat_api_call(
+                    api_endpoint=llm,
+                    messages_payload=[{"role": "user", "content": prompt}],
+                    api_key=None,
+                    temp=0.2,
+                    system_message=None,
+                    streaming=False,
+                    minp=None,
+                    maxp=None,
+                    model=None,
+                    topk=None,
+                    topp=None,
+                )
             )
             parsed = json.loads(str(response or "[]"))
             if isinstance(parsed, list):
@@ -191,6 +212,32 @@ class LocalResearchEngine:
             raise _RunCancelled(run)
         return run
 
+    def _is_checkpointed(self, run: dict[str, Any]) -> bool:
+        return str(run.get("autonomy_mode") or "") == "checkpointed"
+
+    def _approved_patch(self, run_id: str, checkpoint_type: str) -> dict[str, Any]:
+        approved = self.service.approved_checkpoint(run_id, checkpoint_type)
+        if not approved:
+            return {}
+        return dict(approved.get("user_patch") or {})
+
+    def _await_review(
+        self, run_id: str, checkpoint_type: str, proposed_payload: dict[str, Any]
+    ) -> None:
+        """Create the pending checkpoint and park the run in a non-terminal
+        awaiting state (task-16482). Raises _RunAwaitingReview."""
+        checkpoint = self.service.create_checkpoint(
+            run_id, checkpoint_type=checkpoint_type, proposed_payload=proposed_payload
+        )
+        updated = self.service.update_run_progress(
+            run_id,
+            control_state=f"awaiting_{checkpoint_type}",
+            progress_message=f"Awaiting {checkpoint_type} ({checkpoint['id']})",
+            event="awaiting_review",
+            data={"checkpoint_id": checkpoint["id"], "checkpoint_type": checkpoint_type},
+        )
+        raise _RunAwaitingReview(updated)
+
     async def execute_run(self, run_id: str) -> dict[str, Any]:
         """Run the full phase machine for ``run_id`` to a terminal state.
 
@@ -203,13 +250,20 @@ class LocalResearchEngine:
             raise ValueError(
                 f"run {run_id} is already terminal ({status}); engine will not re-execute"
             )
-        ledger = BudgetLedger.from_limits(
-            run.get("limits") if isinstance(run.get("limits"), dict) else None
-        )
+        limits = run.get("limits") if isinstance(run.get("limits"), dict) else {}
+        # task-16482: an approved plan-review limits patch supersedes the
+        # run's original limits for subsequent (post-approval) executions.
+        plan_patch_limits = self._approved_patch(run_id, "plan_review").get("limits")
+        if isinstance(plan_patch_limits, dict) and plan_patch_limits:
+            limits = {**limits, **plan_patch_limits}
+        ledger = BudgetLedger.from_limits(limits)
         self._active_ledger = ledger
 
         try:
             return await self._execute_phases(run, ledger)
+        except _RunAwaitingReview as awaiting:
+            logger.info(f"Research run {run_id} awaiting checkpoint review")
+            return awaiting.run
         except _RunPaused as paused:
             logger.info(f"Research run {run_id} paused between phases")
             return paused.args[0]
@@ -312,6 +366,15 @@ class LocalResearchEngine:
             content_type="application/json",
             content={"query": question, "limits": limits},
         )
+        # task-16482: checkpointed runs pause for plan review before any
+        # search spend; an approved plan checkpoint passes (its limits
+        # patch was already merged into the ledger at execute_run entry).
+        if self._is_checkpointed(run) and not self.service.approved_checkpoint(
+            run_id, "plan_review"
+        ):
+            self._await_review(
+                run_id, "plan_review", {"query": question, "limits": limits}
+            )
 
         # -- iterate: collecting + synthesizing + gap analysis ----------
         # task-16324: collect, synthesize, then let gap analysis decide
@@ -419,6 +482,41 @@ class LocalResearchEngine:
             ledger.settle_docs(allotted_docs)
             self._save_ledger(run_id, ledger)
 
+            # task-16482: sources review before synthesis. An approved
+            # patch passes the boundary (dropped sources filtered, pinned
+            # kept); recollect.enabled does NOT pass -- the run re-collects
+            # and presents a fresh sources review.
+            if self._is_checkpointed(run):
+                approved_sources = self.service.approved_checkpoint(
+                    run_id, "sources_review"
+                )
+                sources_patch = (
+                    dict(approved_sources.get("user_patch") or {})
+                    if approved_sources is not None
+                    else {}
+                )
+                recollect = sources_patch.get("recollect") or {}
+                if approved_sources is None or recollect.get("enabled"):
+                    # No approval yet, or an approved recollect request:
+                    # present (a fresh) sources review and wait.
+                    self._await_review(
+                        run_id,
+                        "sources_review",
+                        {
+                            "source_ids": [
+                                str(r.get("url") or "") for r in merged_results
+                            ],
+                            "sub_questions": all_sub_questions,
+                        },
+                    )
+                else:
+                    dropped = set(sources_patch.get("dropped_source_ids") or [])
+                    if dropped:
+                        merged_results = [
+                            r for r in merged_results
+                            if str(r.get("url") or "") not in dropped
+                        ]
+
             self._check_control(run_id, "synthesizing")
             ledger.check_runtime()
             run = self.service.update_run_progress(
@@ -513,6 +611,8 @@ class LocalResearchEngine:
             "relevant_count": len(relevant_results),
             "chunk_count": len(final_answer.get("chunks") or []),
         }
+        if "gate" in final_answer:
+            verification_summary["gate"] = final_answer["gate"]
         if "citation_verification" in final_answer:
             verification_summary["citation_verification"] = final_answer[
                 "citation_verification"
@@ -542,25 +642,49 @@ class LocalResearchEngine:
                     "unverified_claim_count": len(claims) - supported,
                 },
             )
+        bundle_content = {
+            "query": question,
+            "sub_questions": all_sub_questions,
+            "confidence": final_answer.get("confidence"),
+            "report_markdown": report_markdown,
+            "source_count": len(evidence),
+            "iterations": iteration,
+            "remaining_gaps": remaining_gaps,
+        }
         self.service.save_artifact(
             run_id,
             artifact_name="bundle.json",
             content_type="application/json",
-            content={
-                "query": question,
-                "sub_questions": all_sub_questions,
-                "confidence": final_answer.get("confidence"),
-                "report_markdown": report_markdown,
-                "source_count": len(evidence),
-                "iterations": iteration,
-                "remaining_gaps": remaining_gaps,
-            },
+            content=bundle_content,
         )
 
-        return self.service.complete_run(
+        completed = self.service.complete_run(
             run_id,
             progress_message=f"Completed with {len(evidence)} source(s)",
         )
+        chat_handoff = run.get("chat_handoff")
+        if (
+            self.completion_handoff is not None
+            and isinstance(chat_handoff, dict)
+            and chat_handoff
+            and completed.get("status") == "completed"
+        ):
+            try:
+                result = self.completion_handoff(
+                    {
+                        "run_id": run_id,
+                        "question": question,
+                        "chat_handoff": chat_handoff,
+                        "report_markdown": report_markdown,
+                        "bundle": bundle_content,
+                        "verification_summary": verification_summary,
+                    }
+                )
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:  # noqa: BLE001 - handoff degrades, never fails
+                logger.warning(f"Research completion handoff failed: {exc}")
+        return completed
 
     # -- follow-up Q&A over stored claims (task-16325) ----------------------
 
@@ -633,7 +757,9 @@ class LocalResearchEngine:
             f"Follow-up question: {question}"
         )
         try:
-            response = str(
+            from ..Chat.Chat_Functions import chat_reply_text
+
+            response = chat_reply_text(
                 chat_api_call(
                     api_endpoint=llm,
                     messages_payload=[{"role": "user", "content": prompt}],
@@ -647,7 +773,6 @@ class LocalResearchEngine:
                     topk=None,
                     topp=None,
                 )
-                or ""
             ).strip()
         except Exception as exc:  # noqa: BLE001 - follow-up degrades, never fails hard
             logger.warning(f"Follow-up answer call failed: {exc}")

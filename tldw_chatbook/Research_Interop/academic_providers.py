@@ -119,7 +119,14 @@ def search_arxiv(
     shape with each item additionally carrying ``doi`` and ``source``."""
     search_parts: list[str] = []
     if query:
-        search_parts.append(f"all:{query}")
+        # Phrase-quote multi-word queries: arXiv token matching ranks papers
+        # sharing ANY tokens (a "retrieval augmented generation" token search
+        # surfaces cognitive-augmentation and image-generation papers), while
+        # a phrase match returns papers that actually use the term.
+        if " " in query.strip():
+            search_parts.append(f'all:"{query.strip()}"')
+        else:
+            search_parts.append(f"all:{query}")
     if author:
         search_parts.append(f"au:{author}")
     if year:
@@ -390,6 +397,40 @@ def merge_evidence_pools(
     return merged
 
 
+_QUESTION_PREFIXES = (
+    "what is",
+    "what are",
+    "what was",
+    "what were",
+    "how does",
+    "how do",
+    "how to",
+    "why is",
+    "why does",
+    "explain",
+    "describe",
+    "tell me about",
+)
+
+
+def _paper_query(question: str) -> str:
+    """Normalize a natural-language question into a topical search query:
+    paper engines tokenize everything, so interrogative prefixes ("what
+    is...") pollute arXiv/S2 ranking with off-topic matches."""
+    query = str(question or "").strip().rstrip("?.!").strip()
+    lowered = query.casefold()
+    for prefix in _QUESTION_PREFIXES:
+        if lowered.startswith(prefix + " "):
+            query = query[len(prefix) + 1 :].strip()
+            break
+    # "the main differences between X and Y" -> "differences between X and Y"
+    for filler in ("the main ", "the "):
+        if query.casefold().startswith(filler):
+            query = query[len(filler) :].strip()
+            break
+    return query
+
+
 async def search_papers(
     query: str,
     *,
@@ -409,6 +450,7 @@ async def search_papers(
     failures: list[str] = []
     papers: list[dict[str, Any]] = []
     seen_dois: set[str] = set()
+    topic_query = _paper_query(query)
 
     def _collect(items: list[Any]) -> None:
         for item in items:
@@ -423,7 +465,7 @@ async def search_papers(
 
     try:
         arxiv_out = await to_thread(
-            search_arxiv, query=query, results_per_page=results_per_page
+            search_arxiv, query=topic_query, results_per_page=results_per_page
         )
         _collect(arxiv_out.get("items") or [])
     except AcademicProviderError as exc:
@@ -433,7 +475,7 @@ async def search_papers(
     try:
         s2_out = await to_thread(
             search_semantic_scholar,
-            query=query,
+            query=topic_query,
             results_per_page=results_per_page,
             api_key=semantic_scholar_api_key
             if semantic_scholar_api_key is not None

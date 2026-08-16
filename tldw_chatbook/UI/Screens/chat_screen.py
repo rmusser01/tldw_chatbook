@@ -163,6 +163,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    RESEARCH_COMMAND_HANDLER_ID,
+    RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
@@ -16503,6 +16505,7 @@ class ChatScreen(BaseAppScreen):
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
+        RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -16567,6 +16570,7 @@ class ChatScreen(BaseAppScreen):
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
+            RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -16779,6 +16783,91 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    async def _console_command_research(self, parse: CommandParse) -> None:
+        """``/research <question>``: launch a local deep-research run whose
+        completed report is delivered back into THIS conversation (task-16481).
+
+        The run executes in a worker; the handoff inserts an assistant
+        message on completion, and the existing terminal-run notification
+        remains the fallback when insertion is impossible.
+        """
+        question = (parse.args or "").strip()
+        if not question:
+            await self._append_native_console_system_message(
+                "Usage: /research <question>"
+            )
+            return
+        conversation_id = self._current_console_conversation_id()
+        if not conversation_id:
+            await self._append_native_console_system_message(
+                "Deep research needs an active conversation to deliver its "
+                "report into."
+            )
+            return
+        app = self.app
+        local_service = getattr(app, "local_research_service", None)
+        if local_service is None:
+            await self._append_native_console_system_message(
+                "Local research service is unavailable; cannot start a run."
+            )
+            return
+
+        from tldw_chatbook.Research_Interop.chat_handoff import (
+            insert_research_completion_message,
+        )
+        from tldw_chatbook.Research_Interop.local_research_engine import (
+            LocalResearchEngine,
+        )
+
+        search_params: dict = {}
+        paper_search_fn = None
+        try:
+            from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
+
+            search_params = deep_search_pipeline_params()
+            if getattr(app, "research_window_academic_enabled", False):
+                from tldw_chatbook.Research_Interop.academic_providers import (
+                    search_papers,
+                )
+
+                paper_search_fn = search_papers
+        except Exception:
+            pass
+
+        db = getattr(app, "chachanotes_db", None)
+
+        async def _run_research() -> None:
+            run = local_service.launch_run(
+                query=question,
+                chat_handoff={"conversation_id": conversation_id, "origin": "console"},
+            )
+            engine = LocalResearchEngine(
+                local_service,
+                search_params=search_params,
+                paper_search_fn=paper_search_fn,
+                completion_handoff=(
+                    (lambda payload: insert_research_completion_message(db, payload))
+                    if db is not None
+                    else None
+                ),
+            )
+            try:
+                await engine.execute_run(run["id"])
+            except Exception as exc:  # noqa: BLE001 - worker must not crash the screen
+                logger.warning(f"Console research run failed: {exc}")
+
+        self.run_worker(
+            _run_research(),
+            group="console-research",
+            exclusive=False,
+            description=f"Console research: {question[:60]}",
+        )
+        await self._append_native_console_system_message(
+            f"Deep research started: {question}\n"
+            "The report will be added to this conversation when the run "
+            "completes."
+        )
 
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Delegate the registry-bound image command to its controller."""

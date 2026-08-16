@@ -93,3 +93,22 @@ contract `ServerResearchService` already mirrors.
 - **Fork the pipeline into the engine** — rejected: guarantees behavioral
   drift from the tool path (deadlines, robots, citation verification) the
   moment either side changes.
+
+## Addendum (2026-08-15, task-16482): checkpoint enforcement activated
+
+Clause 6's deferral is resolved: runs with `autonomy_mode="checkpointed"`
+(the schema default) now pause at phase boundaries for review — a
+`plan_review` checkpoint before any search spend and a `sources_review`
+checkpoint before synthesis — parking in a non-terminal
+`awaiting_<type>` control state with partial artifacts preserved.
+Approval goes through `LocalResearchService.patch_and_approve_checkpoint`
+with per-type patch validation (plan: `limits`; sources:
+`pinned_source_ids`/`dropped_source_ids`/`recollect`, inventory-checked
+and disjoint); an approved plan `limits` patch supersedes the run's
+originals for budget enforcement, an approved sources patch drops the
+named sources, and `recollect.enabled` loops the run back to collecting
+for a fresh sources review (server parity). Outline review remains
+unimplemented locally: the local engine has no separate outline phase
+(its plan covers focus areas), so the server's third checkpoint type
+does not map. The window's Approve Checkpoint action resolves the
+latest pending local checkpoint and restarts the engine on approval.

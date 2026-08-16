@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
-from tldw_chatbook.UI.Research_Window import ResearchWindow
+from tldw_chatbook.UI.Research_Window import ResearchWindow, _parse_limits_text
 
 # NOTE (task-16322, ADR-068): ``ResearchScreen`` is back -- the local
 # research execution engine drives launched local runs, so the window is
@@ -273,7 +273,7 @@ async def test_research_window_approves_selected_server_checkpoint():
 
 
 @pytest.mark.asyncio
-async def test_research_window_reports_local_checkpoint_approval_unavailable():
+async def test_research_window_reports_no_pending_local_checkpoint():
     service = FakeResearchScopeService()
     app = SimpleNamespace(research_scope_service=service)
     window = ResearchWindow(app)
@@ -283,8 +283,10 @@ async def test_research_window_reports_local_checkpoint_approval_unavailable():
 
     updated = await window.approve_selected_checkpoint()
 
+    # task-16482: local approval EXISTS now; the unavailable case is "no
+    # pending checkpoint" (no local service wired in this test).
     assert updated is None
-    assert "Local research checkpoints" in window.status_message
+    assert "No pending checkpoint" in window.status_message
 
 
 # --- local engine start wiring (task-16322, ADR-068) ---------------------------
@@ -370,10 +372,10 @@ def test_window_academic_toggle_defaults_off_and_persists_in_state():
     window = ResearchWindow(app_instance=app)
 
     assert window.academic_enabled is False
-    assert window.save_state() == {"source": "local", "academic": False}
+    assert window.save_state() == {"source": "local", "academic": False, "limits": ""}
 
     window.academic_enabled = True
-    assert window.save_state() == {"source": "local", "academic": True}
+    assert window.save_state() == {"source": "local", "academic": True, "limits": ""}
 
 
 def test_window_academic_toggle_restores_from_state():
@@ -424,3 +426,283 @@ def test_window_engine_start_passes_paper_fn_only_when_toggle_on(monkeypatch):
     window_on.academic_enabled = True
     window_on._start_local_engine("run-2")
     assert captured["paper_search_fn"] is academic_providers.search_papers
+
+
+# --- budgets + follow-up Q&A in the window (task-16334) ---------------------------
+
+
+def test_parse_limits_text_numeric_pairs():
+    limits, warnings = _parse_limits_text("max_searches=5, max_runtime_seconds=120")
+    assert limits == {"max_searches": 5, "max_runtime_seconds": 120.0}
+    assert warnings == []
+
+
+def test_parse_limits_text_invalid_pairs_warn_and_are_excluded():
+    limits, warnings = _parse_limits_text("max_searches=five, junk, max_tokens=100")
+    assert limits == {"max_tokens": 100}
+    assert len(warnings) == 2
+
+
+def test_parse_limits_text_empty():
+    assert _parse_limits_text("") == ({}, [])
+    assert _parse_limits_text("   ") == ({}, [])
+
+
+@pytest.mark.asyncio
+async def test_create_run_carries_parsed_limits(monkeypatch):
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+
+    window.limits_text = "max_searches=3, max_fetched_docs=10"
+    await window.create_run({"query": "Budgeted question"})
+
+    create_call = [c for c in service.calls if c[0] == "create_run"][0]
+    assert create_call[2]["limits_json"] == {
+        "max_searches": 3, "max_fetched_docs": 10.0,
+    }
+
+
+def test_limits_text_persists_in_state():
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    window.limits_text = "max_searches=3"
+    assert window.save_state()["limits"] == "max_searches=3"
+
+    window2 = ResearchWindow(app_instance=app)
+    window2.restore_state({"source": "local", "limits": "max_searches=4"})
+    assert window2.limits_text == "max_searches=4"
+
+
+@pytest.mark.asyncio
+async def test_ask_follow_up_answers_from_selected_local_run(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+
+    asked = {}
+
+    class FakeEngine:
+        def __init__(self, service, **kwargs):
+            asked["params"] = kwargs.get("search_params")
+
+        async def answer_follow_up(self, run_id, question, **kwargs):
+            asked["run_id"] = run_id
+            asked["question"] = question
+            return {"status": "answered", "answer": "Because the claims say so.",
+                    "question": question}
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        FakeEngine,
+    )
+    local_service = LocalResearchService(":memory:")
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service,
+                          local_research_service=local_service)
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+
+    result = await window.ask_follow_up("Why is that?")
+
+    assert asked["run_id"] == "local-run"
+    assert asked["question"] == "Why is that?"
+    assert result["status"] == "answered"
+    assert "Because the claims say so." in window.followup_answer_text
+
+
+@pytest.mark.asyncio
+async def test_ask_follow_up_insufficient_verdict_is_displayed_not_faked(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+
+    class FakeEngine:
+        def __init__(self, service, **kwargs):
+            pass
+
+        async def answer_follow_up(self, run_id, question, **kwargs):
+            return {"status": "insufficient_evidence", "answer": None,
+                    "reason": "no stored claims",
+                    "suggestion": "Launch a new research run."}
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        FakeEngine,
+    )
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=LocalResearchService(":memory:"))
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+
+    result = await window.ask_follow_up("Anything?")
+
+    assert result["status"] == "insufficient_evidence"
+    assert "insufficient" in window.followup_answer_text
+    assert "Launch a new research run." in window.followup_answer_text
+
+
+@pytest.mark.asyncio
+async def test_ask_follow_up_requires_selection_and_local_source(monkeypatch):
+    constructed = {"n": 0}
+
+    class FakeEngine:
+        def __init__(self, *a, **k):
+            constructed["n"] += 1
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        FakeEngine,
+    )
+    app = SimpleNamespace(research_scope_service=FakeResearchScopeService(),
+                          local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+
+    result = await window.ask_follow_up("No run selected")  # no selection
+    assert result is None
+    assert constructed["n"] == 0
+    assert "Select a research run" in window.status_message
+
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    # Set the source directly: switch_source() clears the selection, which
+    # would trip the no-selection guard instead of the source guard.
+    window.current_source = "server"
+    result = await window.ask_follow_up("Server run")
+    assert result is None
+    assert constructed["n"] == 0
+    assert "local" in window.status_message
+
+
+# --- local checkpoint approval (task-16482) ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_window_approves_latest_local_checkpoint_and_restarts_engine(monkeypatch):
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+
+    local_service = LocalResearchService(":memory:")
+    run = local_service.launch_run(query="Checkpointed run")
+    checkpoint = local_service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    service = FakeResearchScopeService()
+    service.runs["local"] = [
+        SimpleNamespace(id=run["id"], query="Checkpointed run", status="running",
+                        phase="planning", control_state="awaiting_plan_review",
+                        latest_checkpoint_id=checkpoint["id"])
+    ]
+    app = SimpleNamespace(research_scope_service=service,
+                          local_research_service=local_service)
+    window = ResearchWindow(app_instance=app)
+    restarted = []
+    monkeypatch.setattr(window, "_start_local_engine", restarted.append)
+
+    async def approve(scope_run_id, checkpoint_id, patch_payload):
+        return local_service.patch_and_approve_checkpoint(
+            scope_run_id, checkpoint_id, patch_payload=patch_payload
+        )
+
+    async def fake_scope_approve(run_id_arg, checkpoint_id, *, mode, patch_payload):
+        assert mode == "local"
+        return await approve(run_id_arg, checkpoint_id, patch_payload)
+
+    service.patch_and_approve_checkpoint = fake_scope_approve
+
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    updated = await window.approve_selected_checkpoint(patch_payload={"limits": {}})
+
+    assert updated["status"] == "approved"
+    assert local_service.latest_pending_checkpoint(run["id"]) is None
+    assert restarted == [run["id"]]
+
+
+# --- readable bundle inspection (task-16483) --------------------------------------
+
+@pytest.mark.asyncio
+async def test_load_bundle_auto_loads_the_report(monkeypatch):
+    service = FakeResearchScopeService()
+
+    async def get_bundle(run_id, *, mode):
+        return {
+            "run": {"id": run_id, "status": "completed", "phase": "completed",
+                    "query": "What is RAG?"},
+            "artifacts": [
+                {"artifact_name": "plan.json", "content_type": "application/json",
+                 "content": {"query": "What is RAG?"}},
+                {"artifact_name": "report_v1.md", "content_type": "text/markdown",
+                 "content": "# Report\nAnswer[1]."},
+            ],
+        }
+
+    async def get_artifact(run_id, artifact_name, *, mode):
+        return {"artifact_name": artifact_name, "content_type": "text/markdown",
+                "artifact_version": 1, "content": "# Report\nAnswer[1]."}
+
+    service.get_bundle = get_bundle
+    service.get_artifact = get_artifact
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    monkeypatch.setattr(window, "_start_local_engine", lambda run_id: None)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+
+    bundle = await window.load_selected_run_bundle()
+
+    assert bundle is not None
+    # The run record is NOT selected as the artifact; the report is.
+    assert window.current_artifact is not None
+    assert window.current_artifact["artifact_name"] == "report_v1.md"
+    assert "Answer[1]." in window.current_artifact["content"]
+
+
+# --- selected-run auto-refresh (task-16486) ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_auto_refresh_updates_non_terminal_local_run_preserving_payload():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    window.runs[0].status = "running"
+    window.current_bundle = {"kept": True}
+
+    calls = {"n": 0}
+
+    async def get_run(run_id, *, mode):
+        calls["n"] += 1
+        return SimpleNamespace(id=run_id, query="Local query", status="running",
+                               phase="synthesizing", control_state="running")
+
+    service.get_run = get_run
+    await window._auto_refresh_selected_run()
+
+    assert calls["n"] == 1
+    assert window.selected_run.phase == "synthesizing"
+    assert window.current_bundle == {"kept": True}  # payload state preserved
+
+
+@pytest.mark.asyncio
+async def test_auto_refresh_skips_terminal_and_non_local():
+    service = FakeResearchScopeService()
+    app = SimpleNamespace(research_scope_service=service, local_research_service=None)
+    window = ResearchWindow(app_instance=app)
+    await window.load_runs("local")
+    window.select_run(window.runs[0])
+    window.runs[0].status = "completed"  # terminal: no refresh
+
+    calls = {"n": 0}
+
+    async def get_run(run_id, *, mode):
+        calls["n"] += 1
+        return window.runs[0]
+
+    service.get_run = get_run
+    await window._auto_refresh_selected_run()
+    assert calls["n"] == 0
+
+    window.runs[0].status = "running"
+    window.current_source = "server"  # server source: not our engine
+    await window._auto_refresh_selected_run()
+    assert calls["n"] == 0

@@ -21,6 +21,36 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.UI.Research_Modules import ResearchController
+from tldw_chatbook.UI.Research_Modules.bundle_rendering import (
+    default_artifact_for_bundle,
+    render_artifact,
+    render_bundle_summary,
+)
+
+
+def _parse_limits_text(text: str | None) -> tuple[dict[str, float], list[str]]:
+    """Parse a limits input like "max_searches=5, max_runtime_seconds=120"
+    into a limits_json dict (task-16334). Invalid pairs are excluded and
+    reported as warnings so one typo never blocks run creation."""
+    limits: dict[str, float] = {}
+    warnings: list[str] = []
+    for raw_pair in str(text or "").split(","):
+        pair = raw_pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            warnings.append(f"unparsed limit (expected key=value): {pair!r}")
+            continue
+        key, _, raw_value = pair.partition("=")
+        key = key.strip()
+        try:
+            value = float(raw_value.strip())
+        except ValueError:
+            warnings.append(f"non-numeric limit for {key!r}: {raw_value.strip()!r}")
+            continue
+        if key:
+            limits[key] = value
+    return limits, warnings
 
 
 def _academic_lane_default() -> bool:
@@ -51,6 +81,10 @@ class ResearchWindow(Vertical):
         # task-16328: academic lane toggle (arXiv + Semantic Scholar papers
         # join the run's evidence pool when enabled).
         self.academic_enabled = _academic_lane_default()
+        # task-16334: budget limits text (parsed into limits_json on create)
+        # and the rendered follow-up answer.
+        self.limits_text = ""
+        self.followup_answer_text = ""
         self.controller = ResearchController(
             getattr(app_instance, "research_scope_service", None)
         )
@@ -72,6 +106,10 @@ class ResearchWindow(Vertical):
             )
         with Horizontal(id="research-create-row"):
             yield Input(placeholder="Research question", id="research-query-input")
+            yield Input(
+                placeholder="Limits: max_searches=5, max_runtime_seconds=120",
+                id="research-limits-input",
+            )
             yield Button("Create Run", id="research-create-run", variant="primary")
         yield Static(self.status_message, id="research-status")
         with Horizontal(id="research-body"):
@@ -97,6 +135,13 @@ class ResearchWindow(Vertical):
                 with Horizontal(id="research-checkpoint-actions"):
                     yield Button("Approve Checkpoint", id="research-approve-checkpoint")
                     yield Button("Clear Events", id="research-clear-events")
+                with Horizontal(id="research-followup-row"):
+                    yield Input(
+                        placeholder="Ask a follow-up about the selected run",
+                        id="research-followup-input",
+                    )
+                    yield Button("Ask Follow-up", id="research-followup-ask")
+                yield Static("No follow-up yet.", id="research-followup-answer")
                 yield Static("No bundle loaded.", id="research-bundle-detail")
                 yield Static("No artifact loaded.", id="research-artifact-detail")
                 yield Static(
@@ -104,13 +149,22 @@ class ResearchWindow(Vertical):
                 )
 
     def save_state(self) -> dict[str, Any]:
-        return {"source": self.current_source, "academic": self.academic_enabled}
+        return {
+            "source": self.current_source,
+            "academic": self.academic_enabled,
+            "limits": self.limits_text,
+        }
 
     def restore_state(self, state: dict[str, Any]) -> None:
         source = str((state or {}).get("source") or "local").strip().lower()
         self.current_source = source if source in {"local", "server"} else "local"
         self.academic_enabled = bool((state or {}).get("academic"))
+        self.limits_text = str((state or {}).get("limits") or "")
         self._sync_academic_toggle()
+        try:
+            self.query_one("#research-limits-input", Input).value = self.limits_text
+        except Exception:
+            pass  # not mounted yet; compose()'s initial value covers it
 
     def _sync_academic_toggle(self) -> None:
         try:
@@ -119,6 +173,77 @@ class ResearchWindow(Vertical):
             )
         except Exception:
             pass  # not mounted yet; the compose() initial value covers it
+
+    @on(Button.Pressed, "#research-followup-ask")
+    async def _on_followup_ask(self, event: Button.Pressed) -> None:
+        try:
+            question = self.query_one("#research-followup-input", Input).value
+        except Exception:
+            question = ""
+        await self.ask_follow_up(question or None)
+
+    async def ask_follow_up(self, question: str | None) -> Any:
+        """Answer a follow-up from the selected local run's stored claims
+        (task-16334). Renders the answer, or the engine's explicit
+        insufficient-evidence verdict -- never a fabricated one."""
+        try:
+            run_id = self._selected_run_id()
+        except ValueError:
+            run_id = ""
+        if not run_id:
+            self._set_status("Select a research run before asking a follow-up.")
+            return None
+        if self.current_source != "local":
+            self._set_status("Follow-up Q&A is available for local runs only.")
+            return None
+        local_service = getattr(self.app_instance, "local_research_service", None)
+        if local_service is None:
+            self._set_status("Local research service unavailable for follow-ups.")
+            return None
+        if not question or not str(question).strip():
+            self._set_status("Type a follow-up question first.")
+            return None
+        question = str(question).strip()
+
+        # The default follow-up answerer reads the synthesis LLM from
+        # search_params; assemble them the same way the tool does so the
+        # window uses the configured pipeline.
+        search_params: dict[str, Any] = {}
+        try:
+            from ..Tools.web_tool_impls import _deep_search_settings
+
+            final_llm = _deep_search_settings().get("final_answer_llm")
+            if final_llm:
+                search_params["final_answer_llm"] = final_llm
+        except Exception:
+            pass
+
+        from ..Research_Interop.local_research_engine import LocalResearchEngine
+
+        engine = LocalResearchEngine(local_service, search_params=search_params)
+        try:
+            result = await engine.answer_follow_up(run_id, question)
+        except Exception as exc:  # noqa: BLE001 - report, never crash the window
+            self._set_status(f"Follow-up failed: {exc}")
+            return None
+        if result.get("status") == "answered":
+            self.followup_answer_text = (
+                f"Q: {question}\n{result.get('answer') or ''}"
+            )
+        else:
+            self.followup_answer_text = (
+                f"Q: {question}\n[insufficient evidence] "
+                f"{result.get('reason') or 'stored evidence does not support this question'}\n"
+                f"{result.get('suggestion') or ''}"
+            )
+        try:
+            self.query_one("#research-followup-answer", Static).update(
+                self.followup_answer_text
+            )
+        except Exception:
+            pass  # not mounted (tests); the state carries the text
+        self._set_status(f"Follow-up {result.get('status')}.")
+        return result
 
     @on(Checkbox.Changed, "#research-academic-toggle")
     def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
@@ -152,6 +277,11 @@ class ResearchWindow(Vertical):
         return self.runs
 
     async def create_run(self, payload: dict[str, Any]) -> Any:
+        limits, warnings = _parse_limits_text(self.limits_text)
+        if warnings:
+            self._set_status("Limits: " + "; ".join(warnings))
+        if limits:
+            payload = {**payload, "limits_json": limits}
         created = await self.controller.create_run(self.current_source, payload)
         if self.current_source == "local":
             created_id = (
@@ -245,15 +375,16 @@ class ResearchWindow(Vertical):
         bundle = await self.controller.get_bundle(self.current_source, run_id)
         self.current_bundle = dict(bundle or {})
         self._render_bundle_detail()
-        if self.current_bundle and self.is_mounted:
-            first_artifact_name = next(iter(self.current_bundle.keys()), "")
-            if first_artifact_name:
+        # task-16483: open the most useful artifact right away (the report
+        # when present -- never the local shape's run record).
+        default_name = default_artifact_for_bundle(self.current_bundle)
+        if default_name:
+            if self.is_mounted:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = str(
-                        first_artifact_name
-                    )
+                    self.query_one("#research-artifact-name", Input).value = default_name
                 except Exception:
                     pass
+            await self.load_selected_run_artifact(default_name)
         self._set_status(f"Loaded research bundle for {run_id}.")
         return self.current_bundle
 
@@ -282,8 +413,22 @@ class ResearchWindow(Vertical):
             if not resolved_checkpoint_id and self.current_source != "local":
                 self._set_status("Checkpoint id is required.")
                 return None
+            run_id = self._selected_run_id()
             if not resolved_checkpoint_id:
-                resolved_checkpoint_id = "local-checkpoint-unavailable"
+                # task-16482: local runs resolve their latest PENDING
+                # checkpoint (the engine parks at one boundary at a time).
+                local_service = getattr(
+                    self.app_instance, "local_research_service", None
+                )
+                pending = (
+                    local_service.latest_pending_checkpoint(run_id)
+                    if local_service is not None
+                    else None
+                )
+                if pending is None:
+                    self._set_status("No pending checkpoint for this run.")
+                    return None
+                resolved_checkpoint_id = str(pending["id"])
             resolved_patch_payload = (
                 patch_payload
                 if patch_payload is not None
@@ -300,6 +445,10 @@ class ResearchWindow(Vertical):
             return None
         self._set_selected_run(updated, reset_payload_state=False)
         self._set_status(f"Approved research checkpoint {resolved_checkpoint_id}.")
+        if self.current_source == "local":
+            # task-16482: approval unblocks the boundary -- restart the
+            # engine so the run continues to its next phase/checkpoint.
+            self._start_local_engine(run_id)
         return updated
 
     async def watch_selected_run_events(
@@ -398,6 +547,32 @@ class ResearchWindow(Vertical):
             raise ValueError("No research run is selected.")
         return str(self._record_get(self.selected_run, "id") or "")
 
+    def on_mount(self) -> None:
+        # task-16486: while a local engine run is in flight, keep the
+        # selected run's detail current without manual Refresh.
+        self.set_interval(2.0, self._auto_refresh_selected_run)
+
+    async def _auto_refresh_selected_run(self) -> None:
+        """Refresh the selected LOCAL run's detail while it is non-terminal
+        (task-16486). Payload state (bundle/artifact selections) is
+        preserved; server-source selections and terminal runs are skipped
+        (server observation already has its own streaming surface)."""
+        if self.current_source != "local" or self.selected_run is None:
+            return
+        if self._record_field(self.selected_run, "status") in {
+            "completed", "failed", "cancelled", "draft",
+        }:
+            return
+        try:
+            run_id = self._selected_run_id()
+            updated = await self.controller.get_run(self.current_source, run_id)
+        except Exception:
+            return  # transient controller errors must not spam the status line
+        if updated is None:
+            return
+        self.selected_run = updated
+        self._update_detail(updated)
+
     def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
         self.selected_run = run
         if reset_payload_state:
@@ -419,11 +594,7 @@ class ResearchWindow(Vertical):
     def _render_bundle_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No bundle loaded."
-        if self.current_bundle is not None:
-            renderable = json.dumps(
-                self.current_bundle, indent=2, sort_keys=True, default=str
-            )
+        renderable = render_bundle_summary(self.current_bundle)
         try:
             self.query_one("#research-bundle-detail", Static).update(renderable)
         except Exception:
@@ -432,15 +603,7 @@ class ResearchWindow(Vertical):
     def _render_artifact_detail(self) -> None:
         if not self.is_mounted:
             return
-        renderable = "No artifact loaded."
-        if self.current_artifact is not None:
-            artifact = self.current_artifact
-            renderable = (
-                f"Artifact: {self._record_get(artifact, 'artifact_name', '')}\n"
-                f"Type: {self._record_get(artifact, 'content_type', '')}\n"
-                f"Version: {self._record_get(artifact, 'artifact_version', 1)}\n"
-                f"Content:\n{self._render_value(self._record_get(artifact, 'content'))}"
-            )
+        renderable = render_artifact(self.current_artifact)
         try:
             self.query_one("#research-artifact-detail", Static).update(renderable)
         except Exception:
