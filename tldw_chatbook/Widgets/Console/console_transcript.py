@@ -2243,6 +2243,27 @@ class ConsoleTranscript(VerticalScroll):
                 self.call_later(self.refresh_messages)
         super().anchor(*args, **kwargs)
 
+    def scroll_end(self, *args, **kwargs) -> None:
+        """Jump to the bottom; with a hidden tail, plant the drain's first link.
+
+        Review A, round 2: ``Widget.scroll_end`` (the End key) re-engages
+        the raw anchor synchronously, but its actual scroll can be
+        superseded by the compositor's anchor path, which moves an anchored
+        widget WITHOUT firing the ``scroll_y`` watcher (measured: a pill
+        display toggle between End and the deferred scroll left
+        ``watch_scroll_y`` completely silent across the 32->580 jump). Every
+        scroll-EVENT hook (wheel, PageDown, the watcher) can therefore miss
+        this entry entirely, so the End action itself schedules the first
+        tailward chunk; from there the ``_hydrate_tailward`` self-chain
+        carries the drain on the raw ANCHOR STATE, which needs no scroll
+        events. Callers that already handled the window (``jump_to_latest``
+        via ``anchor()``, the prune's following-branch restore) reach here
+        with no hidden tail, making this a no-op for them.
+        """
+        super().scroll_end(*args, **kwargs)
+        if self._hidden_tail_ids:
+            self._schedule_tailward_hydration()
+
     def _schedule_scrollback_hydration(self) -> None:
         """Coalesce one lazy prepend after explicit detached upward scrolling.
 
@@ -2417,15 +2438,28 @@ class ConsoleTranscript(VerticalScroll):
             message.id: index for index, message in enumerate(self._messages)
         }
         trim_start_id: str | None = None
+        blocking_id: str | None = None
         # Never trim the topmost group: the window must stay non-empty.
         for message_id, group_height in reversed(groups[1:]):
             if message_id in protected_ids:
+                blocking_id = message_id
                 break
             if remaining - group_height <= keep_floor:
                 break
             remaining -= group_height
             trim_start_id = message_id
         if trim_start_id is None:
+            if blocking_id is not None and remaining > keep_floor:
+                # Mirror of the prune's blocked-walk log: without it a
+                # paused slide (selection or focus pinned at the mounted
+                # bottom) is indistinguishable from the trim simply having
+                # nothing to do.
+                logger.debug(
+                    "Console transcript tail trim blocked: mounted height "
+                    f"{remaining} over keep floor {keep_floor} but message "
+                    f"{blocking_id!r} (selected or focused) pins the newest "
+                    "end of the slice"
+                )
             return None
         return index_by_id.get(trim_start_id)
 
@@ -2436,6 +2470,19 @@ class ConsoleTranscript(VerticalScroll):
         size + collapsed vertical margins), scoped per message group. The
         walk ends at the first non-message child (trailing end-rule, empty
         panel, docked jump pill), exactly like the prune's walk.
+
+        Latent mirror divergence, deliberate and currently exact (review
+        round 2): the prune's walk carries ``group_height``/``group_margin``
+        cumulatively ACROSS group boundaries, so a group's first row
+        collapses against the previous group's trailing margin; this walk
+        resets both per group, skipping that inter-group collapse — a
+        per-boundary difference of ``min(prev_bottom, top)``. Today every
+        transcript row has zero vertical margin, so the sum matches the
+        measured virtual height exactly (probe: constant -3 delta = the
+        three non-message chrome rows, at any group count) and the sign is
+        conservative. If a row style ever gains a vertical margin, this
+        walk will overcount each boundary by that collapse amount — still
+        conservative (trims slightly less), but worth knowing.
         """
         key_by_widget_id = {
             id(widget): key for key, widget in self._row_widgets.items()
@@ -3048,9 +3095,27 @@ class ConsoleTranscript(VerticalScroll):
                 self.scroll_end(animate=False)
             else:
                 # Keep the same content in view: shift the offset up by the
-                # height actually removed (measured, not estimated).
+                # height actually removed (measured, not estimated). Use
+                # Textual's internal switch — this is a COMPENSATION, not a
+                # user gesture, exactly like the hydration restore above.
+                # The public scroll_to() calls release_anchor(), which (a)
+                # stamps _user_scroll_time as if the user had scrolled (a
+                # programmatic shift must never outrank a later send's
+                # follow intent — TASK-336 ordering), and (b) — review
+                # round 2's blocker — cleared the RAW anchor during an
+                # End-initiated tail drain: with a tail hidden the belt
+                # predicate makes `following` False, this branch ran, and
+                # the fabricated release disarmed both convergence braces
+                # (the _hydrate_tailward chain and the set_messages heal),
+                # stalling the drain mid-history forever. A genuinely
+                # detached reader's anchor is already released, so for them
+                # this is behavior-identical.
                 removed = total_height - self.virtual_size.height
-                self.scroll_to(y=max(0.0, anchor_y - removed), animate=False)
+                self._scroll_to(
+                    y=max(0.0, anchor_y - removed),
+                    animate=False,
+                    release_anchor=False,
+                )
 
         self.call_after_refresh(_restore_scroll)
 

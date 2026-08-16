@@ -436,11 +436,21 @@ async def test_kill_switch_keeps_the_one_sided_ceiling_and_full_reveals():
 async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
     """`End` must never produce follow-state over a hidden tail (review A).
 
-    Born red: `Widget.scroll_end()` (the End key) clears `_anchor_released`
-    without calling `anchor()`, so the transcript reported tail-follow while
-    the newest rows stayed hidden — a streamed reply never mounted and the
-    jump pill (whose visibility is gated on NOT following) was suppressed at
-    exactly the moment it was the only recovery.
+    Born red round 1: `Widget.scroll_end()` (the End key) clears
+    `_anchor_released` without calling `anchor()`, so the transcript
+    reported tail-follow while the newest rows stayed hidden — a streamed
+    reply never mounted and the jump pill (whose visibility is gated on NOT
+    following) was suppressed at exactly the moment it was the only
+    recovery.
+
+    Born red AGAIN round 2, at `1e0af17a5`, once frames pass between End
+    and the first ingest (the round-1 shape had zero and passed on timing
+    luck): the drain crosses the high watermark, the prune fires, and —
+    because the belt predicate makes `following` False while a tail is
+    hidden — its restore took the not-following branch, whose PUBLIC
+    `scroll_to` fabricated an anchor release, disarming both convergence
+    braces. The drain then stalled mid-history forever (reviewer: settle 5,
+    20 and 100 frames all failed; only 0 passed).
     """
     app = TwoSidedHarness()
     history = _messages(400)
@@ -470,6 +480,22 @@ async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
             "a run — its suppression was the trap in review finding A"
         )
 
+        # The round-2 shape: let frames pass so the drain crosses the high
+        # mark and the prune fires BEFORE any ingest arrives. The drain must
+        # keep converging through the prune — an End press alone, no ticks,
+        # must reach the true tail.
+        await _settle(pilot, times=5)
+        assert await _wait_for(
+            pilot,
+            lambda: not transcript._hidden_tail_ids,
+            attempts=120,
+        ), (
+            "the End drain stalled mid-history: "
+            f"{len(transcript._hidden_tail_ids)} messages still hidden at "
+            f"last={_mounted_message_ids(transcript)[-1]}"
+        )
+        assert _mounted_message_ids(transcript)[-1] == "m399"
+
         # An in-flight reply (no new USER message, so no send-yank branch).
         live = ConsoleChatMessage(
             id="live-reply",
@@ -477,7 +503,7 @@ async def test_end_key_from_deep_scrollback_shows_pill_and_mounts_the_reply():
             content="streamed so far",
             status="streaming",
         )
-        for _ in range(8):
+        for _ in range(3):
             transcript.set_messages([*history, live])
             await transcript.refresh_messages()
             await _settle(pilot, times=3)
@@ -603,7 +629,9 @@ async def test_kill_switch_flip_with_a_hidden_tail_mounts_everything():
         await transcript.refresh_messages()
         await _settle(pilot)
         assert len(_mounted_message_ids(transcript)) == 400, (
-            "with windowing AND pruning off, everything mounts"
+            "with windowing and pruning off AND the pruned prefix cleared "
+            "(as a restart would clear it), everything mounts — a previously "
+            "pruned prefix itself stays sticky by the 15455/15458 contract"
         )
 
 
