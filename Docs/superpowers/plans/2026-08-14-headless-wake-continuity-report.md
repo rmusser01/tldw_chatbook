@@ -95,13 +95,15 @@ the live objects never lost them.
 
 Two details that are easy to get wrong and are deliberate:
 
-- **`_ensure_console_chat_store()` is still called first in the restore**,
-  and it is load-bearing: `_complete_screen_navigation` restores the
-  INCOMING screen before `switch_screen` unmounts the outgoing one, and
-  that call is what claims the runtime for the incoming view
-  (`ensure_console_runtime(app, view=self)` → `attach_view`) in time for
-  the outgoing screen's later `detach_view` to find a different claimant
-  and do nothing. Removing it is mutation M3 below.
+- **The restore still TOUCHES the runtime**, and that is load-bearing:
+  `_complete_screen_navigation` restores the INCOMING screen before
+  `switch_screen` unmounts the outgoing one, and this is where the incoming
+  view claims the runtime (`ensure_console_runtime(app, view=self)` →
+  `attach_view`) in time for the outgoing screen's later `detach_view` to
+  find a different claimant and do nothing. Measured (M3/M3b below): the
+  claim is made by ANY read of a runtime-backed handle, not by
+  `_ensure_console_chat_store` specifically — remove the contact entirely
+  and the continuity test goes red.
 - **The composer→store draft flush stays** and is now the one place the
   view's uncommitted draft is written back into the object that outlives
   it.
@@ -243,13 +245,80 @@ silently replaced. Now both survive.
 
 ## 6. Mutations run and killed
 
-<!--MUTATIONS-->
+Every restore was Edit-based; `grep -rn "MUTATION-" tldw_chatbook/` is
+clean and `git diff` shows only the intended changes.
+
+| # | Mutation | Expected to die | Actually died |
+|---|---|---|---|
+| M1 | the whole change reverted (i.e. the untouched merge-base) | the three continuity reds | `..._is_in_the_transcript`, `..._all_agree`, `..._session_identity...` — 3 failed / 1 passed ✅ |
+| M2 | `_adopt_console_pending_attachments` drops the new `store.clear_pending_attachments(session_id)` | a pending-attachment duplication test | **8** tests in `test_console_pending_attachment_stash.py` ✅ |
+| M3 | `_restore_native_console_state` reads `self._console_chat_store` instead of calling `_ensure_console_chat_store()` | the superseded-screen claim test | **nothing — SURVIVED** (see below) |
+| M3b | the restore touches the runtime not at all (non-constructing read through the app) | the claim ordering | `test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript` ✅ |
+| M4 | `ConsoleChatStore._persist_active_leaf` never writes | the four-way test's active-leaf leg | `test_transcript_payload_db_and_active_leaf_all_agree` ✅ |
+| M5 | `_sync_native_console_transcript` never calls `transcript.refresh_messages()` | the soak's repaint assertion | **nothing — SURVIVED** (see below), then 2 after the fix ✅ |
+
+**M3 survived, and the docstring was wrong.** The claim is not made by
+`_ensure_console_chat_store` specifically: `_console_chat_store` is itself
+a runtime-backed property, so ANY read of it calls
+`ensure_console_runtime(app, view=self)` and claims. M3b — a
+non-constructing read straight off `app.console_runtime` — isolates the
+claim properly and dies. The docstring now states the measured version
+(runtime CONTACT is what matters, not the spelling) instead of the
+plausible one.
+
+**M5 survived, and it caught a test passing for the wrong reason** — the
+whole point of the discipline. `_rendered_text` was reading
+`ConsoleTranscript._messages`, the widget's MODEL, which `set_messages`
+assigns before a single row is built; so "the wake notice is RENDERED"
+and "the transcript repaints" were both really "the data arrived". The
+helper now walks `_row_widgets`, what `_reconcile_rows` actually mounts.
+Re-run under the same mutation: **2 failed** (P3b's render assertion and
+the soak's repaint assertion). Restored: 4 passed. Both a test bug and,
+had it shipped, a soak with no teeth on the one property the
+freeze incident is about.
 
 ---
 
 ## 7. Gate — baseline (merge-base `31b0ef6a1`) vs final
 
-<!--GATE_TABLE-->
+Runner: `.venv/bin/pytest <paths> -p no:randomly -q --no-header -rf`,
+cwd = the worktree, `Tests/test_probe_import_provenance.py` in every gate
+(the venv's editable install resolves `tldw_chatbook` to a FOREIGN
+worktree and loses only by `sys.meta_path` ordering). Every count below
+was READ off a summary line, never inferred.
+
+| Gate | Baseline @ merge-base `31b0ef6a1` | Final @ branch | Delta |
+|---|---|---|---|
+| **`Tests/Chat/` + probe** | 14 failed, 5587 passed, 66 skipped (1134.74s) | **14 failed, 5587 passed, 66 skipped** (1012.66s) | **0** — the same fourteen names, in the same files |
+| **Gate battery** — `test_console_viewless_hooks`, `test_console_runtime_lifetime`, `test_console_runtime_ownership`, `test_screen_residency`, `Tests/Agents/`, 13 fleet+wake files, `test_console_mcp_approval`, 9 session/workspace/browser files, the new continuity suite, probe | its 6 failures re-measured node-by-node at the merge-base: **6 failed, 0 passed** | **6 failed, 2023 passed** | **0** — all six reproduce with this branch absent |
+| **Snapshot/round-trip battery** — `test_console_native_chat_flow`, `test_console_pending_attachment_stash`, `test_console_live_work_handoffs`, `test_console_rag_settings_modal`, `test_console_skill_install_confirm`, `test_console_composer_menu`, `test_console_scope_row`, 3× `Tests/ProductionApp/`, `test_screen_navigation`, `Tests/State/test_screen_state_store`, `test_application_state_ownership`, probe | **7 failed, 753 passed** (902.25s) | 25 failed / 735 passed BEFORE the test updates; after them, per-file: 19 passed (`-k` the round-trip family), 22 passed (pending-attachment stash), 3 passed (`test_chat_root_state_removal`) | 19 of the 25 were mine and are fixed; the other 6 are merge-base reds (see below) |
+| **New continuity suite** (`Tests/UI/test_console_store_continuity.py`) | did not exist; on the untouched production tree: **3 failed, 1 passed** | **4 passed** | +3 |
+
+**The six merge-base reds inside the gate battery**, each re-run at
+`31b0ef6a1` with zero bytes of this branch and each failing there
+(`6 failed` in 13.58s):
+`test_console_session_settings::test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume`,
+`test_console_workspace_controller` ×2,
+`test_console_workspace_context_rail` ×3.
+
+**The six merge-base reds inside the snapshot battery** (from that
+battery's own merge-base run): `test_ctrl_k_opens_session_switcher_and_
+activates_native_session`, `test_switcher_rename_choice_chains_to_rename_
+modal`, `test_chat_composition_retirement` ×3 (all three
+`AttributeError: 'ChatScreen' object has no attribute
+'_ensure_console_video_store'`), and
+`test_application_state_ownership::test_runtime_source_state_store_
+references_are_confined_to_owner_modules`. A seventh, `test_console_
+accepted_send_records_first_send_flag`, failed at the MERGE-BASE and
+passed on the branch — flaky under load, in the branch's favour, and not
+claimed as a fix.
+
+**Honest gap:** the snapshot battery's full re-run after the test updates
+did not complete — it sat at 66% for over an hour under five-way CPU
+contention and was killed. Its per-file re-runs (above) are the evidence
+that stands, and every file in it was already green WITH the production
+change in place during the 25-failure run, so the only files whose state
+changed afterwards are the three that were re-run individually.
 
 ---
 
@@ -272,4 +341,52 @@ silently replaced. Now both survive.
 
 ## 9. Concerns
 
-<!--CONCERNS-->
+1. **~45 tests now exercise code with no production caller.** The
+   per-session and per-message (de)serializers survive this landing; the
+   tests that pinned them were retargeted at a documented test-local round
+   trip rather than deleted, because their subject (legacy-payload
+   tolerance, character-provenance narrowing) is still live code. Until
+   **task-16520** retires both, that coverage describes a path the app
+   never takes. Deliberate, and the alternative — a ~45-test deletion
+   inside the riskiest landing of the arc — was worse.
+
+2. **Runtime-identity scoping of Console history is now visibly
+   vestigial.** `ScreenStateStore.restore` drops a snapshot whose
+   `RuntimeIdentity` no longer matches (a local↔server switch), which used
+   to mean "Console starts fresh after a server switch". It has not meant
+   that since the lifetime landing: `ConsoleRuntime` has no identity check
+   at all (`ensure_chat_store` returns the store it already holds), and
+   nothing clears it on a switch — so the sessions survived the identity
+   change anyway, snapshot or no snapshot. This landing does not change
+   that behaviour by a byte; it just removes the code that looked like it
+   was enforcing it. Whether Console history SHOULD reset on a runtime
+   switch is an owner question, and it is now the only place that decision
+   could live.
+
+3. **Same-target navigation** still carries the lifetime landing's
+   recorded consequence (the outgoing screen's streaming turn is no longer
+   cancelled). Unchanged here, and still worth the owner eyeball that
+   report asked for.
+
+4. **Machine contention made wall-clock numbers unreliable** and produced
+   at least two failures at BOTH the merge-base and the branch
+   (`test_ctrl_k_opens_session_switcher_and_activates_native_session`,
+   `test_switcher_rename_choice_chains_to_rename_modal` — both drive a
+   modal behind `pilot.pause(0.2)`). Four to six foreign `pytest`
+   processes ran on this machine throughout; a 15-minute suite took 15
+   minutes at the merge-base and 15 minutes on the branch, but a
+   single-file run varied by 3×. Counts were read, never inferred.
+
+5. **`Tests/UI/` was NOT run in full.** Under the contention above it was
+   not affordable. What WAS run: every UI file the change's blast radius
+   names (the whole snapshot/round-trip surface, the runtime/lifetime/
+   viewless/residency trio, all thirteen fleet+wake files, the MCP
+   approval file, nine session/workspace/browser files, both ProductionApp
+   route files, and the new continuity suite) plus `Tests/Chat/` in full.
+   Saying so plainly rather than implying coverage that was not obtained.
+
+6. **The soak is a pytest test, not `run_workbench_soak.py`.** It copies
+   that script's shape (route churn, then probe the app) but asserts
+   interactivity instead of writing responsiveness artifacts, so it can
+   live in this task's gate and fail a PR. The artifact-writing soak is
+   untouched.
