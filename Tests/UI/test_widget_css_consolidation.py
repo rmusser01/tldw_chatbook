@@ -262,6 +262,59 @@ def test_isolate_local_variables_leaves_unbalanced_css_an_error():
         widget_css.isolate_local_variables("$x: 1; Foo { color: red;")
 
 
+def test_isolate_local_variables_rejects_a_forward_reference():
+    """TASK-15993 review gap 2b: a forward reference must fail loudly, not
+    silently accept a shape Textual itself rejects.
+
+    Textual, parsing ``$a: $b;\\n$b: blue;\\nFoo { color: $a; }\\n`` standalone,
+    raises ``UnresolvedVariableError`` immediately -- its single left-to-right
+    scan hits ``$b`` inside ``$a``'s own value before ``$b: blue;`` has been
+    seen. The resolver must reject the same shape rather than silently
+    resolving to a dangling ``$b`` (which either defers the failure to
+    sheet-parse time, or -- if an unrelated global happens to share the name
+    -- resolves to the WRONG value with no error anywhere; born-red evidence
+    below).
+    """
+    css = "$a: $b;\n$b: blue;\nFoo { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$b"):
+        widget_css.isolate_local_variables(css, scope="Foo")
+
+    # Born-red for the *silent-wrong-value* half of the gap: a global variable
+    # happens to share the forward-referenced name. Before the fix this
+    # produced `Alpha { color: #800080; }` (purple) instead of "blue", with no
+    # error anywhere -- exactly the silent-misresolution class this task
+    # exists to eliminate, relocated into the new resolver. The fix must
+    # reject it at build time rather than let it reach that state.
+    shared_name_css = "$a: $fwd-shared;\n$fwd-shared: blue;\nAlpha { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$fwd-shared"):
+        widget_css.isolate_local_variables(shared_name_css, scope="Alpha")
+
+
+def test_isolate_local_variables_leaves_quoted_content_untouched():
+    """TASK-15993 review gap 2c-i: a ``$name``-shaped sequence inside a quoted
+    string must not be rewritten -- Textual's tokenizer emits a quoted string
+    as a single opaque ``string`` token, never re-scanned for a
+    ``variable_ref`` (confirmed against ``textual.css.tokenize``).
+    """
+    css = '$a: red;\nFoo { note: "price is $a dollars"; color: $a; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert 'note: "price is $a dollars";' in isolated, (
+        "the quoted string's contents must survive verbatim, $a and all"
+    )
+    assert "color: red;" in isolated
+
+
+def test_isolate_local_variables_handles_semicolon_inside_a_quoted_value():
+    """TASK-15993 review gap 2c-ii: a ``;`` inside a quoted variable *value*
+    must not end the declaration early and corrupt the rest of the block.
+    """
+    css = '$sep: "a;b";\nFoo { color: red; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert "$sep" not in isolated
+    assert "Foo { color: red; }" in isolated
+    assert 'b";' not in isolated, "the string's tail must not leak as raw text"
+
+
 def test_local_variable_definitions_do_not_leak_across_blocks():
     """TASK-15993: a block-local ``$var`` cannot silently apply to a later
     block's rules once both land in the same generated sheet.

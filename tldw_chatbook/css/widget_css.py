@@ -368,97 +368,336 @@ def _selector_start(text: str) -> int:
 #: reference (no trailing ``:``) is a use, not a definition.
 _VAR_DEF_START_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_-]*)\s*:")
 
-#: Matches any ``$name`` reference (definition or use -- callers that only
-#: want uses run this over text that has already had definitions stripped).
+#: Matches a ``$name`` *use* (no trailing ``:``).
 _VAR_USE_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_-]*)")
 
 
-def _substitute_local_variables(text: str, local_vars: dict[str, str]) -> str:
-    """Replace ``$name`` references to *known* local variables with their
-    resolved value text.
+def _split_opaque_spans(css: str) -> list[tuple[str, str]]:
+    """Split ``css`` into ``(kind, text)`` segments spanning the whole string.
 
-    A reference to a name not in ``local_vars`` -- a real app/theme variable
-    (``$surface``, ``$primary``, ...), or simply a name this block never
-    defines -- is left untouched, so it keeps resolving exactly as before
-    against whatever ``Stylesheet.set_variables`` supplies at parse time.
+    ``kind`` is one of ``"code"``, ``"string"``, ``"comment"``, ``"open"``
+    (a bare ``{``) or ``"close"`` (a bare ``}``). Concatenating every
+    segment's text in order reproduces ``css`` exactly.
 
-    Args:
-        text: CSS text (a rule body, or a variable's own value) to scan.
-        local_vars: Locally defined variable name -> resolved value text.
-
-    Returns:
-        ``text`` with known references substituted.
-    """
-    if not local_vars:
-        return text
-    return _VAR_USE_RE.sub(lambda m: local_vars.get(m.group(1), m.group(0)), text)
-
-
-def _consume_variable_defs(text: str, local_vars: dict[str, str]) -> str:
-    """Strip every top-level ``$name: value;`` statement out of one trivia gap.
-
-    ``text`` is the trivia between two top-level rule sets -- comments,
-    blank lines, ``$name: value;`` declarations, and (when this gap sits
-    right before a rule set) the selector list, exactly the shape
-    ``_selector_start`` already assumes. Each declaration's value is resolved
-    against ``local_vars`` (updated here, in the order encountered --
-    Textual itself requires define-before-use, so a value may reference any
-    name already in ``local_vars``, never one defined later) and the
-    statement is then dropped; everything else -- comments, a trailing
-    selector list -- passes through unchanged aside from substituting
-    references to names now known.
-
-    A value is scoped to a top-level (paren/bracket-depth-0) ``;``, matching
-    ``_split_top_level``'s handling of the same shape; a comment inside a
-    value or between statements is skipped rather than scanned for ``;``.
+    A quoted string and a comment are **opaque** to every later pass in this
+    module: Textual's own tokenizer emits a quoted string as a single
+    ``string`` token that is never re-scanned for a ``variable_ref``, and
+    strips comments before tokenizing at all (``textual/css/tokenize.py``) --
+    so nothing downstream of this split may rewrite, substitute into, or
+    treat as structural (``{``/``}``/``;``) the contents of either (TASK-15993
+    review gap: the previous single-pass scanner did both).
 
     Args:
-        text: One trivia-or-trailing chunk of a single block's CSS.
-        local_vars: Locally defined variables so far; mutated in place.
+        css: Raw CSS text.
 
     Returns:
-        ``text`` with its ``$name: value;`` statements removed.
+        The ordered segments.
+
+    Raises:
+        ValueError: If a quoted string is left unterminated.
     """
-    out: list[str] = []
+    segments: list[tuple[str, str]] = []
+    code: list[str] = []
     index = 0
-    length = len(text)
+    length = len(css)
+    quote: str | None = None
+    quote_start = 0
+
+    def flush_code() -> None:
+        if code:
+            segments.append(("code", "".join(code)))
+            code.clear()
+
     while index < length:
-        if text[index : index + 2] == "/*":
-            end = text.find("*/", index + 2)
+        char = css[index]
+        if quote is not None:
+            index += 1
+            if char == quote:
+                segments.append(("string", css[quote_start:index]))
+                quote = None
+            continue
+        if css[index : index + 2] == "/*":
+            flush_code()
+            end = css.find("*/", index + 2)
             end = length if end == -1 else end + 2
-            out.append(text[index:end])
+            segments.append(("comment", css[index:end]))
             index = end
             continue
-        match = _VAR_DEF_START_RE.match(text, index)
-        if match is None:
-            out.append(text[index])
+        if char in "\"'":
+            flush_code()
+            quote = char
+            quote_start = index
             index += 1
             continue
-        value_start = match.end()
-        depth = 0
-        cursor = value_start
-        while cursor < length:
-            if text[cursor : cursor + 2] == "/*":
-                skip_end = text.find("*/", cursor + 2)
-                cursor = length if skip_end == -1 else skip_end + 2
-                continue
-            ch = text[cursor]
-            if ch in "([":
-                depth += 1
-            elif ch in ")]":
-                depth -= 1
-            elif ch == ";" and depth <= 0:
-                break
-            cursor += 1
-        raw_value = text[value_start:cursor]
-        local_vars[match.group(1)] = _substitute_local_variables(
-            raw_value, local_vars
-        ).strip()
-        index = cursor + 1 if cursor < length else cursor
+        if char in "{}":
+            flush_code()
+            segments.append(("open" if char == "{" else "close", char))
+            index += 1
+            continue
+        code.append(char)
+        index += 1
+
+    if quote is not None:
+        raise ValueError("unterminated string isolating local CSS variables")
+    flush_code()
+    return segments
+
+
+def _flatten_segments(segments: list[tuple[str, str]]) -> tuple[list[str], list[bool]]:
+    """Expand ``(kind, text)`` segments into a flat, position-addressable
+    sequence for scanning.
+
+    A ``"code"`` segment becomes one atom per character (every character
+    needs individual matching -- ``{``/``}``/``;``/``$name``); a
+    ``"string"``/``"comment"`` segment becomes a single atom holding its
+    whole span, flagged opaque so no scan below ever looks inside it.
+
+    Args:
+        segments: Output of ``_split_opaque_spans`` (``"open"``/``"close"``
+            segments are not expected here -- callers split on those first).
+
+    Returns:
+        Parallel ``(atoms, opaque)`` lists of equal length.
+    """
+    atoms: list[str] = []
+    opaque: list[bool] = []
+    for kind, text in segments:
+        if kind == "code":
+            atoms.extend(text)
+            opaque.extend([False] * len(text))
+        else:
+            atoms.append(text)
+            opaque.append(True)
+    return atoms, opaque
+
+
+def _collect_declared_names(segments: list[tuple[str, str]]) -> set[str]:
+    """Every ``$name`` this block declares at its own top level, anywhere in
+    the block, regardless of position.
+
+    Used to tell a **forward** reference (a name this block declares later,
+    which Textual would reject with an immediate ``UnresolvedVariableError``
+    -- TASK-15993 review gap 2b) apart from a legitimate reference to an
+    external app/theme variable (a name this block never declares at all,
+    which must keep resolving against the app's real variables untouched).
+
+    Args:
+        segments: Output of ``_split_opaque_spans`` for one block's CSS.
+
+    Returns:
+        The set of locally-declared variable names.
+    """
+    names: set[str] = set()
+    depth = 0
+    for kind, text in segments:
+        if kind == "open":
+            depth += 1
+        elif kind == "close":
+            depth -= 1
+        elif kind == "code" and depth == 0:
+            names.update(match.group(1) for match in _VAR_DEF_START_RE.finditer(text))
+    return names
+
+
+def _substitute_variable_refs(
+    atoms: list[str],
+    opaque: list[bool],
+    start: int,
+    end: int,
+    local_vars: dict[str, str],
+    declared_names: set[str],
+    scope: str,
+    context: str,
+) -> str:
+    """Substitute ``$name`` references over ``atoms[start:end]``.
+
+    Opaque atoms (quoted strings, comments) are copied through verbatim and
+    never scanned for a reference -- Textual's tokenizer never re-scans
+    either for a ``variable_ref`` (TASK-15993 review gap 2c-i).
+
+    A reference to a name already resolved (present in ``local_vars``) is
+    substituted with its resolved text. A reference to a name this block
+    declares *somewhere* (``declared_names``) but has not yet resolved at
+    this point in the left-to-right scan is a **forward reference** --
+    exactly what Textual itself raises ``UnresolvedVariableError`` for when
+    parsing this CSS standalone (review gap 2b) -- and raises here instead of
+    silently passing the raw ``$name`` through (which either defers the
+    failure to whenever the full sheet is next parsed, or -- if some
+    unrelated global happens to share the name -- silently resolves to the
+    *wrong* value with no error anywhere). A reference to a name this block
+    never declares is left untouched, so it keeps resolving against the
+    app's real variables exactly as before.
+
+    Args:
+        atoms: Flattened atoms from ``_flatten_segments``.
+        opaque: Parallel opacity flags.
+        start: First atom index to scan (inclusive).
+        end: Last atom index to scan (exclusive).
+        local_vars: Locally defined variables resolved so far.
+        declared_names: Every name this block declares anywhere.
+        scope: The declaring class's name, for the error message.
+        context: What is being scanned (a variable's own name, or ``"a
+            rule"``), for the error message.
+
+    Returns:
+        The text with known-local references substituted.
+
+    Raises:
+        ValueError: On a forward reference, naming ``scope``, ``context``
+            and both variables.
+    """
+    out: list[str] = []
+    pos = start
+    while pos < end:
+        if opaque[pos]:
+            out.append(atoms[pos])
+            pos += 1
+            continue
+        if atoms[pos] != "$":
+            out.append(atoms[pos])
+            pos += 1
+            continue
+        run_end = pos
+        while run_end < end and not opaque[run_end]:
+            run_end += 1
+        code_chunk = "".join(atoms[pos:run_end])
+        match = _VAR_USE_RE.match(code_chunk)
+        if match is None:
+            out.append(atoms[pos])
+            pos += 1
+            continue
+        name = match.group(1)
+        if name in local_vars:
+            out.append(local_vars[name])
+        elif name in declared_names:
+            raise ValueError(
+                f"{scope}: {context} references '${name}', which this block "
+                f"declares later in the same block -- Textual requires a "
+                f"$variable to be defined before use and raises "
+                f"UnresolvedVariableError immediately on a forward reference; "
+                f"reorder the declarations."
+            )
+        else:
+            out.append(match.group(0))
+        pos += match.end()
     return "".join(out)
 
 
-def isolate_local_variables(css: str) -> str:
+def _consume_variable_defs(
+    segments: list[tuple[str, str]],
+    local_vars: dict[str, str],
+    declared_names: set[str],
+    scope: str,
+) -> str:
+    """Strip every top-level ``$name: value;`` statement out of one trivia gap.
+
+    ``segments`` covers the trivia between two top-level rule sets --
+    comments, blank lines, ``$name: value;`` declarations, and (when this gap
+    sits right before a rule set) the selector list, exactly the shape
+    ``_selector_start`` already assumes. Each declaration's value is resolved
+    against ``local_vars`` (updated here, in the order encountered) and the
+    statement is then dropped; everything else -- comments, a trailing
+    selector list -- passes through unchanged aside from substituting
+    references to names now known (see ``_substitute_variable_refs``).
+
+    A value is scoped to a top-level (paren/bracket-depth-0, opaque-span-aware)
+    ``;`` -- a ``;`` inside a quoted value (``$sep: "a;b";``) does not end the
+    statement early (TASK-15993 review gap 2c-ii).
+
+    Args:
+        segments: One trivia-or-trailing chunk of a single block's CSS, as
+            ``(kind, text)`` segments (no ``"open"``/``"close"`` entries).
+        local_vars: Locally defined variables so far; mutated in place.
+        declared_names: Every name this block declares anywhere (see
+            ``_collect_declared_names``).
+        scope: The declaring class's name, for forward-reference errors.
+
+    Returns:
+        The segments' text with its ``$name: value;`` statements removed.
+
+    Raises:
+        ValueError: On a forward reference within a declaration's own value.
+    """
+    atoms, opaque = _flatten_segments(segments)
+    out: list[str] = []
+    pos = 0
+    n = len(atoms)
+    while pos < n:
+        if opaque[pos]:
+            out.append(atoms[pos])
+            pos += 1
+            continue
+        run_end = pos
+        while run_end < n and not opaque[run_end]:
+            run_end += 1
+        code_chunk = "".join(atoms[pos:run_end])
+        match = _VAR_DEF_START_RE.match(code_chunk)
+        if match is None:
+            out.append(atoms[pos])
+            pos += 1
+            continue
+        name = match.group(1)
+        value_start = pos + match.end()
+        bracket_depth = 0
+        value_end = n
+        scan = value_start
+        while scan < n:
+            if opaque[scan]:
+                scan += 1
+                continue
+            ch = atoms[scan]
+            if ch in "([":
+                bracket_depth += 1
+            elif ch in ")]":
+                bracket_depth -= 1
+            elif ch == ";" and bracket_depth <= 0:
+                value_end = scan
+                break
+            scan += 1
+        resolved_value = _substitute_variable_refs(
+            atoms,
+            opaque,
+            value_start,
+            value_end,
+            local_vars,
+            declared_names,
+            scope,
+            f"'${name}'",
+        ).strip()
+        local_vars[name] = resolved_value
+        pos = value_end + 1 if value_end < n else value_end
+    return "".join(out)
+
+
+def _substitute_local_variables(
+    segments: list[tuple[str, str]],
+    local_vars: dict[str, str],
+    declared_names: set[str],
+    scope: str,
+) -> str:
+    """Substitute known local-variable references throughout a rule's text.
+
+    Args:
+        segments: One rule's ``(kind, text)`` segments (its selector's own
+            ``{``/``}`` excluded -- see ``isolate_local_variables``).
+        local_vars: Locally defined variables resolved so far.
+        declared_names: Every name this block declares anywhere.
+        scope: The declaring class's name, for forward-reference errors.
+
+    Returns:
+        The segments' text with known local references substituted.
+
+    Raises:
+        ValueError: On a forward reference (a rule using a name this block
+            declares only *later* in the same block).
+    """
+    atoms, opaque = _flatten_segments(segments)
+    return _substitute_variable_refs(
+        atoms, opaque, 0, len(atoms), local_vars, declared_names, scope, "a rule"
+    )
+
+
+def isolate_local_variables(css: str, *, scope: str = "") -> str:
     """Inline and strip one block's own top-level ``$name: value;`` declarations.
 
     Textual resolves ``$variable`` references with a single left-to-right
@@ -488,82 +727,76 @@ def isolate_local_variables(css: str) -> str:
     variables exactly as before. Because the local name never appears in the
     emitted text, it cannot leak into any block emitted after this one.
 
+    Matches Textual's own resolution semantics exactly, not just its happy
+    path: a **forward** reference -- a local declaration whose value (or a
+    rule) references a name this block declares only *later* -- raises
+    ``ValueError`` instead of silently accepting it, because Textual itself
+    raises ``UnresolvedVariableError`` immediately on exactly that shape when
+    parsing this CSS standalone; silently accepting it here would either defer
+    the failure to sheet-parse time or, worse, silently resolve to an
+    unrelated global's value if one happens to share the name. Quoted-string
+    and comment contents are never rewritten or treated as structural
+    (``{``/``}``/``;``/``$name``), matching Textual's own tokenizer, which
+    treats a quoted string as one opaque token.
+
     Args:
         css: One block's raw CSS text, as written in its ``BUNDLED_CSS`` /
             ``BUNDLED_SCREEN_CSS`` class attribute.
+        scope: The declaring class's name, used only to name the block in a
+            forward-reference error message.
 
     Returns:
         The same CSS with local variable declarations inlined and removed.
 
     Raises:
         ValueError: If the CSS has unbalanced braces or an unterminated
-            string, mirroring ``split_scoped_css``.
+            string (mirroring ``split_scoped_css``), or a local declaration
+            or rule references a name this block declares only later.
     """
+    segments = _split_opaque_spans(css)
+    declared_names = _collect_declared_names(segments)
+
     local_vars: dict[str, str] = {}
     out: list[str] = []
-    pending: list[str] = []
-    body: list[str] = []
+    pending: list[tuple[str, str]] = []
+    body: list[tuple[str, str]] = []
     depth = 0
-    quote: str | None = None
-    index = 0
-    length = len(css)
 
-    def sink() -> list[str]:
-        return body if depth else pending
-
-    while index < length:
-        char = css[index]
-
-        if quote is not None:
-            sink().append(char)
-            if char == quote:
-                quote = None
-            index += 1
-            continue
-
-        if css[index : index + 2] == "/*":
-            end = css.find("*/", index + 2)
-            end = length if end == -1 else end + 2
-            sink().append(css[index:end])
-            index = end
-            continue
-
-        if char in "\"'":
-            quote = char
-            sink().append(char)
-            index += 1
-            continue
-
-        if char == "{":
+    for kind, text in segments:
+        if kind == "open":
             if depth == 0:
-                text = "".join(pending)
+                out.append(
+                    _consume_variable_defs(pending, local_vars, declared_names, scope)
+                )
                 pending = []
-                out.append(_consume_variable_defs(text, local_vars))
-            body.append(char)
+                out.append(text)
+            else:
+                # A nested rule's own brace is part of the outer rule's body
+                # text -- defer it to the body accumulator so it comes out in
+                # its correct sequential position when the body is flushed,
+                # rather than being spliced into `out` ahead of body text
+                # that has not been flushed yet.
+                body.append((kind, text))
             depth += 1
-            index += 1
             continue
-
-        if char == "}":
+        if kind == "close":
             depth -= 1
             if depth < 0:
                 raise ValueError("unbalanced '}' isolating local CSS variables")
-            body.append(char)
             if depth == 0:
-                out.append(_substitute_local_variables("".join(body), local_vars))
-                body.clear()
-            index += 1
+                out.append(
+                    _substitute_local_variables(body, local_vars, declared_names, scope)
+                )
+                body = []
+                out.append(text)
+            else:
+                body.append((kind, text))
             continue
-
-        sink().append(char)
-        index += 1
+        (body if depth else pending).append((kind, text))
 
     if depth != 0:
         raise ValueError("unbalanced '{' isolating local CSS variables")
-    if quote is not None:
-        raise ValueError("unterminated string isolating local CSS variables")
-    trailing = "".join(pending)
-    out.append(_consume_variable_defs(trailing, local_vars))
+    out.append(_consume_variable_defs(pending, local_vars, declared_names, scope))
     return "".join(out)
 
 
@@ -676,7 +909,7 @@ def render_stylesheets(
         # fallbacks *before* splitting/scoping, so they cannot leak into a
         # later block's rules once every block lands in the same generated
         # file -- see `isolate_local_variables`.
-        isolated_css = isolate_local_variables(block.css)
+        isolated_css = isolate_local_variables(block.css, scope=block.class_name)
         split = split_scoped_css(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector
         )
