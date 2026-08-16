@@ -38,6 +38,15 @@ WIDGET_DEFAULTS_SCOPED_FILENAME = "widget_defaults_scoped.tcss"
 #: the bundle those fallbacks redefine the real design tokens for every rule
 #: after them -- measured: ``$ds-focus-bg`` went from ``#51677E`` to ``$surface``
 #: across the app.  As separate sources they stay local, exactly as today.
+#:
+#: TASK-15993: that same "per-source" scope means every block CONSOLIDATED
+#: INTO one of these two files also shares it with every other block in the
+#: same file -- a block-local ``$ds-*`` fallback used to stay defined for
+#: every block emitted after it here too, just narrowed from app-wide to
+#: sheet-wide rather than eliminated. ``widget_css.render_stylesheets`` now
+#: runs ``isolate_local_variables`` per block before emission, which inlines
+#: and drops each block's own declarations so they cannot reach a later
+#: block's text at all.
 SCREEN_CSS_SCOPED_FILENAME = "screen_css_scoped.tcss"
 SCREEN_CSS_SELF_FILENAME = "screen_css_self.tcss"
 

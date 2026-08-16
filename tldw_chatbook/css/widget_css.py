@@ -75,6 +75,21 @@ both forms with Textual's own parser and asserting the rules match.  The
 computed-style comparisons above are one-off dev-parity measurements, not tests:
 they need a dev checkout to diff against, which CI does not have.
 
+**Consolidation also merges each tier's ``$variable`` scope (TASK-15993).**
+Textual resolves a ``$name`` reference with a single left-to-right token scan
+over whatever *one string* is handed to its parser (``substitute_references``
+in ``textual/css/parse.py``), and ``Stylesheet._parse_rules`` runs that scan
+once per *source* -- so a generated sheet, being every block's text
+concatenated into one source, gives every block in it the same variable
+scope.  A block-local ``$var`` meant only as a fallback for parsing that one
+block's CSS in isolation (see e.g. ``EmojiPickerScreen``) would therefore stay
+"defined" for every block emitted after it in the same file.
+``render_stylesheets`` runs ``isolate_local_variables`` on each block's CSS
+before splitting/scoping it: every local ``$name`` reference is inlined to
+its resolved value and the declaration dropped, so the name never reaches the
+emitted text and cannot leak forward. A reference to a name the block never
+defines locally (a real app/theme variable) is left untouched.
+
 Stdlib-only, so the CSS guard can run without the app's dependencies.
 """
 
@@ -349,6 +364,209 @@ def _selector_start(text: str) -> int:
     return last_break
 
 
+#: Matches the *start* of a top-level variable declaration -- a bare
+#: reference (no trailing ``:``) is a use, not a definition.
+_VAR_DEF_START_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_-]*)\s*:")
+
+#: Matches any ``$name`` reference (definition or use -- callers that only
+#: want uses run this over text that has already had definitions stripped).
+_VAR_USE_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_-]*)")
+
+
+def _substitute_local_variables(text: str, local_vars: dict[str, str]) -> str:
+    """Replace ``$name`` references to *known* local variables with their
+    resolved value text.
+
+    A reference to a name not in ``local_vars`` -- a real app/theme variable
+    (``$surface``, ``$primary``, ...), or simply a name this block never
+    defines -- is left untouched, so it keeps resolving exactly as before
+    against whatever ``Stylesheet.set_variables`` supplies at parse time.
+
+    Args:
+        text: CSS text (a rule body, or a variable's own value) to scan.
+        local_vars: Locally defined variable name -> resolved value text.
+
+    Returns:
+        ``text`` with known references substituted.
+    """
+    if not local_vars:
+        return text
+    return _VAR_USE_RE.sub(lambda m: local_vars.get(m.group(1), m.group(0)), text)
+
+
+def _consume_variable_defs(text: str, local_vars: dict[str, str]) -> str:
+    """Strip every top-level ``$name: value;`` statement out of one trivia gap.
+
+    ``text`` is the trivia between two top-level rule sets -- comments,
+    blank lines, ``$name: value;`` declarations, and (when this gap sits
+    right before a rule set) the selector list, exactly the shape
+    ``_selector_start`` already assumes. Each declaration's value is resolved
+    against ``local_vars`` (updated here, in the order encountered --
+    Textual itself requires define-before-use, so a value may reference any
+    name already in ``local_vars``, never one defined later) and the
+    statement is then dropped; everything else -- comments, a trailing
+    selector list -- passes through unchanged aside from substituting
+    references to names now known.
+
+    A value is scoped to a top-level (paren/bracket-depth-0) ``;``, matching
+    ``_split_top_level``'s handling of the same shape; a comment inside a
+    value or between statements is skipped rather than scanned for ``;``.
+
+    Args:
+        text: One trivia-or-trailing chunk of a single block's CSS.
+        local_vars: Locally defined variables so far; mutated in place.
+
+    Returns:
+        ``text`` with its ``$name: value;`` statements removed.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        if text[index : index + 2] == "/*":
+            end = text.find("*/", index + 2)
+            end = length if end == -1 else end + 2
+            out.append(text[index:end])
+            index = end
+            continue
+        match = _VAR_DEF_START_RE.match(text, index)
+        if match is None:
+            out.append(text[index])
+            index += 1
+            continue
+        value_start = match.end()
+        depth = 0
+        cursor = value_start
+        while cursor < length:
+            if text[cursor : cursor + 2] == "/*":
+                skip_end = text.find("*/", cursor + 2)
+                cursor = length if skip_end == -1 else skip_end + 2
+                continue
+            ch = text[cursor]
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth -= 1
+            elif ch == ";" and depth <= 0:
+                break
+            cursor += 1
+        raw_value = text[value_start:cursor]
+        local_vars[match.group(1)] = _substitute_local_variables(
+            raw_value, local_vars
+        ).strip()
+        index = cursor + 1 if cursor < length else cursor
+    return "".join(out)
+
+
+def isolate_local_variables(css: str) -> str:
+    """Inline and strip one block's own top-level ``$name: value;`` declarations.
+
+    Textual resolves ``$variable`` references with a single left-to-right
+    token scan over whatever *one string* is handed to its parser
+    (``substitute_references`` in ``textual/css/parse.py``): each
+    ``$name: value;`` statement mutates a dict that stays visible to
+    everything parsed *after* it in that same string, and does not carry
+    forward to the next call. ``Stylesheet._parse_rules`` makes exactly one
+    such call per *source* (``Stylesheet.read``/``add_source``), and a
+    generated screen or widget-defaults sheet is one source built by
+    concatenating every ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS`` block's text in
+    turn -- so a block-local ``$var``, meant only as a fallback for parsing
+    that block's CSS in isolation (see e.g. ``EmojiPickerScreen``, and
+    ``build_css.py``'s own note on why the screen sheets stay separate from
+    the app bundle for the same reason), stays defined for every block
+    appended after it in the *same generated file* (TASK-15993). Genuine
+    app/theme variables (``$surface``, ``$primary``, ...) are unaffected --
+    those come from ``Stylesheet.set_variables``, a source shared across
+    every parse call, not from file text.
+
+    This performs the equivalent substitution at *build* time, scoped to one
+    block: every ``$name`` reference within the block that has a local
+    definition is replaced with that definition's (recursively resolved)
+    value text, and the definition statements themselves are dropped from
+    the emitted CSS. A reference to a name the block never defines locally
+    is left untouched, so it keeps resolving against the app's real
+    variables exactly as before. Because the local name never appears in the
+    emitted text, it cannot leak into any block emitted after this one.
+
+    Args:
+        css: One block's raw CSS text, as written in its ``BUNDLED_CSS`` /
+            ``BUNDLED_SCREEN_CSS`` class attribute.
+
+    Returns:
+        The same CSS with local variable declarations inlined and removed.
+
+    Raises:
+        ValueError: If the CSS has unbalanced braces or an unterminated
+            string, mirroring ``split_scoped_css``.
+    """
+    local_vars: dict[str, str] = {}
+    out: list[str] = []
+    pending: list[str] = []
+    body: list[str] = []
+    depth = 0
+    quote: str | None = None
+    index = 0
+    length = len(css)
+
+    def sink() -> list[str]:
+        return body if depth else pending
+
+    while index < length:
+        char = css[index]
+
+        if quote is not None:
+            sink().append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+
+        if css[index : index + 2] == "/*":
+            end = css.find("*/", index + 2)
+            end = length if end == -1 else end + 2
+            sink().append(css[index:end])
+            index = end
+            continue
+
+        if char in "\"'":
+            quote = char
+            sink().append(char)
+            index += 1
+            continue
+
+        if char == "{":
+            if depth == 0:
+                text = "".join(pending)
+                pending = []
+                out.append(_consume_variable_defs(text, local_vars))
+            body.append(char)
+            depth += 1
+            index += 1
+            continue
+
+        if char == "}":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("unbalanced '}' isolating local CSS variables")
+            body.append(char)
+            if depth == 0:
+                out.append(_substitute_local_variables("".join(body), local_vars))
+                body.clear()
+            index += 1
+            continue
+
+        sink().append(char)
+        index += 1
+
+    if depth != 0:
+        raise ValueError("unbalanced '{' isolating local CSS variables")
+    if quote is not None:
+        raise ValueError("unterminated string isolating local CSS variables")
+    trailing = "".join(pending)
+    out.append(_consume_variable_defs(trailing, local_vars))
+    return "".join(out)
+
+
 def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
     """Collect every class-level ``attr`` string literal under ``package_root``.
 
@@ -454,8 +672,13 @@ def render_stylesheets(
     rendered = [header("self"), header("scoped")]
     for block in blocks:
         banner = f"\n/* ===== WIDGET: {block.class_name} ({block.module}) ===== */\n"
+        # TASK-15993: inline and drop this block's own top-level `$var`
+        # fallbacks *before* splitting/scoping, so they cannot leak into a
+        # later block's rules once every block lands in the same generated
+        # file -- see `isolate_local_variables`.
+        isolated_css = isolate_local_variables(block.css)
         split = split_scoped_css(
-            block.css, block.class_name, scope_every_selector=scope_every_selector
+            isolated_css, block.class_name, scope_every_selector=scope_every_selector
         )
         for stream, text in enumerate(split):
             if not text.strip():
