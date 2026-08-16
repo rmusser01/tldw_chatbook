@@ -652,7 +652,7 @@ def test_engine_settles_recorded_usage_into_ledger():
     assert final["status"] == "completed"
     ledger = _artifact_content(service.get_bundle(run["id"]), "budget_ledger.json")
     assert ledger["tokens_settled"] == 40
-    # record_usage counts are provider-exact (task-16789): not estimates.
+    # record_usage counts are provider-exact (task-16814): not estimates.
     assert ledger["tokens_estimated"] is False
 
 

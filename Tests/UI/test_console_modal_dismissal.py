@@ -32,6 +32,7 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     ChangeReviewScreen,
     ChangeRevertConfirmModal,
 )
+from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpState
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
@@ -96,6 +97,9 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
     ConsolePromptQueueModal,
 )
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
+from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
+    ConsoleReactionPickerModal,
+)
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
@@ -300,6 +304,16 @@ TASK2_MODAL_CONTRACTS = (
         None,
         "Console character chip",
         "_cancel_query_debounce",
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleReactionPickerModal,
+        lambda: ConsoleReactionPickerModal(options=[]),
+        "#console-reaction-picker-modal",
+        None,
+        "Console character reaction action",
+        "_cancel_pending_updates",
         "none",
         _RESTORE_OPENER,
     ),
@@ -777,7 +791,12 @@ _DIRECT_SHARED_MODAL_TYPES = tuple(
 CONSOLE_MODAL_LAUNCH_EDGES = (
     _ModalLaunchEdge(
         _CONSOLE_ROOT,
-        (*_CONSOLE_DIRECT_MODAL_TYPES, *_DIRECT_SHARED_MODAL_TYPES, ChangeReviewScreen),
+        (
+            *_CONSOLE_DIRECT_MODAL_TYPES,
+            *_DIRECT_SHARED_MODAL_TYPES,
+            ChangeReviewScreen,
+            TrajectoryScreen,
+        ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
     _ModalLaunchEdge(
@@ -795,6 +814,11 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         ConsoleVideoCapacityModal,
         (CancelConfirmationDialog,),
         ("tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",),
+    ),
+    _ModalLaunchEdge(
+        TrajectoryScreen,
+        (TrajectoryScreen, EnhancedFileOpen),
+        ("tldw_chatbook/UI/Screens/trajectory_screen.py",),
     ),
     _ModalLaunchEdge(
         ChangeReviewScreen,
@@ -1012,9 +1036,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
+    inventory_only_types: set[type[ModalScreen[Any]]] = set()
 
-    assert len(discovered_console_types) == 28
-    assert discovered_console_types == console_contract_types
+    assert discovered_console_types - console_contract_types == inventory_only_types
+    assert discovered_console_types == console_contract_types | inventory_only_types
 
     reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
 
@@ -1023,10 +1048,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 37
+    assert len(reachable_modal_types) == 39
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    }
+    } | {TrajectoryScreen}
     assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
@@ -1143,10 +1168,11 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 13
+    assert len(TASK2_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
+        "ConsoleReactionPickerModal",
         "ConsoleCitationSourcesModal",
         "ConsoleContextModal",
         "ConsoleCostModal",
@@ -1161,6 +1187,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
     }
     expected_hooks = {
         "ConsoleCharacterPickerModal": "_cancel_query_debounce",
+        "ConsoleReactionPickerModal": "_cancel_pending_updates",
         "ConsoleCitationSourcesModal": "increment _request_generation",
         "ConsoleStylePickerModal": "_cancel_search_debounce",
     }

@@ -712,7 +712,7 @@ async def test_auto_refresh_skips_terminal_and_non_local():
     assert calls["n"] == 0
 
 
-# --- Qodo remediation (task-16789) ------------------------------------------------
+# --- Qodo remediation (task-16814) ------------------------------------------------
 
 def test_academic_lane_default_parses_string_booleans(monkeypatch):
     from tldw_chatbook.UI.Research_Window import _parse_config_bool

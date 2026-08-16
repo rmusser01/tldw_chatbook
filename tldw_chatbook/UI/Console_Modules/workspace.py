@@ -122,6 +122,7 @@ class ConsoleWorkspaceController:
         focus_conversation_search: Callable[[], None],
         sync_workspace_context: Callable[[], None],
         schedule_timer: Callable[[float, Callable[[], None]], Any],
+        screen_running_accessor: Callable[[], bool],
         current_chat_controller_accessor: Callable[[], Any],
         fleet_unseen_ids_accessor: Callable[[], frozenset[str]],
         run_marker_with_unseen: Callable[[Any, Any, frozenset[str]], Any],
@@ -167,6 +168,7 @@ class ConsoleWorkspaceController:
             focus_conversation_search: Focus the browser search input.
             sync_workspace_context: Render current Workspace state.
             schedule_timer: Schedule a delayed browser callback.
+            screen_running_accessor: Return whether the owning screen is running.
             current_chat_controller_accessor: Return the current chat controller.
             fleet_unseen_ids_accessor: Return unseen conversation ids.
             run_marker_with_unseen: Project unseen state into a run marker.
@@ -211,6 +213,7 @@ class ConsoleWorkspaceController:
         self._focus_conversation_search_fn = focus_conversation_search
         self._sync_workspace_context_fn = sync_workspace_context
         self._schedule_timer_fn = schedule_timer
+        self._screen_running_accessor = screen_running_accessor
         self._current_chat_controller_accessor = current_chat_controller_accessor
         self._fleet_unseen_ids_accessor = fleet_unseen_ids_accessor
         self._run_marker_with_unseen_fn = run_marker_with_unseen
@@ -1083,7 +1086,7 @@ class ConsoleWorkspaceController:
             # database access"), so skip scheduling when the pump is not
             # running; the mounted app always is, and the guard also avoids
             # minting a coroutine that can never be awaited.
-            if self._screen.is_running:
+            if self._screen_running_accessor():
                 self._console_persisted_rows_refresh_key = refresh_key
                 self.run_worker(
                     self._refresh_console_persisted_rows_cache(

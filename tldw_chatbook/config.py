@@ -6411,6 +6411,26 @@ prompts_db: Optional[PromptsDatabase] = None
 media_db: Optional[MediaDatabase] = None
 
 
+def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
+    """Seed restart-safe bundled profile content after database initialization.
+
+    Args:
+        db: Initialized profile-local character database.
+
+    Returns:
+        The same database instance after best-effort built-in seeding.
+    """
+    try:
+        from tldw_chatbook.Character_Chat.visual_identity import ensure_builtin_samira
+
+        ensure_builtin_samira(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning(
+            "builtin_profile_seed_failed category={}", type(exc).__name__
+        )
+    return db
+
+
 # --- Database Initialization Function (remains largely the same) ---
 def initialize_all_databases():
     global chachanotes_db, prompts_db, media_db
@@ -6423,6 +6443,7 @@ def initialize_all_databases():
         chachanotes_db = CharactersRAGDB(
             db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
         )
+        seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
         logger.opt(exception=True).error(
@@ -6473,6 +6494,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
             )
+            seed_builtin_content(chachanotes_db)
             logger.success(
                 f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
             )

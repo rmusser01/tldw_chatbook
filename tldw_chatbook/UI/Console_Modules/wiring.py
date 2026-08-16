@@ -53,6 +53,7 @@ from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
 )
 
 from .agent import ConsoleAgentController
+from .character import ConsoleCharacterController
 from .dictation import ConsoleDictationController
 from .hands_free import ConsoleHandsFreeController
 from .image import ConsoleImageController
@@ -62,6 +63,7 @@ from .prompt_queue import (
     commit_queued_draft_transaction,
 )
 from .prompts import ConsolePromptsController
+from .reaction_preview import get_console_reaction_preview_coordinator
 from .session import ConsoleSessionController
 from .video import ConsoleVideoController
 from .workspace import ConsoleWorkspaceController
@@ -78,9 +80,10 @@ def build_console_controllers(
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
-    """Construct the Console screen's nine controllers and attach them.
+    """Construct the Console screen's ten controllers and attach them.
 
     Assigns, in this order, `screen._image`, `screen._workspace`,
+    `screen._character`,
     `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._message`, `screen._prompts`, `screen._agent`, and
     `screen._prompt_queue`. The order is documentation, not a constraint:
@@ -249,6 +252,7 @@ def build_console_controllers(
             lambda: screen._focus_console_workspace_conversation_search()
         ),
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
+        screen_running_accessor=lambda: screen.is_running,
         current_chat_controller_accessor=lambda: screen._console_chat_controller,
         fleet_unseen_ids_accessor=lambda: screen._console_fleet_unseen_ids(),
         run_marker_with_unseen=(
@@ -278,6 +282,33 @@ def build_console_controllers(
         wake_retry_poke=lambda: screen._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
     )
+    screen._character = ConsoleCharacterController(
+        app_config_accessor=(
+            lambda: getattr(screen.app_instance, "app_config", {}) or {}
+        ),
+        chat_store_accessor=(
+            lambda: getattr(
+                getattr(screen, "_console_chat_controller", None), "store", None
+            )
+        ),
+        actor_scope_accessor=(
+            lambda: screen._session._current_visual_identity_actor_scope()
+        ),
+        character_name_accessor=lambda: screen._current_console_rail_character_name(),
+        manual_reaction_key=lambda scope: screen._session._manual_reaction_key(scope),
+        resolve_visual_identity=(
+            lambda scope, state, manual: screen._session._resolve_visual_identity(
+                scope, state, manual
+            )
+        ),
+        ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        console_image_default_mode=lambda: screen._console_image_default_mode,
+        is_mounted=lambda: screen.is_mounted,
+        render_character_avatar=(
+            lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
+        ),
+    )
+
     #: Native session lifecycle -- start/activate/swap/promote/rename,
     #: per-session settings, the Ctrl+K switcher's choice handling,
     #: draft sync, and one-session (de)serialization -- moved to
@@ -376,6 +407,19 @@ def build_console_controllers(
         # ratchet.py) that a convenience wrapper would push past, and the
         # controller's body is the pre-move closure unchanged either way.
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
+        visual_identity_db_accessor=(
+            lambda: getattr(screen.app_instance, "chachanotes_db", None)
+        ),
+        reaction_preview_coordinator_accessor=(
+            lambda: get_console_reaction_preview_coordinator(screen.app_instance)
+        ),
+        refresh_character_avatar=(
+            lambda **kwargs: (
+                screen._character._refresh_active_character_avatar_if_scope_changed(
+                    force=True, **kwargs
+                )
+            )
+        ),
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,

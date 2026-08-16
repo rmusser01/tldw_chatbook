@@ -5496,7 +5496,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
     class HungFirstWritePersistence:
         """One shared-store double: the FIRST system-prompt write blocks.
 
-        task-16792 fixture correction: the Console runtime/store became
+        task-16815 fixture correction: the Console runtime/store became
         app-owned (task-15860), so two co-mounted ChatScreens share ONE
         store -- the original per-screen persistence pair aliased to a
         single store and the repair write bound to the hung double

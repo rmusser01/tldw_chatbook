@@ -436,6 +436,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_path,
     settings,
     get_chachanotes_db_lazy,
+    seed_builtin_content,
 )
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
@@ -5148,6 +5149,12 @@ def setup_owns_startup_networking(
     )
 
 
+def _select_profile_database(notes_service: object | None) -> Any:
+    """Return the seeded injected profile DB, or the seeded lazy global DB."""
+    injected = getattr(notes_service, "db", None)
+    return seed_builtin_content(injected) if injected else get_chachanotes_db_lazy()
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -5679,17 +5686,11 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
-        if (
-            self.notes_service
-            and hasattr(self.notes_service, "db")
-            and self.notes_service.db
-        ):
-            self.chachanotes_db = (
-                self.notes_service.db
-            )  # ChaChaNotesDB is used by NotesInteropService
+        if getattr(self.notes_service, "db", None):
+            self.chachanotes_db = _select_profile_database(self.notes_service)
             logging.info("Assigned self.notes_service.db to self.chachanotes_db")
         else:  # Fallback to global if notes_service didn't set it up as expected on itself
-            lazy_db = get_chachanotes_db_lazy()
+            lazy_db = _select_profile_database(self.notes_service)
             if lazy_db:
                 self.chachanotes_db = lazy_db
                 logging.info(

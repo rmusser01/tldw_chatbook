@@ -1211,7 +1211,7 @@ def chat_api_call(
 def _estimate_prompt_text(
     messages_payload: Any, system_message: Optional[str]
 ) -> str:
-    """Text used for ESTIMATED prompt tokens (task-16789): the system
+    """Text used for ESTIMATED prompt tokens (task-16814): the system
     message is part of the prompt and must count; multimodal content lists
     contribute only their text parts so base64 image payloads cannot
     explode the estimate."""
