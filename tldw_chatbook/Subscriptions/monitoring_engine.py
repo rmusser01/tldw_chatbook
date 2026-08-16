@@ -617,6 +617,17 @@ DISPOSITION_CHANGED = "changed"
 #: other URLs already collected; this is how that partial failure stays
 #: visible instead of silently vanishing into "0 found".
 DISPOSITION_ERROR = "error"
+#: `check_url` was never called at all: another check of this exact
+#: (subscription, url) pair was already in flight, so the entrant skipped
+#: rather than double-checking (task-16838 -- a scheduled check and a UI
+#: "Check Now" of the same source can otherwise interleave across the
+#: network await and each report the same page change once, writing two
+#: snapshots). Like `DISPOSITION_ERROR`, this is synthesized by the caller
+#: (`local_watchlists_service._check_url_guarded`), never by `check_url`
+#: itself. The concurrent check that held the claim reports the real
+#: outcome; this disposition only records, honestly, that this run did not
+#: check the URL.
+DISPOSITION_SKIPPED_IN_FLIGHT = "skipped_in_flight"
 
 #: ``reason`` values for ``DISPOSITION_BASELINE_STORED``. These two are NOT
 #: interchangeable and must never be aggregated together (whole-branch review,

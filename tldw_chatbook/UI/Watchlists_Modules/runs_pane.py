@@ -302,6 +302,16 @@ class RunsPane(RecomposeCaptureGuard, Vertical):
                 # a clean one that merely found nothing.
                 f"{dispositions.get('error', 0)} error"
             )
+            # task-16838: URLs this run never checked because another check
+            # of the same source was already running (a scheduled check
+            # overlapping a Check Now). Conditional, unlike `error`: an
+            # omitted segment always means a true zero -- the counts are
+            # zero-filled at write time and `.get(..., 0)` covers rows from
+            # before the counter existed -- so absence is not ambiguous, and
+            # a rare event does not widen every normal run's line.
+            skipped = dispositions.get("skipped", 0)
+            if skipped:
+                base += f" | {skipped} skipped (check already running)"
         return base
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
