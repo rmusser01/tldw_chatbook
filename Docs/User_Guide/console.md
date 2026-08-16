@@ -412,7 +412,8 @@ verified against the TASK-15455 windowing (PR #1538) plus its reconciliation
 delta — shipped tests and an isolated 500-message load probe; not re-checked
 live. "Long conversations" sliding scroll-back and bounded far jumps
 verified against TASK-15777 — shipped tests plus isolated 400/500-message
-mounted probes (scroll-back walked m360→m0 at a constant 101 mounted rows;
+mounted probes (scroll-back walks the full history with mounted rows bounded
+by the watermarks — measured ~150 rows / height ~600 at the default marks;
 a far jump mounted 5 rows instead of 490); not re-checked live. The
 head-pinned-selection pause (TASK-16851) verified by shipped tests — a
 post-jump walk-down held ≤1100 virtual rows against a 900 high mark where

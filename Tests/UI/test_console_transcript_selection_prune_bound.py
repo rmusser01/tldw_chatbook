@@ -129,7 +129,7 @@ async def test_head_pinned_selection_walkdown_stays_bounded_near_high_mark():
             transcript.scroll_to(y=transcript.max_scroll_y, animate=False)
             await _settle(pilot)
             height = transcript.virtual_size.height
-            assert height <= 1100, (
+            assert height <= 1000, (
                 "a head-pinned selection must not disable the height bound: "
                 f"virtual height {height} escaped the 900 high watermark"
             )
@@ -141,7 +141,7 @@ async def test_head_pinned_selection_walkdown_stays_bounded_near_high_mark():
 
         # The bound is a fixed point, not a lucky frame: idle does not grow it.
         await _settle(pilot, times=20)
-        assert transcript.virtual_size.height <= 1100
+        assert transcript.virtual_size.height <= 1000
 
         # Selection UX survives the bounding mechanism: the jumped-to row is
         # still mounted, still first, still selected, action row and all.
