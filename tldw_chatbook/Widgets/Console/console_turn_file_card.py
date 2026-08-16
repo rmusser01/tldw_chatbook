@@ -109,19 +109,24 @@ class ConsoleTurnFileCard(Vertical):
                 )
                 if turn is None:
                     return [], {}
-                changed_by_root = {
-                    str(row["root"]): provider.changed_files(row)
+                # Per-row pairing, never root-keyed: `turn.rows` can hold
+                # rows from TWO windows on the SAME root (a turn's own
+                # window and its surviving sub-agents' post-turn window,
+                # PR3a-1 Task 6c -- both markers carry this run's id). A
+                # root-keyed map would collide those rows; pairing each
+                # entry to the exact row it came from (by position, via
+                # `turn_file_entries`) keeps both windows' files distinct
+                # and each one's diff readable against its own row. This
+                # deliberately renders the UNION of the run's clean rows --
+                # see `turn_file_entries`'s docstring for the ruling.
+                row_files = [
+                    (row, provider.changed_files(row))
                     for row in turn.rows
                     if not row.get("tracking_error")
-                }
-                entries = turn_file_entries(turn.rows, changed_by_root)
-                row_by_root = {
-                    str(row["root"]): row for row in turn.rows
-                }
-                mapping = {
-                    idx: row_by_root[entry.root]
-                    for idx, entry in enumerate(entries)
-                }
+                ]
+                paired = turn_file_entries(row_files)
+                entries = [entry for entry, _row in paired]
+                mapping = {idx: row for idx, (_entry, row) in enumerate(paired)}
                 return entries, mapping
 
             entries, mapping = await asyncio.to_thread(_read)

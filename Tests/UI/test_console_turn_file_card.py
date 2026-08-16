@@ -158,6 +158,144 @@ async def test_expand_provider_construction_failure_never_crashes_app():
 
 
 @pytest.mark.asyncio
+async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tmp_path):
+    """PR3a-1 Task 6c regression: a run's ``change_snapshots`` can hold
+    rows from TWO windows -- the turn's own window and its surviving
+    sub-agents' post-turn window (``console_agent_bridge.py``'s
+    ``_close_post_turn_change_window``) -- and BOTH windows can cover the
+    SAME root, with BOTH markers carrying the SAME ``change_review_run_id``.
+
+    Driven over the REAL stack (real ``ChangeTurnTracker``/shadow repo, a
+    real ``AgentRunsDB``, the real ``AgentRunsChangeReviewProvider``) --
+    copying the fixture pattern from ``test_change_review_screen.py``'s
+    ``review_fixture``/``_record_turn``; that module's docstring explains
+    why fake provider shapes are banned here. Uses a ``tmp_path`` FILE
+    (not ``:memory:``) deliberately: ``ConsoleTurnFileCard`` reads the
+    provider off ``asyncio.to_thread`` (a different OS thread than the one
+    that wrote the rows), and ``AgentRunsDB`` holds one connection PER
+    THREAD (``_held_connection``) -- a ``:memory:`` database is private to
+    the connection that opened it, so the worker thread would see a blank
+    schema (measured: ``no such table: change_snapshots``). A real file is
+    the only path-independent way to exercise the card's actual off-thread
+    read.
+
+    Pre-fix this fails: ``ConsoleTurnFileCard._load_rows`` built a
+    root-keyed ``changed_by_root`` dict, so the second-recorded (post-turn)
+    row's files silently overwrote the first-recorded (turn) row's files at
+    that root's dict slot. The result was 2 rows total (matching the file
+    COUNT by coincidence) but both were ``survivor_write.txt`` -- the turn
+    window's ``turn_write.txt`` never appeared at all, and expanding either
+    row served the post-turn window's diff.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.UI.Screens.change_review_screen import (
+        AgentRunsChangeReviewProvider,
+    )
+    from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
+    from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "seed.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    # Window 1: the turn's own window -- recorded FIRST, matching
+    # production's insertion order (the turn ends before any post-turn
+    # window is opened).
+    _record_window(
+        CHANGE_KIND_TURN,
+        lambda: (root / "turn_write.txt").write_text("ALPHA_TURN_MARKER\n"),
+    )
+    # Window 2: the post-turn window covering a surviving sub-agent's
+    # writes -- same root, same run_id, recorded SECOND.
+    _record_window(
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        lambda: (root / "survivor_write.txt").write_text("BRAVO_POST_MARKER\n"),
+    )
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+
+    class _RealHost(App):
+        CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                "✎ Edited 2 files  +2 −0 — review with `v`",
+                run_id,
+                lambda: provider,
+                id="card-under-test",
+            )
+
+    async with _RealHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows: list = []
+        for _ in range(120):
+            rows = list(card.query(".console-turn-file-row"))
+            if len(rows) >= 2:
+                break
+            await pilot.pause(0.02)
+        assert len(rows) == 2, "row count must equal total files across BOTH windows"
+        labels = [str(row.render()) for row in rows]
+        assert "turn_write.txt" in labels[0], labels
+        assert "survivor_write.txt" in labels[1], labels
+        # No duplicates: exactly one row names each file (the root-keyed
+        # bug rendered survivor_write.txt twice and turn_write.txt zero times).
+        assert sum("turn_write.txt" in label for label in labels) == 1
+        assert sum("survivor_write.txt" in label for label in labels) == 1
+
+        async def _expand(index: int):
+            rows[index].focus()
+            await pilot.press("enter")
+            body = None
+            for _ in range(60):
+                bodies = list(card.query(".console-turn-file-diff"))
+                if bodies[index].display:
+                    body = bodies[index]
+                    break
+                await pilot.pause(0.02)
+            assert body is not None, f"diff body {index} never displayed"
+            return str(body.query_one(".console-turn-file-diff-text").render())
+
+        turn_diff = await _expand(0)
+        assert "ALPHA_TURN_MARKER" in turn_diff
+        assert "BRAVO_POST_MARKER" not in turn_diff
+
+        post_turn_diff = await _expand(1)
+        assert "BRAVO_POST_MARKER" in post_turn_diff
+        assert "ALPHA_TURN_MARKER" not in post_turn_diff
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_degrades_to_marker_only():
     class _Broken(_FakeProvider):
         def turns(self):

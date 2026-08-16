@@ -234,6 +234,12 @@ plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
 byte-identical to the pre-card behavior). `v` and the inspector's Review
 changes action work identically either way.
 
+The "✎ A sub-agent edited N files after this turn" row (see [Parallel
+sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
+by design it covers the same run's full set of tracked changes — turn and
+post-turn windows alike — the same union the `v` Review screen shows for
+that run.
+
 ### Parallel sub-agents (the fleet)
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
