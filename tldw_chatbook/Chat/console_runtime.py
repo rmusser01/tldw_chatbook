@@ -842,6 +842,44 @@ class ConsoleRuntime:
                 type(exc).__name__,
             )
 
+    def remount_pending_approval(self) -> None:
+        """Mount the card for a round armed while nothing was attached.
+
+        task-15860 Task 5. The screen's approval card is derived entirely
+        from its own `_task_resume_state`, which a FRESH screen starts
+        empty — and screens are never cached. So a round armed headlessly
+        (a risk-tagged tool in a wake turn) would sit registered,
+        announced app-wide, and still invisible the moment the user acted
+        on that announcement and opened Console. `switch_session`'s
+        identical re-derive would eventually mount it, but only if the
+        user switched sessions — which they have no reason to do, never
+        having seen a card.
+
+        Gated on a NEW claim (`attach_view`'s `previous is not view`), not
+        run on every `_ensure_console_chat_controller()`: re-pushing the
+        payload rebuilds the card's rows, so an unconditional re-derive
+        would discard a half-made decision (a chosen Select, not yet
+        submitted) on any tick that happens to touch the controller.
+
+        Best-effort: a raising seam is logged, never propagated into the
+        attach.
+        """
+        controller = self._chat_controller
+        remount = (
+            getattr(controller, "remount_pending_approval_for_active_session", None)
+            if controller is not None
+            else None
+        )
+        if not callable(remount):
+            return
+        try:
+            remount()
+        except Exception as exc:  # noqa: BLE001 -- an attach never dies on this
+            logger.debug(
+                "Pending-approval remount raised at attach (exception_type={})",
+                type(exc).__name__,
+            )
+
     def attach_view(self, view: Any) -> None:
         """Claim this runtime for `view` and open a new Console visit.
 
@@ -860,7 +898,8 @@ class ConsoleRuntime:
         """
         previous = self.view
         self.view = view
-        if previous is not view:
+        claimed = previous is not view
+        if claimed:
             controller = self._chat_controller
             begin_visit = (
                 getattr(controller, "begin_visit", None)
@@ -871,6 +910,8 @@ class ConsoleRuntime:
                 begin_visit()
         self._bind_view_hooks()
         self._rearm_delivery_ui_hook()
+        if claimed:
+            self.remount_pending_approval()
 
     def detach_view(self, view: Any | None = None) -> bool:
         """Clear every screen-owned slot; the runtime itself survives.

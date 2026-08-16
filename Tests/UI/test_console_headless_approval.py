@@ -172,16 +172,24 @@ def _risk_row():
 
 
 def _toast_text(app) -> str:
-    """Text from the app's MOUNTED toast widgets, whatever screen is up."""
+    """Text from the app's MOUNTED `Toast` widgets, whatever screen is up.
+
+    Reads `Toast.render()`, not `renderable`: a `Toast` is a `Static`
+    that never calls `update()`, so its `renderable` is empty and a
+    helper reading that attribute reports "no toast" for a toast that is
+    on screen. Measured -- that is what this helper did first.
+    """
     chunks: list[str] = []
     for screen in app.screen_stack:
         for node in screen.walk_children(with_self=True):
-            if type(node).__name__ not in {"Toast", "ToastRack", "ToastHolder"}:
+            if type(node).__name__ != "Toast":
                 continue
-            for inner in node.walk_children(with_self=True):
-                renderable = getattr(inner, "renderable", None)
-                if renderable is not None:
-                    chunks.append(str(renderable))
+            render = getattr(node, "render", None)
+            if callable(render):
+                try:
+                    chunks.append(str(render()))
+                except Exception:  # noqa: BLE001 -- a mid-mount toast
+                    pass
     return "\n".join(chunks)
 
 
@@ -229,7 +237,13 @@ async def test_a_headless_risk_tagged_round_toasts_app_wide_and_is_resolvable(
     """
     app, gateway = _build_console_app(tmp_path)
 
-    async with app.run_test(size=(160, 48)) as pilot:
+    # `notifications=True` is REQUIRED and is not decoration: Textual's
+    # `run_test` defaults it to False, which makes `Screen._extend_compose`
+    # skip the `ToastRack` entirely -- no toast can ever mount, so a test
+    # that asserted on the RENDERED toast under the default would fail
+    # forever and one that asserted on `app._notifications` would pass
+    # without proving anything reached the screen.
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
             app, pilot, gateway
         )
