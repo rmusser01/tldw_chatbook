@@ -25,9 +25,21 @@ from textual.css.query import NoMatches, QueryError
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Markdown,
+    OptionList,
+    Static,
+    TextArea,
+)
 
-from tldw_chatbook.app import LibraryIngestQueueMixin, _IngestParsePoolResources
+from tldw_chatbook.app import (
+    LibraryIngestQueueMixin,
+    TldwCli,
+    _IngestParsePoolResources,
+)
 from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Constants import (
@@ -123,6 +135,7 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
 )
+from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.Widgets.Library.library_rail import (
@@ -294,6 +307,38 @@ class GatedLibraryMediaScopeService(StaticLibraryMediaScopeService):
             )
             return ["obsolete"]
         return ["audio", "video"]
+
+
+class FailingFirstLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Fail the initial exact page once so mounted Retry can recover."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self._failures = 1
+
+    async def search_media(self, **kwargs):
+        if self._failures:
+            self._failures -= 1
+            raise RuntimeError("private-media-failure")
+        return await super().search_media(**kwargs)
+
+
+class GatedFailingSecondLibraryMediaScopeService(StaticLibraryMediaScopeService):
+    """Hold page 2, then fail it so retained-page rendering is observable."""
+
+    def __init__(self, media_items):
+        super().__init__(media_items)
+        self.page_two_entered = threading.Event()
+        self.page_two_release = threading.Event()
+
+    async def search_media(self, **kwargs):
+        if kwargs.get("offset") == 20:
+            self.page_two_entered.set()
+            await asyncio.to_thread(
+                self.page_two_release.wait, _GATED_RELEASE_TIMEOUT_SECONDS
+            )
+            raise RuntimeError("private-page-two-failure")
+        return await super().search_media(**kwargs)
 
 
 def _open_source_test_app() -> SimpleNamespace:
@@ -4151,15 +4196,18 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
 
 
 async def _pick_media_type(screen, pilot, value: str) -> None:
-    """Open the type chooser strip and pick ``value`` directly (task-14902)."""
+    """Open the bounded type chooser and pick ``value`` directly."""
     screen.query_one("#library-media-type-filter", Button).press()
-    await _wait_for_selector(screen, pilot, "#library-media-type-choices")
-    choice = next(
-        button
-        for button in screen.query(".library-media-type-choice")
-        if str(getattr(button, "choice_value", "")) == value
+    chooser = await _wait_for_selector(
+        screen, pilot, "#library-media-type-choices"
     )
-    choice.press()
+    assert isinstance(chooser, OptionList)
+    chooser.highlighted = next(
+        index
+        for index, option in enumerate(chooser.options)
+        if getattr(option, "choice_value", None) == value
+    )
+    chooser.action_select()
     await pilot.pause()
     await pilot.pause()
 
@@ -6614,6 +6662,212 @@ async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
         ] == ["local:media:2", "local:media:1"]
 
 
+@pytest.mark.parametrize("size", ((100, 30), (170, 48)))
+@pytest.mark.asyncio
+async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) -> None:
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Media {index:02d}",
+            "type": "document",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 46)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        assert str(host.CSS_PATH) == TldwCli.CSS_PATH[1]
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 45
+            and len(screen.query(".library-media-row")) == 20,
+            message="Exact first Media page never reached the mounted canvas.",
+        )
+
+        canvas = screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+        list_pane = screen.query_one("#library-media-list", Vertical)
+        row_scroll = screen.query_one("#library-media-row-scroll", VerticalScroll)
+        pager = screen.query_one("#library-media-pager", Vertical)
+        await _wait_for_condition(
+            pilot,
+            lambda: row_scroll.max_scroll_y > 0 and pager.region.width > 0,
+            message=lambda: (
+                "Media row viewport/pager never received bounded geometry: "
+                f"scroll={row_scroll.region!r}/{row_scroll.virtual_size!r}, "
+                f"pager={pager.region!r}, canvas={canvas.region!r}, "
+                f"host={screen.query_one('#library-canvas').region!r}"
+            ),
+        )
+        assert canvas.pager == controller.pager
+        assert str(screen.query_one("#library-media-title", Static).renderable) == (
+            "Media (45)"
+        )
+        assert str(
+            screen.query_one("#library-media-page-status", Static).renderable
+        ) == "1-20 of 45 · Page 1 of 3"
+        assert row_scroll.parent is list_pane
+        assert pager.parent is list_pane
+        assert row_scroll.max_scroll_y > 0
+        assert list_pane.region.contains_region(pager.region)
+        assert pager in host.screen._compositor.visible_widgets
+        previous = screen.query_one("#library-media-previous", Button)
+        assert previous.disabled is True
+        assert str(previous.tooltip) == controller.pager.previous_reason
+        assert controller.pager.previous_reason in str(
+            screen.query_one("#library-media-disabled-reason", Static).renderable
+        )
+
+        screen.query_one("#library-media-next", Button).focus()
+        screen.query_one("#library-media-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_scope == MediaBrowseScope(page=2)
+            and str(
+                screen.query_one("#library-media-page-status", Static).renderable
+            )
+            == "21-40 of 45 · Page 2 of 3"
+            and getattr(screen.focused, "id", None) == "library-media-next",
+            message="Media page 2 never applied.",
+        )
+        assert str(
+            screen.query_one("#library-media-page-status", Static).renderable
+        ) == "21-40 of 45 · Page 2 of 3"
+        assert len(screen.query(".library-media-row")) == 20
+
+        screen.query_one("#library-media-next", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_scope == MediaBrowseScope(page=3)
+            and str(
+                screen.query_one("#library-media-page-status", Static).renderable
+            )
+            == "41-45 of 45 · Page 3 of 3"
+            and screen.query_one("#library-media-next", Button).disabled
+            and getattr(screen.focused, "id", None) == "library-media-previous",
+            message="Media final page never applied.",
+        )
+        assert str(
+            screen.query_one("#library-media-page-status", Static).renderable
+        ) == "41-45 of 45 · Page 3 of 3"
+        assert len(screen.query(".library-media-row")) == 5
+        next_page = screen.query_one("#library-media-next", Button)
+        assert next_page.disabled is True
+        assert str(next_page.tooltip) == controller.pager.next_reason
+
+@pytest.mark.asyncio
+async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    app.media_reading_scope_service = FailingFirstLibraryMediaScopeService(
+        _two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        controller = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.error_copy
+            and len(screen.query("#library-media-retry")) == 1,
+            message="Initial Media error never exposed one Retry action.",
+        )
+
+        title = str(screen.query_one("#library-media-title", Static).renderable)
+        page_status = str(
+            screen.query_one("#library-media-page-status", Static).renderable
+        )
+        assert title == "Media"
+        assert "(0)" not in title
+        assert page_status == "No page loaded · Total unavailable"
+        assert "private-media-failure" not in _visible_text(screen)
+
+        retry = screen.query_one("#library-media-retry", Button)
+        retry.focus()
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.applied_result is not None
+            and controller.applied_result.total == 2
+            and not screen.query("#library-media-retry")
+            and getattr(screen.focused, "id", None) == "library-media-type-filter",
+            message="Media Retry never recovered to a bounded focus target.",
+        )
+        assert str(screen.query_one("#library-media-title", Static).renderable) == (
+            "Media (2)"
+        )
+        screen._focus_library_media_page_control("#library-media-next")
+        assert getattr(screen.focused, "id", None) == "library-media-type-filter"
+
+
+@pytest.mark.asyncio
+async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls() -> None:
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Media {index:02d}",
+            "type": "document",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 26)
+    ]
+    app = _build_test_app()
+    _seed_conversations(app, [], media=media)
+    service = GatedFailingSecondLibraryMediaScopeService(media)
+    app.media_reading_scope_service = service
+    host = LibraryHarness(app)
+
+    try:
+        async with host.run_test(size=(100, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-media", Button).press()
+            controller = screen._library_media_browse_controller
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.applied_result is not None
+                and len(screen.query(".library-media-row")) == 20,
+                message="Initial retained Media page never rendered.",
+            )
+
+            screen.query_one("#library-media-next", Button).press()
+            await _wait_for_condition(
+                pilot,
+                lambda: service.page_two_entered.is_set()
+                and controller.loading
+                and len(screen.query(".library-media-row")) == 20
+                and screen.query_one("#library-media-previous", Button).disabled
+                and screen.query_one("#library-media-next", Button).disabled,
+                message="Page 2 never reached its loading gate.",
+            )
+            assert len(screen.query(".library-media-row")) == 20
+            assert screen.query_one("#library-media-previous", Button).disabled
+            assert screen.query_one("#library-media-next", Button).disabled
+
+            service.page_two_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(controller.error_copy)
+                and len(screen.query("#library-media-retry")) == 1,
+                message="Page 2 failure never exposed the retained Retry state.",
+            )
+            assert len(screen.query(".library-media-row")) == 20
+            assert "private-page-two-failure" not in _visible_text(screen)
+    finally:
+        service.page_two_release.set()
+
+
 @pytest.mark.asyncio
 async def test_library_media_newer_page_and_facet_generations_win() -> None:
     app = _build_test_app()
@@ -6828,7 +7082,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
     )
     screen._exit_library_media_select_mode = lambda **_kwargs: None
     event = SimpleNamespace(
-        button=SimpleNamespace(choice_value=choice),
+        option=SimpleNamespace(choice_value=choice),
         stop=lambda: None,
     )
 

@@ -2602,6 +2602,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
+#library-media-canvas {
+    height: 100%;
+    min-height: 0;
+}
+
 #library-media-type-filter {
     width: auto;
     min-width: 0;
@@ -2634,6 +2639,17 @@ with stray left-edge border fragments), and padding 0 1 so the full
     overflow-x: hidden;
 }
 
+#library-media-list {
+    overflow-y: hidden;
+}
+
+#library-media-row-scroll {
+    width: 100%;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
 #library-media-preview,
 #library-media-detail-empty {
     margin: 0 0 0 1;
@@ -2658,7 +2674,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: auto;
 }
 
-#library-canvas.library-notes-compact #library-media-list,
+#library-canvas.library-notes-compact #library-media-list {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-y: hidden;
+}
+
 #library-canvas.library-notes-compact #library-media-preview {
     width: 100%;
     height: auto;

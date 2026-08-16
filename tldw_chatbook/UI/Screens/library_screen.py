@@ -33,7 +33,15 @@ from textual.geometry import Region
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker, get_current_worker
-from textual.widgets import Button, Checkbox, Collapsible, Input, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    OptionList,
+    Static,
+    TextArea,
+)
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_onboarding_state import (
@@ -1548,6 +1556,10 @@ def _sync_library_canvas(
             # item (task-15457 review round 1, Critical 1).
             screen._selected_media_id = media_state.selected_id
             sync_args = (media_state,)
+            sync_kwargs = {
+                "pager": screen._library_media_browse_controller.pager,
+                "type_options": media_state.type_options,
+            }
         elif kind == "media-trash":
             # task-4025: the media canvas's Trash view -- same targeted
             # contract, its own mounted widget/state builder.
@@ -9482,6 +9494,8 @@ class LibraryScreen(BaseAppScreen):
                     self._selected_media_id = media_state.selected_id
                     yield LibraryMediaCanvas(
                         media_state,
+                        pager=self._library_media_browse_controller.pager,
+                        type_options=media_state.type_options,
                         id="library-media-canvas",
                     )
                 elif (
@@ -10327,20 +10341,61 @@ class LibraryScreen(BaseAppScreen):
         self._selected_media_id = media_state.selected_id
         focused = self.focused
         focused_id = getattr(focused, "id", None)
+        pager_focus_ids = {
+            "library-media-previous",
+            "library-media-next",
+            "library-media-retry",
+            "library-media-type-filter",
+        }
         if (
             isinstance(focused_id, str)
             and focused_id
             and any(widget.id == "library-media-canvas" for widget in focused.ancestors)
+            and not (
+                focus_identity
+                in {
+                    "#library-media-previous",
+                    "#library-media-next",
+                    "#library-media-retry",
+                }
+                and focused_id in pager_focus_ids
+            )
         ):
             focus_identity = f"#{focused_id}"
         elif self._library_pending_list_entry_focus:
             focus_identity = "#library-media-row-0"
-        then = (
-            (lambda: self._focus_library_control(focus_identity))
-            if focus_identity
-            else None
-        )
+        if focus_identity in {
+            "#library-media-previous",
+            "#library-media-next",
+            "#library-media-retry",
+        }:
+            def focus_page_control() -> None:
+                self._focus_library_media_page_control(focus_identity)
+
+            then = focus_page_control
+        else:
+            then = (
+                (lambda: self._focus_library_control(focus_identity))
+                if focus_identity
+                else None
+            )
         _sync_library_canvas(self, "media", then=then)
+
+    def _focus_library_media_page_control(self, invoked: str) -> None:
+        """Restore pager focus without ever landing on a disabled control."""
+        opposite = {
+            "#library-media-previous": "#library-media-next",
+            "#library-media-next": "#library-media-previous",
+            "#library-media-retry": "#library-media-type-filter",
+        }[invoked]
+        for selector in (invoked, opposite, "#library-media-type-filter"):
+            try:
+                control = self.query_one(selector)
+            except (NoMatches, QueryError):
+                continue
+            if not getattr(control, "disabled", False):
+                control.focus()
+                return
 
     def _request_library_media_browse(
         self,
@@ -15282,6 +15337,8 @@ class LibraryScreen(BaseAppScreen):
                 self._selected_media_id = media_state.selected_id
                 canvas = LibraryMediaCanvas(
                     media_state,
+                    pager=self._library_media_browse_controller.pager,
+                    type_options=media_state.type_options,
                     id="library-media-canvas",
                 )
             else:
@@ -15686,11 +15743,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
+
         def focus_open_strip() -> None:
-            self._focus_library_choice_strip_active(
-                ".library-media-type-choice",
-                self._library_media_type_filter,
-            )
+            self._focus_library_control("#library-media-type-choices")
 
         def focus_opener() -> None:
             self._focus_library_control("#library-media-type-filter")
@@ -15705,15 +15760,17 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
-    @on(Button.Pressed, ".library-media-type-choice")
-    def handle_library_media_type_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact media type carried by one strip choice.
+    @on(OptionList.OptionSelected, "#library-media-type-choices")
+    def handle_library_media_type_choice(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Apply the exact media type carried by one chooser option.
 
         Args:
-            event: Button press event emitted by a type-strip option.
+            event: Selection event emitted by the bounded type chooser.
         """
         event.stop()
-        requested = getattr(event.button, "choice_value", None)
+        requested = getattr(event.option, "choice_value", None)
         if requested is not None and type(requested) is not str:
             return
         self._library_media_type_choices_visible = False
@@ -15729,6 +15786,38 @@ class LibraryScreen(BaseAppScreen):
             self,
             "media",
             then=lambda: self._focus_library_control("#library-media-type-filter"),
+        )
+
+    @on(Button.Pressed, "#library-media-previous")
+    def handle_library_media_previous(self, event: Button.Pressed) -> None:
+        """Request the previous exact Media page."""
+        event.stop()
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is None or self._library_media_browse_controller.pager.previous_disabled:
+            return
+        self._request_library_media_page(
+            applied.page - 1,
+            focus_identity="#library-media-previous",
+        )
+
+    @on(Button.Pressed, "#library-media-next")
+    def handle_library_media_next(self, event: Button.Pressed) -> None:
+        """Request the next exact Media page."""
+        event.stop()
+        applied = self._library_media_browse_controller.applied_scope
+        if applied is None or self._library_media_browse_controller.pager.next_disabled:
+            return
+        self._request_library_media_page(
+            applied.page + 1,
+            focus_identity="#library-media-next",
+        )
+
+    @on(Button.Pressed, "#library-media-retry")
+    def handle_library_media_retry(self, event: Button.Pressed) -> None:
+        """Retry the latest failed Media request."""
+        event.stop()
+        self._retry_library_media_browse(
+            focus_identity="#library-media-retry",
         )
 
     @on(Button.Pressed, ".library-media-row")
@@ -29149,7 +29238,12 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_view != "viewer":
             media_state = self._build_library_media_state()
             self._selected_media_id = media_state.selected_id
-            return LibraryMediaCanvas(media_state, id="library-media-canvas")
+            return LibraryMediaCanvas(
+                media_state,
+                pager=self._library_media_browse_controller.pager,
+                type_options=media_state.type_options,
+                id="library-media-canvas",
+            )
         if self._library_media_detail is None:
             return Static(
                 "Loading media…",

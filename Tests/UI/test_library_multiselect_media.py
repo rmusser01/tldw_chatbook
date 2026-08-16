@@ -686,7 +686,7 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
     )
     pick = SimpleNamespace(
         stop=lambda: None,
-        button=SimpleNamespace(choice_value="video"),
+        option=SimpleNamespace(choice_value="video"),
     )
     LibraryScreen.handle_library_media_type_choice(fake, pick)
     assert fake._library_media_type_filter == "video"
