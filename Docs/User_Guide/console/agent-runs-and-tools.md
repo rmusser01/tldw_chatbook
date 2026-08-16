@@ -543,16 +543,28 @@ to the conversation, and the `◈` mark stays set so you can see on return
 that something happened while you were away. Navigating back shows the
 completed turn already in the transcript.
 
-Two honest limits remain. **Nothing wakes while the app is not running**
+One honest limit remains. **Nothing wakes while the app is not running**
 — completions are recorded durably (mark + ledger) and claimed the next
 time the app starts and Console opens; a wake at launch, before Console
 has ever been opened in that session, is follow-up work (task-15860).
-And **a headless wake that needs an approval card parks it**: the card is
-retained and is claimable when you next open Console, but nothing
-surfaces it while you are away, and if nobody answers it the request
-denies itself at the `[mcp] approval_timeout_seconds` deadline
-(default 120s). A wake turn also spends model tokens with no window
-open — the `◈` mark is your signal that it did.
+A wake turn also spends model tokens with no window open — the `◈` mark
+is your signal that it did.
+
+**A headless wake that needs approval asks you, wherever you are.** When
+a woken turn reaches a tool that requires your approval, a toast names it
+on whatever screen you're on ("Agent in “…” needs approval to use a tool.
+Open Console to review — nothing runs until you answer."), the session
+picks up its usual approval badge, and the card is waiting, already
+mounted, the moment you open Console. The tool does not run until you
+answer it. Nothing auto-approves: navigating away from Console again
+denies the request (the same rule as any card you leave unanswered), and
+so does quitting the app. If you have set a positive `[mcp]
+approval_timeout_seconds`, it still expires the request on schedule —
+being away does not buy the request extra time. The shipped default is
+`0`, which means no deadline: the request waits for you. One limitation:
+if a woken turn arms two approval rounds for the same conversation, only
+the most recent one has a card to mount; the older one still has to be
+answered, and until it is, it keeps the badge lit (task-15661).
 
 **Turning the wake off.** Set `[agents] autowake_enabled = false` in
 `config.toml` (default `true`; no Settings UI switch). OFF loses

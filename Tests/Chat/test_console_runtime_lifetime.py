@@ -62,6 +62,24 @@ class _StalledGateway:
         yield "never"
 
 
+class _ThreadApp:
+    """The app surface `request_mcp_approvals` needs to reach its poll loop.
+
+    **Not decoration.** ADR-067 added a no-`app` guard to
+    `request_mcp_approvals` that denies every name on the spot when
+    `controller.app is None` -- so the two approval-round tests below,
+    written before that guard existed, stopped exercising the poll loop
+    at all and passed on the guard's verdict instead. Measured
+    (task-15860 Task 5): with the visit-cancel check deleted outright --
+    fail-open for every session-scoped round -- this whole file was
+    still 14/14 green in 0.98s, which is less than one poll interval.
+    Wiring an app restores what these tests claim to pin.
+    """
+
+    def call_from_thread(self, fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+
 class _View:
     """The smallest thing `ConsoleRuntime` accepts as a view."""
 
@@ -141,6 +159,8 @@ async def test_leaving_console_still_denies_a_parked_approval_round():
         store=store, provider_gateway=_StalledGateway()
     )
     controller.mcp_approval_timeout_seconds = lambda: 60.0
+    # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
+    controller.app = _ThreadApp()
     runtime = _runtime_with(controller, _View())
 
     decisions: dict[str, str] = {}
@@ -270,6 +290,8 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
         store=store, provider_gateway=_StalledGateway()
     )
     controller.mcp_approval_timeout_seconds = lambda: 60.0
+    # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
+    controller.app = _ThreadApp()
     runtime = _runtime_with(controller, _View())
 
     decisions: dict[str, str] = {}

@@ -4637,6 +4637,79 @@ must run under the widget's reconcile lock — read mid-reconcile, the transient
 child order faked a "blocked prune" and stalled a selection-free End drain
 (218 messages stranded in the born-red End-race pin).
 
+## A guard added by a later ADR can hollow out an older test without turning it red (task-15860, 2026-08-16)
+
+`Tests/Chat/test_console_runtime_lifetime.py`'s two AC#2 approval pins —
+"leaving Console denies a parked approval round" and "a round from the
+previous visit is not resurrected" — build the controller with
+`app is None`. That was fine when they were written. Then ADR-067 added a
+no-`app` guard to `request_mcp_approvals` that denies every name on the spot,
+and from that moment the rounds never reached the poll loop at all: both tests
+passed on the guard's verdict, not on the cancellation signal they claim to
+pin. Measured while mutation-testing a change to that exact signal: with
+`_is_session_cancelled`'s visit check deleted outright — fail-open for every
+session-scoped round — the whole file was still **14/14 green in 0.98s**.
+
+**The tell was the clock.** A file whose tests are supposed to poll on a 1.0s
+granularity cannot finish in less than one poll interval. After wiring a
+`call_from_thread` app the same file takes 2.81s and the same deletion fails
+both pins.
+
+**What to do.** When you change a signal, mutation-test the OTHER files that
+claim to pin it, not only your own — a green neighbour is not evidence.
+And when a suite that exercises timed waits runs impossibly fast, that is a
+finding, not good luck.
+
+## pytest silently drops a directory argument when a file inside it is also listed (task-15860, 2026-08-16)
+
+A gate invocation passed `Tests/Agents/` *and*
+`Tests/Agents/test_agent_runs_wake_ledger.py` (the second arrived from a
+separate "wake suites" list). pytest collected **283** tests instead of
+**1,733** — the directory arg was collapsed against the more specific
+file — and reported a perfectly healthy `282 passed, 1 skipped`, exit 0.
+Nothing in the output says a thing was skipped; the only evidence is the
+count, and 282 looks like a normal number.
+
+**What to do.** Never pass a directory and a path inside it in the same
+invocation. And "READ every count" means read it against what you MEANT to
+run: `--collect-only -q | tail -2` on the exact argument list first, then
+compare. A count you have not predicted cannot be checked.
+
+## Textual's `run_test` disables notifications, so a toast assertion can never see a toast (task-15860, 2026-08-16)
+
+`App.run_test()` defaults `notifications=False`, which sets
+`_disable_notifications` and makes `Screen._extend_compose` skip the
+`ToastRack` entirely. A test asserting on rendered toast widgets fails
+forever under the default; a test asserting on `app._notifications` passes
+without proving anything reached a screen. Pass `notifications=True` and
+assert on the widget.
+
+Second trap in the same assertion: `Toast` is a `Static` that never calls
+`update()`, so its `renderable` is empty — a helper reading `renderable`
+reports "no toast" for a toast that is on screen. Read `Toast.render()`.
+
+## Do not commit to a file the running suite imports — `inspect`/`linecache` read source off disk lazily (task-15860, 2026-08-16)
+
+A 59-minute single-process Console population (3,404 tests) came back with
+**4 failures unique to the branch**, all in
+`test_console_prompts_controller.py::test_screen_keeps_a_real_delegation_for_
+every_outside_caller[...]` — a test that does
+`inspect.getsource(getattr(ChatScreen, name))`. Its message showed it had read
+a *different method's* body entirely.
+
+The cause was a comment-only commit to `chat_screen.py` (net +7 lines at line
+14903) made **while the run was in flight**. Each method's `co_firstlineno` is
+fixed at import; `inspect.findsource` calls `linecache.checkcache`, re-reads
+the now-changed file, and every method defined below the edit reports source
+shifted by the delta. The tell was not the assertion text but the SPLIT: the
+two parametrisations that passed are defined at lines 5330 and 6264, the four
+that failed at 16684, 16790, 16794 and 17198 — a clean line-number boundary at
+the edit point. Re-run on a stable tree: 37 passed.
+
+**What to do.** While a long run is in flight, stage edits somewhere the run
+does not import, or wait. This bites any assertion built on `inspect.getsource`
+/ `inspect.getsourcelines` / traceback rendering — and those are exactly the
+architecture-contract tests that a big single-process gate is there to run.
 ## A born-red run that dies on ImportError is not born-red evidence (TASK-16838, 2026-08-16)
 
 The in-flight-guard test file imported the new `_IN_FLIGHT_URL_CHECKS`

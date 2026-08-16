@@ -28,6 +28,7 @@ from typing import (
 from uuid import uuid4
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
@@ -1422,6 +1423,33 @@ class ConsoleChatController:
         #: previous visit's teardown already denied. See
         #: ``_bind_visit_cancel_signal``.
         self._shutdown_requested = threading.Event()
+        #: The cancellation Event for rounds armed with NO Console visit
+        #: open (task-15860, plan Task 5). ``None`` until the first such
+        #: round arms.
+        #:
+        #: ``_shutdown_requested`` answers the question "did the visit that
+        #: armed this round end?". A round armed while the runtime is
+        #: DETACHED was not armed during any visit, so reading that
+        #: (already-set) Event for it answered a different question and
+        #: denied the round at the first 1.0s poll -- measured, 1.01s to
+        #: ``deny``, with nothing ever surfaced. That is the same category
+        #: error the wake-fires landing fixed one layer up, where
+        #: ``_attempt`` read "a visit ended" as "the app is exiting".
+        #:
+        #: This Event stands in for the visit that has not happened yet:
+        #: unset while detached (so the round waits for the user to open
+        #: Console and answer it) and set by the next ``leave_console()``
+        #: -- by then the user HAS seen it and navigated away, which is
+        #: exactly the case AC#2's "leaving denies parked approvals" is
+        #: about -- or by ``begin_shutdown()`` at app exit. It is dropped
+        #: once set, so the next detached round binds a fresh one.
+        #:
+        #: Nothing here weakens a fail-closed gate: the round still cannot
+        #: resolve to anything but a human's own decision, a CONFIGURED
+        #: deadline (unchanged, never paused or extended -- ADR-067's
+        #: ``<= 0`` default is "no deadline" for the mounted case too),
+        #: this run's own cancel event, or these two teardown signals.
+        self._headless_visit_cancel: threading.Event | None = None
         #: True once this controller has been torn down for good
         #: (``begin_shutdown``). Blocks ``begin_visit`` from ever handing
         #: a disposed controller a fresh, unset cancellation Event.
@@ -3758,10 +3786,29 @@ class ConsoleChatController:
         captured Event set and denies. Nothing here can make a round
         fail open.
 
+        **task-15860, plan Task 5 -- the DETACHED arm.** With the runtime
+        outliving the screen, a round can be armed when no visit is open
+        at all (a headless wake turn reaching a risk-tagged tool). That
+        round was not armed *during* the visit whose Event is currently
+        set, so answering to it is a category error -- measured, it denied
+        the round at the first 1.0s poll, silently, making a headless wake
+        unable to use any risk-tagged tool and giving the user no chance
+        to answer. Such a round binds ``_headless_visit_cancel`` instead:
+        unset now, set by the NEXT ``leave_console()`` (the user has seen
+        it by then) or by ``begin_shutdown()``. A DISPOSED controller is
+        excluded -- it keeps the permanently-set Event, so an app-exit
+        round still denies immediately.
+
         Returns:
-            The Event this visit's teardown will set.
+            The Event whose set() this round must treat as cancellation.
         """
-        return self._shutdown_requested
+        if self._disposed or not self._shutdown_requested.is_set():
+            return self._shutdown_requested
+        event = self._headless_visit_cancel
+        if event is None or event.is_set():
+            event = threading.Event()
+            self._headless_visit_cancel = event
+        return event
 
     def _is_session_cancelled(
         self,
@@ -4122,7 +4169,15 @@ class ConsoleChatController:
                 self._parked_approval_payloads[session_id] = payload
 
         try:
-            if is_parked:
+            if self._approval_view_is_detached():
+                # task-15860 Task 5: no Console view exists, so BOTH the
+                # mount seam and the park seam are `None` and neither
+                # branch below would surface anything at all. Announce
+                # app-wide instead -- the toast renders on whatever screen
+                # the user is actually on, which is the only seam that can
+                # reach them here.
+                self._announce_detached_approval(owning_session_id)
+            elif is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
@@ -4433,6 +4488,113 @@ class ConsoleChatController:
         """Push ``payload`` (or clear it) onto the UI thread, if wired."""
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        **Known limitation, not fixed here:**
+        ``_parked_approval_payloads`` holds ONE payload per session
+        (last-armed wins -- see ``request_mcp_approvals``' ``finally``),
+        so with two rounds armed for one session only the newest can
+        mount. Filed as task-15661; pinned by
+        ``Tests/UI/test_console_headless_approval.py::
+        test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        if self.set_pending_approval is None:
+            return False
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+        with self._approval_state_lock:
+            still_armed = any(
+                state.get("session_id") == session_id
+                for state in self._pending_approval_rounds.values()
+            )
+            payload = (
+                self._parked_approval_payloads.get(session_id)
+                if still_armed
+                else None
+            )
+        if payload is None:
+            return False
+        self.set_pending_approval(payload)
+        return True
+
+    def _approval_view_is_detached(self) -> bool:
+        """True when NO Console view can surface an approval round.
+
+        task-15860 Task 5. Deliberately a property of the SEAMS, not of
+        ``ConsoleRuntime.view``: these two slots are what an announcement
+        would travel through, and ``detach_view`` clears them together
+        (``CONSOLE_VIEW_HOOK_SLOTS``). Asking the runtime instead would
+        make this method wrong in exactly the case it exists for -- a
+        controller whose seams are unwired for any other reason would
+        still surface nothing while claiming a view.
+        """
+        return self.set_pending_approval is None and self.park_pending_approval is None
+
+    def _announce_detached_approval(self, session_id: str) -> None:
+        """Raise the app-wide toast for a round armed with no Console view.
+
+        WORKER THREAD. ``App.notify`` is documented thread-safe (it posts
+        a message), so this needs no ``call_from_thread`` marshal -- and
+        the toast renders on whatever screen the user is currently
+        looking at, which is the whole point: the screen-owned seam
+        (``ChatScreen._park_console_approval``) is unreachable here.
+
+        Best-effort in both directions. An app double with no ``notify``
+        (several controller-level tests) is silently skipped, and a
+        raising/incompatible ``notify`` is logged rather than allowed to
+        break the round -- a missing toast must never turn into a missing
+        approval.
+
+        Args:
+            session_id: The round's owning session, used only to name the
+                conversation in the notice.
+        """
+        app = self.app
+        notify = getattr(app, "notify", None) if app is not None else None
+        if not callable(notify):
+            return
+        title = ""
+        try:
+            for session in self.store.sessions():
+                if session.id == session_id:
+                    title = str(getattr(session, "title", "") or "")
+                    break
+        except Exception:  # noqa: BLE001 -- a missing title never blocks the notice
+            title = ""
+        where = f" in {escape_markup(title)}" if title else ""
+        message = (
+            f"Agent{where} needs approval to use a tool. "
+            "Open Console to review -- nothing runs until you answer."
+        )
+        try:
+            notify(message, severity="warning")
+        except TypeError:
+            # An app double whose `notify` takes the message alone.
+            try:
+                notify(message)
+            except Exception:  # noqa: BLE001
+                logger.debug("Detached approval notice could not be delivered")
+        except Exception as exc:  # noqa: BLE001 -- surfacing is best-effort
+            logger.debug(
+                "Detached approval notice raised (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _resolve_mcp_approval_timeout_seconds(self) -> float:
         if self.mcp_approval_timeout_seconds is not None:
@@ -5888,6 +6050,23 @@ class ConsoleChatController:
         self._disposed = True
         self.prompt_queue_coordinator.shutdown()
         self._shutdown_requested.set()
+        self._cancel_headless_rounds()
+
+    def _cancel_headless_rounds(self) -> None:
+        """Deny every round armed while no Console visit was open.
+
+        task-15860 Task 5. Called by both teardown paths
+        (``leave_console``, ``begin_shutdown``); a no-op when no detached
+        round ever armed. The Event is DROPPED once set so the next
+        detached round binds a fresh, unset one rather than inheriting a
+        pre-set Event and denying instantly -- which would silently
+        restore the exact 1.01s self-deny this task removed.
+        """
+        event = self._headless_visit_cancel
+        if event is None:
+            return
+        self._headless_visit_cancel = None
+        event.set()
 
     def begin_visit(self) -> None:
         """Open a new Console visit on a controller that survived the last.
@@ -5956,6 +6135,11 @@ class ConsoleChatController:
         # teardown cancellation"), unchanged.
         self.prompt_queue_coordinator.shutdown()
         self._shutdown_requested.set()
+        # task-15860 Task 5: a round armed while DETACHED deferred to this
+        # moment. The user has now had a Console visit in which to answer
+        # it and has navigated away instead, so AC#2's rule applies to it
+        # exactly as it does to a round armed during the visit.
+        self._cancel_headless_rounds()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
         wake_sessions = set(self._agent_wake_turn_sessions)
