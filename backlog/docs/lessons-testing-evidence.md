@@ -4611,3 +4611,28 @@ pre-fix commit, where it finally failed. Rules: (1) a regression test for a
 visual fix is only evidence once it has been RUN against the pre-fix tree
 and observed red there; (2) any style probe on a widget mounted first in a
 test App is probing the focused state whether you meant it or not.
+## A bare scroll_to(max) walk is not a user gesture — it self-terminates the moment the boundary stops moving
+
+**TASK-16851, 2026-08-16.** The head-pinned-selection fix (refuse tailward
+hydration while over the high mark with a blocked prune) passed its stall pin
+but "failed" its Esc-recovery pin: after Esc unblocked the prune, an 80-round
+`scroll_to(y=max_scroll_y)` walk never advanced a single chunk. Probe: reader
+parked at exactly `scroll_y == max_scroll_y`, so every subsequent `scroll_to`
+produced NO scroll_y change — `watch_scroll_y` never fired, nothing scheduled
+hydration, and the loop measured the harness gesture, not the product. Every
+REAL input path (wheel-down, PageDown, End) has its own boundary hook and
+recovered immediately. The pre-existing two-sided walks had only ever worked
+because hydration kept GROWING max_scroll_y under them, re-arming the watcher
+each round — a walk test that relies on that is green only while the feature
+under test keeps moving the goalposts for it.
+
+**What to do.** Drive boundary-walk tests with the product's real gestures
+(`action_page_down()`, wheel events, `scroll_end`) — or at minimum pair the
+positioning `scroll_to` with one. Before concluding a recovery path is broken,
+check whether the loop's gesture can still produce a state change at all.
+
+Same task, implementation twin worth remembering: a decision that walks
+`self.children` (the hydration refusal reusing `_compute_prunable_prefix`)
+must run under the widget's reconcile lock — read mid-reconcile, the transient
+child order faked a "blocked prune" and stalled a selection-free End drain
+(218 messages stranded in the born-red End-race pin).

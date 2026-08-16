@@ -1805,6 +1805,14 @@ class ConsoleTranscript(VerticalScroll):
         self.summary_boundary_message_id: str | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
+        #: TASK-16851: when the last ``scroll_end`` (the End key) was issued.
+        #: The prune's restore compares this against its ENTRY capture: an
+        #: End that lands inside the entry->restore window engages the raw
+        #: anchor AFTER the capture, and without the stamp the restore reads
+        #: that engagement as the shrink-clamp's spurious re-attach and
+        #: quietly cancels the user's drain (the frame-wide End-during-prune
+        #: race the TASK-15777 round-3 review filed).
+        self._scroll_end_intent_time = 0.0
         self._refresh_lock = asyncio.Lock()
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
@@ -2286,7 +2294,13 @@ class ConsoleTranscript(VerticalScroll):
         events. Callers that already handled the window (``jump_to_latest``
         via ``anchor()``, the prune's following-branch restore) reach here
         with no hidden tail, making this a no-op for them.
+
+        TASK-16851: the intent stamp lets a prune whose entry-capture
+        predates this call recognize the anchor engagement as the user's
+        End rather than the shrink-clamp's re-attach (see
+        ``_run_prune_check``'s restore).
         """
+        self._scroll_end_intent_time = monotonic()
         super().scroll_end(*args, **kwargs)
         if self._hidden_tail_ids:
             self._schedule_tailward_hydration()
@@ -2598,6 +2612,20 @@ class ConsoleTranscript(VerticalScroll):
         the oldest rows, with its own measured scroll compensation), so an
         up-then-down round trip oscillates between the two marks instead of
         accumulating.
+
+        TASK-16851: that bound is real only while the prune can actually
+        make room. A far jump SELECTS its target and lands it at the window
+        HEAD, and the prune's walk stops at the first protected group — so a
+        head-pinned selection blocks the prune entirely while this chain
+        kept revealing (round-3 review: 490 rows / height 2.18x the high
+        mark, growing with session length). Hydration must not outrun a
+        prune that cannot make room: while the measured height is at/over
+        the high mark AND the prune walk is blocked, the reveal is refused
+        and the walk stalls BOUNDED instead (the mirror of the trim's
+        blocked-by-selection pause on the other boundary — the eviction
+        alternative would unmount the selection's action row, review D's
+        teleport). Clearing the selection (Esc) or the jump pill restores
+        full downward reachability.
         """
         self._tailward_hydration_scheduled = False
         if (
@@ -2606,20 +2634,47 @@ class ConsoleTranscript(VerticalScroll):
             or not self._hidden_tail_ids
         ):
             return
-        tail_start = self._hidden_tail_start_index()
-        budget = self._scrollback_chunk_line_budget()
-        used = 0
-        end = tail_start
-        while end < len(self._messages) and used < budget:
-            used += self._estimated_message_lines(self._messages[end])
-            end += 1
-        self._hydrating_scrollback = True
-        self._set_hidden_tail(end if end < len(self._messages) else None)
-        try:
-            async with self._refresh_lock:
+        async with self._refresh_lock:
+            # Re-check under the lock: the guards above ran while another
+            # reconcile (a prune's, most often) could still be in flight,
+            # and the refusal below walks ``self.children`` — reading them
+            # mid-reconcile sees a transient order whose first child may not
+            # be a message row, which makes the prune walk look blocked when
+            # it is not (measured: the walk broke immediately and stalled a
+            # selection-free drain).
+            if not self.is_mounted or not self._hidden_tail_ids:
+                return
+            low_mark, high_mark = self._prune_watermarks()
+            if (
+                high_mark > 0
+                and self.virtual_size.height >= high_mark
+                and not self._compute_prunable_prefix(
+                    self.virtual_size.height, low_mark
+                )[0]
+            ):
+                # Mirror of the prune's and the trim's blocked-walk logs: an
+                # unexplained stalled downward walk must be diagnosable.
+                logger.debug(
+                    "Console transcript tailward hydration refused: mounted "
+                    f"height {self.virtual_size.height} at/over high mark "
+                    f"{high_mark} and the prune walk is blocked (a protected "
+                    "group holds the window head) — hydration must not "
+                    "outrun a prune that cannot make room"
+                )
+                return
+            tail_start = self._hidden_tail_start_index()
+            budget = self._scrollback_chunk_line_budget()
+            used = 0
+            end = tail_start
+            while end < len(self._messages) and used < budget:
+                used += self._estimated_message_lines(self._messages[end])
+                end += 1
+            self._hydrating_scrollback = True
+            self._set_hidden_tail(end if end < len(self._messages) else None)
+            try:
                 await self._reconcile_rows(self._transcript_rows())
-        finally:
-            self._hydrating_scrollback = False
+            finally:
+                self._hydrating_scrollback = False
         self._schedule_prune_check()
         # Chain while the reader is still pinned to the bottom: a reader whose
         # anchor re-engaged at the slice bottom is auto-scrolled to the new
@@ -3123,6 +3178,7 @@ class ConsoleTranscript(VerticalScroll):
         )
         following = self._is_following_tail()
         raw_anchor_at_entry = self._raw_anchor_engaged()
+        entry_time = monotonic()
         anchor_y = self.scroll_y
         self._pruned_message_ids.update(prune_ids)
         logger.info(
@@ -3157,6 +3213,20 @@ class ConsoleTranscript(VerticalScroll):
                 # TASK-336), and leave an entry-engaged anchor engaged so
                 # the drain keeps converging.
                 if not raw_anchor_at_entry and self._raw_anchor_engaged():
+                    if self._scroll_end_intent_time > entry_time:
+                        # TASK-16851 (the round-3 residual): this engagement
+                        # is a user End that landed INSIDE the entry->restore
+                        # window, not the shrink-clamp's re-attach — its
+                        # deferred scroll was enqueued before this callback,
+                        # so quietly releasing here would cancel the drain
+                        # after ~one chunk (the pill stayed up and a second
+                        # End resumed). Honor it instead: keep the anchor,
+                        # skip the now-stale entry-offset compensation (the
+                        # user asked for the bottom, not their old position),
+                        # and re-arm the drain's self-chain.
+                        if self._hidden_tail_ids:
+                            self._schedule_tailward_hydration()
+                        return
                     self._release_anchor_quietly()
                 # Content: keep the same rows in view by shifting the
                 # offset up by the height actually removed (measured, not
