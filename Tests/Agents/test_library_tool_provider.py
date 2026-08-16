@@ -712,13 +712,20 @@ def test_sealing_loop_terminates_when_the_identity_itself_is_hostile():
     a halved id is a WRONG id, not a smaller one -- so the loop shrinks the
     four text fields around it and the identity survives verbatim."""
     huge = "界" * 40_000
-    oversized_id = "x" * 5_000
+    # TWO REGIMES (Qodo PR-1729 finding 3 refined the 16174 pin): below the
+    # projection bound an id survives VERBATIM -- the shrink loop never
+    # touches it, because a halved id is a WRONG id. AT the bound it is
+    # truncated at projection instead, because the alternative demonstrated
+    # by the finding is worse: an unbounded id is unshrinkable ballast that
+    # forces the sealing loop to drop the ENTIRE row (id, snippet and all),
+    # and an id past _MAX_RESULT_ID_CHARS names nothing fetchable anyway.
+    verbatim_id = "x" * 1_500
     row = LibraryRagResultRow(
         result_id=huge,
         title=huge,
         snippet="Matched media · pdf",
         score=0.5,
-        source_id=oversized_id,
+        source_id=verbatim_id,
         chunk_id="",
         citations=(),
         provenance=MappingProxyType({"source_type": "media"}),
@@ -734,7 +741,7 @@ def test_sealing_loop_terminates_when_the_identity_itself_is_hostile():
     payload = json.loads(result.content)
     assert serialized_size(payload) <= MAX_RESULT_BYTES
     assert payload["returned"] == len(payload["results"]) == 1
-    assert payload["results"][0]["source_id"] == oversized_id
+    assert payload["results"][0]["source_id"] == verbatim_id
 
 
 # --------------------------------------------------------------------------
@@ -861,6 +868,35 @@ def test_media_id_is_never_projected():
     assert projected["note_id"] == "n8", "the fallbacks that DO occur still ship"
 
 
+def test_oversized_identity_values_are_bounded_at_projection():
+    """Qodo PR-1729 finding 3: identity keys are excluded from the sealing
+    loop's shrink order, so an untrusted 50k-char provenance id could force
+    row drops. Identity strings are bounded at projection instead, by the
+    same _MAX_RESULT_ID_CHARS precedent result_id already uses -- an id past
+    that length names nothing fetchable (production ids are <= 1000 chars),
+    while unbounded it is payload ballast."""
+    row = _point_id_row(9)
+    row["source_id"] = "s" * 50_000
+    row["chunk_id"] = "c" * 50_000
+    row["provenance"]["note_id"] = "n" * 50_000
+    row["provenance"]["doc_id"] = "d" * 50_000
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload["returned"] == 1
+    projected = payload["results"][0]
+    # source_id/chunk_id pass through from_result's display sanitizer (1000)
+    # on this dict-row path; the provenance fallbacks bypass it, so the
+    # projection bound (2000) is their ONLY defence.
+    for key in ("source_id", "chunk_id"):
+        assert len(projected[key]) == 1000, (key, len(projected[key]))
+    for key in ("note_id", "doc_id"):
+        assert len(projected[key]) == 2000, (key, len(projected[key]))
+
+
 def test_sealed_payload_survives_fallbacks():
     """The ceiling re-check every payload ADDITION on this seam owes: ten rows,
     five carrying both fallbacks, all kept under 32 KiB -- with the cost of the
@@ -888,7 +924,7 @@ def test_sealed_payload_survives_fallbacks():
     # under `-s` with the assert forced, or use the QA report's figures.
     assert size <= MAX_RESULT_BYTES, (
         f"fallbacks cost {cost} B over ten rows ({carriers} carrying both keys, "
-        f"{cost / carriers:.1f} B per carrying row, {cost / 10:.1f} B per row) "
+        f"{cost / max(carriers, 1):.1f} B per carrying row, {cost / 10:.1f} B per row) "
         f"-- fixture-short ids; real UUID ids cost 46-102 B/carrying row; "
         f"payload {size} B of the {MAX_RESULT_BYTES} B ceiling, headroom "
         f"{MAX_RESULT_BYTES - size} B"

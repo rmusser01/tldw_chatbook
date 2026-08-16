@@ -67,10 +67,39 @@ MODE = sys.argv[1] if len(sys.argv) > 1 else ""
 # silently invalidate every isolation claim in the report (the `data_dir`
 # assert in `_assert_isolated` is what catches that mistake).
 # ---------------------------------------------------------------------------
+def _validated_scratch_path(raw: str) -> pathlib.Path:
+    """Resolve an operator-supplied path and refuse unsafe targets.
+
+    Qodo PR-1729 finding 1: CLI paths flow into ``mkdir``/``write_text``.
+    This probe may only ever write OUTSIDE the repository tree (a scratch
+    dir or an artifact path the operator owns), so the one containment
+    check that matters here is "never inside the repo checkout" -- a
+    traversal that lands in the tree could clobber tracked files.
+
+    Args:
+        raw: The path string exactly as passed on the command line.
+
+    Returns:
+        The fully resolved path.
+
+    Raises:
+        SystemExit: If the resolved path falls inside this repository.
+    """
+    resolved = pathlib.Path(raw).resolve()
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    if resolved == repo_root or repo_root in resolved.parents:
+        raise SystemExit(
+            f"refusing repo-tree target {resolved} (repo: {repo_root})"
+        )
+    return resolved
+
+
 if MODE == "one":
-    SCRATCH = pathlib.Path(sys.argv[2]).resolve()
+    SCRATCH = _validated_scratch_path(sys.argv[2])
     INDEX_KIND = sys.argv[3]
-    OUT_JSON = pathlib.Path(sys.argv[4]).resolve()
+    if INDEX_KIND not in ("canonical", "noncanonical"):
+        raise SystemExit(f"unknown index kind {INDEX_KIND!r}")
+    OUT_JSON = _validated_scratch_path(sys.argv[4])
     PROFILE_ROOT = SCRATCH / INDEX_KIND
     USER_NAME = f"probe16588_{INDEX_KIND}"
     # Captured BEFORE HOME is overwritten: `expanduser("~")` reads
@@ -352,6 +381,14 @@ def build_long_document(doc: dict) -> str:
     ``MIN_MARKER_OFFSET`` -- if the corpus ever stops satisfying its own
     design, the window-contains-marker check silently becomes unfailable, so
     this is a hard assert rather than a comment.
+
+    Args:
+        doc: A long-doc spec mapping with ``slug``, ``title`` and
+            ``marker`` keys (see ``LONG_DOCS``).
+
+    Returns:
+        The full document text with the marker paragraph planted past the
+        minimum offset.
     """
     # A STABLE digest, never `hash()` -- Python randomizes string hashing per
     # process, so the two workers (one per index kind) would otherwise build
@@ -377,6 +414,15 @@ def build_long_document(doc: dict) -> str:
 
 
 def build_short_document(title: str, seed: int) -> str:
+    """Build a short (~1.5k-char) corpus document with no planted marker.
+
+    Args:
+        title: The document's first line, used as its title.
+        seed: Deterministic filler seed, so re-runs produce identical text.
+
+    Returns:
+        The document text: title, blank line, then filler.
+    """
     return f"{title}\n\n{_filler(seed, 1500)}"
 
 
@@ -1015,6 +1061,7 @@ def _run_all(scratch: pathlib.Path, out_dir: pathlib.Path) -> None:
 
 
 def main() -> None:
+    """Run one probe arm (seed, drive routes, expand, dump artifacts)."""
     if MODE == "one":
         _run_one(SCRATCH, INDEX_KIND, OUT_JSON)
     elif MODE == "all":

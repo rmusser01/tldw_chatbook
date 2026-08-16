@@ -168,7 +168,7 @@ def _identity_fallbacks(provenance: Any) -> dict[str, str]:
         raw = provenance.get(key)
         if raw is None:
             continue
-        value = str(raw).strip()
+        value = str(raw).strip()[:_MAX_RESULT_ID_CHARS]
         if value:
             fallbacks[key] = value
     return fallbacks
@@ -411,8 +411,19 @@ class LibraryRagToolProvider:
                 :_MAX_RUNTIME_BACKEND_CHARS
             ],
         }
-        source_id = str(getattr(row, "source_id", "") or "").strip()
-        chunk_id = str(getattr(row, "chunk_id", "") or "").strip()
+        # Identity strings are deliberately OUTSIDE the sealing loop's shrink
+        # order (truncating an id mid-flight yields a corrupt fetch key), so
+        # they must be bounded HERE or an untrusted oversized provenance value
+        # forces the loop to drop the whole row (Qodo PR-1729 finding 3 --
+        # demonstrated: a 50k-char id returned a 0-row payload). An id past
+        # _MAX_RESULT_ID_CHARS names nothing fetchable anyway; production ids
+        # are <= 1000 chars.
+        source_id = str(getattr(row, "source_id", "") or "").strip()[
+            :_MAX_RESULT_ID_CHARS
+        ]
+        chunk_id = str(getattr(row, "chunk_id", "") or "").strip()[
+            :_MAX_RESULT_ID_CHARS
+        ]
         provenance = getattr(row, "provenance", None)
         # Computed from the UNPROJECTED snippet against this adapter's own
         # cap, so a snippet the projection above cuts is reported as
