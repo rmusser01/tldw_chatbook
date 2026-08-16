@@ -7216,6 +7216,12 @@ class PersonasScreen(BaseAppScreen):
     ) -> tuple[asyncio.Task[Any], threading.Event] | None:
         """Admit one screen-wide authoring operation without queuing duplicates."""
 
+        if self._character_save_inflight:
+            self._notify(
+                "Wait for Character Save to finish before editing reactions.",
+                "warning",
+            )
+            return None
         task = asyncio.current_task()
         active = self._visual_identity_operation_task
         state = self._visual_identity_authoring

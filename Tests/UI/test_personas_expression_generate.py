@@ -2461,3 +2461,107 @@ async def test_character_save_dispatches_normally_without_reaction_authoring(
     assert save_calls[0][1:] == (screen.state.selected_entity_id, screen._edit_mode)
     assert screen._character_editor_generation == generation
     assert screen._character_save_inflight
+
+
+async def test_visual_identity_clear_refuses_character_save_inflight_without_state(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    candidate_calls = []
+    original_create = personas_screen_module.create_visual_identity_candidate
+
+    def create_candidate(*args, **kwargs):
+        candidate_calls.append((args, kwargs))
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(
+        personas_screen_module,
+        "create_visual_identity_candidate",
+        create_candidate,
+    )
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+
+    assert not await screen._stage_visual_identity_clear(asset)
+
+    assert notifications == [
+        ("Wait for Character Save to finish before editing reactions.", "warning")
+    ]
+    assert candidate_calls == []
+    assert screen._visual_identity_authoring is None
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_operation_event is None
+    assert browser._staged == {}
+
+
+async def test_visual_identity_generation_refuses_character_save_before_work(
+    personas_editor_with_bound_pack, monkeypatch
+):
+    app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    browser = screen.query_one(personas_screen_module.PersonasVisualIdentityPackWidget)
+    asset = browser.selected_asset
+    assert asset is not None
+    admitted = AsyncMock(return_value=True)
+    provider_calls = []
+    dialogs = AsyncMock(return_value=True)
+    monkeypatch.setattr(screen, "_generate_visual_identity_assets_admitted", admitted)
+    monkeypatch.setattr(
+        personas_screen_module,
+        "run_generation",
+        lambda request: provider_calls.append(request),
+    )
+    monkeypatch.setattr(app, "push_screen_wait", dialogs)
+    notifications = _capture_notifications(app)
+    screen._character_save_inflight = True
+
+    assert not await screen._generate_visual_identity_assets((asset,))
+    assert not await screen._generate_visual_identity_pack_all()
+
+    assert notifications == [
+        ("Wait for Character Save to finish before editing reactions.", "warning"),
+        ("Wait for Character Save to finish before editing reactions.", "warning"),
+    ]
+    assert admitted.await_count == 0
+    assert dialogs.await_count == 0
+    assert provider_calls == []
+    assert screen._visual_identity_authoring is None
+    assert screen._visual_identity_operation_task is None
+    assert screen._visual_identity_operation_event is None
+    assert browser._staged == {}
+
+
+async def test_visual_identity_operation_admits_when_character_save_idle(
+    personas_editor_with_bound_pack,
+):
+    _app, screen, _db, _char_id, _preview_calls = personas_editor_with_bound_pack
+    snapshot = screen._visual_identity_author_snapshot()
+    assert snapshot is not None
+
+    admission = screen._begin_visual_identity_operation(snapshot)
+
+    assert admission is not None
+    task, event = admission
+    assert task is asyncio.current_task()
+    assert not event.is_set()
+    screen._finish_visual_identity_operation(task)
+
+
+async def test_visual_identity_operation_admits_after_character_save_completion(
+    personas_editor_with_bound_pack,
+):
+    app, screen, _db, char_id, _preview_calls = personas_editor_with_bound_pack
+    screen._character_save_inflight = True
+
+    await screen._after_character_save(str(char_id), "Packed")
+    await app.workers.wait_for_complete()
+    snapshot = screen._visual_identity_author_snapshot()
+
+    assert not screen._character_save_inflight
+    assert snapshot is not None
+    admission = screen._begin_visual_identity_operation(snapshot)
+    assert admission is not None
+    task, _event = admission
+    screen._finish_visual_identity_operation(task)
