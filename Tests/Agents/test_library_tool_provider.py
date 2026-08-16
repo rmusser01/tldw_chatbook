@@ -746,7 +746,18 @@ def _point_id_row(index: int, *, chars: int = 300) -> dict:
     """A NON-CANONICAL semantic row, as `_semantic_row` builds one when the
     indexed entry carried no `source_id`/`document_id` metadata: `source_id`
     fell through to the vector store's POINT id, and the real document
-    identity survives only in the provenance extras."""
+    identity survives only in the provenance extras.
+
+    BYTE-COST CAVEAT: the ids below (`n1`, `note_n1`) are deliberately SHORT,
+    so the cost `test_sealed_payload_survives_fallbacks` reports (15.0 B per
+    carrying row) is a fixture artefact and is NOT the production figure.
+    Real ids are UUIDs: re-measured by the same strip-and-reserialize method
+    on 34 real route payloads, the fallbacks cost **45.94 B/row on a
+    canonical index (a redundant `doc_id`) and 102.0 B/row non-canonical
+    (`note_id` + `doc_id`)** -- 3-7x this fixture. See
+    `Docs/superpowers/qa/2026-08-16-rag-semantic-identity/report.md`
+    (§ "Byte cost, on the real route payloads").
+    """
     return {
         "title": f"Doc {index}",
         "snippet": (f"doc-{index}: " + "the plan says a great deal. " * 40)[:chars],
@@ -869,9 +880,16 @@ def test_sealed_payload_survives_fallbacks():
             carriers += 1
     size = serialized_size(payload)
     cost = size - serialized_size(stripped)
+    # The per-row figure below is scaled by THIS fixture's short ids (`n1`);
+    # on real UUID ids the same method reads 45.94 B/row canonical and
+    # 102.0 B/row non-canonical (TASK-16588 QA report, § "Byte cost").
+    # NOTE: an f-string in an assert message is rendered only when the assert
+    # FAILS -- a green run prints nothing. To read the numbers, run this test
+    # under `-s` with the assert forced, or use the QA report's figures.
     assert size <= MAX_RESULT_BYTES, (
         f"fallbacks cost {cost} B over ten rows ({carriers} carrying both keys, "
-        f"{cost / carriers:.1f} B per carrying row, {cost / 10:.1f} B per row); "
+        f"{cost / carriers:.1f} B per carrying row, {cost / 10:.1f} B per row) "
+        f"-- fixture-short ids; real UUID ids cost 46-102 B/carrying row; "
         f"payload {size} B of the {MAX_RESULT_BYTES} B ceiling, headroom "
         f"{MAX_RESULT_BYTES - size} B"
     )

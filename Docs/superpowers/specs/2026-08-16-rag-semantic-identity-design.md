@@ -1,7 +1,7 @@
 # Semantic-route identity: carry the fallbacks, measure the window (TASK-16588)
 
 Date: 2026-08-16
-Status: draft-pending-user-review
+Status: accepted
 Programme: RAG server-port (eleven merged; last: 16174 agentic expansion
 #1712 → dev `dec2c467f`)
 Worktree: `.worktrees/rag-16588-route`, branch
@@ -37,10 +37,14 @@ and the point-id fallback never fires. The 15810 scratch's
 `doc_id`/`note_id`/`type` vocabulary came from that QA script's OWN
 hand-built `IndexEntry` metadata (`seed_profile.py:72`), not the app's.
 What this means for the arc, pre-registered:
-- (b) is real for LEGACY indexes (pre-`source_id` builders) and for any
-  non-canonical `IndexEntry` producer — the 15810 script is committed
-  proof such producers run against real profiles. It is NOT the common
-  case on a fresh canonical index.
+- (b) is real for any non-canonical `IndexEntry` producer — one such
+  producer is committed in this repo (TASK-15810's QA seeder), which is
+  proof such producers EXIST, not that one has ever run against a real
+  profile: that script asserts its own data_dir is scratch-isolated
+  (`seed_profile.py:51`). Whether a shipped app version ever wrote an
+  index without `source_id` was NOT established — no such vintage of the
+  indexing path was found. It is NOT the common case on a fresh canonical
+  index.
 - The route probe therefore seeds BOTH: a canonical index (expected
   pre-fix `not_found` on declared-expandable rows: **0** — and a nonzero
   reading there would be a NEW finding) and a non-canonical one built the

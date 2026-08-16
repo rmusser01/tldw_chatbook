@@ -146,6 +146,10 @@ conversation seams, on both routes, every one at rank 1 — returned a
 marker (e.g. marker at char 9732 of a 12,380-char note, window 4380–12380).
 0 of 22 head windows (0–8000) contain it, which is the control proving the
 corpus can actually fail this check. Long-doc windows missing their marker: 0.
+Instrument limit, disclosed: all 22 anchored windows are the document TAIL
+(`[total − 8000, total]`), so this proves the window is off the HEAD and on
+the match's side of the document — not that it is centred on the match. See
+the QA report's Disclosed limits for what a future extender must vary.
 
 **AC#2 (the identity).** On the non-canonical index `_semantic_row` resolves
 `source_id` to the vector store's POINT id (`note_<uuid>_chunk_4`), which
@@ -159,8 +163,13 @@ from the notes DB, not from vector metadata) and are all `expandable: false`.
 
 **AC#4 (bytes).** Strip-and-reserialize, ten-row payload, five carriers:
 **+15.0 B per carrying row, +75 B total, payload 4,085 B of 32,768 B,
-headroom 28,683 B** (`test_sealed_payload_survives_fallbacks`'s assertion
-message). Re-measured by the same method on the 34 REAL route payloads:
+headroom 28,683 B.** Provenance: that figure is computed inside
+`test_sealed_payload_survives_fallbacks` and rendered into its **assertion
+message**, which pytest emits only when the assert FAILS — it is not printed
+output of the passing suite; the final review reproduced it independently in
+a standalone script and got the byte-identical string. The fixture's ids are
+deliberately short, and both the fixture and the assertion now carry that
+caveat in-file. Re-measured by the same method on the 34 REAL route payloads:
 **45.94 B/row canonical (a redundant `doc_id`) and 102.0 B/row non-canonical
 (`note_id` + `doc_id`)** — 3–7× the synthetic figure because real ids are
 UUIDs. Largest observed payload 17,350 B, 53 % of the ceiling, 15,418 B of

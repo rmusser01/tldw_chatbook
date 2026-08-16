@@ -176,12 +176,49 @@ INDEPENDENT and both required: on the non-canonical index the anchored
 window is correct and the expansion still returned `not_found` before the
 fallbacks shipped.
 
+### The all-rows window check — the stronger AC#3 reading
+
+The marker check above covers 22 rows. A second, weaker-per-row but far
+broader check was recorded for **every** hinted row in **every** arm and is
+aggregated here for the first time: `window_has_snippet_head` — does the
+returned window contain the first 160 whitespace-normalized characters of
+that row's OWN snippet? Recomputed from `probe-artifacts.json`'s raw rows
+(not from the artifact's own `counts` block), over all 340 rows:
+
+| arm | window contains the row's own snippet head | fails |
+|---|---|---|
+| `post` (as shipped) | **340 / 340** | 0 |
+| `head` (`chunk_start` stripped) | 186 / 340 | **154** |
+| `pre`, canonical (fallbacks stripped) | 200 / 200 | 0 |
+| `pre`, non-canonical (fallbacks stripped) | **4 / 140** | 136 (all `not_found`) |
+
+Two things follow, both stronger than the 22-row table. **340/340 on the
+`post` arm is proof the expansion resolved the RIGHT document on every
+rescued row**, not merely *a* document — a window fetched from the wrong
+document could not contain that row's snippet. And the `head` arm's **154**
+failures make the anchor control convincing across 340 rows rather than 22:
+dropping `chunk_start` breaks the window on 45 % of all rows, not only on
+the long-doc ones. The 4 successes in the non-canonical `pre` arm are the
+same 4 rows that resolved at all pre-fix (the engine's FTS keyword-leg rows,
+`expandable: false`); the other 136 have no window to check because the
+expansion returned `not_found`.
+
 ## Byte cost, on the real route payloads (AC#4)
 
 Task 1 measured the addition by strip-and-reserialize on a synthetic ten-row
 payload: **+15.0 B per carrying row, +75 B over ten rows, payload 4,085 B of
-32,768 B.** The probe repeats that method on the payloads these routes
-actually produced (34 of them, ten rows each):
+32,768 B.**
+
+*Provenance of that figure, stated because it is not obvious:* it is computed
+inside `test_sealed_payload_survives_fallbacks` and rendered into that test's
+**assertion message** — a string pytest emits only when the assert FAILS, so
+a green run never prints it. It is therefore **not** output of the passing
+suite. It has been reproduced independently: TASK-16588's final review
+replicated the same strip-and-reserialize in a standalone script and got the
+byte-identical string.
+
+The probe repeats that method on the payloads these routes actually produced
+(34 of them, ten rows each):
 
 | index × route | payload bytes (as shipped) | without fallbacks | fallback cost | rows carrying | **B / carrying row** | largest payload | ceiling |
 |---|---|---|---|---|---|---|---|
@@ -261,6 +298,18 @@ condition was never triggered and no production code was touched in Task 2.
   real adapter produced, in the same process. `chunk_start` is deliberately
   KEPT in the `pre` arm because it already shipped in TASK-16174's fix wave —
   the before/after being measured is TASK-16588's, not 16174's.
+* **Every anchored window in this run is the document TAIL, so 22/22 proves
+  "off the head", not "centred on the match".** All 22 POST windows are
+  `[total − 8000, total]` (e.g. 4380–12380 of 12380). With ~12.3k-char
+  documents and an 8,000-char budget, a `chunk_start` of ~9,200 has exactly
+  two reachable outcomes — head or tail — and the check distinguishes those
+  two, nothing finer. An extender who wants to show a true MID-document
+  slice must vary the two things this instrument holds fixed: make the
+  document 3–5× the budget, and plant markers at offsets that are past the
+  budget (so the head control still fails) but NOT within one budget of the
+  tail — i.e. `budget/2 < chunk_start < total − budget/2`. Nothing here is
+  wrong; it is simply a weaker statement than "the window is centred on the
+  match".
 * **`media_id` was never projected and never needed**: no builder writes it
   (spec verification item 2), and no row in 340 carried one.
 

@@ -1629,6 +1629,15 @@ back `not_found` before the fallbacks shipped and `ok` after; on a canonical
 index the reading was 0 both before and after, so the fix is
 defensive-plus-legacy and the report says so rather than overclaiming.
 
+A broader per-row check ran in every arm and is the stronger AC#3 reading:
+does the returned window contain the first 160 chars of that row's OWN
+snippet? Over all 340 rows — **340 / 340 post-fix**, 186/340 on the `head`
+(anchor-stripped) arm, and on the `pre` (fallback-stripped) arm 200/200
+canonical but only **4 / 140** non-canonical. The post-fix 340/340 proves the
+expansion resolved the RIGHT document on every rescued row, not merely *a*
+document; the head arm's 154 failures make the anchor control failable across
+all 340 rows rather than the 22 marker ones.
+
 Byte cost, re-measured by strip-and-reserialize on the 34 real route
 payloads: **45.94 B per carrying row canonical (a redundant `doc_id`), 102.0
 B non-canonical (`note_id` + `doc_id`)** — 3–7× the +15.0 B/row the unit
@@ -1638,8 +1647,15 @@ so the sealing loop dropped nothing.
 
 **If you extend this instrument**, keep the property that makes it work: the
 marker must sit past the tool's default budget, or the anchored-window check
-becomes unfailable, and the head-window arm is what proves it has not. Two
-things this probe deliberately does NOT measure: `label_only` rows (0 of 340
+becomes unfailable, and the head-window arm is what proves it has not. And
+know the limit this run does NOT escape: all 22 anchored windows are the
+document **TAIL** (`[total − 8000, total]`), because a ~12.3k-char document
+and an 8,000-char budget leave a `chunk_start` of ~9,200 only two reachable
+outcomes, head or tail. 22/22 therefore proves "off the head", not "centred
+on the match". To show a true mid-document slice, make the document 3–5× the
+budget AND plant markers past the budget but NOT within one budget of the
+tail (`budget/2 < chunk_start < total − budget/2`). Two more things this
+probe deliberately does NOT measure: `label_only` rows (0 of 340
 — they are a `plain`-route product of the Library's four-seam keyword path,
 which is Phase E's regime), and retrieval quality (every marker query put its
 target at rank 1 by design; the gated suite is the instrument for that, and
