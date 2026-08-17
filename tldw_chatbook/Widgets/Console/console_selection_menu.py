@@ -102,6 +102,14 @@ class ConsoleSelectionMenu(Vertical):
     DEFAULT_CSS = """
     ConsoleSelectionMenu {
         position: absolute;
+        /* Live spike 2026-08-16: textual 8.2.8's vertical layout excludes
+           position:absolute children from sibling stacking but still feeds
+           their height into the fr denominator -- mounted on the screen, the
+           menu shrank the 1fr #screen-content sibling by its own height and
+           floated the composer above dead rows (the "black bar").
+           overlay:screen is the style that removes an overlay from the
+           container's flow math entirely. */
+        overlay: screen;
         width: auto;
         height: auto;
         border: round $primary;

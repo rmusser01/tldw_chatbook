@@ -829,6 +829,79 @@ async def test_far_right_release_keeps_menu_inside_transcript():
         assert menu.region.bottom <= region.bottom
 
 
+class _FrFlowApp(App[None]):
+    """Minimal screen-shaped app: docked navbar/footer around a 1fr content
+    container, mirroring BaseAppScreen's arrangement.
+
+    Live spike 2026-08-16 (user F12 dump): a ConsoleSelectionMenu mounted on
+    the screen shrank the 1fr sibling by exactly the menu's height -- the
+    composer floated 9 rows above the footer with dead rows between (the
+    "black bar"). Textual 8.2.8's vertical layout excludes
+    ``position: absolute`` children from sibling stacking but still feeds
+    their height into the fr denominator; ``overlay: screen`` is the style
+    that fully removes an overlay from the container's flow math.
+    """
+
+    CSS = """
+    #navbar {
+        dock: top;
+        height: 3;
+    }
+    #screen-content {
+        height: 1fr;
+    }
+    #footer {
+        dock: bottom;
+        height: 1;
+    }
+    ConsoleTranscript {
+        height: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Vertical
+
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="hello world", id="m1"
+                )
+            ]
+        )
+        yield Static("nav", id="navbar")
+        with Vertical(id="screen-content"):
+            yield transcript
+        yield Static("footer", id="footer")
+
+
+@pytest.mark.asyncio
+async def test_screen_mounted_menu_steals_no_flow_height():
+    """The screen-mounted menu must not shrink the 1fr content sibling.
+
+    Regression for the live "black bar": mounting the menu consumed its own
+    height from the screen's fr budget, pulling the composer up and leaving
+    dead rows above the docked footer whenever a selection menu was open.
+    """
+    app = _FrFlowApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        content = app.query_one("#screen-content")
+        transcript = app.query_one(ConsoleTranscript)
+        await pilot.pause()
+        assert content.region.height == 36  # 40 - 3 navbar - 1 footer
+        await app.screen.mount(
+            ConsoleSelectionMenu(screen_x=4, screen_y=10, owner=transcript)
+        )
+        await pilot.pause()
+        await pilot.pause()  # clamp pass
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert menu.region.y == 10  # still anchored at its cell
+        assert (
+            content.region.height == 36
+        ), "menu stole flow height from the 1fr sibling"
+
+
 class _MarkdownTranscriptMenuApp(App[None]):
     """Transcript whose only row is a markdown (ASSISTANT) row (task G)."""
 
