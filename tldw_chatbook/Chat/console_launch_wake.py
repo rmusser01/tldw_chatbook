@@ -166,8 +166,8 @@ def _conversation_exists_locally(app: Any, conversation_id: str) -> bool:
         return True
 
 
-def _build_viewless_runtime(app: Any) -> Any:
-    """Build the Console runtime objects a launch delivery needs, viewless.
+def _ensure_launch_runtime(app: Any) -> Any:
+    """Return the Console controller a launch delivery needs, building it.
 
     Mirrors `ChatScreen`'s own `_ensure_console_*` chain with the screen
     removed. The constructor arguments that a mounted Console derives from
@@ -179,6 +179,10 @@ def _build_viewless_runtime(app: Any) -> Any:
     (`_provider_selection_for_session`), not from these fields. The first
     real Console mount re-applies the whole selection through
     `_sync_console_chat_core_state`, so nothing here is sticky.
+
+    Every `ensure_*` is idempotent, so when Console IS the startup tab this
+    returns the screen's own, fully-wired controller and every argument
+    below is ignored — which is why the function is not named "viewless".
 
     Returns:
         The `ConsoleChatController`, or `None` when there is no durable
@@ -273,7 +277,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     """
     if not marked:
         return 0
-    controller = _build_viewless_runtime(app)
+    controller = _ensure_launch_runtime(app)
     if controller is None:
         return 0
     wake = getattr(controller, "fleet_wake", None)
