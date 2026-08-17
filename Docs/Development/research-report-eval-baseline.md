@@ -363,6 +363,35 @@ metrics, because a report built from source text still resolves markers and
 verifies quotes. Every number above therefore describes source-text evidence.
 `--llm-timeout-s` now exists so that is measurable rather than assumed.
 
+### First run with summarization actually working (arm F)
+
+Bounded deliberately (1 question, 3 results/query, 1 query, 1 round) to isolate
+one question: does the pipeline work at all when summaries are allowed to
+finish? With `--llm-timeout-s 240`:
+
+| Metric | Value |
+|---|---|
+| per-result summarizations | **7 attempted, 7 succeeded** |
+| their durations | 42s, 94s, 131s, 64s, 81s, 115s, 93s (mean 88.5s) |
+| over the shipped 30s timeout | **7 of 7** |
+| `citation_accuracy` | 1.00 (15/15 markers) |
+| `claim_support_rate` | 1.00 |
+| `cited_sentence_ratio` | 0.65 |
+| `gate_pass_rate` | 0.54 |
+
+**The shipped `relevance_llm_timeout_s` of 30s cannot succeed on this model at
+all** -- the fastest summary took 42s. That default is calibrated for hosted
+providers; against a local 27B it guarantees the fallback path, which is why no
+recorded baseline in this document ever measured a summarized evidence pool.
+
+Residual: map-reduce CHUNK summarization still failed (2 of 2) with "No choices
+in response data" while per-result calls on the same path in the same run all
+succeeded, so it is input-size dependent -- a success status whose body carries
+none of the parsed shapes. Filed as task-17384. The caller falls back to the
+chunk's source text and marks it not-generated, so evidence stays real; the cost
+is a wasted call and summarization quality on exactly the large evidence pools
+multi-hop produces.
+
 ### Reading gate_pass_rate
 
 It is a ratio, and multi-hop adds to its denominator. Pulling in more marginal
