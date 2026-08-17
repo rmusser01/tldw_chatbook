@@ -36,6 +36,40 @@ STEP_TOOL_CALL = "tool_call"
 STEP_TOOL_RESULT = "tool_result"
 STEP_SPAWN = "spawn"
 STEP_ERROR = "error"
+# Fleet PR3b Task 1 (spec SS6): a steering entry delivered to a child at the
+# protocol-coherent drain boundary records a step of this kind, so the step
+# log shows WHEN each entry actually reached the model.
+STEP_STEERING = "steering"
+
+# The two steering sources (spec SS6: "two paths, one mechanism"). The label
+# the child sees is derived from the source by `format_steering_message`
+# below -- prepended by the mechanism, never trusted from input.
+STEERING_SOURCE_SUPERVISOR = "supervisor"
+STEERING_SOURCE_USER = "user"
+#: Cap on one steering entry's text, enforced by the producers at their own
+#: boundaries (send_to_agent -- Task 2; the panel input -- Task 3). The
+#: ``max_subagent_result_chars`` shape: a plain int ceiling, 4000.
+MAX_STEERING_CHARS = 4000
+
+
+def format_steering_message(source: str, text: str) -> str:
+    """Render one steering entry exactly as the child's model will see it.
+
+    THE one formatter (plan Task 1): the loop's history injection, the run
+    log record, and every test render through this function, so the three
+    can never drift. The label comes from ``source`` (one of
+    ``STEERING_SOURCE_SUPERVISOR``/``STEERING_SOURCE_USER``); ``text`` is
+    payload only -- a forged "[Steering from ...]" prefix inside it is
+    still wrapped, never promoted to a label.
+
+    Args:
+        source: Who steered -- ``"supervisor"`` or ``"user"``.
+        text: The steering message body.
+
+    Returns:
+        ``"[Steering from {source}] {text}"``.
+    """
+    return f"[Steering from {source}] {text}"
 
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
