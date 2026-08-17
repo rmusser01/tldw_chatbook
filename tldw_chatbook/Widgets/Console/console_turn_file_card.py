@@ -16,9 +16,10 @@ from typing import Any, Callable
 
 from loguru import logger
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_display_state import (
     DiffHunk,
@@ -27,10 +28,41 @@ from tldw_chatbook.Chat.console_display_state import (
     split_unified_diff,
     turn_file_entries,
 )
+from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 _CHEVRON_CLOSED = "▸"
 _CHEVRON_OPEN = "▾"
+
+#: Note text cap (TASK-16800 spec §1) -- matches the `Input`'s own
+#: `max_length` so the widget-level typing limit and this boundary check
+#: can never drift apart.
+NOTE_MAX_LENGTH = 2000
+
+
+def _validate_note_text(raw: str) -> "str | None":
+    """Strip and bound-check a note before it reaches the DB.
+
+    The strip-then-empty check runs first because
+    ``input_validation.validate_text_input`` treats an empty string as
+    valid (it only rejects *oversized*/dangerous text) -- this widget
+    boundary additionally rejects a note that is empty after stripping.
+
+    Args:
+        raw: The raw ``Input.value`` text.
+
+    Returns:
+        The stripped note text, or ``None`` when it is empty or fails
+        validation (over ``NOTE_MAX_LENGTH`` chars, or a dangerous
+        HTML/script pattern -- defense in depth, since the excerpt is
+        later embedded literally in the delivery block).
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if not validate_text_input(text, max_length=NOTE_MAX_LENGTH):
+        return None
+    return text
 
 
 class ConsoleTurnFileCard(Vertical):
@@ -65,7 +97,33 @@ class ConsoleTurnFileCard(Vertical):
     ConsoleTurnFileCard .console-turn-file-hunk-actions {
         height: auto;
     }
+    ConsoleTurnFileCard .console-turn-file-note-btn {
+        min-width: 10;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-notes {
+        height: auto;
+    }
+    ConsoleTurnFileCard .console-turn-file-note {
+        height: auto;
+        min-height: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-note-text {
+        width: 1fr;
+    }
+    ConsoleTurnFileCard .console-turn-file-note-input {
+        width: 100%;
+    }
     """
+
+    BINDINGS = [
+        # Not priority: only takes effect while a note `Input` is focused
+        # (gated by `check_action` below) -- otherwise `escape` must keep
+        # bubbling to `ConsoleTranscript`'s own "clear selection" binding
+        # and the screen's composer-focus fallback, exactly like every
+        # other widget-level escape in this app.
+        Binding("escape", "cancel_note_input", "Cancel note", show=False),
+    ]
+
     # Selection styling (parity with `.console-transcript-message-selected`)
     # deliberately does NOT live in DEFAULT_CSS: it needs the app bundle's
     # `$ds-focus-bg`/`$ds-focus-fg` tokens, and Textual resolves `$vars`
@@ -106,6 +164,17 @@ class ConsoleTurnFileCard(Vertical):
         #: are applied at MOUNT time, from these raw hunks, so re-expanding
         #: a collapsed row never re-derives anything from a lossy cache.
         self._hunk_cache: dict[int, list[DiffHunk]] = {}
+        #: Whether the provider exposes the full note read/write/delete
+        #: trio -- duck-typed-optional, mirroring how ``turn_for_run`` is
+        #: treated: a provider missing any of the three renders NO note UI
+        #: at all rather than a partially-working one. Set once, from the
+        #: same off-thread read as ``notes_for_run`` itself, in
+        #: ``_load_rows``.
+        self._notes_capable: bool = False
+        #: Existing notes keyed by ``(root, path)`` -- the anchor's file
+        #: identity -- populated from ``notes_for_run`` on load and kept in
+        #: sync as notes are added/deleted through this card instance.
+        self._notes_by_key: dict[tuple[str, str], list[dict]] = {}
 
     @property
     def marker_text(self) -> str:
@@ -190,7 +259,9 @@ class ConsoleTurnFileCard(Vertical):
             if provider is None:
                 return
 
-            def _read() -> tuple[list[TurnFileEntry], dict[int, dict]]:
+            def _read() -> tuple[
+                list[TurnFileEntry], dict[int, dict], list[dict], bool
+            ]:
                 # Run-scoped read when the provider offers it (Qodo,
                 # PR #1728): a transcript can hold many cards, and each
                 # `turns()` call scans and groups the WHOLE conversation's
@@ -205,7 +276,7 @@ class ConsoleTurnFileCard(Vertical):
                         None,
                     )
                 if turn is None:
-                    return [], {}
+                    return [], {}, [], False
                 # Per-row pairing, never root-keyed: `turn.rows` can hold
                 # rows from TWO windows on the SAME root (a turn's own
                 # window and its surviving sub-agents' post-turn window,
@@ -224,13 +295,33 @@ class ConsoleTurnFileCard(Vertical):
                 paired = turn_file_entries(row_files)
                 entries = [entry for entry, _row in paired]
                 mapping = {idx: row for idx, (_entry, row) in enumerate(paired)}
-                return entries, mapping
+                # Task 4: note capability is duck-typed-optional, the same
+                # posture as `turn_for_run` above -- a provider missing any
+                # of the trio renders no note UI at all (checked once here,
+                # off-thread, and cached on the instance for every later
+                # note-UI decision).
+                notes_capable = all(
+                    callable(getattr(provider, name, None))
+                    for name in (
+                        "add_change_note",
+                        "delete_change_note",
+                        "notes_for_run",
+                    )
+                )
+                notes = provider.notes_for_run(self._run_id) if notes_capable else []
+                return entries, mapping, notes, notes_capable
 
-            entries, mapping = await asyncio.to_thread(_read)
+            entries, mapping, notes, notes_capable = await asyncio.to_thread(_read)
             if not self.is_mounted or not entries:
                 return
             self._entries = entries
             self._row_for_entry = mapping
+            self._notes_capable = notes_capable
+            notes_by_key: dict[tuple[str, str], list[dict]] = {}
+            for note in notes:
+                key = (str(note["root"]), str(note["path"]))
+                notes_by_key.setdefault(key, []).append(note)
+            self._notes_by_key = notes_by_key
             rows_box = self.query_one(".console-turn-file-rows", Vertical)
             for idx, entry in enumerate(entries):
                 chevron = resolve_glyph(_CHEVRON_CLOSED)
@@ -257,7 +348,16 @@ class ConsoleTurnFileCard(Vertical):
             return
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        idx = getattr(event.button, "entry_index", None)
+        button = event.button
+        if button.has_class("console-turn-file-note-btn"):
+            event.stop()
+            await self._open_note_input(button)
+            return
+        if button.has_class("console-turn-file-note-delete"):
+            event.stop()
+            await self._delete_note(button)
+            return
+        idx = getattr(button, "entry_index", None)
         if idx is None:
             return
         event.stop()
@@ -330,13 +430,32 @@ class ConsoleTurnFileCard(Vertical):
                             markup=False,
                         )
                     )
-                    # Task 4 populates this row with the `✎ note` affordance
-                    # and any existing notes; mounted empty here so the
-                    # per-hunk block/action-row pairing is in place ahead of
-                    # that task.
-                    await body.mount(
-                        Horizontal(classes="console-turn-file-hunk-actions")
-                    )
+                    actions_row = Horizontal(classes="console-turn-file-hunk-actions")
+                    await body.mount(actions_row)
+                    notes_box = Vertical(classes="console-turn-file-hunk-notes")
+                    await body.mount(notes_box)
+                    if self._notes_capable:
+                        note_btn = Button(
+                            "✎ note",
+                            classes="console-turn-file-note-btn",
+                            compact=True,
+                        )
+                        note_btn.entry_index = idx
+                        note_btn.hunk_index = hunk_idx
+                        # Same guard as the row button above -- a quick
+                        # second press must never be silently swallowed by
+                        # the default "-active" flash.
+                        note_btn.active_effect_duration = 0
+                        await actions_row.mount(note_btn)
+                        existing_notes = [
+                            note
+                            for note in self._notes_by_key.get(
+                                (entry.root, entry.path), []
+                            )
+                            if int(note.get("hunk_index", -1)) == hunk_idx
+                        ]
+                        for note in existing_notes:
+                            await notes_box.mount(self._build_note_row(note))
             except Exception:
                 logger.opt(exception=True).warning(
                     "Turn file card diff load failed for {}", entry.label
@@ -347,6 +466,241 @@ class ConsoleTurnFileCard(Vertical):
             f"{resolve_glyph(_CHEVRON_OPEN)} {entry.status}  "
             f"{entry.label}  +{entry.adds} −{entry.dels}"
         )
+
+    def check_action(
+        self, action: str, parameters: "tuple[object, ...]"
+    ) -> "bool | None":
+        """Gate the escape-cancels-note-input binding to when it applies.
+
+        ``escape`` must otherwise keep bubbling to ``ConsoleTranscript``'s
+        own "clear selection" binding (and the screen's composer-focus
+        fallback) exactly as it does for every widget without a note input
+        open -- returning ``False`` here (rather than always claiming the
+        key) is what lets Textual's binding resolution continue up the
+        chain instead of swallowing escape whenever ANY descendant of this
+        card happens to be focused.
+
+        Args:
+            action: Textual action name being checked.
+            parameters: Parsed positional parameters for the action.
+
+        Returns:
+            Whether a ``console-turn-file-note-input`` is currently
+            focused, for ``cancel_note_input``; the superclass result for
+            every other action.
+        """
+        if action == "cancel_note_input":
+            focused = self.app.focused
+            return focused is not None and focused.has_class(
+                "console-turn-file-note-input"
+            )
+        return super().check_action(action, parameters)
+
+    async def action_cancel_note_input(self) -> None:
+        """Escape: unmount the focused note input without saving.
+
+        ``check_action`` above guarantees this only fires while a note
+        input actually has focus.
+        """
+        try:
+            focused = self.app.focused
+            if focused is not None and focused.has_class(
+                "console-turn-file-note-input"
+            ):
+                await focused.remove()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card note-input cancel failed."
+            )
+
+    async def _open_note_input(self, button: Button) -> None:
+        """Mount an inline note ``Input`` under the pressed hunk's block.
+
+        Args:
+            button: The pressed ``✎ note`` button, carrying ``entry_index``/
+                ``hunk_index`` attributes set at mount time.
+        """
+        try:
+            idx = getattr(button, "entry_index", None)
+            hunk_idx = getattr(button, "hunk_index", None)
+            if idx is None or hunk_idx is None:
+                return
+            bodies = list(self.query(".console-turn-file-diff"))
+            if idx >= len(bodies):
+                return
+            notes_boxes = list(bodies[idx].query(".console-turn-file-hunk-notes"))
+            if hunk_idx >= len(notes_boxes):
+                return
+            notes_box = notes_boxes[hunk_idx]
+            existing_inputs = list(
+                notes_box.query(".console-turn-file-note-input")
+            )
+            if existing_inputs:
+                # Already open -- focus it rather than mounting a second
+                # input for the same hunk.
+                existing_inputs[0].focus()
+                return
+            note_input = Input(
+                classes="console-turn-file-note-input",
+                placeholder="Add a note…",
+                max_length=NOTE_MAX_LENGTH,
+            )
+            note_input.entry_index = idx
+            note_input.hunk_index = hunk_idx
+            await notes_box.mount(note_input)
+            note_input.focus()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card note-input open failed."
+            )
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in a note input: save the note off-thread."""
+        if not event.input.has_class("console-turn-file-note-input"):
+            return
+        event.stop()
+        await self._save_note(event.input)
+
+    async def _save_note(self, note_input: Input) -> None:
+        """Validate, persist off-thread, and render one hunk note.
+
+        On success the input is replaced in place by a rendered note row.
+        A raising ``provider.add_change_note`` (or any other failure) is
+        swallowed here -- the input stays mounted with the user's text
+        intact so nothing is lost, and a warning is logged -- this is the
+        card's absolute "no exception escapes an `on_*` handler" rule.
+
+        Args:
+            note_input: The submitted note ``Input``.
+        """
+        try:
+            idx = getattr(note_input, "entry_index", None)
+            hunk_idx = getattr(note_input, "hunk_index", None)
+            if idx is None or hunk_idx is None:
+                return
+            if idx >= len(self._entries) or idx not in self._hunk_cache:
+                return
+            hunks = self._hunk_cache[idx]
+            if hunk_idx >= len(hunks):
+                return
+            text = _validate_note_text(note_input.value)
+            if text is None:
+                return
+            entry = self._entries[idx]
+            hunk = hunks[hunk_idx]
+            # Captured NOW, at save time -- not at input-open time -- per
+            # spec §1/§3: the excerpt is the retention safety net, and the
+            # card's own cached hunk is the full-diff-derived source for it.
+            excerpt = hunk_excerpt(hunk)
+            provider = self._provider_factory()
+            if provider is None:
+                return
+            add_change_note = getattr(provider, "add_change_note", None)
+            if not callable(add_change_note):
+                return
+
+            def _write() -> int:
+                return add_change_note(
+                    run_id=self._run_id,
+                    root=entry.root,
+                    path=entry.path,
+                    hunk_index=hunk_idx,
+                    hunk_header=hunk.header,
+                    hunk_excerpt=excerpt,
+                    note=text,
+                )
+
+            note_id = await asyncio.to_thread(_write)
+            if not note_input.is_mounted:
+                return
+            notes_box = note_input.parent
+            note_record = {
+                "id": note_id,
+                "note": text,
+                "delivered_at": None,
+                "root": entry.root,
+                "path": entry.path,
+                "hunk_index": hunk_idx,
+            }
+            self._notes_by_key.setdefault(
+                (entry.root, entry.path), []
+            ).append(note_record)
+            await note_input.remove()
+            if notes_box is not None and notes_box.is_mounted:
+                await notes_box.mount(self._build_note_row(note_record))
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card note save failed."
+            )
+
+    async def _delete_note(self, button: Button) -> None:
+        """Delete a pending note off-thread and remove its rendered row.
+
+        Args:
+            button: The pressed ``✕`` button, carrying a ``note_id``
+                attribute set at mount time.
+        """
+        try:
+            note_id = getattr(button, "note_id", None)
+            if note_id is None:
+                return
+            provider = self._provider_factory()
+            if provider is None:
+                return
+            delete_change_note = getattr(provider, "delete_change_note", None)
+            if not callable(delete_change_note):
+                return
+
+            def _delete() -> bool:
+                return delete_change_note(note_id)
+
+            deleted = await asyncio.to_thread(_delete)
+            if not deleted:
+                return
+            for notes in self._notes_by_key.values():
+                notes[:] = [
+                    note for note in notes if int(note.get("id", -1)) != int(note_id)
+                ]
+            note_row = button.parent
+            if note_row is not None and note_row.is_mounted:
+                await note_row.remove()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card note delete failed."
+            )
+
+    @staticmethod
+    def _build_note_row(note: dict) -> Horizontal:
+        """Render one note as a ``.console-turn-file-note`` row.
+
+        Args:
+            note: A ``change_notes`` row dict (at minimum ``id``, ``note``,
+                ``delivered_at``).
+
+        Returns:
+            A row with the note text, plus a ``✕`` delete button while
+            ``delivered_at`` is null -- delivered notes render a ``sent``
+            marker instead and carry no delete affordance (they are
+            record).
+        """
+        delivered = note.get("delivered_at") is not None
+        text = str(note.get("note", ""))
+        label_text = f"{text}  · sent" if delivered else text
+        children: list[Any] = [
+            Static(
+                label_text,
+                classes="console-turn-file-note-text",
+                markup=False,
+            )
+        ]
+        if not delivered:
+            delete_btn = Button(
+                "✕", classes="console-turn-file-note-delete", compact=True
+            )
+            delete_btn.note_id = int(note["id"])
+            delete_btn.active_effect_duration = 0
+            children.append(delete_btn)
+        return Horizontal(*children, classes="console-turn-file-note")
 
     @staticmethod
     def _hunk_display_text(hunk: DiffHunk, cap: int, *, include_prelude: bool) -> str:
