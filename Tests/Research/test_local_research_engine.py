@@ -1012,3 +1012,218 @@ def test_provider_overrides_reach_params_and_papers():
     assert state["last_params"]["engine"] == "duckduckgo"
     assert state["last_params"]["result_count"] == 3
     assert state["papers"] == [["pubmed"]]
+
+
+# --- pipeline params pre-flight (task-17371) --------------------------------
+# A run whose engine was constructed WITHOUT search_params used to reach the
+# real pipeline and die inside generate_and_search's own validation with
+# "Invalid search_params parameter" -- a message that names neither what is
+# missing nor where it comes from. Research_Window shipped exactly that
+# construction (no search_params at all), so every window-launched run failed
+# with it. The engine now refuses the unusable configuration up front, and
+# only when the REAL pipeline is the search function.
+
+
+def test_default_pipeline_without_search_params_fails_legibly():
+    """No search_params + the default (real) pipeline: the run must fail
+    naming the missing keys and where they come from, not with the
+    pipeline's opaque 'Invalid search_params parameter'."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)  # no search_params -- the window's bug
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    # fail_run records the reason in progress_message (service contract).
+    message = str(final.get("progress_message") or final.get("error_msg") or "")
+    # Names the missing keys...
+    assert "engine" in message and "result_count" in message
+    # ...and where they come from.
+    assert "SearchSettings" in message
+
+
+def test_injected_search_fn_skips_the_pipeline_preflight():
+    """The pre-flight is the REAL pipeline's requirement, not the engine's:
+    a caller injecting its own search_fn (every other test here, and any
+    future non-web lane) still runs with empty search_params."""
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn
+    )  # still no search_params
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+
+
+def test_preflight_refuses_params_without_usable_llms():
+    """Qodo (PR 1764): search keys alone let a run spend phase-1 searches and
+    only then fail for want of an LLM. The tool path refuses both cases before
+    phase 1; the engine matches it for every default-pipeline caller."""
+    service = _make_service()
+    engine = LocalResearchEngine(
+        service,
+        search_params={
+            "engine": "duckduckgo",
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 5,
+            # both LLM slots present but empty -- the shape a config with no
+            # [SearchSettings] LLMs actually produces
+            "relevance_analysis_llm": "",
+            "final_answer_llm": None,
+        },
+    )
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    message = str(final.get("progress_message") or "")
+    assert "relevance_analysis_llm" in message and "final_answer_llm" in message
+    assert "SearchSettings" in message
+
+
+def test_preflight_accepts_fully_configured_params():
+    """The complement: a complete assembly must pass the pre-flight, or the
+    check would refuse every real run."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+
+    engine._require_pipeline_params(
+        {
+            "engine": "duckduckgo",
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 5,
+            "relevance_analysis_llm": "llama_cpp",
+            "final_answer_llm": "llama_cpp",
+        }
+    )
+
+
+# --- multi-hop on by default (task-17371) -------------------------------------
+# Gap-driven replanning shipped but max_iterations defaulted to 1, so every
+# real run was single-pass and the mechanism never ran. task-17370 measured
+# what it is worth: on the one question whose synthesis path was intact,
+# a second round held the gate rate while taking resolved markers from 24 to
+# 39 and citation density from 0.77 to 0.95. Deep research defaults to it now.
+
+
+def _gap_pipeline(question: str, gaps_per_round):
+    """search/analyze/gap fakes recording the queries of every round."""
+    rounds: list[str] = []
+    remaining = list(gaps_per_round)
+
+    def search_fn(q, params):
+        rounds.append(q)
+        return (
+            {"results": [{"title": f"R:{q}", "url": f"https://x.example/{len(rounds)}"}],
+             "warnings": []},
+            {"sub_questions": [], "main_goal": question},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {"text": "Answer citing [1].", "evidence": [
+                {"id": 1, "url": "https://x.example/1", "title": "R"}],
+                "confidence": 0.5, "chunks": []},
+            "relevant_results": {"0": {"url": "https://x.example/1"}},
+        }
+
+    async def gap_fn(context):
+        return remaining.pop(0) if remaining else []
+
+    return search_fn, analyze_fn, gap_fn, rounds
+
+
+def test_multi_hop_runs_a_second_round_by_default():
+    """No limits at all: the run must research the gaps its first synthesis
+    left open, not stop after one pass."""
+    service = _make_service()
+    search_fn, analyze_fn, gap_fn, rounds = _gap_pipeline("q", [["gap one"], []])
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    assert rounds == ["q", "gap one"], rounds
+
+
+def test_explicit_single_pass_limit_still_wins():
+    """A run that asks for one pass gets one pass -- the default must not
+    override what a caller (or the baseline recorder) states."""
+    service = _make_service()
+    search_fn, analyze_fn, gap_fn, rounds = _gap_pipeline("q", [["gap one"], []])
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert rounds == ["q"], rounds
+
+
+def test_configured_iteration_default_is_honoured(monkeypatch):
+    """Operators can move the shipped default without editing code."""
+    from tldw_chatbook.Research_Interop import local_research_engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module, "_configured_max_iterations", lambda: 3
+    )
+    service = _make_service()
+    search_fn, analyze_fn, gap_fn, rounds = _gap_pipeline(
+        "q", [["gap one"], ["gap two"], []]
+    )
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert rounds == ["q", "gap one", "gap two"], rounds
+
+
+def test_plan_review_patch_bounds_the_iterations():
+    """Qodo (PR 1766): an approved plan-review patch reached the budget ledger
+    but not the iteration bound, which was re-read from the run record. With
+    multi-hop as the default, a run the user had just limited to ONE pass could
+    still perform a second -- spending more than the review had approved.
+
+    Driven on an AUTONOMOUS run with a pre-approved plan patch, because a
+    resumed CHECKPOINTED run restarts the phase machine from the top (a
+    documented v1 limitation), which makes counting rounds through that path
+    ambiguous. The merge under test is the same one either way.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, gap_fn, rounds = _gap_pipeline("q", [["gap one"], []])
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn, gap_fn=gap_fn
+    )
+    # No max_iterations of its own, so ONLY the approved patch can bound it.
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    checkpoint = service.create_checkpoint(
+        run["id"], checkpoint_type="plan_review", proposed_payload={"query": "q"}
+    )
+    service.patch_and_approve_checkpoint(
+        run["id"], checkpoint["id"], patch_payload={"limits": {"max_iterations": 1}}
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed", final.get("progress_message")
+    # Without the fix this is ["q", "gap one"]: the ledger honoured the patch
+    # while the iteration bound fell back to the shipped default of 2.
+    assert rounds == ["q"], rounds

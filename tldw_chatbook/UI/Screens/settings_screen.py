@@ -265,6 +265,7 @@ from .settings_appearance_defaults import (
 from .settings_library_rag_defaults import (
     CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
     DEFAULT_RERANKER_PROVIDER,
+    RERANKER_ATTEMPTS_PER_CANDIDATE,
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
     library_rag_reranker_provider_options,
@@ -12979,30 +12980,52 @@ class SettingsScreen(BaseAppScreen):
     def _library_rag_rerank_cost_disclosure(values: Mapping[str, object]) -> str:
         """The Reranking fold's cost disclosure (TASK-3502 AC#2).
 
-        Pointwise reranking -- the shipped strategy -- issues ONE provider
-        call per candidate, so enabling it silently multiplies a search's
-        spend by the rerank top-k. That was stated nowhere before the user
-        committed to the toggle. Static honest text, deliberately NOT a
-        live price estimate: this repo owns no per-provider pricing table
-        for the reranker's models, and a wrong number would be worse than
-        an honest ceiling.
+        Pointwise reranking -- what this toggle creates (a bare
+        ``RerankingConfig()``) and the strategy this fold can edit --
+        issues ONE provider call per candidate, so enabling it silently
+        multiplies a search's spend by the rerank top-k. That was stated
+        nowhere before the user committed to the toggle. Static honest
+        text, deliberately NOT a live price estimate: this repo owns no
+        per-provider pricing table for the reranker's models, and a wrong
+        number would be worse than an honest ceiling.
+
+        The retry factor is part of the ceiling (TASK-17065 final review
+        F1): ``BaseReranker._call_llm`` retries EVERY exception, twice by
+        default, so the honest worst case is ``top_k x 3`` -- measured, 3
+        candidates against an erroring provider issue 9 calls and 20 issue
+        60. The other two strategies are not reachable from this fold: a
+        built-in preset may carry ``listwise`` (exactly 1 call per search,
+        so this line over-states there) or ``pairwise`` (a merge sort:
+        40-69 comparisons at top_k=20, so it would under-state); see
+        Docs/User_Guide/settings/rag.md, which states all three shapes.
 
         Args:
             values: The category's current (draft-aware) field values.
 
         Returns:
             One sentence naming the provider the calls are billed to and
-            the configured per-search call ceiling.
+            the configured per-search call ceiling, retries included.
         """
         provider = (
             str(values.get("reranker_provider") or "").strip()
             or DEFAULT_RERANKER_PROVIDER
         )
         top_k = values.get("reranker_top_k")
+        try:
+            retry_ceiling = int(top_k) * RERANKER_ATTEMPTS_PER_CANDIDATE
+        except (TypeError, ValueError):
+            # The box holds free text mid-edit; disclose the base ceiling
+            # rather than crash the fold on a half-typed number.
+            retry_ceiling = None
+        retries = (
+            f", or {retry_ceiling} if calls fail and are retried"
+            if retry_ceiling is not None
+            else ""
+        )
         return (
             f"Reranking scores each result with a separate {provider} call "
-            f"— up to {top_k} calls per search, billed at that provider's "
-            "rates."
+            f"— up to {top_k} calls per search{retries}, billed at that "
+            "provider's rates."
         )
 
     def _update_library_rag_rerank_disclosure(

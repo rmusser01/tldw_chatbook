@@ -756,7 +756,7 @@ def test_search_papers_accepts_categories(monkeypatch):
     assert papers == []
 
 
-# --- malformed-payload degradation + OSF Accept header (task-16812) ----------------
+# --- malformed-payload degradation + OSF Accept header (task-17385) ----------------
 
 def test_search_osf_sends_accept_json_header(monkeypatch):
     monkeypatch.setattr(

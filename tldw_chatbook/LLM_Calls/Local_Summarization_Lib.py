@@ -153,6 +153,15 @@ def summarize_with_llama(
     try:
         logging.debug("Llama.cpp: Loading and validating configurations")
         loaded_config_data = load_settings()
+        # task-17382: this function indexed a `llama_api` section in ten
+        # places. No such section has ever existed -- the loader builds
+        # `llama_cpp_api` -- so the FIRST read raised KeyError, the except at
+        # the bottom turned it into an error STRING, and the deep-search
+        # caller stored that string as a result's evidence content. Resolved
+        # once here, defensively, the way the chat handler does it.
+        llama_config = {}
+        if isinstance(loaded_config_data, dict):
+            llama_config = loaded_config_data.get("llama_cpp_api") or {}
         if loaded_config_data is None:
             logging.error("Failed to load configuration data")
             llama_api_key = None
@@ -163,14 +172,42 @@ def summarize_with_llama(
                 logging.info("Llama.cpp: Using API key provided as parameter")
             else:
                 # If no parameter is provided, use the key from the config
-                llama_api_key = loaded_config_data["llama_api"]["api_key"]
+                llama_api_key = llama_config.get("api_key")
                 if llama_api_key:
                     logging.info("Llama.cpp: Using API key from config file")
                 else:
                     logging.warning("Llama.cpp: No API key found in config file")
 
         logging.info("llama.cpp: Attempting to use API URL from config file")
-        api_url = loaded_config_data["llama_api"]["api_ip"]
+        # task-17382: prefer the modern api_settings entry -- what routes the
+        # chat handler, and what a run priming a local endpoint sets -- over
+        # the legacy section's api_ip, which otherwise sends every summary to
+        # the default port regardless of where the run's model actually is.
+        api_settings_llama = {}
+        if isinstance(loaded_config_data, dict):
+            api_settings_llama = (
+                (loaded_config_data.get("api_settings") or {}).get("llama_cpp") or {}
+            )
+        configured_url = (
+            api_settings_llama.get("api_url")
+            or api_settings_llama.get("api_ip")
+            or llama_config.get("api_ip")
+        )
+        if not configured_url:
+            raise ValueError(
+                "Llama.cpp Summarize: no API URL configured "
+                "(api_settings.llama_cpp.api_url or llama_cpp_api.api_ip)"
+            )
+        # These keys legitimately hold any of a server root, a base ending in
+        # /v1, a full chat-completions endpoint, or a bare host:port. This
+        # function POSTs directly rather than going through the shared caller,
+        # so it must land on the endpoint exactly once itself: normalize to the
+        # origin with the same helper the chat handler uses, then append the
+        # path. Posting a base URL raw returned llama-server's 404 "File Not
+        # Found" (observed live during the task-17370 measurement).
+        from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
+
+        api_url = f"{normalize_llamacpp_base_url(configured_url)}/v1/chat/completions"
         logging.debug("Llama: API endpoint configured")
 
         # Load transcript
@@ -221,16 +258,16 @@ def summarize_with_llama(
         # Temperature handling
         if temp is None:
             # Check config
-            if "temperature" in loaded_config_data["llama_api"]:
-                temp = loaded_config_data["llama_api"]["temperature"]
+            if "temperature" in llama_config:
+                temp = llama_config["temperature"]
                 temp = float(temp)
             else:
                 temp = 0.7
         logging.debug(f"Llama: Using temperature: {temp}")
 
         # Check for max tokens
-        if "max_tokens" in loaded_config_data["llama_api"]:
-            max_tokens = loaded_config_data["llama_api"]["max_tokens"]
+        if "max_tokens" in llama_config:
+            max_tokens = llama_config["max_tokens"]
             max_tokens = int(max_tokens)
         else:
             max_tokens = 4096
@@ -238,8 +275,8 @@ def summarize_with_llama(
 
         # Check for streaming
         if not isinstance(streaming, bool):
-            if "streaming" in loaded_config_data["llama_api"]:
-                streaming = loaded_config_data["llama_api"]["streaming"]
+            if "streaming" in llama_config:
+                streaming = llama_config["streaming"]
                 streaming = bool(streaming)
         logging.debug(f"Llama: Streaming mode: {streaming}")
 
@@ -258,8 +295,8 @@ def summarize_with_llama(
         session = requests.Session()
 
         # Load config values
-        retry_count = loaded_config_data["llama_api"]["api_retries"]
-        retry_delay = loaded_config_data["llama_api"]["api_retry_delay"]
+        retry_count = int(llama_config.get("api_retries", 3))
+        retry_delay = int(llama_config.get("api_retry_delay", 5))
 
         # Configure the retry strategy
         retry_strategy = Retry(
@@ -311,14 +348,32 @@ def summarize_with_llama(
             else:
                 logging.debug("Llama.cpp Summarizer: Processing non-streaming response")
                 response_data = response.json()
-                if "content" in response_data and len(response_data["content"]) > 0:
-                    summary = response_data["content"].strip()
+                # task-17382: this parsed ONLY llama.cpp's native
+                # `{"content": ...}` shape while posting to
+                # /v1/chat/completions, whose payload puts the text under
+                # choices[0].message.content -- so every real chunk
+                # summarization came back "No choices in response data" once
+                # the endpoint was reached. Accept the OpenAI shape first,
+                # then the native one, so either endpoint works.
+                summary = ""
+                if isinstance(response_data, dict):
+                    choices = response_data.get("choices")
+                    if isinstance(choices, list) and choices:
+                        first = choices[0] if isinstance(choices[0], dict) else {}
+                        message = first.get("message")
+                        if isinstance(message, dict):
+                            summary = str(message.get("content") or "")
+                        if not summary:
+                            summary = str(first.get("text") or "")
+                    if not summary:
+                        summary = str(response_data.get("content") or "")
+                summary = summary.strip()
+                if summary:
                     logging.debug("llama: Summarization successful")
                     logging.info("Summarization successful.")
                     return summary
-                else:
-                    logging.error("Llama: No choices in response data")
-                    return "Llama: No choices in response data"
+                logging.error("Llama: No choices in response data")
+                return "Llama: No choices in response data"
         else:
             logging.error(
                 "Llama: API request failed; status_code=%s",

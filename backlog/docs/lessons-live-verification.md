@@ -968,3 +968,30 @@ if there isn't one, say so out loud — "it's persisted" is not "it will be
 shown". The general form: a durable write is evidence about durability
 and about nothing else. Two live sessions of this programme were spent on
 designs that a single executed probe retired in an afternoon.
+## A worktree's live probe imports the MAIN checkout, and a redirected log hides its own progress (task-17370/17380, 2026-08-17)
+
+Two mechanical traps cost a cycle each while measuring the research pipeline
+from a worktree.
+
+The venv here is an editable install pointing at
+`/Users/.../tldw_chatbook/tldw_chatbook`, i.e. the MAIN checkout. A probe run
+from a worktree with the venv's python imported the main checkout's package,
+which was on an unrelated branch — the first attempt died with
+`ModuleNotFoundError: No module named
+'tldw_chatbook.Research_Interop.local_research_engine'` on a module that exists
+in the worktree. Fix: `PYTHONPATH=<worktree>` (or run the script from the
+worktree root, so `sys.path[0]` wins).
+
+Second: the baseline recorder prints progress with `print()`, and Python
+block-buffers stdout when it is redirected to a file — so a 50-minute run's
+per-question lines all appeared at the very end, while loguru's stderr flowed
+continuously. A monitor watching for `Running:` saw nothing for the whole run
+and a `grep -c` for it returned 0 on a live, healthy process. Fix:
+`PYTHONUNBUFFERED=1` for anything whose stdout you intend to watch.
+
+**Also worth stating**: verifying a UI launch path means launching it the way
+the UI does. A window-created research run is CHECKPOINTED (the scope service
+never passes `autonomy_mode`, so the service default applies), so it parks at
+`plan_review` and never reaches `collecting` until the checkpoint is approved.
+A harness that used `autonomy_mode="autonomous"` would have "verified" a path
+no user takes.

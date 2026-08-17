@@ -6,13 +6,22 @@ with the configured deep-search pipeline settings, scores each completed
 run's verification payload with the existing self-eval scorer, and prints
 the aggregated live baseline (mean metrics + per-run detail) plus JSON.
 
-Spend bounds are the point: small result counts, no sub-query fan-out, a
-handful of questions. Expect real network search traffic and LLM calls --
-both relevance and synthesis LLMs must be configured ([SearchSettings]).
+Spend bounds are the DEFAULT, not a property of the script (task-17370):
+small result counts, a handful of questions, and -- unless asked otherwise
+-- one search query and one synthesis pass per run. Both decomposition
+mechanisms are off at those defaults, which is how every baseline recorded
+before task-17370 was measured; the flags below turn them on so their
+effect on the relevance gate can be measured instead of assumed. Expect
+real network search traffic and LLM calls -- both relevance and synthesis
+LLMs must be configured ([SearchSettings]).
+
+Decomposition costs spend super-linearly: --max-queries N multiplies the
+per-run gate LLM calls by up to N, and --max-iterations M multiplies rounds
+on top of that.
 
 Usage:
     python3 Helper_Scripts/Benchmarks/record_research_baseline.py [--questions 3]
-        [--max-results 5] [--json-out PATH]
+        [--max-results 5] [--max-queries 1] [--max-iterations 1] [--json-out PATH]
 """
 
 from __future__ import annotations
@@ -34,7 +43,7 @@ if str(REPO_ROOT) not in sys.path:
 # Question sets: with --academic the evidence pool is papers/datasets, so
 # non-research topics (product features, protocols) legitimately score zero
 # relevance and produce no synthesis to verify. The biomedical set stresses
-# domain-specific vocabulary the PubMed lane must match (task-16812).
+# domain-specific vocabulary the PubMed lane must match (task-17385).
 QUESTION_SETS: dict[str, list[str]] = {
     "default": [
         "What is retrieval augmented generation?",
@@ -99,9 +108,28 @@ def _build_search_params(
     max_results: int,
     engine_override: str | None = None,
     llm_override: str | None = None,
+    max_queries: int = 1,
+    deadline_s: float | None = None,
+    llm_timeout_s: float | None = None,
 ) -> dict:
     """Assemble engine search params exactly like the web_deep_search tool
-    does, so the baseline measures the shipped pipeline configuration."""
+    does, so the baseline measures the shipped pipeline configuration.
+
+    ``max_queries`` is the TOTAL search queries per run including the
+    original question -- the pipeline's own semantics (generate_and_search
+    truncates sub-queries to cap - 1). It also decides sub-query generation:
+    at a cap of 1 there is nowhere for a generated sub-question to go, so
+    generating one would be spend with no search behind it. Deriving the
+    switch from the cap makes the two impossible to set contradictorily,
+    and keeps the config's own ``search_enable_subquery`` from silently
+    changing what a recorded baseline measured.
+
+    ``deadline_s`` overrides the phase-2 wall clock. The configured default
+    (``deep_search_timeout_s``, 240s) is calibrated for the one-query runs
+    this script used to force; under fan-out it truncates the gate loop via
+    ``cancel_event`` mid-run, and truncated results are never judged at all
+    (task-16333) -- so leaving it fixed would measure the deadline rather
+    than the gate."""
     from tldw_chatbook.Tools.web_tool_impls import (
         _deep_search_settings,
         deep_search_pipeline_params,
@@ -124,28 +152,54 @@ def _build_search_params(
             + ". Configure them, or pass --engine duckduckgo (keyless)."
         )
     # task-16484: shared assembly with the tool; spend bounds via overrides.
+    resolved_max_queries = max(1, int(max_queries or 1))
+    extra: dict = {
+        "subquery_generation_llm": relevance_llm,
+        "relevance_analysis_llm": relevance_llm,
+        "final_answer_llm": final_llm,
+    }
+    if llm_timeout_s is not None:
+        # task-17382 measurement: every per-result summarization in the live
+        # arms failed at exactly the shipped 30s, so the pipeline fell back to
+        # raw source content and no baseline has measured it with summaries
+        # completing. Local models need far longer per page.
+        extra["relevance_llm_timeout_s"] = float(llm_timeout_s)
+    if deadline_s is not None:
+        # Both keys: the assembly derives them from one setting, and the
+        # pipeline reads them independently.
+        extra["deep_search_timeout_s"] = float(deadline_s)
+        extra["phase1_time_budget_s"] = float(deadline_s)
     return deep_search_pipeline_params(
         engine=engine,
         max_results=max_results,
-        subquery=False,  # spend bound: single query per run
-        max_queries=1,  # spend bound: no fan-out
+        subquery=resolved_max_queries > 1,  # never half-enabled (see docstring)
+        max_queries=resolved_max_queries,
         respect_robots=True,
-        extra={
-            "subquery_generation_llm": relevance_llm,
-            "relevance_analysis_llm": relevance_llm,
-            "final_answer_llm": final_llm,
-        },
+        extra=extra,
     )
 
 
-async def _run_question(engine, service, question: str) -> dict | None:
+async def _run_question(
+    engine, service, question: str, max_iterations: int = 1
+) -> dict | None:
     """Execute one bounded research run; return its verification payload (or
     None with the failure printed -- one failed question must not sink the
-    baseline)."""
+    baseline).
+
+    ``max_iterations`` is the gap-driven replanning bound (task-16324). It is
+    passed explicitly even at its default of 1 so the recorded run states
+    what it measured rather than inheriting it; 1 is byte-equivalent to the
+    engine's own default, and a limits dict carrying only max_iterations
+    leaves the budget ledger unbounded exactly as passing nothing did.
+    """
     # Autonomous mode: the baseline measures the PIPELINE, not the
     # checkpoint UX -- checkpointed runs (the service default since
     # task-16482) park at plan review and never produce a report.
-    run = service.launch_run(query=question, autonomy_mode="autonomous")
+    run = service.launch_run(
+        query=question,
+        autonomy_mode="autonomous",
+        limits_json={"max_iterations": max(1, int(max_iterations or 1))},
+    )
     final = await engine.execute_run(run["id"])
     if final.get("status") != "completed":
         print(f"  [run failed: {final.get('status')} — {final.get('progress_message')}]")
@@ -158,6 +212,26 @@ async def _run_question(engine, service, question: str) -> dict | None:
     # The full summary (not just the citation block) so gate counts flow
     # into gate_pass_rate (task-16333).
     return payload
+
+
+def _decorate_aggregate(aggregate: dict, *, args: argparse.Namespace) -> dict:
+    """Stamp the decomposition settings onto the emitted aggregate.
+
+    task-17370: the recorded 0.29 and 0.42 gate numbers were both measured
+    with fan-out and replanning off, but nothing in their JSON said so, and
+    the resulting "genuine residual" reading could not be checked. Every
+    aggregate from here on states its own conditions. Kept out of
+    ``aggregate_metrics`` so the scorer's Dict[str, float] contract stands.
+    """
+    return {
+        **aggregate,
+        "decomposition": {
+            "max_queries": max(1, int(getattr(args, "max_queries", 1) or 1)),
+            "max_iterations": max(1, int(getattr(args, "max_iterations", 1) or 1)),
+            "deadline_s": getattr(args, "deadline_s", None),
+            "llm_timeout_s": getattr(args, "llm_timeout_s", None),
+        },
+    }
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -178,10 +252,19 @@ async def main_async(args: argparse.Namespace) -> int:
         args.max_results,
         engine_override=args.engine,
         llm_override=args.llm,
+        llm_timeout_s=args.llm_timeout_s,
+        max_queries=args.max_queries,
+        deadline_s=args.deadline_s,
     )
     print(
         f"engine={search_params['engine']} relevance={search_params['relevance_analysis_llm']} "
         f"synthesis={search_params['final_answer_llm']} max_results={args.max_results}"
+    )
+    print(
+        f"decomposition: max_queries={search_params['search_default_max_queries']} "
+        f"(subqueries={'ON' if search_params['subquery_generation'] else 'OFF'}) "
+        f"max_iterations={max(1, int(args.max_iterations or 1))} "
+        f"deadline_s={search_params['deep_search_timeout_s']}"
     )
 
     with tempfile.TemporaryDirectory(prefix="tldw-research-baseline-") as tmp:
@@ -219,7 +302,9 @@ async def main_async(args: argparse.Namespace) -> int:
         payloads = []
         for question in question_set[: args.questions]:
             print(f"Running: {question}")
-            payload = await _run_question(engine, service, question)
+            payload = await _run_question(
+                engine, service, question, max_iterations=args.max_iterations
+            )
             if payload is not None:
                 metrics = score_research_report(payload)
                 cv = payload.get("citation_verification") or {}
@@ -244,7 +329,7 @@ async def main_async(args: argparse.Namespace) -> int:
             "timeouts) before relying on this baseline."
         )
         return 1
-    aggregate = aggregate_metrics(payloads)
+    aggregate = _decorate_aggregate(aggregate_metrics(payloads), args=args)
     print("\n=== Live baseline (mean over runs) ===")
     print(json.dumps(aggregate, indent=2))
     if args.json_out:
@@ -264,6 +349,45 @@ def main() -> int:
     )
     parser.add_argument(
         "--max-results", type=int, default=5, help="search results per query (spend bound)"
+    )
+    parser.add_argument(
+        "--max-queries",
+        type=int,
+        default=1,
+        help=(
+            "total search queries per run including the original question; "
+            ">1 enables sub-question generation (default 1 = no fan-out, the "
+            "spend bound every pre-task-17370 baseline was recorded under)"
+        ),
+    )
+    parser.add_argument(
+        "--deadline-s",
+        type=float,
+        default=None,
+        help=(
+            "override the phase-2 wall clock (default: [SearchSettings] "
+            "deep_search_timeout_s, calibrated for single-query runs); raise it "
+            "when enabling fan-out or the gate loop is truncated mid-run"
+        ),
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=1,
+        help=(
+            "gap-driven replanning rounds per run (default 1 = single pass, "
+            "the engine's own default)"
+        ),
+    )
+    parser.add_argument(
+        "--llm-timeout-s",
+        type=float,
+        default=None,
+        help=(
+            "per-call relevance/summarization LLM timeout (default: the "
+            "configured relevance_llm_timeout_s, 30s -- too short for local "
+            "models, which makes every summary fall back to source text)"
+        ),
     )
     parser.add_argument("--json-out", default=None, help="optional path for the aggregate JSON")
     parser.add_argument(

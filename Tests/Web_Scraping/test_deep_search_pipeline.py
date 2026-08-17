@@ -1391,3 +1391,50 @@ async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
     for prompt in captured:
         input_line = prompt.split("\n\n", 1)[0]
         assert input_line == prefix  # no note, no extra text
+
+
+# --- provider error strings must never become evidence (task-17382) ----------
+# The summarizers report failure by RETURNING a string, and the caller only
+# recognized the "Error:" prefix. A llama.cpp failure returns "Llama: Error
+# occurred while processing summary with Llama: 'llama_api'", which sailed
+# through the guard and was stored as the result's content -- so the synthesis
+# was built from an error message where the source body belonged.
+
+
+@pytest.mark.parametrize(
+    "failure_text",
+    [
+        "Llama: Error occurred while processing summary with Llama: 'llama_api'",
+        "Kobold: Error occurred while processing summary with Kobold: boom",
+        "Llama: API request failed: 502 Bad Gateway",
+        "Ollama: JSON parse error from summarization API.",
+        "Custom OpenAI API: Unexpected error occurred: boom",
+        "Custom OpenAI API-2: Error making API request: boom",
+        "Llama: No choices in response data",
+        "Error: legacy prefix still detected",
+        "Error summarizing with Oobabooga: boom",
+    ],
+)
+def test_provider_failure_strings_are_recognized(failure_text):
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
+
+    assert _is_summary_failure(failure_text) is True
+
+
+@pytest.mark.parametrize(
+    "summary_text",
+    [
+        "This dataset reports error rates for retrieval augmented generation.",
+        "The paper analyses failure modes and error propagation in MoE routing.",
+        "Graph neural networks aggregate messages over edges.",
+        # A summary may legitimately OPEN with the word error; only the
+        # providers' own failure phrasings may count.
+        "Error rates in retrieval systems are reported per corpus.",
+        "Failed to converge is the outcome this dataset documents.",
+    ],
+)
+def test_real_summaries_are_not_mistaken_for_failures(summary_text):
+    """The detector must not eat legitimate prose that merely says "error"."""
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
+
+    assert _is_summary_failure(summary_text) is False

@@ -78,6 +78,37 @@ def test_every_builtin_profile_reranking_config_constructs(tmp_path):
             create_reranker_from_config(rc)  # must not raise
 
 
+def test_no_builtin_profile_asks_for_reasoning_it_cannot_fit_or_read(tmp_path):
+    """AC#11 (spend safety): shipped presets never set `include_reasoning`.
+
+    `RerankingConfig.max_tokens` defaults to 100 and reaches providers for
+    the first time since TASK-17065. `include_reasoning=True` appends a
+    free-form `"reasoning"` string to the JSON the parser needs, leaving
+    ~60 tokens for it on pointwise and ~40 on listwise -- and a truncated
+    body is a `json.JSONDecodeError`, i.e. a row that was BILLED and left
+    `scored=False` (listwise: `except Exception` fails the ENTIRE rerank).
+    It buys nothing in exchange: `RerankingResult.reasoning` is written
+    only by `PointwiseReranker._score_result` and is read nowhere outside
+    `reranker.py` -- `_apply_scores` copies only `rerank_score` into the
+    row. `high_accuracy` (pointwise) and `research_papers` (listwise)
+    shipped with the flag on; both are read-only profiles a user can pick
+    from the Settings picker, so neither can be repaired from the UI.
+    """
+    manager = get_profile_manager(profiles_dir=tmp_path)
+    offenders = [
+        profile.id
+        for name in manager.list_profiles()
+        if (profile := manager.get_profile(name)) is not None
+        and profile.read_only
+        and profile.reranking_config is not None
+        and profile.reranking_config.include_reasoning
+    ]
+    assert offenders == [], (
+        "built-in profiles asking for unreadable reasoning under a "
+        f"{RerankingConfig().max_tokens}-token cap: {offenders}"
+    )
+
+
 def _make_v2_service_with_reranking(tmp_path, enable_cache=False):
     """EnhancedRAGServiceV2 with mock embeddings, in-memory store, and a
     real (pointwise) reranking config -- mirrors the mock-embeddings pattern
@@ -349,7 +380,7 @@ async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_resu
     assert len(baseline_order) == 2
 
     async def _always_fail_scoring(query, result, original_rank):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     service.reranker._score_result = _always_fail_scoring
 
@@ -393,7 +424,7 @@ async def test_pairwise_reranker_counts_failed_comparisons():
     reranker = PairwiseReranker(cfg)
 
     async def _always_raise(prompt, system_prompt=None):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     reranker._call_llm = _always_raise
 
@@ -419,7 +450,7 @@ async def test_listwise_reranker_counts_total_failure():
     reranker = ListwiseReranker(cfg)
 
     async def _always_raise(prompt, system_prompt=None):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     reranker._call_llm = _always_raise
 

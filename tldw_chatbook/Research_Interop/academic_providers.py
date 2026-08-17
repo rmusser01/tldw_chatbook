@@ -69,7 +69,7 @@ class AcademicProviderError(Exception):
 
 def _json_or_error(response: Any, provider: str) -> Any:
     """Parse a provider response body as JSON; a malformed payload is a
-    typed provider failure (task-16812: a raw JSONDecodeError escaped the
+    typed provider failure (task-17385: a raw JSONDecodeError escaped the
     lane's degradation catch and killed the OTHER providers' results too)."""
     try:
         return json.loads(response.text)
