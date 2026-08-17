@@ -32,11 +32,18 @@ disclosure**; no composer-draft path).
 Five pieces, in dependency order. Every anchor below was re-verified
 against dev at `ed49499b8` (2026-08-17).
 
-### 1. Persistence: `change_notes` in AgentRuns_DB (v3 → v4)
+### 1. Persistence: `change_notes` in AgentRuns_DB (audit version 8)
 
-AgentRuns_DB is self-versioned (`_CURRENT_SCHEMA_VERSION = 3`,
-`DB/AgentRuns_DB.py:38`), so this is a self-contained bump — no
-ChaChaNotes migration.
+AgentRuns_DB migrates by its own convention — idempotent
+`CREATE TABLE IF NOT EXISTS` in the DDL block plus PRAGMA-guarded
+idempotent ALTERs, with an **append-only audit** `schema_version` table
+(`INSERT OR IGNORE ... VALUES (N)`; currently at 7 — see
+`DB/AgentRuns_DB.py:335-345`; the `_CURRENT_SCHEMA_VERSION = 3` constant
+at `:38` is not the live version gate). This feature adds the
+`change_notes` DDL to the create block and appends audit version **8** —
+self-contained, no ChaChaNotes migration. NOTE (v5 durability comment in
+the DDL): this DB holds durable user-authored content, and notes extend
+that — "clear run history" tooling must not treat it as disposable.
 
 ```sql
 CREATE TABLE change_notes (
@@ -196,6 +203,17 @@ controller/bridge-side and does not consult the presentation switch.
 
 ## Known boundaries (inherited, disclosed, not changed here)
 
+- **Agent-path-only delivery:** `turn_bundle_block` is applied only
+  inside `ConsoleAgentBridge.run_reply` (the wake feature's delivery-path
+  decision record, `Chat/console_fleet_wake.py:18-40`, documents this).
+  A send taken on the plain-provider path (agent runtime toggled off)
+  attaches nothing — notes simply **stay pending** until the next agent
+  turn, which is the turn that can act on file-change feedback anyway.
+  Unlike the wake notice, none of that record's disqualifiers apply here:
+  the notes are user-authored feedback riding the user's own real
+  message, so the "reads as user input" and "no trailing user entry"
+  concerns are moot.
+
 - **Conversation-id drift:** temporary-conversation promotion can change
   a conversation's id while existing runs keep the old one. Notes share
   exactly the exposure `change_snapshots` already has; no new mitigation.
@@ -213,7 +231,8 @@ controller/bridge-side and does not consult the presentation switch.
   multi-hunk, rename, binary, and the >cap case (segmentation on full
   text; display cap per hunk).
 - **Persistence:** real file-backed `AgentRunsDB` (NOT `:memory:` —
-  thread-affinity, V1 lesson): v3→v4 migration on an existing file;
+  thread-affinity, V1 lesson): opening a pre-existing DB file creates
+  `change_notes` and appends audit version 8 idempotently;
   add/delete/pending/mark-delivered; resume round-trip (new provider +
   card instance sees the notes).
 - **Widget:** real CSS bundle, id/class queries only. Per-hunk blocks

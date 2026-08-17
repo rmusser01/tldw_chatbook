@@ -1,9 +1,11 @@
 ---
 id: TASK-16800
 title: 'Turn file card: annotate/feedback loop and Review affordance'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-15'
+updated_date: '2026-08-17 03:28'
 labels:
   - console
   - change-review
@@ -40,7 +42,6 @@ fit the row).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 An expanded diff row exposes an action to attach a note to a specific hunk, without leaving the transcript
 - [ ] #2 A note attached to a hunk is durably recorded (survives session resume, like the rest of the card's source data) and is available to the agent as context on its next reply
