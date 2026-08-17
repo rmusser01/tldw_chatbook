@@ -9582,10 +9582,16 @@ class SettingsScreen(BaseAppScreen):
                     # task-16480: prevent() silences only THIS write. The
                     # widget-lifecycle (recompose/category-return) echo
                     # re-populates the input un-prevented, so the queue must
-                    # be armed the same way the endpoint sync arms its own --
-                    # route-echo regression: navigation-applied credentials
-                    # stopped being suppressible across recompose.
-                    if credential_input.value != credential_value:
+                    # be armed for navigation-applied credentials the same
+                    # way the endpoint sync arms its own. Armed ONLY while a
+                    # navigation context is active (Qodo review, PR #1760):
+                    # an always-armed queue could swallow a later genuine
+                    # user edit that returns the field to the queued value,
+                    # and this sync runs on every provider switch.
+                    if (
+                        credential_input.value != credential_value
+                        and self._navigation_provider
+                    ):
                         self._provider_credential_env_var_suppress_queue.append(
                             credential_value
                         )
