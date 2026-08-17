@@ -806,6 +806,34 @@ def extract_response_content(resp: Any) -> str:
     return content if isinstance(content, str) else str(content)
 
 
+def safe_endpoint_for_display(api_endpoint: Any) -> str:
+    """Return an endpoint string that is safe to log, label, or raise.
+
+    TASK-17165. `api_endpoint` is caller-supplied text, and a mis-ordered
+    caller can put a CREDENTIAL there -- `BaseReranker._call_llm_impl` does
+    exactly that today (TASK-17065), which is how an API key reached an
+    ERROR log line, an INFO line on every call, and a metrics label.
+
+    The rule is an ALLOWLIST, not a blocklist: a registered endpoint is safe
+    by definition and prints verbatim, so real diagnostics stay readable;
+    anything else is unknown-provenance text and is elided to its length.
+    Pattern-matching key SHAPES would miss any credential that does not look
+    like one, and this sink cannot know what it was handed.
+
+    Args:
+        api_endpoint: The raw endpoint argument, of any type.
+
+    Returns:
+        The lowercased endpoint when registered, else a redaction marker
+        carrying only its length.
+    """
+    text = str(api_endpoint or "")
+    lowered = text.lower()
+    if lowered in API_CALL_HANDLERS:
+        return lowered
+    return f"<unrecognised endpoint, {len(text)} chars, redacted>"
+
+
 def chat_api_call(
     api_endpoint: str,
     messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
@@ -922,14 +950,24 @@ def chat_api_call(
         :rtype: str | dict | Generator[str, Any, None]
     """
     endpoint_lower = api_endpoint.lower()
-    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_lower}")
-    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_lower})
+    # TASK-17165: never echo the raw value -- these two fire on EVERY call,
+    # not just failures, and the label additionally lands in exported
+    # metrics (where it is also an unbounded-cardinality hazard).
+    endpoint_display = safe_endpoint_for_display(api_endpoint)
+    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_display}")
+    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_display})
     start_time = time.time()
 
     handler = API_CALL_HANDLERS.get(endpoint_lower)
     if not handler:
-        logger.error(f"Unsupported API endpoint requested: {api_endpoint}")
-        raise ValueError(f"Unsupported API endpoint: {api_endpoint}")
+        logger.error(f"Unsupported API endpoint requested: {endpoint_display}")
+        # The message lists what IS valid instead of echoing what was passed:
+        # more useful for a genuine typo, and safe when the value is a
+        # credential (TASK-17165).
+        raise ValueError(
+            f"Unsupported API endpoint: {endpoint_display}. "
+            f"Valid endpoints: {', '.join(sorted(API_CALL_HANDLERS))}"
+        )
 
     params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
     call_kwargs = {}
@@ -1181,9 +1219,10 @@ def chat_api_call(
         )
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
+            safe_endpoint = safe_endpoint_for_display(endpoint_lower)
             raise ChatConfigurationError(
-                provider=endpoint_lower,
-                message=f"Unsupported API endpoint: {endpoint_lower}",
+                provider=safe_endpoint,
+                message=f"Unsupported API endpoint: {safe_endpoint}",
             )
         else:
             error_detail = safe_llm_exception_message(e)
