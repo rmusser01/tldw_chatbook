@@ -557,6 +557,10 @@ autowake_enabled` is off (there is no separate launch switch). If you
 have never run a background sub-agent, launch does exactly what it did
 before: one indexed check that finds nothing.
 
+If Console is your startup tab, the woken conversation opens as another
+tab beside the one you landed on; it never switches you away from the tab
+you started in.
+
 One case cannot be delivered and is cleaned up instead: sub-agent work
 started in a **temporary (unsaved) chat** belongs to a session that does
 not survive the app, so there is no conversation left to wake. Its `◈`
