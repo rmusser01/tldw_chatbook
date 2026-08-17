@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Sequence
 from urllib.parse import urlparse, urlunparse
 
@@ -472,6 +472,45 @@ def build_default_console_session_settings(
             default_sources, "thinking_budget_tokens"
         ),
         streaming=_bool_setting_from_sources(default_sources, "streaming", True),
+    )
+
+
+def default_console_session_settings(
+    app_config: Mapping[str, object],
+    provider: str | None = None,
+    model: str | None = None,
+) -> ConsoleSessionSettings:
+    """The default settings snapshot a NEW Console session starts from.
+
+    `build_default_console_session_settings` plus the one rule that always
+    accompanied it at the screen's call site: a llama.cpp session takes no
+    `base_url` from configuration (the gateway normalizes the origin at
+    send time; a stale configured URL here would pin it).
+
+    Named here, and not left inline in
+    `ConsoleSessionController._default_console_session_settings`, because
+    task-15860's launch wake builds a session with no screen in existence
+    and must start from the same defaults rather than a second spelling of
+    them.
+
+    Args:
+        app_config: The live app configuration snapshot.
+        provider: An explicit provider override (the Console control bar's
+            selection when there is a view), or ``None``.
+        model: An explicit model override, or ``None``.
+
+    Returns:
+        The default settings for a new session.
+    """
+    settings = build_default_console_session_settings(app_config, provider, model)
+    provider_key = provider_config_key(settings.provider)
+    return replace(
+        settings,
+        base_url=(
+            None
+            if provider_key in {"llama_cpp", "local_llamacpp"}
+            else settings.base_url
+        ),
     )
 
 
