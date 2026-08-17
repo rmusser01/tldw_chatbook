@@ -109,7 +109,7 @@ grounding untested, not failing). En route the script gained the
 `autonomy_mode="autonomous"` fix — checkpointed (the service default since
 task-16482) would park every run at plan review and produce no report.
 
-## Category-lane live baselines (2026-08-16, task-16812)
+## Category-lane live baselines (2026-08-16, task-17385)
 
 Three more lanes measured with the same runner/config (local Qwen3.8-27B on
 :9191, duckduckgo web lane, bounded):
@@ -133,7 +133,7 @@ on-topic, confirming the relevance gate's strictness hits
 non-paper sources hardest. Citation integrity is unaffected (every kept
 source verifies).
 
-Live-verification fixes en route (task-16812): OSF intermittently 301s —
+Live-verification fixes en route (task-17385): OSF intermittently 301s —
 httpx does not follow redirects by default, which yielded empty bodies;
 the OSF client now follows redirects and sends the server-parity
 `Accept: application/json` header. Malformed payloads (the OSF 301 HTML)

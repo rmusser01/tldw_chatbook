@@ -43,7 +43,7 @@ if str(REPO_ROOT) not in sys.path:
 # Question sets: with --academic the evidence pool is papers/datasets, so
 # non-research topics (product features, protocols) legitimately score zero
 # relevance and produce no synthesis to verify. The biomedical set stresses
-# domain-specific vocabulary the PubMed lane must match (task-16812).
+# domain-specific vocabulary the PubMed lane must match (task-17385).
 QUESTION_SETS: dict[str, list[str]] = {
     "default": [
         "What is retrieval augmented generation?",

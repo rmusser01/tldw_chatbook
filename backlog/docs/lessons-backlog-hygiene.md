@@ -39,6 +39,22 @@ known, expensive to rediscover. Every entry states the incident that produced it
   **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
   instant it is derived, so re-derive it at filing time.
 
+- **2026-08-17, TASK-17385 (the seventh collision, and the second one *caused by a
+  renumber* landing on an already-taken ID).** Two **Done** tasks shared `TASK-16812`
+  on dev — a Console thinking-controls task and a research category-lane baselines
+  task — so Backlog Guard was red on dev itself and every PR inherited it. Both being
+  Done, "never move a Done task" could not break the tie; the later claimant (baselines)
+  moved to `17385`, verified free above the true all-branch max of **17384**. The
+  renumber was trivial; finding its references was the trap. A first sweep of `backlog/`
+  + `Docs/` looked complete but **MISSED three live references in CODE** — a source
+  comment (`Research_Interop/academic_providers.py`), a test section header
+  (`Tests/Research/test_academic_providers.py`), and a benchmark comment
+  (`Helper_Scripts/Benchmarks/record_research_baseline.py`). Merging that partial fix
+  would have shipped three pointers resolving to the WRONG task. Only a whole-repo grep
+  caught them. **Lesson: a renumber's references are not confined to `backlog/`+`Docs/`
+  — task IDs are cited from source, test, and benchmark comments too; grep the ENTIRE
+  tree (`grep -rIn "task-<id>" .`) before you believe the reference set is complete.**
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
@@ -53,7 +69,10 @@ carried a bad number.
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:
-the later claimant moves, and every reference in its shipped slice moves with it.
+the later claimant moves, and every reference in its shipped slice moves with it —
+and that slice includes **source, test, and benchmark comments**, not just `backlog/`
+and `Docs/`. Grep the whole repo (`grep -rIn "task-<id>" .`), or a partial rename ships
+dangling pointers to the wrong task.
 
 ```bash
 git for-each-ref --format='%(refname)' refs/remotes/ | while read -r b; do
