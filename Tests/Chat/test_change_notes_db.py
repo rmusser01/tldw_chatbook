@@ -116,6 +116,78 @@ def test_mark_notes_delivered_stamps_only_given_ids_and_sets_timestamp(db):
     assert notes[note_2]["delivered_at"] is None
 
 
+def test_mark_notes_delivered_stamps_delivered_by_run_id_when_given(db):
+    """TASK-16800 Task 6 fix round: `delivered_by_run_id` records which
+    run's COMPLETION did the delivering -- distinct from `run_id`, the
+    run whose diff the note is anchored to/critiques. A note annotated
+    against `run_a`'s diff but delivered on `run_b`'s completion must
+    carry `run_b` in `delivered_by_run_id`, not `run_a`."""
+    run_a = _make_run(db, conversation_id="conv1")
+    run_b = _make_run(db, conversation_id="conv1")
+    note_id = db.add_change_note(
+        run_id=run_a, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="anchored-to-a",
+    )
+
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_b)
+
+    row = db.notes_for_run(run_a)[0]
+    assert row["run_id"] == run_a
+    assert row["delivered_by_run_id"] == run_b
+    assert row["delivered_at"] is not None
+
+
+def test_mark_notes_delivered_leaves_delivered_by_run_id_null_when_omitted(db):
+    """The parameter is optional (back-compat with callers/rows that
+    predate the column) -- omitting it must not raise and must leave the
+    column NULL, exactly like a pre-migration stamp would read."""
+    run_id = _make_run(db)
+    note_id = db.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="no-deliverer",
+    )
+    db.mark_notes_delivered([note_id])
+    row = db.notes_for_run(run_id)[0]
+    assert row["delivered_at"] is not None
+    assert row["delivered_by_run_id"] is None
+
+
+def test_delivered_notes_for_conversation_joins_both_runs_oldest_first(db):
+    """Batched counterpart to `pending_notes_for_conversation` (TASK-16800
+    Task 6 fix round) -- same join shape, but for DELIVERED notes."""
+    run_a = _make_run(db, conversation_id="conv1")
+    run_b = _make_run(db, conversation_id="conv1")
+    other_conv_run = _make_run(db, conversation_id="conv2")
+
+    note_a = db.add_change_note(
+        run_id=run_a, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="note-a",
+    )
+    note_b = db.add_change_note(
+        run_id=run_b, root="/r", path="b.py", hunk_index=0,
+        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="note-b",
+    )
+    other_conv_note = db.add_change_note(
+        run_id=other_conv_run, root="/r", path="c.py", hunk_index=0,
+        hunk_header="@@ -3,1 +3,1 @@", hunk_excerpt="z", note="note-other-conv",
+    )
+    db.mark_notes_delivered([note_a, note_b, other_conv_note], delivered_by_run_id=run_b)
+
+    delivered = db.delivered_notes_for_conversation("conv1")
+    assert [row["id"] for row in delivered] == [note_a, note_b]
+    assert {row["run_id"] for row in delivered} == {run_a, run_b}
+    assert all(row["delivered_by_run_id"] == run_b for row in delivered)
+
+
+def test_delivered_notes_for_conversation_excludes_pending(db):
+    run_id = _make_run(db)
+    db.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="still-pending",
+    )
+    assert db.delivered_notes_for_conversation("conv1") == []
+
+
 def test_mark_notes_delivered_mid_run_race_leaves_later_note_pending(db):
     """Spec §4: the attach step captures the exact pending-id list at
     attach time; a note added AFTER that capture — while the run is still
@@ -253,6 +325,108 @@ def test_migration_creates_table_and_appends_audit_version_8(tmp_path):
             hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="post-migration",
         )
         assert reopened.notes_for_run(run_id)[0]["id"] == note_id
+    finally:
+        reopened.close()
+
+
+def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
+    tmp_path,
+):
+    """TASK-16800 Task 6 fix round: a file whose `change_notes` table
+    already exists but predates `delivered_by_run_id` (i.e. was last
+    opened by code before the fix round) must pick up the column via the
+    idempotent ALTER TABLE, not lose the table's existing rows -- same
+    mechanism/precedent as `test_migration_creates_table_and_appends_audit_version_8`,
+    but for a column ADD on an already-existing table rather than the
+    whole table's CREATE.
+    """
+    db_path = tmp_path / "migrate_v9.db"
+
+    first = AgentRunsDB(db_path, client_id="t")
+    run_id = first.create_run(conversation_id="c", agent_kind="primary")
+    pre_migration_note_id = first.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+    )
+    first.close()
+
+    # Simulate a pre-v9 file: recreate change_notes with the OLD (10-column,
+    # no delivered_by_run_id) shape and remove the version-9 audit row.
+    # (`ALTER TABLE ... DROP COLUMN` hits a SQLite schema-reconstruction
+    # quirk against this table's commented DDL -- dropping and recreating
+    # with the old shape sidesteps it and is arguably more honest: a truly
+    # pre-v9 file's `change_notes` table never had the column at all.)
+    raw = sqlite3.connect(str(db_path))
+    try:
+        old_rows = raw.execute(
+            "SELECT id, run_id, root, path, hunk_index, hunk_header, "
+            "hunk_excerpt, note, created_at, delivered_at FROM change_notes"
+        ).fetchall()
+        raw.execute("DROP TABLE change_notes")
+        raw.execute(
+            """
+            CREATE TABLE change_notes (
+                id INTEGER PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                root TEXT NOT NULL,
+                path TEXT NOT NULL,
+                hunk_index INTEGER NOT NULL,
+                hunk_header TEXT NOT NULL,
+                hunk_excerpt TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                delivered_at TEXT
+            )
+            """
+        )
+        raw.executemany(
+            "INSERT INTO change_notes "
+            "(id, run_id, root, path, hunk_index, hunk_header, hunk_excerpt, "
+            "note, created_at, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            old_rows,
+        )
+        raw.execute("DELETE FROM schema_version WHERE version = 9")
+        raw.commit()
+    finally:
+        raw.close()
+
+    raw = sqlite3.connect(str(db_path))
+    try:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
+        assert "delivered_by_run_id" not in columns
+        versions = {row[0] for row in raw.execute("SELECT version FROM schema_version")}
+        assert 9 not in versions
+    finally:
+        raw.close()
+
+    reopened = AgentRunsDB(db_path, client_id="t")
+    try:
+        raw = sqlite3.connect(str(db_path))
+        try:
+            columns = {
+                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
+            }
+            assert "delivered_by_run_id" in columns
+            versions = {
+                row[0] for row in raw.execute("SELECT version FROM schema_version")
+            }
+            assert 9 in versions
+        finally:
+            raw.close()
+
+        # The pre-existing row survived the ALTER, reading NULL for the
+        # new column (no DEFAULT), and the API still works against it.
+        pre_row = reopened.notes_for_run(run_id)[0]
+        assert pre_row["id"] == pre_migration_note_id
+        assert pre_row["delivered_by_run_id"] is None
+
+        post_note_id = reopened.add_change_note(
+            run_id=run_id, root="/r", path="b.py", hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
+        )
+        reopened.mark_notes_delivered([post_note_id], delivered_by_run_id=run_id)
+        post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
+        assert post_row["delivered_by_run_id"] == run_id
     finally:
         reopened.close()
 

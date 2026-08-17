@@ -284,7 +284,19 @@ class AgentRunsDB(BaseDB):
                     hunk_excerpt TEXT NOT NULL,
                     note TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    delivered_at TEXT
+                    delivered_at TEXT,
+                    -- v9 (TASK-16800 Task 6 fix round): which run's
+                    -- COMPLETION actually stamped this note delivered --
+                    -- distinct from `run_id` above, which anchors the note
+                    -- to the run whose DIFF it critiques. A note written
+                    -- against an earlier run's diff is commonly delivered
+                    -- on a LATER run's completion, so resume re-derivation
+                    -- needs this to place the disclosure row at the
+                    -- delivering run's position (matching live emission)
+                    -- instead of fragmenting/mis-anchoring at the
+                    -- annotated run. NULL until stamped, and NULL forever
+                    -- on rows stamped by code that predates this column.
+                    delivered_by_run_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_notes_pending
                     ON change_notes(run_id) WHERE delivered_at IS NULL;
@@ -353,6 +365,23 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_snapshots ADD COLUMN "
                     "kind TEXT NOT NULL DEFAULT 'turn'"
                 )
+            # v8->v9 (TASK-16800 Task 6 fix round): a file created while
+            # change_notes existed but before delivered_by_run_id did
+            # keeps its old 10-column table -- same idempotent-ALTER
+            # mechanism as every column above. No DEFAULT: every
+            # pre-existing row correctly reads as NULL (unknown delivering
+            # run), which is exactly the legacy fallback resume
+            # re-derivation is built to handle.
+            note_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(change_notes)"
+                ).fetchall()
+            }
+            if "delivered_by_run_id" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN delivered_by_run_id TEXT"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -371,6 +400,9 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (8)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (9)"
             )
 
     def record_change_snapshot(
@@ -672,7 +704,40 @@ class AgentRunsDB(BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def mark_notes_delivered(self, note_ids: Sequence[int]) -> None:
+    def delivered_notes_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's delivered notes, oldest first.
+
+        TASK-16800 Task 6 fix round: the batched counterpart to
+        ``pending_notes_for_conversation`` (same join shape, same
+        precedent as the TASK-1972 no-N+1 fix for ``change_snapshots``)
+        -- resume re-derivation needs every delivered note across every
+        run of the conversation in ONE query, not one ``notes_for_run``
+        call per re-derived run.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Delivered (``delivered_at IS NOT NULL``) note rows across
+            every run of the conversation, oldest first. Each row carries
+            ``delivered_by_run_id`` -- NULL for notes stamped before that
+            column existed.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cn.* FROM change_notes cn
+                JOIN agent_runs ar ON ar.id = cn.run_id
+                WHERE ar.conversation_id = ? AND cn.delivered_at IS NOT NULL
+                ORDER BY cn.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_notes_delivered(
+        self, note_ids: Sequence[int], delivered_by_run_id: str | None = None
+    ) -> None:
         """Stamp exactly the given notes as delivered.
 
         Spec §4: the delivery seam captures the precise id list it
@@ -683,6 +748,15 @@ class AgentRunsDB(BaseDB):
 
         Args:
             note_ids: The note ids to stamp delivered.
+            delivered_by_run_id: The id of the run whose completion is
+                doing this delivery (TASK-16800 Task 6 fix round) --
+                distinct from each note's own ``run_id`` (the run whose
+                diff it critiques). Stamped verbatim onto every row in
+                ``note_ids``, alongside the same ``delivered_at``
+                timestamp, so resume re-derivation can anchor the
+                disclosure at the run that actually delivered it. Left
+                ``None`` (the default) only by callers that predate this
+                column or do not know/care which run is delivering.
         """
         ids = [int(note_id) for note_id in note_ids]
         if not ids:
@@ -690,9 +764,10 @@ class AgentRunsDB(BaseDB):
         placeholders = ",".join("?" for _ in ids)
         with self.transaction() as conn:
             conn.execute(
-                f"UPDATE change_notes SET delivered_at = ? "
+                f"UPDATE change_notes SET delivered_at = ?, "
+                f"delivered_by_run_id = ? "
                 f"WHERE id IN ({placeholders}) AND delivered_at IS NULL",
-                (_now_iso(), *ids),
+                (_now_iso(), delivered_by_run_id, *ids),
             )
 
     @staticmethod

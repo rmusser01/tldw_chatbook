@@ -3638,7 +3638,14 @@ class ConsoleAgentBridge:
                 and diff_feedback_included_ids
             ):
                 try:
-                    self._db.mark_notes_delivered(diff_feedback_included_ids)
+                    # task-6 fix round: stamp with the id of THIS
+                    # (completing) run -- the run whose completion is
+                    # actually doing the delivering, which resume
+                    # re-derivation anchors the disclosure row to. `run_id`
+                    # is already known-bound by the `locals()` check above.
+                    self._db.mark_notes_delivered(
+                        diff_feedback_included_ids, delivered_by_run_id=run_id
+                    )
                     self._store.append_message(
                         session_id,
                         role=ConsoleMessageRole.TOOL,
@@ -4710,15 +4717,19 @@ class ConsoleAgentBridge:
         tool/spawn/error step) yields an empty block; callers should skip
         those rather than inject nothing.
 
-        task-6 (turn-file-annotate, spec §4): each block also ends with
-        one diff-feedback disclosure row per delivery batch of that run's
-        own ``change_notes`` (notes anchored to this run's diff, grouped
-        by ``delivered_at``, oldest batch first), rendered with the same
-        ``format_diff_feedback_disclosure`` the live completion seam uses.
-        Pending notes yield nothing. This is the designed healer for the
-        live seam's stamp-then-append: if the live append never happened
-        (e.g. it raised after the stamp landed), resume still surfaces the
-        row from the DB.
+        task-6 (turn-file-annotate, spec §4) + fix round: each block also
+        ends with one diff-feedback disclosure row per delivery batch
+        DELIVERED BY that run's own completion (grouped by
+        ``(delivered_by_run_id, delivered_at)``, oldest batch first),
+        rendered with the same ``format_diff_feedback_disclosure`` the
+        live completion seam uses -- so a re-derived row is
+        byte-identical to what live emission produced, and lands at the
+        same run's position live placed it at (not the position of
+        whichever earlier run the notes happen to be anchored/annotated
+        against). Pending notes yield nothing. This is the designed
+        healer for the live seam's stamp-then-append: if the live append
+        never happened (e.g. it raised after the stamp landed), resume
+        still surfaces the row from the DB.
 
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
@@ -4738,6 +4749,41 @@ class ConsoleAgentBridge:
                 snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
         except Exception:  # noqa: BLE001 -- resume must not die on this
             snap_by_run = {}
+        # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
+        # the whole conversation -- same no-N+1 precedent as the snapshot
+        # fetch immediately above, and the same "resume must not die on
+        # this" posture: a change_notes read failure must degrade to no
+        # disclosure rows, not break conversation resume entirely.
+        #
+        # Grouped by (target_run_id, delivered_at) where target_run_id is
+        # `delivered_by_run_id` -- the run whose COMPLETION actually
+        # stamped the note delivered, matching live emission's placement
+        # exactly, and immune to both failure modes an earlier version of
+        # this method had: (a) one live batch spanning notes anchored to
+        # TWO different runs no longer fragments into two resume rows --
+        # it stays one row, keyed on the single delivering run; (b) a note
+        # annotated against a run that later became superseded (and so is
+        # excluded from `records`, silently dropping any block keyed to
+        # it) still surfaces, because the delivering run -- typically
+        # still live/non-superseded -- is what the row is keyed to, not
+        # the (possibly off-branch) annotated run.
+        #
+        # `delivered_by_run_id` is NULL on rows stamped before that column
+        # existed (a pre-migration DB) or by any future caller that omits
+        # it -- there is no way to recover which run delivered those, so
+        # they fall back to the note's OWN `run_id` (the annotated run):
+        # the same position this method used before the fix round, kept
+        # here only as the legacy floor, not the common path.
+        disclosure_batches: dict[str, dict[str, list[dict]]] = {}
+        try:
+            for _note in self._db.delivered_notes_for_conversation(conversation_id):
+                _target = _note.get("delivered_by_run_id") or _note.get("run_id")
+                _delivered_at = str(_note.get("delivered_at"))
+                disclosure_batches.setdefault(str(_target), {}).setdefault(
+                    _delivered_at, []
+                ).append(_note)
+        except Exception:  # noqa: BLE001 -- resume must not die on this
+            disclosure_batches = {}
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
@@ -4829,45 +4875,30 @@ class ConsoleAgentBridge:
                             status="complete",
                         )
                     )
-            # task-6 (turn-file-annotate, spec §4): re-derive the
-            # diff-feedback disclosure row(s) this run's own notes produced
-            # once delivered -- the designed healer for Task 5's live seam,
-            # which stamps `delivered_at` and appends the disclosure row in
-            # one `try`: if the append fails after the stamp lands, the DB
-            # still records the delivery but the live transcript never got
-            # a row. A fresh resume must surface it regardless. Uses the
-            # SAME shared formatter the live seam uses
-            # (`format_diff_feedback_disclosure`) so a re-derived row is
-            # byte-identical to what live emission would have produced.
-            #
-            # `notes_for_run` returns notes ANCHORED to this run (the run
-            # whose diff the note critiques), not notes "delivered by" it
-            # -- `change_notes` carries no delivered-by-run column, so
-            # there is no way to recover which LATER run's completion
-            # actually stamped a note delivered. The anchor run is the
-            # only per-run key available, so that is where its disclosure
-            # row(s) land on resume: after this run's own marker rows,
-            # grouped by `delivered_at` (one row per delivery batch, oldest
-            # batch first -- ISO-8601 timestamps sort chronologically).
-            # This loop never consults `snap_rows`, so a run with delivered
-            # notes but no snapshot rows at all (change tracking failed or
-            # was never configured -- delivery does not depend on tracking
-            # succeeding) still yields its disclosure row(s). Pending
-            # notes (`delivered_at IS NULL`) are silently skipped -- only
-            # what the model actually saw is ever disclosed.
-            notes = self._db.notes_for_run(str(record.get("id")))
-            delivered_batches: dict[str, list[dict]] = {}
-            for _note in notes:
-                _delivered_at = _note.get("delivered_at")
-                if not _delivered_at:
-                    continue
-                delivered_batches.setdefault(str(_delivered_at), []).append(_note)
-            for _delivered_at in sorted(delivered_batches):
+            # task-6 (turn-file-annotate, spec §4) + fix round: append this
+            # run's own diff-feedback disclosure row(s) -- i.e. every
+            # delivery batch keyed to THIS run as the delivering run (see
+            # `disclosure_batches` construction above for the grouping and
+            # legacy-fallback rules). Placed after this run's own marker
+            # rows (steps, change-summary/failure rows), never gated on
+            # `snap_rows`, so a run with delivered notes but no snapshot
+            # rows at all (tracking failed or was never configured --
+            # delivery does not depend on tracking succeeding) still
+            # yields its disclosure row(s). This is the designed healer
+            # for Task 5's live seam, which stamps `delivered_at` then
+            # appends the disclosure row in one `try`: if the append fails
+            # after the stamp lands, the DB still records the delivery but
+            # the live transcript never got a row -- a fresh resume
+            # surfaces it regardless, byte-identical to what live emission
+            # would have produced (same shared `format_diff_feedback_disclosure`).
+            for _delivered_at in sorted(
+                disclosure_batches.get(str(record.get("id")), {})
+            ):
                 block.append(
                     ConsoleChatMessage(
                         role=ConsoleMessageRole.TOOL,
                         content=format_diff_feedback_disclosure(
-                            delivered_batches[_delivered_at]
+                            disclosure_batches[str(record.get("id"))][_delivered_at]
                         ),
                         status="complete",
                     )

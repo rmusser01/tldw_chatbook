@@ -2563,7 +2563,7 @@ def test_resume_marker_messages_re_derives_diff_feedback_disclosure_after_marker
     )
     db.set_status(run_id, "done", result="4")
     note_id = _add_note(db, run_id, note="use the cached value here")
-    db.mark_notes_delivered([note_id])
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_id)
     delivered = db.notes_for_run(run_id)
     assert delivered[0]["delivered_at"] is not None
 
@@ -2602,9 +2602,9 @@ def test_resume_marker_messages_groups_two_delivery_batches_in_delivery_order(
     )
     db.set_status(run_id, "done", result="ok")
     first_id = _add_note(db, run_id, path="a.py", note="first batch note")
-    db.mark_notes_delivered([first_id])
+    db.mark_notes_delivered([first_id], delivered_by_run_id=run_id)
     second_id = _add_note(db, run_id, path="b.py", note="second batch note")
-    db.mark_notes_delivered([second_id])
+    db.mark_notes_delivered([second_id], delivered_by_run_id=run_id)
     delivered = db.notes_for_run(run_id)
     delivered_ats = {n["id"]: n["delivered_at"] for n in delivered}
     assert delivered_ats[first_id] <= delivered_ats[second_id]
@@ -2662,7 +2662,9 @@ def test_resume_marker_messages_heals_disclosure_when_live_append_never_happened
     run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
     db.set_status(run_id, "done", result="ok")  # no steps: a plain answer
     note_id = _add_note(db, run_id, note="healed disclosure")
-    db.mark_notes_delivered([note_id])  # stamped, as if live append then failed
+    # Stamped as if live append then failed -- delivered_by_run_id is this
+    # same run's id, matching what the real Task 5 stamp call now passes.
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_id)
 
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
@@ -2701,7 +2703,7 @@ def test_resume_marker_messages_disclosure_survives_run_with_no_snapshot_rows(
     )
     db.set_status(run_id, "done", result="4")
     note_id = _add_note(db, run_id, note="no snapshot for this turn")
-    db.mark_notes_delivered([note_id])
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_id)
     # Sanity: no change_snapshots rows exist for this run/conversation.
     assert db.change_snapshots_for_conversation("conv-1") == []
 
@@ -2715,6 +2717,219 @@ def test_resume_marker_messages_disclosure_survives_run_with_no_snapshot_rows(
         db.notes_for_run(run_id)
     )
     assert "no snapshot for this turn" in block[-1].content
+
+
+def test_resume_marker_messages_disclosure_anchors_at_the_delivering_run(tmp_path):
+    """Fix-round CRITICAL finding: a note annotated against run A's diff
+    but DELIVERED on run B's later completion must resume with its
+    disclosure row after B's own marker row(s) -- not A's. Live emission
+    places the row at whichever run's completion actually did the
+    stamping; re-derivation must match that, matching
+    ``format_diff_feedback_disclosure`` byte-for-byte, or a resumed
+    transcript would show the disclosure attached to the wrong turn (or,
+    under the pre-fix anchor-run grouping, not at all if A had since been
+    superseded)."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_a,
+        [
+            {
+                "index": 0,
+                "kind": STEP_TOOL_RESULT,
+                "tool_name": "calculator",
+                "result": "4",
+                "summary": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_a, "done", result="4")
+    note_id = _add_note(db, run_a, note="annotated on a, delivered on b")
+
+    run_b = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_b,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "boom",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_b, "done", result="ok")
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_b)
+    delivered = db.notes_for_run(run_a)
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 2
+    block_a = blocks[0][1]
+    block_b = blocks[1][1]
+    assert "calculator" in block_a[0].content
+    assert not any("Diff feedback attached" in m.content for m in block_a)
+    assert "boom" in block_b[0].content
+    assert block_b[-1].content == format_diff_feedback_disclosure(delivered)
+    assert "annotated on a, delivered on b" in block_b[-1].content
+    assert block_b[-1].change_review_run_id is None
+
+
+def test_resume_marker_messages_batch_spanning_two_anchor_runs_stays_one_row(
+    tmp_path,
+):
+    """Fix-round finding: one live delivery batch containing notes
+    annotated against TWO different runs' diffs must stay ONE disclosure
+    row -- at the delivering run's position -- not fragment into one row
+    per anchor run."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(run_a, "done", result="ok")
+    note_a = _add_note(db, run_a, path="a.py", note="note on a")
+
+    run_b = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.set_status(run_b, "done", result="ok")
+    note_b = _add_note(db, run_b, path="b.py", note="note on b")
+
+    run_c = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_c,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "final turn",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_c, "done", result="ok")
+    # ONE call -- both notes delivered together, by run_c's completion.
+    db.mark_notes_delivered([note_a, note_b], delivered_by_run_id=run_c)
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 3
+    block_a, block_b, block_c = (b for _anchor, b in blocks)
+    assert not any("Diff feedback attached" in m.content for m in block_a)
+    assert not any("Diff feedback attached" in m.content for m in block_b)
+    disclosure_rows = [m for m in block_c if "Diff feedback attached" in m.content]
+    assert len(disclosure_rows) == 1
+    assert "note on a" in disclosure_rows[0].content
+    assert "note on b" in disclosure_rows[0].content
+
+
+def test_resume_marker_messages_legacy_null_delivered_by_run_id_falls_back_to_annotated_run(
+    tmp_path,
+):
+    """A note stamped delivered before ``delivered_by_run_id`` existed (or
+    by any caller that omits it) carries NULL there -- there is no way to
+    recover which run delivered it, so resume falls back to the note's own
+    (annotated) run's position, exactly like the original Task 6
+    mechanism. Verified against a conversation with a LATER run present,
+    so a wrong "always use the newest/last run" fallback would be
+    detectable."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_a = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_a,
+        [
+            {
+                "index": 0,
+                "kind": STEP_TOOL_RESULT,
+                "tool_name": "calculator",
+                "result": "4",
+                "summary": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_a, "done", result="4")
+    note_id = _add_note(db, run_a, note="legacy stamp, no deliverer recorded")
+    db.mark_notes_delivered([note_id])  # no delivered_by_run_id -- legacy shape
+
+    run_b = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_b,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "boom",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_b, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 2
+    block_a = blocks[0][1]
+    block_b = blocks[1][1]
+    assert "calculator" in block_a[0].content
+    assert block_a[-1].content == format_diff_feedback_disclosure(
+        db.notes_for_run(run_a)
+    )
+    assert "legacy stamp, no deliverer recorded" in block_a[-1].content
+    assert not any("Diff feedback attached" in m.content for m in block_b)
+
+
+def test_resume_marker_messages_survives_delivered_notes_read_failure(
+    tmp_path, monkeypatch
+):
+    """Fix-round CRITICAL C1: a ``change_notes`` read failure must not
+    break conversation resume entirely -- guarded the same way the
+    ``change_snapshots_for_conversation`` fetch immediately above it
+    already is ("resume must not die on this"). A run's own step markers
+    must still come back even if the disclosure lookup blows up."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        run_id,
+        [
+            {
+                "index": 0,
+                "kind": STEP_TOOL_RESULT,
+                "tool_name": "calculator",
+                "result": "4",
+                "summary": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(run_id, "done", result="4")
+    note_id = _add_note(db, run_id, note="should not crash resume")
+    db.mark_notes_delivered([note_id], delivered_by_run_id=run_id)
+
+    def _boom(self, conversation_id):
+        raise RuntimeError("change_notes DB is on fire")
+
+    monkeypatch.setattr(AgentRunsDB, "delivered_notes_for_conversation", _boom)
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 1
+    block = blocks[0][1]
+    assert "calculator" in block[0].content
+    assert not any("Diff feedback attached" in m.content for m in block)
 
 
 def _tool_marker(text: str) -> ConsoleChatMessage:
