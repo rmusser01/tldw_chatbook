@@ -211,7 +211,11 @@ class ConsoleAgentSteeringBar(Vertical):
         if not self._state.target_id:
             # The empty-target guard (Task 2's report, concern (d)): a
             # submit with no target must never reach the bridge and draw
-            # an unknown-id refusal naming ''.
+            # an unknown-id refusal naming ''. Pinned at THIS layer by
+            # `test_submit_with_an_empty_target_never_posts_a_message_at_
+            # all`'s post_message spy -- the controller and bridge also
+            # refuse an empty target, so an outcome-only assertion cannot
+            # see this guard (first-round mutation finding).
             return
         if len(text) > MAX_STEERING_CHARS:
             self._set_note(

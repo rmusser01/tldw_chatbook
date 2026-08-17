@@ -318,10 +318,18 @@ async def test_empty_input_submit_is_inert():
 
 
 @pytest.mark.asyncio
-async def test_submit_with_an_empty_target_never_reaches_the_bridge():
-    """The empty-target guard itself: a bar whose state carries no target
-    (a race the sync can produce) swallows the submit rather than sending
-    `''` to the bridge and drawing a refusal naming `''`."""
+async def test_submit_with_an_empty_target_never_posts_a_message_at_all():
+    """The WIDGET's empty-target guard itself: a bar whose state carries
+    no target (a race the sync can produce) swallows the submit — no
+    ``SteeringSubmitted`` posts at all, so nothing downstream can ever
+    draw a refusal naming ``''``.
+
+    Asserted at the message layer deliberately (mutation finding, first
+    round): "nothing reached the bridge" alone is VACUOUS for this guard,
+    because the controller's own ``not target_id`` arm also refuses — the
+    guard-dropped mutant survived an outcome-only assertion. Spying on
+    ``post_message`` pins the layer the plan names ("disable submit on an
+    empty target"), not just the shared outcome."""
     coordinator, handle_id = _fleet_with_live_child()
     bridge = _SteeringFleetBridge(coordinator)
 
@@ -338,6 +346,15 @@ async def test_submit_with_an_empty_target_never_reaches_the_bridge():
         )
         await pilot.pause()
 
+        posted: list[object] = []
+        original_post = bar.post_message
+
+        def _spy(message, *args, **kwargs):
+            posted.append(message)
+            return original_post(message, *args, **kwargs)
+
+        bar.post_message = _spy
+
         steer_input = console.query_one(_INPUT, Input)
         steer_input.focus()
         await pilot.pause()
@@ -345,6 +362,11 @@ async def test_submit_with_an_empty_target_never_reaches_the_bridge():
         await pilot.press("enter")
         await pilot.pause()
 
+        assert [
+            m
+            for m in posted
+            if isinstance(m, ConsoleAgentSteeringBar.SteeringSubmitted)
+        ] == []
         assert bridge.steer_calls == []
         assert coordinator.drain_steering(handle_id) == []
 
