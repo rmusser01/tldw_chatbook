@@ -64,6 +64,36 @@ async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     assert reached, "the app never reached _schedule_deferred_startup_work"
 
 
+def test_probe_p3a_an_unsaved_session_is_keyed_by_its_own_session_id(tmp_path):
+    """The PRODUCTION source of an unresolvable mark, executed.
+
+    `ConsoleChatController._agent_conversation_id` is what the agent bridge
+    (and therefore the fleet drain, and therefore the mark writer) keys a
+    conversation by. For an UNSAVED session it returns the ephemeral
+    `session.id`, which names no ChaChaNotes conversation.
+    """
+    from Tests.Chat.test_console_fleet_wake import _controller_rig
+
+    chacha, _app, runs_db, _store, session, _gw, _bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        keyed = controller._agent_conversation_id(session.id)
+        print(f"\nPROBE P3a session.persisted_conversation_id: "
+              f"{session.persisted_conversation_id!r}")
+        print(f"PROBE P3a keyed conversation id: {keyed!r}")
+        print(
+            "PROBE P3a ChaChaNotes row for that id: "
+            f"{chacha.get_conversation_by_id(keyed)!r}"
+        )
+        assert session.persisted_conversation_id is None
+        assert keyed == session.id
+        assert chacha.get_conversation_by_id(keyed) is None
+    finally:
+        runs_db.close()
+        chacha.close_connection()
+
+
 @pytest.mark.asyncio
 async def test_probe_p3_ephemeral_conversation_id_leaks_a_permanent_mark(tmp_path):
     """The stale-mark shape: mark an id that names no ChaChaNotes row (an
