@@ -4836,3 +4836,60 @@ Two guards in depth meant no single observation covered both mutations;
 the four together did. Corollary: a no-work pin also needs a control that
 runs the same probes WITH work present and watches every one flip,
 otherwise a hook that never runs at all satisfies it perfectly.
+
+---
+
+## A fixture keyed to the code's invented config section hides a total production failure (task-17382, 2026-08-17)
+
+`summarize_with_llama` indexed `loaded_config_data["llama_api"]` in ten places.
+No such section has ever existed — the loader builds `llama_cpp_api` — so every
+llama.cpp summarization raised `KeyError` before contacting a server, and the
+`except` at the bottom returned an error STRING rather than raising. The
+deep-search caller tested `summary.startswith("Error:")`, which no
+provider-prefixed message matches, so `"Llama: Error occurred while processing
+summary with Llama: 'llama_api'"` was stored AS the result's evidence content
+and the synthesis was built from it. Citation verification kept passing because
+it matches quotes against `original_content` first, so the reports were graded
+sound while the model had never been shown its sources.
+
+The reason this survived a security review of that very file:
+`test_summarization_diagnostic_privacy.py`'s fixture stubbed the settings dict
+with a `"llama_api"` key — the name the summarizer had invented. The tests fed
+the code its own mistake and passed. The same fixture stubs `api_keys` and
+`local_api_ip`, which is exactly why the Kobold and TabbyAPI summarizers'
+identical defect (task-17383) also stayed invisible. Fixing the code then broke
+those tests, which is the only reason anyone looked.
+
+**What to do.** A fixture standing in for configuration must be keyed to what
+the LOADER produces, not to what the code under test reads — those are the same
+string only when the code is right, and a stub that mirrors the code's
+assumption can never fail. When you fake a provider response, fake what the
+SERVER sends: my own first fake returned llama.cpp's native `{"content": ...}`
+shape, which is what the buggy parser read, so it passed while the live
+endpoint (`/v1/chat/completions`, `choices[0].message.content`) returned "No
+choices in response data" on every call. Cheapest check available: print the
+real `load_settings()` keys once and compare, or assert the section exists.
+
+---
+
+## A metric can be graded on fallback content, and nothing in it says so (task-17370, 2026-08-17)
+
+Every live research baseline recorded in this repo reports
+`citation_accuracy 1.00` and healthy `claim_support_rate`. All of them were
+measured with per-result summarization failing: first instantly (wrong config
+section), then a 404, then an unparseable payload, and once those were fixed, a
+timeout at exactly the shipped 30s per call on a local 27B. Each failure fell
+back to raw source text, which is the CORRECT degradation — and completely
+invisible in the metrics, because a report built from source text still
+resolves its markers and still verifies its quotes.
+
+The tell was uniformity: six summarizations completing in exactly `30.0s` is a
+timeout, not a latency distribution.
+
+**What to do.** When a pipeline has a degradation path, a metric that only
+grades the OUTPUT cannot tell you which path produced it — so record the path
+alongside the number (which stage ran, which fell back), and treat suspiciously
+round, uniform timings as a budget being hit rather than work being done. Also:
+absence of an error log is not evidence of success when the code logs successes
+at INFO through stdlib `logging`, whose default level hides them; the runs above
+showed zero "Summarization successful" lines whether they worked or not.
