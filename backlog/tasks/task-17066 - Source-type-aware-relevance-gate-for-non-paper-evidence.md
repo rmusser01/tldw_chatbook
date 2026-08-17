@@ -47,5 +47,5 @@ ADR required: no - prompt calibration within the existing gate contract; the fal
 
 ## Re-measurement (2026-08-17, endpoint on :9191)
 
-- gate_pass **0.29 → 0.42** (+45% relative); citation_accuracy **held at 1.00** (72/72 markers); claim_support 0.97 → 1.00; cited_sentence_ratio 0.52 → 0.75; quote_grounding 0.33 (one run quoted, all verified).
+- gate_pass_rate **0.29 → 0.42** (+45% relative); citation_accuracy **held at 1.00** (72/72 markers); claim_support 0.97 → 1.00; cited_sentence_ratio 0.52 → 0.75; quote_grounding 0.33 (one run quoted, all verified).
 - Honest residual: repositories still pass at under half the paper rate (0.93) — partly genuine (repository records are supporting material, not answers, for general-purpose questions). Fully closing would need a per-kind threshold or category-tuned question sets; the top-3 flagged fallback covers the remainder. Comparison table in the baseline doc.
