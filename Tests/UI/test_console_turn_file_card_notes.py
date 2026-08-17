@@ -447,6 +447,163 @@ async def test_note_input_survives_sync_tick_and_selection_move(notes_fixture):
 
 
 @pytest.mark.asyncio
+async def test_note_button_second_press_does_not_double_mount_input(notes_fixture):
+    """Pressing ``✎ note`` again while an input is already open on that
+    hunk must NOT mount a second input -- the existing one is refocused
+    (value intact) instead, matching ``_open_note_input``'s "already
+    open" branch.
+    """
+    db, service, provider, root, run_id = notes_fixture
+
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+
+        note_input = await _open_note_input(pilot, body)
+        note_input.value = "typed before second press"
+
+        note_btn = body.query_one(".console-turn-file-note-btn", Button)
+        note_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        inputs = list(body.query(".console-turn-file-note-input"))
+        assert len(inputs) == 1, "a second press must not mount a second input"
+        assert inputs[0] is note_input, "second press must reuse the same input"
+        assert inputs[0].value == "typed before second press"
+        assert pilot.app.focused is inputs[0], (
+            "second press must refocus the existing input"
+        )
+
+
+@pytest.mark.asyncio
+async def test_note_input_enter_submits_inside_real_transcript_not_select(
+    notes_fixture,
+):
+    """The highest-risk interaction: a real Enter keypress INSIDE the note
+    ``Input`` while it is mounted inside a REAL ``ConsoleTranscript`` host
+    must submit the note -- not fall through to the transcript's own
+    ``"enter" -> confirm_selection`` binding.
+
+    Textual resolves the FOCUSED widget's own binding
+    (``Input``'s built-in ``enter -> submit``) before walking up to any
+    ancestor's BINDINGS, so this is expected to work by construction --
+    but nothing pinned it before this test, and the row/note-button-open
+    steps in this same file needed a click instead of focus+Enter
+    specifically because of a DIFFERENT widget (``Button``) racing
+    ``ConsoleTranscript``'s focus handling. This test proves the ``Input``
+    itself is not subject to the same race: it polls for ``app.focused
+    is note_input`` (never a fixed sleep) before pressing Enter, so a
+    genuine focus-race would show up as this assertion timing out rather
+    than as a silently-wrong pass.
+    """
+    from Tests.UI.test_console_native_transcript import MutableTranscriptHarness
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+    db, service, provider, root, run_id = notes_fixture
+
+    card_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=MARKER,
+        id="m-card",
+        change_review_run_id=run_id,
+    )
+    other_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", id="m-other"
+    )
+
+    app = MutableTranscriptHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_change_review_provider_factory(lambda: provider)
+        transcript.set_messages([card_message, other_message])
+        await transcript.refresh_messages()
+
+        card = transcript.query_one(
+            f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
+        )
+        for _ in range(60):
+            if card.query(".console-turn-file-row"):
+                break
+            await pilot.pause(0.02)
+        assert card.query(".console-turn-file-row"), "card rows never loaded"
+
+        transcript.scroll_home(animate=False)
+        await pilot.pause()
+
+        # Click (not focus+Enter) to expand the row and open the note
+        # input -- the `Button` presses race `ConsoleTranscript`'s own
+        # "enter" binding, per the earlier live-safety test's comment.
+        # The interaction THIS test pins starts only once the `Input`
+        # itself is confirmed focused, below.
+        row = card.query(".console-turn-file-row").first()
+        await pilot.click(row)
+        body = None
+        for _ in range(60):
+            bodies = card.query(".console-turn-file-diff")
+            if bodies and bodies.first().display:
+                body = bodies.first()
+                break
+            await pilot.pause(0.02)
+        assert body is not None, "diff body never displayed"
+
+        note_btn = body.query_one(".console-turn-file-note-btn", Button)
+        await pilot.click(note_btn)
+        note_input = None
+        for _ in range(60):
+            inputs = body.query(".console-turn-file-note-input")
+            if inputs:
+                note_input = inputs.first()
+                break
+            await pilot.pause(0.02)
+        assert note_input is not None, "note input never opened"
+
+        # Wait until the Input has ACTUALLY gained focus -- not a fixed
+        # pause racing the transition -- before typing/submitting.
+        for _ in range(120):
+            if pilot.app.focused is note_input:
+                break
+            await pilot.pause(0.02)
+        assert pilot.app.focused is note_input, (
+            "note input never actually gained focus after the click"
+        )
+
+        note_input.value = "enter must submit, not select"
+        await pilot.press("enter")
+
+        note_row = None
+        for _ in range(60):
+            rows = body.query(".console-turn-file-note")
+            if rows:
+                note_row = rows.first()
+                break
+            await pilot.pause(0.02)
+        assert note_row is not None, (
+            "Enter inside a focused note input must persist+render the "
+            "note, not merely toggle transcript row selection"
+        )
+        assert "enter must submit, not select" in _note_text(note_row)
+        assert not body.query(".console-turn-file-note-input"), (
+            "input must be replaced by the note row"
+        )
+
+        # The transcript must NOT have treated this Enter as
+        # confirm_selection on the card's row.
+        assert not card.has_class("console-turn-file-card-selected"), (
+            "Enter in the note input must not select the transcript row"
+        )
+        assert transcript.selected_message_id != card_message.id
+
+        rows = db.notes_for_run(run_id)
+        assert len(rows) == 1
+        assert rows[0]["note"] == "enter must submit, not select"
+
+
+@pytest.mark.asyncio
 async def test_degrade_provider_add_change_note_raises_no_crash(notes_fixture):
     """A provider whose `add_change_note` raises must not crash the app:
     the input stays mounted (nothing lost) and a warning is logged --

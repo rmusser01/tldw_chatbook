@@ -16,9 +16,8 @@ from typing import Any, Callable
 
 from loguru import logger
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.events import Click
+from textual.events import Click, Key
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_display_state import (
@@ -114,15 +113,6 @@ class ConsoleTurnFileCard(Vertical):
         width: 100%;
     }
     """
-
-    BINDINGS = [
-        # Not priority: only takes effect while a note `Input` is focused
-        # (gated by `check_action` below) -- otherwise `escape` must keep
-        # bubbling to `ConsoleTranscript`'s own "clear selection" binding
-        # and the screen's composer-focus fallback, exactly like every
-        # other widget-level escape in this app.
-        Binding("escape", "cancel_note_input", "Cancel note", show=False),
-    ]
 
     # Selection styling (parity with `.console-transcript-message-selected`)
     # deliberately does NOT live in DEFAULT_CSS: it needs the app bundle's
@@ -467,40 +457,69 @@ class ConsoleTurnFileCard(Vertical):
             f"{entry.label}  +{entry.adds} −{entry.dels}"
         )
 
-    def check_action(
-        self, action: str, parameters: "tuple[object, ...]"
-    ) -> "bool | None":
-        """Gate the escape-cancels-note-input binding to when it applies.
+    async def on_key(self, event: Key) -> None:
+        """Reclaim Enter/Escape from a focused note input's ancestors.
 
-        ``escape`` must otherwise keep bubbling to ``ConsoleTranscript``'s
-        own "clear selection" binding (and the screen's composer-focus
-        fallback) exactly as it does for every widget without a note input
-        open -- returning ``False`` here (rather than always claiming the
-        key) is what lets Textual's binding resolution continue up the
-        chain instead of swallowing escape whenever ANY descendant of this
-        card happens to be focused.
+        A BINDINGS-only approach here (the first cut of this feature) is
+        provably wrong once this card is mounted inside a real
+        ``ConsoleTranscript`` -- traced (and pinned by a regression test)
+        after review flagged the interaction as unverified. The root
+        cause is Textual's actual key-dispatch order, not a focus race:
+        ``App.on_event`` checks *priority* bindings app-wide, then
+        forwards the raw ``Key`` MESSAGE to the focused widget, which
+        bubbles up the DOM like any other message; **non-priority**
+        bindings -- including an `Input`'s own built-in ``enter ->
+        submit`` and this card's escape binding -- are resolved only in
+        ``App._on_key``, i.e. only once that message reaches the App
+        completely UNSTOPPED (see ``textual/app.py``'s
+        ``_check_bindings``/``_on_key``). ``ConsoleTranscript`` defines
+        its OWN raw ``on_key`` for row navigation
+        (``"enter" -> confirm_selection``, ``"escape" ->
+        clear_selection``) that unconditionally calls ``event.stop()`` --
+        so when this card is nested inside it, that ancestor's handler
+        wins the bubble race every time, and the focused note `Input`'s
+        own binding never even gets checked. A live-transcript regression
+        test proved this: Enter inside the note input selected the
+        transcript row instead of saving, with nothing raised or logged.
+
+        Reclaiming both keys HERE -- on this card, a closer ancestor of
+        the note input than ``ConsoleTranscript`` -- wins the bubble race
+        instead, mirroring ``ConsoleTranscriptActionButton.on_key``'s
+        existing reclaiming of Enter/Tab/Escape in this same codebase for
+        the identical reason. This is now the single source of truth for
+        both keys, in every host (the standalone-card tests keep passing
+        unchanged): ``on_input_submitted`` stays as a harmless fallback
+        for a programmatically-posted ``Input.Submitted``, but a real
+        Enter keypress no longer reaches it -- this handler saves
+        directly.
 
         Args:
-            action: Textual action name being checked.
-            parameters: Parsed positional parameters for the action.
-
-        Returns:
-            Whether a ``console-turn-file-note-input`` is currently
-            focused, for ``cancel_note_input``; the superclass result for
-            every other action.
+            event: The bubbling key event.
         """
-        if action == "cancel_note_input":
+        try:
             focused = self.app.focused
-            return focused is not None and focused.has_class(
+            if focused is None or not focused.has_class(
                 "console-turn-file-note-input"
+            ):
+                return
+            if event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                await self._save_note(focused)
+            elif event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                await self.action_cancel_note_input()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card note-input key handling failed."
             )
-        return super().check_action(action, parameters)
 
     async def action_cancel_note_input(self) -> None:
-        """Escape: unmount the focused note input without saving.
+        """Unmount the focused note input without saving.
 
-        ``check_action`` above guarantees this only fires while a note
-        input actually has focus.
+        Called from ``on_key`` above once it has confirmed a note input
+        is focused and the pressed key was escape.
         """
         try:
             focused = self.app.focused
