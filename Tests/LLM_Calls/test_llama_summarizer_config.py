@@ -12,13 +12,25 @@ from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as lib
 
 
 class _FakeResponse:
+    """The shape llama-server's /v1/chat/completions ACTUALLY returns.
+
+    The first version of this fake returned llama.cpp's NATIVE
+    ``{"content": ...}`` shape, which is what the function parsed -- so these
+    tests passed while every real chunk summarization came back "Llama: No
+    choices in response data" (observed live). A fake that agrees with the
+    code instead of with the server proves nothing.
+    """
+
     status_code = 200
 
-    def __init__(self):
+    def __init__(self, payload=None):
         self.text = ""
+        self._payload = payload or {
+            "choices": [{"message": {"role": "assistant", "content": " SUMMARY "}}]
+        }
 
     def json(self):
-        return {"content": " SUMMARY "}
+        return self._payload
 
 
 @pytest.fixture
@@ -137,3 +149,57 @@ def test_summarize_with_llama_normalizes_the_endpoint(
     lib.summarize_with_llama(input_data="text", custom_prompt="Summarize.", api_key=None)
 
     assert captured_post["url"] == expected
+
+
+def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
+    """It posts to /v1/chat/completions, so it must read choices[].message."""
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings())
+
+    class _Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, *_a, **_k):
+            return _FakeResponse()
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+
+    assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "SUMMARY"
+
+
+def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypatch):
+    """llama.cpp's native endpoint returns a top-level content; a config
+    pointing at one must keep working."""
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings())
+
+    class _Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, *_a, **_k):
+            return _FakeResponse({"content": " NATIVE "})
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+
+    assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "NATIVE"
+
+
+def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
+    """Neither shape present: return a failure the deep-search guard catches
+    rather than something that could be stored as evidence."""
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings())
+
+    class _Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, *_a, **_k):
+            return _FakeResponse({"unexpected": True})
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+
+    result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
+
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
+
+    assert _is_summary_failure(result), result

@@ -348,14 +348,32 @@ def summarize_with_llama(
             else:
                 logging.debug("Llama.cpp Summarizer: Processing non-streaming response")
                 response_data = response.json()
-                if "content" in response_data and len(response_data["content"]) > 0:
-                    summary = response_data["content"].strip()
+                # task-17382: this parsed ONLY llama.cpp's native
+                # `{"content": ...}` shape while posting to
+                # /v1/chat/completions, whose payload puts the text under
+                # choices[0].message.content -- so every real chunk
+                # summarization came back "No choices in response data" once
+                # the endpoint was reached. Accept the OpenAI shape first,
+                # then the native one, so either endpoint works.
+                summary = ""
+                if isinstance(response_data, dict):
+                    choices = response_data.get("choices")
+                    if isinstance(choices, list) and choices:
+                        first = choices[0] if isinstance(choices[0], dict) else {}
+                        message = first.get("message")
+                        if isinstance(message, dict):
+                            summary = str(message.get("content") or "")
+                        if not summary:
+                            summary = str(first.get("text") or "")
+                    if not summary:
+                        summary = str(response_data.get("content") or "")
+                summary = summary.strip()
+                if summary:
                     logging.debug("llama: Summarization successful")
                     logging.info("Summarization successful.")
                     return summary
-                else:
-                    logging.error("Llama: No choices in response data")
-                    return "Llama: No choices in response data"
+                logging.error("Llama: No choices in response data")
+                return "Llama: No choices in response data"
         else:
             logging.error(
                 "Llama: API request failed; status_code=%s",

@@ -149,8 +149,16 @@ class _FakeSession:
 
 
 def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str, Any]:
+    # task-17382: this fixture used to key the llama section as "llama_api",
+    # which is the name the SUMMARIZER invented -- the loader builds
+    # "llama_cpp_api". These tests therefore passed by feeding the code its own
+    # mistake, while every real llama.cpp summarization failed with
+    # KeyError('llama_api') before reaching a server. Keyed to the loader now.
+    # The "api_keys" and "local_api_ip" sections below are still names nothing
+    # produces; the Kobold/TabbyAPI summarizers that read them fail the same
+    # way in production, tracked as task-17383.
     return {
-        "llama_api": {
+        "llama_cpp_api": {
             "api_key": "fixed-llama-key",
             "api_ip": llama_endpoint,
             "temperature": 0.7,
