@@ -4540,6 +4540,18 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     outline: none;
 }
 
+/* task-17169: inline review-note marker under an annotated message. A
+   non-interactive Static (the note text IS the viewer), quiet like the
+   citation chip but full-width so multi-line notes wrap. */
+.console-transcript-annotations {
+    width: 1fr;
+    height: auto;
+    margin: 0 0 1 1;
+    padding: 0 1;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
 /* TASK-385: a selected Tool/System row must read the same as a selected
    user/assistant row. The muted `-tool`/`-system` rules above share the
    single-class specificity of `-selected` and follow it in source order, so
