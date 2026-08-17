@@ -42,7 +42,6 @@ ChaChaNotes migration.
 CREATE TABLE change_notes (
     id INTEGER PRIMARY KEY,
     run_id TEXT NOT NULL,
-    conversation_id TEXT NOT NULL,   -- denormalized for the delivery query
     root TEXT NOT NULL,
     path TEXT NOT NULL,
     hunk_index INTEGER NOT NULL,     -- 0-based, over the FULL diff (see §3)
@@ -53,8 +52,14 @@ CREATE TABLE change_notes (
     delivered_at TEXT                -- NULL = pending; set by the delivery seam (§4)
 );
 CREATE INDEX idx_change_notes_pending
-    ON change_notes(conversation_id) WHERE delivered_at IS NULL;
+    ON change_notes(run_id) WHERE delivered_at IS NULL;
 ```
+
+No denormalized conversation id: `agent_runs` already carries
+`conversation_id NOT NULL`, so `pending_notes_for_conversation` is a
+JOIN through `change_notes.run_id = agent_runs.id`. One source of truth
+— and the card never needs to learn the conversation id at insert time
+(it only knows its `run_id`, which is exactly the key it writes).
 
 - **Anchor** = `(run_id, root, path, hunk_index, hunk_header)`. Snapshot
   rows are immutable and `git diff -M <pinned-sha> <pinned-sha>` is
@@ -130,27 +135,42 @@ finding #1 — this is a real widget change, planned as its own task):
   <hunk_excerpt, fenced>
   ```
 
-  The block is capped (16 KB total, oldest-first elision with an honest
-  "… N more notes elided" line) so a pile of notes cannot blow the
-  context budget.
+  The block is capped (16 KB total, oldest-first inclusion with an honest
+  "… N more notes held for the next message" line) so a pile of notes
+  cannot blow the context budget. **A note elided from the block is NOT
+  attached and NOT stamped** — it stays pending and rides the following
+  send; only feedback the model actually received is ever marked
+  delivered.
 - **Stamping happens at run completion, not attach** (review finding #3):
   the block is only ever in the outbound copy, so a run that dies before
   producing assistant output must leave the notes pending for the retry.
-  `mark_notes_delivered` is called at the same run-completion point that
-  invokes `_append_change_markers` (bridge `:4695`) — **beside** it, not
-  inside it, so stamping happens even when the new turn changed no files
-  and the marker seam's `if files:` gate emits nothing. Gated on the run
-  having produced assistant output. Double-delivery is impossible by
+  **The attach step captures the exact note ids it included**, and that
+  id list travels with the run; at completion, `mark_notes_delivered`
+  stamps precisely that list — never "all pending for the conversation".
+  This closes a real race: a user can annotate an *older* turn's card
+  while a new run is already in flight, and those mid-run notes were
+  never in the payload — a blanket stamp would silently swallow them.
+  Stamping is called at the same run-completion point that invokes
+  `_append_change_markers` (bridge `:4695`) — **beside** it, not inside
+  it, so it happens even when the new turn changed no files and the
+  marker seam's `if files:` gate emits nothing. Gated on the run having
+  produced assistant output. Double-delivery is impossible by
   construction (pending query excludes stamped rows).
 - **Disclosure row** (review finding #4 — resume amnesia): at the same
-  completion seam, a persisted TOOL-role transcript row records what was
-  attached — content, not just a count:
+  completion seam, a TOOL-role transcript row records what was attached —
+  content, not just a count:
   `📝 Diff feedback attached — a.py @@ -1,4 +1,6 @@: "use the cached
   value here"` (one line per note, same message family as the change
-  markers). The row carries **no** `change_review_run_id`, so it can
-  never itself render as a turn file card. Humans, resume, and exports
-  keep the record even though the outbound copy is transient. Whether TOOL rows re-enter rebuilt provider
-  history is an inherited pipeline property (see Known boundaries).
+  markers). **Durability follows the marker precedent exactly**: the
+  change markers are not persisted messages — they are emitted live and
+  re-derived on resume (`resume_marker_messages`, bridge `:4536`) — so
+  the disclosure row is likewise emitted live at completion and
+  re-derived on resume from delivered `change_notes` rows (grouped by
+  `delivered_at`, anchored after the delivering run's marker position).
+  Everything needed for re-derivation is already in the table. The row
+  carries **no** `change_review_run_id`, so it can never itself render as
+  a turn file card. Whether TOOL rows re-enter rebuilt provider history
+  is an inherited pipeline property (see Known boundaries).
 
 ### 5. Card affordances (bounded polish)
 
@@ -205,7 +225,12 @@ controller/bridge-side and does not consult the presentation switch.
   last user message of the outbound copy and the stored message is
   unchanged; completion stamps `delivered_at` + emits the disclosure row
   with note content; a run failing before assistant output leaves notes
-  pending; block cap elision.
+  pending; **the mid-run race** — a note created after attach, while the
+  run is in flight, is NOT stamped at that run's completion and rides the
+  next send; **cap elision keeps elided notes pending** (only notes in
+  the block are stamped); **disclosure resume re-derivation** — a fresh
+  session over the same DB re-derives the disclosure row with the same
+  content, anchored after its run's marker.
 - **Affordances:** Review button opens the screen at the card's run;
   expand-all mounts all diff bodies; elision keeps first+last components.
 - **Kill switch:** OFF-path byte-parity unchanged; pending notes created
