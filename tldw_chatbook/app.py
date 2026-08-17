@@ -11729,10 +11729,6 @@ class TldwCli(
             await collections_tag_events.handle_keyword_merge(self, event)
         elif event.__class__.__name__ == "KeywordDeleteEvent":
             await collections_tag_events.handle_keyword_delete(self, event)
-        elif event.__class__.__name__ == "BatchAnalysisStartEvent":
-            from .Event_Handlers import multi_item_review_events
-
-            await multi_item_review_events.handle_batch_analysis_start(self, event)
 
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
