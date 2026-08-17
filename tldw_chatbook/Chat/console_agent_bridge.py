@@ -3422,6 +3422,7 @@ class ConsoleAgentBridge:
                 : len(diff_feedback_included_ids)
             ]
             if diff_feedback_block:
+                attached = False
                 for index in range(len(run_messages) - 1, -1, -1):
                     message = run_messages[index]
                     content = message.get("content")
@@ -3434,7 +3435,25 @@ class ConsoleAgentBridge:
                             **message,
                             "content": f"{content}\n\n{diff_feedback_block}",
                         }
+                        attached = True
                         break
+                if not attached:
+                    # No user message with str content could carry the
+                    # block (no user message at all, or the only/last one
+                    # has LIST content -- a vision/attachment turn). The
+                    # notes were rendered but never actually reached the
+                    # payload, so completion below must not stamp/
+                    # disclose them: reset both to empty so they stay
+                    # pending and ride the next send that DOES have a
+                    # carrier.
+                    logger.warning(
+                        "change_review: "
+                        f"{len(diff_feedback_included_ids)} pending diff-"
+                        "feedback note(s) held back -- no user message "
+                        "could carry the block this turn"
+                    )
+                    diff_feedback_included_ids = []
+                    diff_feedback_included_notes = []
         except Exception:  # noqa: BLE001 -- notes must never break the reply
             logger.opt(exception=True).warning(
                 "change_review: could not attach pending diff-feedback notes"

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -231,6 +232,103 @@ def test_failed_run_leaves_notes_pending_and_appends_no_disclosure(tmp_path):
     assert tool_rows == []
 
 
+# -- (f) attach found no carrier: never stamp/disclose what the payload
+# could not carry (CRITICAL fix-round finding) ----------------------------
+
+
+def test_no_user_message_leaves_notes_pending_and_appends_no_disclosure(tmp_path):
+    """Reviewer-found critical: the attach loop's backward scan can find NO
+    ``role=="user"`` string-content message to carry the block -- e.g. a
+    payload with no user message at all. ``render_diff_feedback_block`` ran
+    and returned included ids/notes, but the block never actually reached
+    the outbound payload -- completion must not stamp/disclose feedback the
+    model never saw.
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Fine."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    note_id = _add_note(db, earlier_run, note="never reaches the model")
+
+    captured: dict = {}
+    with patch.object(AgentService, "run_turn", _spy_run_turn(captured)):
+        run_id, outcome = bridge.run_reply(
+            **_run_kwargs(
+                session,
+                aid,
+                agent_messages=[{"role": "system", "content": "no user turn here"}],
+            )
+        )
+
+    assert outcome.status == "done"
+    assert outcome.final_text.strip() == "Fine."
+
+    # Confirm the block was never silently injected anywhere in the
+    # outbound payload either.
+    sent = captured["messages_by_call"][-1]
+    assert all("Diff feedback" not in str(m.get("content")) for m in sent)
+
+    pending = db.pending_notes_for_conversation("conv-1")
+    assert [n["id"] for n in pending] == [note_id]
+
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows == []
+
+
+def test_list_content_user_message_leaves_notes_pending_and_appends_no_disclosure(
+    tmp_path,
+):
+    """Same failure family: the ONLY/last user message has LIST content (a
+    vision/attachment turn shape, e.g. ``[{"type": "text", "text": "hi"}]``),
+    which ``isinstance(content, str)`` correctly excludes as a carrier -- so
+    again nothing was actually attached, and nothing may be stamped.
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Fine."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    note_id = _add_note(db, earlier_run, note="never reaches the model")
+
+    vision_message = {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+    captured: dict = {}
+    # Unrelated pre-existing gap, worked around here rather than fixed
+    # (out of this task's scope): the fake gateway reports no usage, so
+    # the "no usage" fallback estimates tokens by iterating message
+    # content as characters -- which raises on LIST content. Forcing a
+    # usage value skips that estimate path so this test can isolate the
+    # attach-loop behavior under test instead of tripping an unrelated
+    # token-counter limitation.
+    with (
+        patch.object(AgentService, "run_turn", _spy_run_turn(captured)),
+        patch.object(agent_service_module, "_usage_total_tokens", lambda resp: 5),
+    ):
+        run_id, outcome = bridge.run_reply(
+            **_run_kwargs(session, aid, agent_messages=[vision_message])
+        )
+
+    assert outcome.status == "done"
+    assert outcome.final_text.strip() == "Fine."
+
+    sent = captured["messages_by_call"][-1]
+    assert sent[-1]["content"] == [{"type": "text", "text": "hi"}]
+
+    pending = db.pending_notes_for_conversation("conv-1")
+    assert [n["id"] for n in pending] == [note_id]
+
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert tool_rows == []
+
+
 # -- (c) mid-run race: a note created while the run is in flight ----------
 
 
@@ -411,6 +509,115 @@ def test_stamp_failure_never_breaks_the_reply_and_leaves_note_pending(
     # The stamp never landed, so the note correctly stays pending rather
     # than being silently lost.
     assert len(db.pending_notes_for_conversation("conv-1")) == 1
+
+
+# -- minor: RUN_CANCELLED with truthy final_text still stamps (deliberate) -
+
+
+def test_cancelled_run_with_partial_final_text_still_stamps_and_discloses(tmp_path):
+    """Deliberate, not a gap: completion gates on ``outcome.final_text``
+    being truthy, not on ``outcome.status == "done"``. ``agent_runtime``
+    checks ``should_cancel()`` again AFTER a tool-call-free turn has
+    already produced its full text (see the ``if not calls:`` branch),
+    returning ``RUN_CANCELLED`` with that text attached as
+    ``final_text``. The outbound payload -- notes included -- genuinely
+    reached the model in that case, so stamping/disclosing here is
+    correct: "produced assistant output" is the spec's actual gate, and a
+    cancelled-but-answered turn satisfies it.
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Cancelled but answered."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    _add_note(db, earlier_run, note="n")
+
+    class _CancelAfterFirstProbe:
+        """False on the pre-model-call check, True on the post-turn one --
+        so the model's own turn completes before cancellation is observed."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self):
+            self.calls += 1
+            return self.calls > 1
+
+    run_id, outcome = bridge.run_reply(
+        **_run_kwargs(session, aid, should_cancel=_CancelAfterFirstProbe())
+    )
+
+    assert outcome.status == "cancelled"
+    assert outcome.final_text.strip() == "Cancelled but answered."
+
+    assert db.pending_notes_for_conversation("conv-1") == []
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert len(tool_rows) == 1
+    assert "n" in tool_rows[0].content
+
+
+# -- minor: turn_bundle_block + diff-feedback block stack on one message --
+
+
+def test_bundle_block_and_diff_feedback_block_stack_on_the_same_message(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Done."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    _add_note(db, earlier_run, note="fix the bundled file too")
+
+    bundle_block = "Bundled files (readable via skill_file): notes.md (1 bytes)"
+    original_user_message = {"role": "user", "content": "hi"}
+    agent_messages = [original_user_message]
+    captured: dict = {}
+
+    with patch.object(AgentService, "run_turn", _spy_run_turn(captured)):
+        run_id, outcome = bridge.run_reply(
+            **_run_kwargs(
+                session,
+                aid,
+                agent_messages=agent_messages,
+                turn_bundle_block=bundle_block,
+            )
+        )
+
+    assert outcome.status == "done"
+
+    # Bundle block first, feedback block appended after -- same message,
+    # same order the two seams run in.
+    sent = captured["messages_by_call"][-1]
+    assert sent[-1]["content"].startswith(
+        f"hi\n\n{bundle_block}\n\n## Diff feedback from the user"
+    )
+    assert "fix the bundled file too" in sent[-1]["content"]
+
+    # Caller's own list/dict untouched.
+    assert agent_messages == [original_user_message]
+    assert agent_messages[0] is original_user_message
+    assert original_user_message["content"] == "hi"
+
+    # Stored transcript message unchanged.
+    stored_user = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.USER
+    ][0]
+    assert stored_user.content == "hi"
+
+    # Stamped + disclosed correctly despite the stacked bundle block.
+    assert db.pending_notes_for_conversation("conv-1") == []
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert len(tool_rows) == 1
+    assert "fix the bundled file too" in tool_rows[0].content
 
 
 # -- fallback hunk (hunk_header == "") renders sanely (Task 4 carried minor)
