@@ -131,9 +131,16 @@ not:
   see all requested results." **Cost:** stated on the fold itself, directly
   under the toggle and readable before you turn anything on — "Reranking
   scores each result with a separate `<provider>` call — up to `<n>` calls
-  per search, billed at that provider's rates." — and it tracks the
-  provider and **Rerank results** you have staged, so the number you read
-  is the ceiling you would actually buy. **Reranker provider** enumerates
+  per search, or `<n×3>` if calls fail and are retried, billed at that
+  provider's rates." — and it tracks the provider and **Rerank results**
+  you have staged, so the number you read is the ceiling you would
+  actually buy. The `×3` is the retry loop: a failed scoring call is
+  retried twice (`max_retries = 2`), on *any* error including a wrong
+  credential, so 20 candidates against a provider that is down cost 60
+  calls, not 20 (measured). That line describes the **pointwise** strategy
+  — the one this toggle creates and the only one these four fields edit;
+  the "Reranking is not free" quirk below states all three shapes and what
+  each really costs. **Reranker provider** enumerates
   every chat provider this build registers, with the default shown
   explicitly as "openai (default)" — and since TASK-17065 the reranker
   dispatches through that same table, so the name you pick really is the
@@ -201,11 +208,15 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
    **Reranker model** (blank uses the reranker's default), keep **Rerank
    results** at or below **Default results**, and **Save (s)** — no backfill
    needed. Every search this profile runs now issues one extra provider
-   call per candidate result, at that provider's rates — and since
-   TASK-17065 those calls really go out. Before that fix reranking silently
-   no-opped for every provider the picker offered, so a profile with the
-   toggle already ticked starts spending on its next search without you
-   touching anything; untick **Enable reranking** to opt out. If the
+   call per candidate result — three, if that call keeps failing — at that
+   provider's rates, and since TASK-17065 those calls really go out. Before
+   that fix reranking silently no-opped for every provider the picker
+   offered, so a profile with the toggle already ticked starts spending on
+   its next search without you touching anything; untick **Enable
+   reranking** to opt out. The tick is not the only door: the built-in
+   **Hybrid Full**, **High Accuracy** and **Research Papers** presets carry
+   a reranker config of their own, so making one of them active spends too
+   (see Quirks). If the
    provider has no credential configured, or the call fails, the search
    still returns, with the reranking line on the results screen saying so.
 6. **Delete a profile you no longer want.** With a profile *of your own* active
@@ -261,14 +272,37 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   the next Library query does, not anything already rendered. **Default
   results** now drives the Library window's "Evidence · top N per source"
   cap (clamped at 50) — see [Library Search/RAG](../library/search-and-rag.md).
-- **Reranking is not free.** The default (pointwise) strategy scores every
-  candidate result with a separate provider call, so a profile with
-  **Rerank results** at 15 can spend up to 15 calls on a single search —
-  every surface that reads this profile (Library, Console manual/auto
-  retrieval) pays that cost, not just this pane. Until TASK-17065 those
-  calls never actually reached a provider (reranking failed and was skipped,
-  for every provider); they do now, so an already-ticked profile begins
-  spending on its next search.
+- **Reranking is not free — and "one call per result" is only one of three
+  shapes.** Every surface that reads this profile (Library, Console
+  manual/auto retrieval) pays the cost, not just this pane. Until
+  TASK-17065 those calls never actually reached a provider (reranking
+  failed and was skipped, for every provider); they do now, so an
+  already-ticked profile begins spending on its next search. What ONE
+  search costs, measured against the real reranker with the provider seam
+  faked (`Tests/RAG_Search/test_reranker_degraded_paths.py` is the same
+  seam):
+
+  | Strategy | Calls for ONE search | With the retry loop (`max_retries = 2`) |
+  |---|---|---|
+  | **pointwise** (this fold's toggle, `Hybrid Full`, `High Accuracy`) | one per candidate, up to **Rerank results** — 20 at the default | up to **×3** — 3 candidates against a failing provider issued **9** calls; 20 issued **60** |
+  | **listwise** (`Research Papers`) | exactly **1**, covering at most 10 documents — the fold's line over-states here | up to **3** |
+  | **pairwise** (no built-in preset; a hand-written profile only) | a merge sort over the candidates, ≈ `n·log₂n` **comparisons** — **40–69** at `Rerank results` 20, not 20 | up to **×3** (≈200) |
+
+  The retry loop fires on *any* exception, including a wrong or missing
+  credential — the case where the calls buy nothing at all.
+
+- **Three built-in presets rerank without you ticking anything.** Reranking
+  is on for a profile whenever that profile carries a reranker config —
+  the **Enable reranking** tick is how *your own* profiles get one, not the
+  only way one exists. **Hybrid Full** (pointwise, 15 candidates), **High
+  Accuracy** (pointwise, 15) and **Research Papers** (listwise, 10) all
+  ship with one, all bill `openai` unless you clone and change them, and
+  all three are pickable from the profile picker. Selecting one with
+  **Set active** is therefore a spend decision, with no checkbox in it.
+  The out-of-the-box active profile, **Hybrid Basic**, carries no reranker
+  config, so a fresh install spends nothing until you pick or configure
+  otherwise. Built-ins are read-only: to run one *without* reranking,
+  **Clone…** it and untick **Enable reranking** on the copy.
 - **Backfill needs embeddings support.** Without it you get "Semantic indexing
   is unavailable (missing embeddings extras, or disabled in config)." and the
   index never builds; keyword search keeps working regardless. "RAG backfill
@@ -319,3 +353,17 @@ each provider handler resolves its own. Pinned by
 real caller and binds through `inspect.signature(chat_api_call)`, plus nine
 parametrised provider cells covering the five keyless locals and four remotes).
 No live provider call was made; the picker itself was not touched.*
+
+*Verified against `fix/task-17065-reranker-dispatch` — 2026-08-17 (TASK-17065
+final-review fix wave, F1/F2): the spend numbers above are MEASURED, not
+inferred — counting `chat_api_call` invocations through the real reranker with
+the provider seam faked, one `rerank()` at a time. Pointwise with the shipped
+retry settings: 9 calls for 3 candidates against an erroring provider, 60 for
+20. Pairwise at `Rerank results` 20: 40 calls best case, 69 worst (49–65 across
+200 randomised comparison outcomes), matching the merge sort's own bounds.
+Listwise: exactly 1. The three built-in presets that carry a reranker config
+were read back off `ConfigProfileManager` over an empty profiles dir — Hybrid
+Full, High Accuracy, Research Papers, all `openai`; the other nine built-ins,
+including the default Hybrid Basic, carry none. The Settings cost line was
+changed to disclose the retried ceiling and re-pinned in
+`Tests/UI/test_settings_rag_profile_region.py`. No live provider call was made.*

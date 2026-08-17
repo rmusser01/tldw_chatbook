@@ -25,6 +25,14 @@ DEFAULT_DISTANCE_METRIC = "cosine"
 #: it); kept honest by
 #: ``test_reranker_provider_default_constant_matches_rerankingconfig_default``.
 DEFAULT_RERANKER_PROVIDER = "openai"
+#: ``1 + RerankingConfig().max_retries`` (RAG_Search/reranker.py) -- the
+#: attempts ONE candidate can cost. `BaseReranker._call_llm` retries every
+#: `Exception`, not just transient ones, so a provider that is down (or a
+#: credential that is wrong) multiplies the per-search call count by this,
+#: measured: 3 candidates against an erroring provider issue 9 calls. Same
+#: hardcode-not-import trade as the two constants above; kept honest by
+#: ``test_reranker_attempts_constant_matches_rerankingconfig_retries``.
+RERANKER_ATTEMPTS_PER_CANDIDATE = 3
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0

@@ -228,6 +228,18 @@ class BaseReranker(ABC):
                     model=self.config.model_name,
                     temp=self.config.temperature,
                     max_tokens=self.config.max_tokens,
+                    # STATED, not inherited. Every handler currently
+                    # DECLARES `streaming=False`, so the config is never
+                    # consulted -- but the shipped `CONFIG_TOML_CONTENT`
+                    # sets `streaming = true` for 18 of the 29 providers
+                    # (every keyless local among them), and one handler
+                    # declaring `streaming: bool | None = None` would hand
+                    # this function a generator. Nothing here would raise:
+                    # `str(<generator>)` parses as no JSON, every row comes
+                    # back `scored=False`, and the search is billed in full
+                    # for an entirely unscored rerank. Pinned by
+                    # Tests/RAG_Search/test_reranker_degraded_paths.py.
+                    streaming=False,
                 ),
             )
 

@@ -352,7 +352,17 @@ Two rules out of it:
   (`test_reranker_dispatch_binding_against_the_real_chat_api_call_signature`) first
   asserted a literal tuple *it typed itself*, so it guarded a copy of the caller and
   caught nothing. It only became evidence once it drove the real `_call_llm_impl` and
-  observed what landed.
+  observed what landed. **And know exactly what `bind` buys you**, because the fixed
+  fake's first docstring over-claimed it and the final review caught that:
+  `inspect.signature(...).bind()` checks arity and keyword *names* only — it is BLIND
+  to order. Re-measured on this very call:
+  `bind("THE-KEY", [...], "openai", "gpt-4o-mini", 0.25, 128)` is ACCEPTED (it simply
+  lands the key in `api_endpoint`), while `bind(provider="x", ...)` raises
+  `unexpected keyword argument`. What actually catches a mis-ordering is the landing
+  ASSERTIONS on a guard that drives the real caller — plus, cheaply, refusing
+  positional arguments at the fake (`assert not args`) when the seam is keyword-only
+  by contract. Mutation-checked: reverting the call site to positional now fails with
+  *"positional arguments landed here: ('openai',)"*, not with a bind error.
 - **A feature that resolves credentials itself is a divergence to justify, not a
   default.** The fix here was a DELETION: all 29 handlers already resolve their own key
   or need none, and every other `chat_api_call` caller in the repo

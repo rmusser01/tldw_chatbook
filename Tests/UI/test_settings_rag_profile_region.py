@@ -4002,7 +4002,9 @@ async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
     """AC#2: the per-candidate spend is stated adjacent to the toggle and
     readable BEFORE committing to it -- a fresh clone has reranking OFF, and
     the line must still be on screen, naming the configured rerank top-k as
-    the call ceiling."""
+    the call ceiling AND the retried ceiling behind it (TASK-17065 F1: the
+    reranker retries every exception twice, so `top_k` alone understated a
+    failing provider's spend threefold)."""
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -4023,7 +4025,8 @@ async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
         text = str(disclosure.renderable)
         assert text == (
             "Reranking scores each result with a separate openai call — up "
-            "to 20 calls per search, billed at that provider's rates."
+            "to 20 calls per search, or 60 if calls fail and are retried, "
+            "billed at that provider's rates."
         )
         assert "20" in _visible_text(screen)
 
@@ -4059,7 +4062,8 @@ async def test_reranker_cost_disclosure_tracks_the_staged_top_k_and_provider(
         )
         assert str(disclosure.renderable) == (
             "Reranking scores each result with a separate anthropic call — "
-            "up to 50 calls per search, billed at that provider's rates."
+            "up to 50 calls per search, or 150 if calls fail and are retried, "
+            "billed at that provider's rates."
         )
 
 
@@ -4204,7 +4208,8 @@ async def test_previewing_a_profile_discloses_that_profiles_reranking_cost(
         assert screen._rag_preview_profile_id == other.id
         assert str(disclosure.renderable) == (
             "Reranking scores each result with a separate anthropic call — "
-            "up to 42 calls per search, billed at that provider's rates."
+            "up to 42 calls per search, or 126 if calls fail and are retried, "
+            "billed at that provider's rates."
         )
         # ...and browsing back restores the active profile's own line.
         select.value = profile.id

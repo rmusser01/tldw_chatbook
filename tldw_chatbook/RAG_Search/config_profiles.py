@@ -401,12 +401,18 @@ class ConfigProfileManager:
         accurate_rag.search.include_citations = True
         accurate_rag.search.score_threshold = 0.7
 
+        # include_reasoning stays OFF (TASK-17065 AC#11). The flag appends a
+        # free-form "reasoning" string to the JSON body the parser needs,
+        # under RerankingConfig.max_tokens=100 -- and a truncated body is a
+        # JSONDecodeError, i.e. a row that was billed and left scored=False.
+        # It buys nothing: RerankingResult.reasoning is read nowhere outside
+        # reranker.py (_apply_scores copies only rerank_score onto the row).
         accurate_rerank = RerankingConfig(
             model_provider="openai",
             model_name="gpt-3.5-turbo",
             strategy="pointwise",
             top_k_to_rerank=15,
-            include_reasoning=True,
+            include_reasoning=False,
         )
 
         self._profiles["high_accuracy"] = ProfileConfig(
@@ -516,8 +522,12 @@ class ConfigProfileManager:
         research_rag.search.include_citations = True
         research_rag.search.default_top_k = 15
 
+        # include_reasoning OFF for the same reason as high_accuracy above,
+        # and more sharply here: listwise already spends ~40 of its 100
+        # tokens on the ranking array, and its one call covers the whole
+        # batch -- a truncated body fails the ENTIRE rerank, billed.
         research_rerank = RerankingConfig(
-            strategy="listwise", top_k_to_rerank=10, include_reasoning=True
+            strategy="listwise", top_k_to_rerank=10, include_reasoning=False
         )
 
         self._profiles["research_papers"] = ProfileConfig(

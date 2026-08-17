@@ -197,6 +197,7 @@ explicit invalid row.
 - [x] #8 A stored provider this build cannot dispatch is displayed honestly and is repairable from the UI: picking a valid provider over it stages and saves, rather than being folded back to the invalid stored value by the effective-provider guard
 - [x] #9 The picker's enumeration stays derived, not hand-listed: whichever arm ships, adding a chat provider must not silently desynchronise Settings from the engine
 - [x] #10 The spend consequence is handled deliberately: the change lands on a build carrying TASK-3502's cost disclosure and skipped/degraded notice, and the release note states that reranking-enabled profiles begin spending real provider calls
+- [x] #11 Spend safety: no shipped read-only profile asks a provider for free-form `reasoning` text under the reranker's 100-token cap -- `RerankingResult.reasoning` is never read outside `reranker.py`, so on `high_accuracy` (pointwise) and `research_papers` (listwise) the flag only buys extra output tokens and a truncated JSON body, i.e. a billed-but-unscored row (listwise: a wholly failed rerank)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -270,8 +271,10 @@ first time.
   `test_every_sampled_provider_reaches_the_seam_without_a_credential_gate`,
   9 parametrised cells.
 - **#2** -- `self._settings` and the `["API"]` read are deleted outright;
-  `test_reranker_does_not_read_a_settings_table` monkeypatches `load_settings` to
-  raise and construction still succeeds. The openai/anthropic/groq credential is now
+  `test_reranker_does_not_read_a_settings_table` asserts the module-level import is
+  absent and (final-review F7) monkeypatches `load_settings` on `tldw_chatbook.config`
+  -- the SOURCE, so a re-grown read fires it even as a late import inside `__init__`
+  -- while constructing all three strategies. The openai/anthropic/groq credential is now
   FOUND -- by the provider handler, which is the acceptable variant the task's "Fix
   shape" blesses ("simply not resolving at all and letting the provider handler
   resolve ... is an acceptable variant").
@@ -303,7 +306,14 @@ first time.
   signature and plants nothing; 8 call sites), the guard itself (it re-typed the
   caller's argument list as a literal tuple, so it guarded a copy; it now drives the
   real caller), and 3 fakes in `test_reranker_construction.py` raising an error the
-  code can no longer produce. Other `chat_api_call` fakes in the repo (Console
+  code can no longer produce. **Corrected in the final-review fix wave (F4): binding
+  does NOT catch a mis-ORDERED positional call.** `inspect.signature(...).bind()`
+  checks arity and keyword NAMES; re-measured,
+  `bind("THE-KEY", [...], "openai", "gpt-4o-mini", 0.25, 128)` is accepted and only
+  `bind(provider=...)` raises. The mis-order catchers are the guard's landing
+  assertions plus the fake's new `assert not args` (this seam is keyword-only by
+  contract) -- mutation-checked: reverting the call site to positional now fails with
+  "positional arguments landed here: ('openai',)". Other `chat_api_call` fakes in the repo (Console
   gateway, Evals, Tools, Web_Scraping) are keyword-only and not at this seam.
 - **#8** -- ALREADY SATISFIED ON DEV, no code written here: the picker-repair half
   shipped with TASK-3502's Qodo remediation (the reranker-provider change guard folds
@@ -363,4 +373,50 @@ itself is a divergence to justify, not a default.
 `Tests/RAG_Search/test_reranker_construction.py`, `CHANGELOG.md`,
 `Docs/User_Guide/settings/rag.md`, `backlog/docs/lessons-testing-evidence.md`, plus
 the spec/plan under `Docs/superpowers/`.
+
+### Final-review fix wave (2026-08-17, same branch)
+
+The whole-branch review returned SHIP-WITH-FIXES with two BLOCKING doc findings; all
+seven findings are addressed here, plus one AC amendment.
+
+- **F1 (blocked) -- the disclosed ceiling was wrong for two strategies and understated
+  by the retry loop.** Re-measured independently by counting `chat_api_call`
+  invocations through the real reranker with the seam faked: pointwise with shipped
+  settings costs `top_k x 3` (**9** calls for 3 candidates against an erroring
+  provider, **60** for 20) because `_call_llm` retries EVERY exception twice; pairwise
+  is a merge sort and costs **40-69** comparison calls at top_k=20 (49-65 across 200
+  randomised runs; the 40 and 69 are the algorithm's own bounds, reproduced by an
+  external simulation of the same merge), not 20; listwise costs exactly **1**. The
+  shape is now stated per strategy in `CHANGELOG.md` and
+  `Docs/User_Guide/settings/rag.md`, and the Settings cost line discloses the retried
+  ceiling ("... up to `<n>` calls per search, or `<n x 3>` if calls fail and are
+  retried ..."), driven by a new `RERANKER_ATTEMPTS_PER_CANDIDATE` constant pinned to
+  `1 + RerankingConfig().max_retries`.
+- **F2 (blocked) -- enablement is not the tick.** Reranking is on for any profile
+  carrying a `reranking_config`, and three read-only built-ins do: Hybrid Full
+  (pointwise, 15), High Accuracy (pointwise, 15), Research Papers (listwise, 10), all
+  billing `openai`. Read back off `ConfigProfileManager` over an empty profiles dir;
+  the other nine built-ins, including the active default Hybrid Basic, carry none.
+  Both surfaces now name all three and say a preset switch is a spend decision.
+- **F5 -- non-streaming is now STATED.** It previously held only because all 29
+  handlers declare `streaming=False`, while the shipped config sets `streaming = true`
+  for 18 providers; a generator return would have yielded `scored=False` on every row,
+  billed and silent. `_call_llm_impl` passes `streaming=False`, pinned RED-first by
+  `assert landed["streaming"] is False` in the dispatch guard.
+- **AC#11 (new) -- `include_reasoning=False` on `high_accuracy` and
+  `research_papers`.** `RerankingResult.reasoning` is read nowhere outside
+  `reranker.py`, and under `max_tokens=100` the extra free-form string is the only
+  real truncation risk -> `JSONDecodeError` -> a billed-but-unscored row (listwise:
+  the whole rerank). AC added to this file BEFORE implementing, per CLAUDE.md. Pinned
+  RED-first by `test_no_builtin_profile_asks_for_reasoning_it_cannot_fit_or_read`.
+- **F4 -- the bind over-claim corrected** in the fake's docstring, the guard's
+  docstring, this file (AC#7 above) and the lesson; the fake now also refuses
+  positional arguments outright, which does catch a mis-order.
+- **F6/F7 -- test hygiene.** Two `Tests/Library/` files stopped simulating
+  `"No API key found for provider: openai"`, an error the code can no longer produce;
+  the settings-table test's unreachable half now patches the source module.
+- **F3 -- NOT fixed here, filed as TASK-17265.** The reranker passes its system prompt
+  in-band and never as `system_message=`; `chat_with_anthropic` discards it and
+  `chat_with_google` skips non-user/assistant roles, so the JSON contract never reaches
+  those models. Out of scope for a fix wave whose blocking findings were doc-only.
 <!-- SECTION:NOTES:END -->

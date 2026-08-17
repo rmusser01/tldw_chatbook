@@ -29,9 +29,10 @@ CLAIMS when its provider calls fail. This module pins all three:
 reranker's single provider seam (imported at `RAG_Search/reranker.py`
 module level, invoked through `run_in_executor` in `_call_llm_impl`) -- so
 the whole real path (`rerank` -> `_call_llm` -> `_call_llm_impl` -> the
-fake) executes. The fake BINDS what it is handed against the real
-`chat_api_call` signature (TASK-17065): the previous one declared the
-caller's own mis-ordered positional list and therefore agreed with the bug.
+fake) executes. The fake REFUSES positional arguments and BINDS what it is
+handed against the real `chat_api_call` signature (TASK-17065): the previous
+one declared the caller's own mis-ordered positional list and therefore
+agreed with the bug.
 No credential is planted any more -- the reranker resolves none, so nothing
 gates the call before the seam.
 """
@@ -41,6 +42,7 @@ from typing import Callable, List
 
 import pytest
 
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call as real_chat_api_call
 from tldw_chatbook.RAG_Search import reranker as reranker_module
 from tldw_chatbook.RAG_Search.reranker import (
@@ -72,8 +74,13 @@ def _install_fake_provider(
     a fixed valid score.
 
     Everything the reranker passes is run through
-    `inspect.signature(chat_api_call).bind(...)`, so a mis-ordered positional
-    call or a mis-named keyword raises HERE. The fake this replaces declared
+    `inspect.signature(chat_api_call).bind(...)`, which raises HERE on a
+    mis-named keyword or on arity drift. It does NOT see argument ORDER --
+    `bind("KEY", [...], "openai", "gpt-4o-mini", 0.25, 128)` is accepted
+    quite happily, it just lands the key in `api_endpoint` -- so this fake
+    ALSO refuses positional arguments outright, and the seam guard below
+    asserts what each keyword actually carries. Between them, mis-ordering
+    cannot pass. The fake this replaces declared
     the caller's OWN (wrong) positional list -- `(api_key, messages_payload,
     provider, model, temp, maxp)` -- so it agreed with the bug, and a green
     suite could not see that the reranker reached zero of the 29 providers it
@@ -89,6 +96,14 @@ def _install_fake_provider(
     landings: List[dict] = []
 
     def fake_chat_api_call(*args, **kwargs):
+        # `bind` cannot see order, so refuse positionals rather than pretend
+        # it can: this seam is keyword-only by contract (`run_in_executor`
+        # forwards positionals only, which is exactly how the credential
+        # used to land in `api_endpoint`).
+        assert not args, (
+            "the reranker must call chat_api_call by keyword; positional "
+            f"arguments landed here: {args!r}"
+        )
         bound = signature.bind(*args, **kwargs)
         landings.append(dict(bound.arguments))
         payload = bound.arguments["messages_payload"]
@@ -469,8 +484,13 @@ async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signatur
     Two things changed beyond the assertions. It now drives the REAL caller
     (`_call_llm_impl`) instead of re-typing its argument list, so it cannot
     drift from the code it guards; and the seam fake binds through
-    `inspect.signature(chat_api_call).bind(...)`, so a future positional
-    mis-order raises instead of being agreed with.
+    `inspect.signature(chat_api_call).bind(...)` and refuses positionals.
+    Be precise about which half catches what (final-review F4): `bind`
+    catches a mis-named keyword and arity drift, and is BLIND to order --
+    it accepts the old positional list without complaint. A future
+    mis-ordering is caught by the fake's no-positionals rule and by the
+    landing assertions below, which is why this test drives the real
+    caller instead of asserting a tuple it typed itself.
     """
     config = RerankingConfig(
         model_provider="openai",
@@ -499,10 +519,21 @@ async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signatur
     # config path (CLAUDE.md's documented precedence) -- which is what every
     # other `chat_api_call` caller in this repo already relies on.
     assert "api_key" not in landed
-    # And nothing lands in the parameters the broken positional call filled
-    # by displacement.
+    # And nothing lands in the parameter the broken positional call filled by
+    # displacement (`system_message` took the temperature).
     assert "system_message" not in landed
-    assert "streaming" not in landed
+    # NON-STREAMING IS PINNED, NOT INHERITED (final-review F5). The old
+    # positional list put the token cap into `streaming` (truthy), so a
+    # scoring call that had resolved a credential would have STREAMED. Today
+    # non-streaming holds only because all 29 handlers DECLARE
+    # `streaming=False` and therefore never consult the config -- while the
+    # shipped `CONFIG_TOML_CONTENT` sets `streaming = true` for 18 of them,
+    # including every keyless local. One future handler declaring
+    # `streaming: bool | None = None` would flip reranking to streaming for
+    # those, and `_call_llm_impl` would return the repr of a generator: no
+    # exception, every row `scored=False`, the whole rerank billed and
+    # unscored. So the reranker states it.
+    assert landed["streaming"] is False
 
 
 def test_reranker_does_not_read_a_settings_table(monkeypatch):
@@ -519,14 +550,20 @@ def test_reranker_does_not_read_a_settings_table(monkeypatch):
         "the divergence that produced TASK-17065"
     )
 
-    def _explode():
-        raise AssertionError("BaseReranker must not call load_settings()")
+    # The exploder goes on the SOURCE, not on `reranker_module` (final-review
+    # F7): monkeypatching the name the assertion above just proved absent
+    # planted something nothing could call. Patched here it is live -- a
+    # re-grown read fires it even if it arrives as a late import inside
+    # `__init__` rather than a module-level one -- and it is quiet today:
+    # constructing all three strategies reads no settings at all.
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("a reranker must not call load_settings()")
 
-    monkeypatch.setattr(reranker_module, "load_settings", _explode, raising=False)
+    monkeypatch.setattr(config_module, "load_settings", _explode)
 
-    reranker = PointwiseReranker(RerankingConfig())
-
-    assert not hasattr(reranker, "_settings")
+    for strategy_class in (PointwiseReranker, PairwiseReranker, ListwiseReranker):
+        reranker = strategy_class(RerankingConfig())
+        assert not hasattr(reranker, "_settings")
 
 
 @pytest.mark.parametrize(
