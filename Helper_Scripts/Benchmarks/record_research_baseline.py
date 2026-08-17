@@ -110,6 +110,7 @@ def _build_search_params(
     llm_override: str | None = None,
     max_queries: int = 1,
     deadline_s: float | None = None,
+    llm_timeout_s: float | None = None,
 ) -> dict:
     """Assemble engine search params exactly like the web_deep_search tool
     does, so the baseline measures the shipped pipeline configuration.
@@ -157,6 +158,12 @@ def _build_search_params(
         "relevance_analysis_llm": relevance_llm,
         "final_answer_llm": final_llm,
     }
+    if llm_timeout_s is not None:
+        # task-17382 measurement: every per-result summarization in the live
+        # arms failed at exactly the shipped 30s, so the pipeline fell back to
+        # raw source content and no baseline has measured it with summaries
+        # completing. Local models need far longer per page.
+        extra["relevance_llm_timeout_s"] = float(llm_timeout_s)
     if deadline_s is not None:
         # Both keys: the assembly derives them from one setting, and the
         # pipeline reads them independently.
@@ -222,6 +229,7 @@ def _decorate_aggregate(aggregate: dict, *, args: argparse.Namespace) -> dict:
             "max_queries": max(1, int(getattr(args, "max_queries", 1) or 1)),
             "max_iterations": max(1, int(getattr(args, "max_iterations", 1) or 1)),
             "deadline_s": getattr(args, "deadline_s", None),
+            "llm_timeout_s": getattr(args, "llm_timeout_s", None),
         },
     }
 
@@ -244,6 +252,7 @@ async def main_async(args: argparse.Namespace) -> int:
         args.max_results,
         engine_override=args.engine,
         llm_override=args.llm,
+        llm_timeout_s=args.llm_timeout_s,
         max_queries=args.max_queries,
         deadline_s=args.deadline_s,
     )
@@ -368,6 +377,16 @@ def main() -> int:
         help=(
             "gap-driven replanning rounds per run (default 1 = single pass, "
             "the engine's own default)"
+        ),
+    )
+    parser.add_argument(
+        "--llm-timeout-s",
+        type=float,
+        default=None,
+        help=(
+            "per-call relevance/summarization LLM timeout (default: the "
+            "configured relevance_llm_timeout_s, 30s -- too short for local "
+            "models, which makes every summary fall back to source text)"
         ),
     )
     parser.add_argument("--json-out", default=None, help="optional path for the aggregate JSON")

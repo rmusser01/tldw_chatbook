@@ -130,4 +130,42 @@ def test_emitted_aggregate_records_the_decomposition_settings():
         "max_queries": 4,
         "max_iterations": 2,
         "deadline_s": 1800,
+        # Absent on this Namespace: recorded as None rather than omitted, so a
+        # reader can tell "ran at the configured default" from "not recorded".
+        "llm_timeout_s": None,
     }
+
+
+# --- per-call LLM timeout (task-17370, after the task-17382 measurement) ------
+# Every per-result summarization in the live arms failed at exactly 30.0s --
+# the shipped relevance_llm_timeout_s -- so the pipeline fell back to raw
+# source content and NO recorded baseline has ever measured the pipeline with
+# summaries actually completing. A baseline cannot investigate that while the
+# timeout is fixed at whatever the config happens to hold.
+
+
+def test_default_leaves_the_configured_llm_timeout_untouched(stub_settings):
+    params = recorder._build_search_params(5, engine_override="duckduckgo")
+
+    assert params["relevance_llm_timeout_s"] == 30
+
+
+def test_llm_timeout_override_reaches_the_pipeline(stub_settings):
+    params = recorder._build_search_params(
+        5, engine_override="duckduckgo", llm_timeout_s=240
+    )
+
+    assert params["relevance_llm_timeout_s"] == 240.0
+
+
+def test_emitted_aggregate_records_the_llm_timeout():
+    """A recorded result must state the timeout it ran under, for the same
+    reason it states the decomposition settings."""
+    import argparse
+
+    args = argparse.Namespace(
+        max_queries=3, max_iterations=2, deadline_s=900.0, llm_timeout_s=240.0
+    )
+    out = recorder._decorate_aggregate({"gate_pass_rate": 0.5}, args=args)
+
+    assert out["decomposition"]["llm_timeout_s"] == 240.0
