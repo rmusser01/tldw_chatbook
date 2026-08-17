@@ -95,24 +95,24 @@ deepseek key:
 
 ```toml
 [API]
-openai_api_key = "sk-legacy-openai"
+openai_api_key = "REDACTED-legacy-openai-value"
 [api_settings.openai]
-api_key = "sk-modern-openai"
+api_key = "REDACTED-modern-openai-value"
 [api_settings.deepseek]
-api_key = "sk-deepseek"
+api_key = "REDACTED-deepseek-value"
 ```
 
 ```
 API section present in load_settings(): False
 openai lookup via _call_llm_impl's read: None
-api_settings.openai.api_key: sk-modern-openai          <- the credential IS loaded
-RAW loader sees API.openai_api_key: sk-legacy-openai   <- and so is the legacy one
-get_cli_setting('API','openai_api_key'): sk-legacy-openai
+api_settings.openai.api_key: REDACTED-modern-openai-value          <- the credential IS loaded
+RAW loader sees API.openai_api_key: REDACTED-legacy-openai   <- and so is the legacy one
+get_cli_setting('API','openai_api_key'): REDACTED-legacy-openai
 
 openai:    RESULT ValueError No API key found for provider: openai
 anthropic: RESULT ValueError No API key found for provider: anthropic
 groq:      RESULT ValueError No API key found for provider: groq
-deepseek:  RESULT ValueError Unsupported API endpoint: sk-deepseek   <- defect 2
+deepseek:  RESULT ValueError Unsupported API endpoint: REDACTED-deepseek-value   <- defect 2
 ```
 
 (`await PointwiseReranker(RerankingConfig(model_provider=p))._call_llm_impl(...)`
@@ -120,7 +120,7 @@ for each `p`; the deepseek line is the real `chat_api_call` refusing the key it
 was handed as an endpoint.)
 
 A second run with ONLY `[API] openai_api_key` set confirms the fix shape:
-`api_settings.openai.api_key == "sk-legacy-only"` -- the loader has already
+`api_settings.openai.api_key == "REDACTED-legacy-only"` -- the loader has already
 normalised the legacy value into the modern table.
 
 ### Consequences
@@ -197,3 +197,15 @@ explicit invalid row.
 - [ ] #9 The picker's enumeration stays derived, not hand-listed: whichever arm ships, adding a chat provider must not silently desynchronise Settings from the engine
 - [ ] #10 The spend consequence is handled deliberately: the change lands on a build carrying TASK-3502's cost disclosure and skipped/degraded notice, and the release note states that reranking-enabled profiles begin spending real provider calls
 <!-- AC:END -->
+
+**Seam guard added by TASK-3502's Qodo round (PR #1751, finding 3):**
+`Tests/RAG_Search/test_reranker_degraded_paths.py::
+test_reranker_dispatch_binding_against_the_real_chat_api_call_signature`
+binds the caller's positional sequence against the REAL `chat_api_call`
+signature and asserts where each argument LANDS today
+(`api_endpoint`←the key, `api_key`←the provider, `temp`←the model,
+`system_message`←the temperature, `streaming`←max_tokens; `model`/`maxp`
+never reached at all). It is deliberately RED-ON-REPAIR: fixing the
+caller here MUST break it, and the repair includes rewriting it to assert
+the correct binding. Every other fake at this seam copies the caller's
+wrong order, which is why a green suite never caught this.

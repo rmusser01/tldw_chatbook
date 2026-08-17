@@ -271,6 +271,7 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_chunking_method,
     normalise_library_rag_citation_style,
     normalise_library_rag_distance_metric,
+    library_rag_reranker_providers,
     normalise_library_rag_reranker_provider,
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
@@ -18780,7 +18781,17 @@ class SettingsScreen(BaseAppScreen):
         # category posts a `Select.Changed` carrying the resolved name over
         # a blank loaded value and stages a draft nobody edited -- the
         # task-15740 family (the app's own rewrites staged as user edits).
-        if normalise_library_rag_reranker_provider(
+        # Fold back ONLY when the loaded value is one the fold-back
+        # PRESERVES: blank (blank-means-default) or a registered name. An
+        # UNRECOGNISED loaded value also normalises to the default, so
+        # folding back there re-saved the broken value and made the picker
+        # unable to repair it -- Qodo PR-1751 finding 2 / the final review's
+        # F5. The guard's real target is the task-15740 mount echo, where
+        # the loaded value is blank and the echo is not a user edit.
+        loaded_is_foldable = (
+            not loaded.strip() or loaded in library_rag_reranker_providers()
+        )
+        if loaded_is_foldable and normalise_library_rag_reranker_provider(
             loaded
         ) == normalise_library_rag_reranker_provider(chosen):
             chosen = loaded

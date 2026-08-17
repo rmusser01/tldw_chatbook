@@ -4124,6 +4124,54 @@ async def test_opening_the_category_does_not_dirty_the_draft_via_the_provider_se
 
 
 @pytest.mark.asyncio
+async def test_an_unrecognised_stored_provider_is_repairable_from_the_picker(
+    monkeypatch, tmp_path
+):
+    """Qodo PR-1751 finding 2 (and the final review's F5): a profile carrying
+    a provider this build does not register showed as the DEFAULT while the
+    profile kept the bad value -- and the mount-echo guard folded the user's
+    corrective pick straight back to it, so selecting the default could never
+    repair it.
+
+    The guard's real job is the task-15740 mount echo, where the loaded value
+    is BLANK (or already equivalent) and the echo is not a user edit. An
+    unrecognised loaded value is neither: the pick IS a change and must
+    stage.
+    """
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.reranking_config = RerankingConfig(model_provider="frobnicator-9000")
+    profile.rag_config.search.enable_reranking = True
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        await pilot.pause()
+
+        # Premise: the profile really does hold the unrecognised value while
+        # the control necessarily displays a registered one.
+        assert (
+            screen._library_rag_loaded_values()["reranker_provider"]
+            == "frobnicator-9000"
+        )
+        select = screen.query_one("#settings-library-rag-reranker-provider", Select)
+        assert select.value == "openai"
+
+        # The user picks the default to repair it. That must STAGE, not fold
+        # back to the unrecognised value.
+        select.value = "openai"
+        await pilot.pause()
+        draft = screen._library_rag_draft()
+        assert draft is not None, "picking the default must stage a repair"
+        assert draft.values["reranker_provider"] == "openai"
+
+
+@pytest.mark.asyncio
 async def test_previewing_a_profile_discloses_that_profiles_reranking_cost(
     monkeypatch, tmp_path
 ):

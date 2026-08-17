@@ -1,5 +1,5 @@
 ---
-id: task-17165
+id: taREDACTED-17165
 title: >-
   chat_api_call unknown-endpoint ERROR echoes the raw argument — a mis-ordered
   caller put an API key there
@@ -19,7 +19,7 @@ arguments to `chat_api_call` POSITIONALLY in the wrong order
 (`RAG_Search/reranker.py:228-237`), so the API key arrives as
 `api_endpoint` — and `chat_api_call`'s unknown-endpoint failure path
 echoes that raw argument into an ERROR log line
-("Routing to endpoint: sk-…"). Reproduced with an isolated config: a
+("Routing to endpoint: <the key>"). Reproduced with an isolated config: a
 deepseek-keyed profile with reranking enabled logs the key at ERROR
 level on every search.
 

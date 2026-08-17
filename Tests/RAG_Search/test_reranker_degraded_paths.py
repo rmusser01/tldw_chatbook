@@ -433,3 +433,54 @@ def _make_v2_service(tmp_path, strategy: str, enable_cache: bool):
         enable_reranking=True,
         enable_parallel_processing=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# The seam contract itself (Qodo PR-1751 finding 3)
+# ---------------------------------------------------------------------------
+
+
+def test_reranker_dispatch_binding_against_the_real_chat_api_call_signature():
+    """CHARACTERIZATION PIN — asserts the CURRENT, BROKEN binding on purpose.
+
+    Qodo PR-1751 finding 3: every fake at this seam copies the caller's own
+    parameter order, so a suite full of green reranker tests cannot see that
+    the caller is mis-ordered. This test binds what the reranker actually
+    passes against the REAL `chat_api_call` signature and states where each
+    argument LANDS -- which is how TASK-3502's fix wave established that
+    end-to-end dispatch reaches 0 of 29 providers.
+
+    It is deliberately red-on-repair: when TASK-17065 fixes the caller, this
+    test MUST fail and be rewritten to assert the correct binding. That is
+    the point -- the seam gets a mechanical guard instead of agreeable fakes.
+    """
+    import inspect
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    # Exactly the positional sequence `BaseReranker._call_llm_impl` hands to
+    # `loop.run_in_executor(None, chat_api_call, ...)`.
+    caller_positionals = (
+        "THE-API-KEY",
+        [{"role": "user", "content": "q"}],
+        "the-provider",
+        "the-model",
+        0.25,
+        128,
+    )
+    bound = inspect.signature(chat_api_call).bind(*caller_positionals)
+    landed = dict(bound.arguments)
+
+    # The credential lands in the ENDPOINT parameter -- the root of both the
+    # "Unsupported API endpoint" failure and the key-echoing ERROR log
+    # (TASK-17165).
+    assert landed["api_endpoint"] == "THE-API-KEY"
+    assert landed["messages_payload"] == [{"role": "user", "content": "q"}]
+    # ...and every remaining argument is displaced by one position.
+    assert landed["api_key"] == "the-provider"
+    assert landed["temp"] == "the-model"
+    assert landed["system_message"] == 0.25
+    assert landed["streaming"] == 128
+    # Nothing reaches the parameters the caller's own inline comments claim.
+    assert "model" not in landed
+    assert "maxp" not in landed
