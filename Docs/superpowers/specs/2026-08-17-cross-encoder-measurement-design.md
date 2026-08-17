@@ -34,6 +34,28 @@ reorderable population is negligible on all three modes, that alone is a
 publishable answer and grounds to retire** — no model download required, and
 the arc ends early with a measured reason rather than an opinion.
 
+## THE CENSUS, MEASURED (2026-08-17, before any decision)
+
+Item 1 was run first, as the spec required. Three modes, the real fixtures,
+`QueryOutcome.rows_returned`, at the gate's k and at a reranker's depth:
+
+| mode | queries with ≥2 rows | distribution |
+|---|---|---|
+| `plain` | **0 / 60** (0.0%) | 39 queries return 0 rows, 21 return exactly 1 |
+| `semantic` | **60 / 60** (100%) | every query returns the full window (10 at k=10, 20 at k=20) |
+| `hybrid` | **60 / 60** (100%) | every query returns the full window |
+
+**The arc proceeds.** `plain` reproduces TASK-16071's finding exactly — an
+order-only change is provably the identity there, and no cross-encoder result
+can or should move a plain cell. But `semantic` and `hybrid` return a FULL
+window on every single query, so a reranker has a large, real population to
+reorder on two of the three modes.
+
+This is what makes the coming measurement interpretable in both directions:
+a null result cannot be explained away as "there was nothing to reorder",
+because on 120 of 180 mode-query pairs there is a full k-row list. A null
+here would be a strong null.
+
 ## Pre-registered decision rule (fixed before any run)
 
 Only if the census shows a non-trivial reorderable population do we implement
