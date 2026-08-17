@@ -1427,6 +1427,10 @@ def test_provider_failure_strings_are_recognized(failure_text):
         "This dataset reports error rates for retrieval augmented generation.",
         "The paper analyses failure modes and error propagation in MoE routing.",
         "Graph neural networks aggregate messages over edges.",
+        # A summary may legitimately OPEN with the word error; only the
+        # providers' own failure phrasings may count.
+        "Error rates in retrieval systems are reported per corpus.",
+        "Failed to converge is the outcome this dataset documents.",
     ],
 )
 def test_real_summaries_are_not_mistaken_for_failures(summary_text):

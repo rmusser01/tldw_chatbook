@@ -384,12 +384,21 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
 #: mistaken for one. The old guard tested only the "Error:" prefix, which no
 #: provider-prefixed message matches.
 _SUMMARY_FAILURE_MARKERS = (
-    "error",
+    # The legacy convention this guard originally tested for.
+    "error:",
+    # What the summarizers actually emit, verbatim from their return
+    # statements. Deliberately phrase-level, not the bare word "error": a
+    # real summary may open with "Error rates in retrieval systems are ..."
+    # and must not be thrown away.
+    "error occurred",
+    "error making",
+    "error decoding",
+    "error parsing",
+    "error summarizing",
     "unexpected error",
     "api request failed",
     "json parse error",
     "no choices in response",
-    "failed to",
 )
 
 #: How far into the value a marker still counts as the leading clause.
