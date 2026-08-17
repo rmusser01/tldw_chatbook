@@ -634,6 +634,86 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+class _RecordingGateway:
+    """Records each turn's system prompt (messages[0]) and answers 'ok'."""
+
+    def __init__(self):
+        self.systems: list[str] = []
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        self.systems.append(str(messages[0].get("content", "")) if messages else "")
+        yield "ok"
+
+
+def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
+    tmp_path, monkeypatch
+):
+    """A session bound to a non-default workspace must carry the workspace
+    note into the primary agent's system prompt -- even on the fast path with
+    no builtin_gate, since run_reply resolves the workspace up front rather
+    than only inside the provider-gated branch."""
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    ws_registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "ws.sqlite", client_id="bridge-note-test")
+    )
+    ws_registry.ensure_default_workspace()
+    ws_registry.create_workspace(workspace_id="ws-note-1", name="Notes Workspace")
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: ws_registry)
+
+    gateway = _RecordingGateway()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="ws-note-1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    outcome = _run(
+        bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
+    )
+
+    assert outcome.status == "done"
+    assert gateway.systems, "expected a primary model call"
+    primary = gateway.systems[0]
+    assert primary.startswith("BASE PROMPT")
+    assert "NOT running in the default workspace" in primary
+    assert "Notes Workspace" in primary
+
+
+def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
+
+    gateway = _RecordingGateway()
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id=DEFAULT_WORKSPACE_ID)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+
+    outcome = _run(
+        bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
+    )
+
+    assert outcome.status == "done"
+    assert gateway.systems, "expected a primary model call"
+    assert "NOT running in the default workspace" not in gateway.systems[0]
+
+
 def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
     tmp_path, monkeypatch
 ):
