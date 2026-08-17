@@ -258,7 +258,18 @@ Read counts, cwd = this worktree, parent-repo `.venv/bin/pytest`,
 | Baseline, `Tests/Agents` + `test_console_headless_wake_invariants.py` + `test_console_fleet_wake.py` | **1492 passed** in 55 s |
 | Import provenance | **1 passed** — `PROBE imported tldw_chatbook from: …/.worktrees/headless-closeout/tldw_chatbook/__init__.py` |
 | New invariant gate alone | **4 passed** |
-| Final combined gate (all arc suites + the new one + `Tests/Agents`) | see §5 |
+| Final combined gate (all arc suites + the new one + `Tests/Agents`) | **1599 passed**, 0 failed, exit 0, in 250.79 s |
+
+The final gate is: `Tests/UI/test_console_headless_wake_fires.py`,
+`test_console_headless_approval.py`, `test_console_launch_wake.py`,
+`test_console_store_continuity.py`, `test_console_sync_outlives_screen.py`,
+`test_console_runtime_ownership.py`, `test_console_turn_activity_line.py`,
+`test_screen_residency.py`, `test_console_headless_invariants_gate.py`;
+`Tests/Chat/test_console_viewless_hooks.py`,
+`test_console_runtime_lifetime.py`,
+`test_console_headless_wake_invariants.py`,
+`test_console_fleet_wake.py`; `Tests/Agents`;
+`Tests/test_probe_import_provenance.py`.
 
 No full-suite run was attempted: the machine carries foreign pytest runs
 and a 281-file population run was measured at ~200 minutes by the previous
