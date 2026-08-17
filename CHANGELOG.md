@@ -62,7 +62,8 @@ and this project adheres to Some kind of Versioning
   retries every failure twice** (`max_retries = 2`, on *any* exception, a bad
   credential included), so the honest ceiling is `top-k × 3`: 3 candidates against a
   failing provider issued 9 calls, 20 issued 60. **listwise** issues exactly **1** call
-  per search (10 documents max). **pairwise** is a merge sort, so it issues `≈ n·log₂n`
+  per search (10 documents max) — but the same retry rule applies, so a failing
+  provider costs **3**. **pairwise** is a merge sort, so it issues `≈ n·log₂n`
   *comparisons*, not `n` scorings — **40–69** calls at top-k 20, ~200 with retries; no
   built-in preset uses it.
 

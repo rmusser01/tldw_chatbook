@@ -361,7 +361,7 @@ the provider seam faked, one `rerank()` at a time. Pointwise with the shipped
 retry settings: 9 calls for 3 candidates against an erroring provider, 60 for
 20. Pairwise at `Rerank results` 20: 40 calls best case, 69 worst (49–65 across
 200 randomised comparison outcomes), matching the merge sort's own bounds.
-Listwise: exactly 1. The three built-in presets that carry a reranker config
+Listwise: exactly 1 on success, 3 against an erroring provider (the retry rule is strategy-independent). The three built-in presets that carry a reranker config
 were read back off `ConfigProfileManager` over an empty profiles dir — Hybrid
 Full, High Accuracy, Research Papers, all `openai`; the other nine built-ins,
 including the default Hybrid Basic, carry none. The Settings cost line was
