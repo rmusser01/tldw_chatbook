@@ -146,31 +146,56 @@ and on resume) is untouched, because that formatter was not modified.
 
 ## Mutation testing
 
-Eleven mutations. Eight killed immediately; **three survived and each was a
-real weakness**, fixed and pinned:
+Thirteen mutations, ten killed, **three survived — and each survivor was a
+real weakness.** A fourth finding came out of *how* one of the killed
+mutants died. All four are fixed and pinned.
 
-1. `_message_row_signature` did not name `live_activity`. A markdown row (the
-   default assistant renderer) carries the line in its **header**, which that
-   signature never renders — it renders the *plain* row. The elapsed
-   therefore only ticked as a side effect of the plain renderer embedding the
-   same text; disabling that branch froze a markdown row's elapsed at its
-   first painted value. Two renderers silently depending on each other.
-2. `_with_turn_activity` stamping every message instead of the one in-flight
-   row is invisible to every display assertion (a row with content never
-   renders the line, and only assistant rows can) — yet it puts
-   `live_activity` into every row's signature, i.e. a whole-transcript
-   re-derive and re-sync once a second for the whole turn. Pinned by
-   measuring blast radius (row signatures + per-message signature compute
-   counts) rather than pixels; the target id is now hoisted out of the loop.
-3. `apply_turn_activity` skipping the empty case left a stale line on a row
-   that stays in flight after its run dies without a terminal publish —
-   frozen at its last elapsed, which is the exact defect this feature exists
-   to remove, in a new costume.
+| # | mutation | outcome |
+|---|---|---|
+| 1 | `_message_body`'s activity branch disabled | killed (2) — **and diagnosed finding A** |
+| 2 | `_assistant_markdown_header`'s activity suffix disabled | killed (7) |
+| 3 | `live_activity` dropped from `_message_signature_token` | killed (2) |
+| 4 | primary-only step filter widened to include children | killed (2) |
+| 5 | every step kind treated as a tool call | killed (2) |
+| 6 | `apply_turn_activity`'s eligibility check dropped | killed (2) |
+| 7 | in-flight statuses narrowed back to `streaming` only | killed (9) |
+| 8 | controller's viewed-run status gate disabled | killed (3) |
+| 9 | `started_at` never stamped (`None`) | killed (1) |
+| 10 | `_with_turn_activity` stamps every message | **SURVIVED** |
+| 11 | `_is_generating_placeholder_body` blind to the line | **SURVIVED** |
+| 12 | `apply_turn_activity` skips the empty case | **SURVIVED** |
+| 13 | the screen's `apply_turn_activity` call removed | killed (3) |
 
-A fourth pin came out of (3): a **streaming** empty row is reachable on a
-fence-gated tool turn (`reset_stream_buffer` discards leaked prose and leaves
-the row streaming-and-empty), and there the line must render dim and without
-a doubled `Streaming…` status line under it.
+**A — the signature coupling (from how #1 died).** #1 killed two tests, but
+the *failure* was the interesting part: the production-path test's FIRST
+paint still showed `⚙ calculator · <1s`, and only the SECOND tick failed to
+advance. A markdown row carries the line in its **header**, which
+`_message_row_signature` never renders — it renders the *plain* row. So the
+elapsed only ticked as a side effect of the plain renderer embedding the same
+text; the two renderers were silently coupled, and disabling the plain branch
+froze a markdown row's elapsed at its first painted value. `live_activity` is
+now named in that signature outright, pinned by a test that paints two ticks
+differing in nothing but the elapsed and checks the row updates in place.
+
+**B — blast radius (#10).** Stamping every message rather than the one
+in-flight row is invisible to every display assertion (a row with content
+never renders the line, and only assistant rows can) — yet it puts
+`live_activity` into every row's signature: a whole-transcript re-derive and
+re-sync once a second for the entire turn. Pinned by measuring row signatures
+and per-message signature compute counts instead of pixels; the target id is
+now hoisted out of the row loop.
+
+**C — the doubled/undimmed line (#11).** A **streaming** empty row is
+reachable on a fence-gated tool turn (`reset_stream_buffer` discards leaked
+prose and leaves the row streaming-and-empty). There, a placeholder predicate
+blind to the activity line rendered it as ordinary assistant content with a
+`Streaming…` status line stacked under it. Pinned on both the absent status
+line and the dim span.
+
+**D — the stale line (#12).** Skipping the empty case left the last line
+sitting on a row that stays in flight after its run dies without a terminal
+publish — frozen at its last elapsed, which is the exact defect this feature
+exists to remove, in a new costume.
 
 ## Known limits
 
