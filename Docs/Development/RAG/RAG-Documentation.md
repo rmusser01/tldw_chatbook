@@ -818,7 +818,7 @@ max_expansions = 3
 
 Reorder results after retrieval. **This is not a quality win by default.**
 The one strategy that has been measured here (`cross_encoder`, TASK-16965)
-came out net harmful on the averaged row of the gated eval set — big gains
+came out net harmful on the averaged row [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.] of the gated eval set — big gains
 on weak-retrieval query categories, losses on categories retrieval already
 got right — and the three LLM-driven strategies have never been measured at
 all (they bill a provider per call, which the local gate cannot run). Turn

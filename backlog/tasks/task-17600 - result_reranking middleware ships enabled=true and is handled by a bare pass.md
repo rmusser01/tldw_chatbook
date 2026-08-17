@@ -41,3 +41,7 @@ context a fix here should carry.
       presented as an accuracy improvement
 - [ ] A test fails if a declared-enabled middleware name has no
       implementation, so this class of gap cannot recur silently
+- [ ] The same sweep covers `reranking_strategy` (TASK-16965 final review
+      F3): it has ZERO readers repo-wide, yet RAG-DESIGN.md instructs users
+      to select a strategy with it — a config key that reads nothing is the
+      same species as a middleware that runs nothing

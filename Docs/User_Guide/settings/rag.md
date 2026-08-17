@@ -299,9 +299,14 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   (TASK-3502 said so explicitly). The fourth, **`cross_encoder`**, runs a
   local model and *can* be measured, so TASK-16965 measured it over the
   60-query golden set against a rule written down before the code was —
-  and the answer was **net harmful**:
+  and the answer was **net harmful** [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.]:
 
-  | | MRR@10 before → after | NDCG@10 | recall@10 |
+  | | MRR before → after | NDCG@10 | recall@10 |
+  <!-- F2 (final review): this MRR is UNBOUNDED-rank, not MRR@10 — arm B's
+  reranked lists exceed 10 on 60/60 queries (mean 19.4 semantic, 20.0
+  hybrid), so ranks 11–20 are counted. Correcting to @10 shifts the
+  deltas only slightly (semantic −0.0169 → −0.0134) and does not change
+  the verdict. -->
   |---|---|---|---|
   | semantic | 0.808 → **0.762** | 0.804 → 0.776 | 0.804 → **0.826** |
   | hybrid | 0.812 → **0.787** | 0.817 → 0.805 | 0.848 → **0.870** |

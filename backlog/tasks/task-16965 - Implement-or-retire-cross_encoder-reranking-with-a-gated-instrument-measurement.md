@@ -127,3 +127,34 @@ Left alone deliberately: `Library/library_rag_score_kinds.py` and `Library/libra
 
 Batteries: `Tests/RAG_Search/` + `Tests/RAG_Eval/` = 678 passed / 26 skipped. Repo-wide collection 49,427 (2 pre-existing `playwright` ImportErrors in `Tests/Web_Scraping/Confluence/`, untouched by this branch). ruff clean on every touched file; `ruff format --check` deltas on `config_profiles.py`/`config.py`/`document_expansion_tool.py` are pre-existing at HEAD, `reranker.py` is formatted.
 <!-- SECTION:NOTES:END -->
+
+### Final-review corrections (2026-08-17, applied before merge)
+
+- **F1 — the headline was narrower than it sounded.** "Net harmful on the
+  averaged row" used the instrument's `overall`, which EXCLUDES `scoped` and
+  `negative` (`UNAVERAGED_CATEGORIES`) — and `scoped` is exactly where this
+  strategy wins. Averaged over all 53 ground-truthed queries, **hybrid
+  reverses sign: MRR 0.731 → 0.806 (+0.075)**. The pre-registered verdict is
+  unchanged (it is computed from the instrument's own cells, and the six
+  regression cells stand), but every headline site now carries the caveat.
+- **F2** — arm B's MRR is unbounded-rank, not MRR@10: its reranked lists
+  exceed 10 on 60/60 queries (mean 19.4 semantic / 20.0 hybrid). Correcting
+  to @10 moves the deltas slightly (semantic −0.0169 → −0.0134) and does not
+  change the verdict; the label is corrected and the caveat recorded.
+- **F4** — `library_rag_score_kinds.py` was modified in Task 1 and is now in
+  the files list (the notes had listed it as untouched).
+- **F5 — the normalisation claim was overstated, and the control now backs
+  the corrected version.** Ordering is normalisation-invariant only when
+  `combine_original_score` is False; the shipped config blends 30% of the
+  original score, so the sort key is scale-dependent. The review RAN that
+  control: with the blend off (ordering identical to raw logits) the verdict
+  is still HARMED with the same six regression cells and 3dp-matching deltas,
+  and a 10×-scaled blend agrees. **The harm is the model's ranking, not the
+  min-max.**
+- **F3** (`reranking_strategy` has zero readers repo-wide) folded into
+  TASK-17600's scope — it is the same enabled-but-unread species that task
+  already owns.
+- **F6** (the work guard asserts rows scored/failed but not
+  `row_order_changes > 0`) recorded in the QA report as a known limit of the
+  guard; the mutation test proves the guard catches the failure mode that
+  actually occurred.

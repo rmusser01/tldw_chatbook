@@ -12,6 +12,8 @@ the gated eval instrument can see (the other three are remote, priced and
 non-reproducible, so TASK-3502 left their value unmeasured). Measured under
 a rule fixed before the run, ``cross_encoder`` came out net HARMFUL on the
 averaged row and strongly BIMODAL by query category -- see
+(that averaged row EXCLUDES `scoped`/`negative`; over all 53
+ground-truthed queries hybrid REVERSES sign, MRR 0.731 -> 0.806) --
 ``CrossEncoderReranker`` for the numbers and
 ``Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`` for the run. It
 therefore ships selectable but is the default of nothing and the
@@ -910,6 +912,13 @@ class CrossEncoderReranker(BaseReranker):
     strongly-relevant row to 1.0 -- ties, in the one place ordering is the
     entire product. Normalising is monotonic, so it preserves the model's
     ordering exactly while putting the numbers on the scale
+    (STRICTLY: only when `combine_original_score` is False. The shipped
+    config blends 30% of the original score, so the sort key IS
+    scale-dependent. The final review ran the control: with the blend
+    off -- pure normalised CE score, ordering identical to raw logits --
+    the verdict is still HARMED with the SAME six regression cells and
+    deltas matching to 3dp, and a 10x-scaled blend agrees. The harm is
+    the model's ranking, not the normalisation.)
     ``combine_original_score`` blends against.
 
     **What it measured, so nobody has to re-run the probe to find out.**
@@ -917,7 +926,9 @@ class CrossEncoderReranker(BaseReranker):
     against a rule fixed in the plan BEFORE the strategy was written, in
     two pre-declared arms (rerank the k=10 window; and retrieve 20, rerank,
     score the first 10 -- the second arm exists because permuting a <=k
-    list cannot move P@k/recall/F1 at all). **Verdict: HARMED.** On the
+    list cannot move P@k/recall/F1 at all). **Verdict: HARMED** (on the instrument's averaged row, which EXCLUDES
+    `scoped`/`negative` -- over all 53 ground-truthed queries hybrid
+    REVERSES sign: MRR 0.731 -> 0.806, +0.075; final review F1)**.** On the
     averaged overall row at k=10, arm B: semantic MRR 0.808 -> 0.762 and
     NDCG 0.804 -> 0.776; hybrid MRR 0.812 -> 0.787 and NDCG 0.817 -> 0.805;
     recall@10 +0.022 on both. The strategy is NOT inert -- 3,621 rows

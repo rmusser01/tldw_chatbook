@@ -352,6 +352,11 @@ class ConfigProfileManager:
         # sentence-transformers model, no provider/credential/network) and
         # MEASURED it on the gated eval instrument against a rule fixed
         # before the run. Verdict: net HARMFUL on the averaged row
+    # F1 CAVEAT (final review): that averaged row EXCLUDES `scoped` and
+    # `negative` (UNAVERAGED_CATEGORIES) -- and `scoped` is precisely where
+    # this strategy WINS. Averaged over all 53 ground-truthed queries,
+    # hybrid REVERSES sign: MRR 0.731 -> 0.806 (+0.075). The verdict stands
+    # on the pre-registered rule; the headline is narrower than it sounds.
         # (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787 at k=10),
         # and strongly BIMODAL -- large gains where retrieval is weak
         # (hybrid `scoped` MRR 0.163 -> 0.929) paid for by demoting

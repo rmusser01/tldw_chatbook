@@ -504,7 +504,7 @@ Batch processing utilities for efficient indexing.
 
 3. **Re-ranking**
    - Apply cross-encoder models (if enabled -- off by default, and measured
-     net-harmful on average; see the note under "Re-ranking" in Future
+     net-harmful on average [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.]; see the note under "Re-ranking" in Future
      Enhancements)
    - Score based on expanded context
    - Filter by relevance thresholds

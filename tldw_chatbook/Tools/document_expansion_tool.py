@@ -14,7 +14,7 @@ risk-tagged so an inherited `allow` is floored to `ask`. It is deliberately
 INDEPENDENT of reranking (AC#6) -- it consumes final result rows whatever
 produced them. That independence has since been worth having: TASK-16965
 implemented `cross_encoder` (which TASK-3502 had left unimplemented) and
-MEASURED it as net harmful on average, so a tool that presumed a working
+MEASURED it as net harmful on average [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.] (CAVEAT: the instrument's averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`) -- and `scoped` is where the strategy wins, so over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075)), so a tool that presumed a working
 reranker would now be built on a stage nobody recommends turning on.
 
 **The contract works from exactly what a row carries.** `source_type` +

@@ -259,7 +259,7 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # local model, no provider/credential/network). "cross_encoder"
             # is implemented and selectable but is NOT recommended: it is
             # the only strategy that has been measured here (TASK-16965)
-            # and it came out net harmful on average -- large gains where
+            # and it came out net harmful on average [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.] -- large gains where
             # retrieval is weak, losses where it is already good. See
             # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md.
         },
