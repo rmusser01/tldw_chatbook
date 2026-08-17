@@ -55,7 +55,25 @@ listed by `high_accuracy` with `enabled = true`, and
 finding: `reranking_strategy` has **zero readers repo-wide** while
 RAG-DESIGN.md tells users to select a strategy with it.
 
-**Decision: DELETE both, do not wire.** Wiring `result_reranking` would
+**MEASURED AT SPEC REVIEW — the gap is 8 names, not 1.** The task was
+filed against `result_reranking`. Enumerating the TOML's pipeline
+declarations against `pipeline_loader.py`'s `middleware_id ==` branches:
+**11 middleware names are declared by pipelines; 4 are implemented.**
+`result_reranking` is the only one with an explicit bare `pass` — the other
+**seven** (`abstract_extractor`, `citation_formatter`, `citation_parser`,
+`code_formatter`, `code_syntax_enhancer`, `result_clustering`,
+`table_renderer`) simply fall off the end of the `if/elif` and no-op
+SILENTLY, with no comment marking them. Two whole pipelines
+(`technical_docs`, `research_papers`) consist ENTIRELY of unimplemented
+middleware. Three of the seven are not even defined in a `[middleware.*]`
+block, so they are names referencing nothing at all.
+
+This reframes the task: the filed name is one instance, and the guard is
+the deliverable. **AC#2's sweep must run in BOTH directions** — declared
+-but-unimplemented (the seven above) and implemented-but-undeclared — since
+the filed AC only anticipated the latter.
+
+**Decision: DELETE the promises, do not wire, and let the guard enforce it.** Wiring `result_reranking` would
 switch reranking ON for anyone using `high_accuracy` — and TASK-16965
 measured reranking as net-harmful on the averaged row. Shipping a stage
 that spends provider calls to make retrieval worse, on the strength of a
