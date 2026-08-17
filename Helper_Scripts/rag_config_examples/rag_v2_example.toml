@@ -30,7 +30,16 @@ profile = "hybrid_basic"  # Default profile
 # enable_reranking = true
 # enable_parallel_processing = true
 # parent_size_multiplier = 3
-# reranking_strategy = "cross_encoder"
+# reranking_strategy = "pointwise"
+#
+# Reranking strategies: "pointwise" | "pairwise" | "listwise" bill an LLM
+# provider per call; "cross_encoder" runs a local model (no provider, no
+# credential, no network). "cross_encoder" is selectable but NOT
+# recommended -- it is the only strategy anyone has measured on the gated
+# eval instrument (TASK-16965) and it came out net HARMFUL on the averaged
+# row (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787), while producing
+# large gains on the weak-retrieval categories (hybrid "scoped" MRR
+# 0.163 -> 0.929). Numbers: Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
 
 # Example configurations:
 

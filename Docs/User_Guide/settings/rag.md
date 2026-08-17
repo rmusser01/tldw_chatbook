@@ -287,9 +287,40 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   | **pointwise** (this fold's toggle, `Hybrid Full`, `High Accuracy`) | one per candidate, up to **Rerank results** — 20 at the default | up to **×3** — 3 candidates against a failing provider issued **9** calls; 20 issued **60** |
   | **listwise** (`Research Papers`) | exactly **1**, covering at most 10 documents — the fold's line over-states here | up to **3** |
   | **pairwise** (no built-in preset; a hand-written profile only) | a merge sort over the candidates, ≈ `n·log₂n` **comparisons** — **40–69** at `Rerank results` 20, not 20 | up to **×3** (≈200) |
+  | **cross_encoder** (no built-in preset; a hand-written profile only) | **0** — it runs a local model, no provider, no credential, no network | n/a |
 
   The retry loop fires on *any* exception, including a wrong or missing
   credential — the case where the calls buy nothing at all.
+
+- **Reranking has never been shown to improve search here — and the one
+  strategy that was measured made it worse on average.** Three of the four
+  strategies bill an LLM provider per call, which the local, deterministic
+  eval gate cannot run, so their retrieval value is simply unknown
+  (TASK-3502 said so explicitly). The fourth, **`cross_encoder`**, runs a
+  local model and *can* be measured, so TASK-16965 measured it over the
+  60-query golden set against a rule written down before the code was —
+  and the answer was **net harmful**:
+
+  | | MRR@10 before → after | NDCG@10 | recall@10 |
+  |---|---|---|---|
+  | semantic | 0.808 → **0.762** | 0.804 → 0.776 | 0.804 → **0.826** |
+  | hybrid | 0.812 → **0.787** | 0.817 → 0.805 | 0.848 → **0.870** |
+
+  It is not doing nothing — it rescored 3,621 rows and moved 1,950 of them
+  — its effect is just **split down the middle by query type**. Where
+  retrieval was already weak it was a large win (hybrid *scoped* queries
+  MRR 0.163 → **0.929**; *prompt* 0.022 → 0.200). Where retrieval already
+  put the right answer first — paraphrased and vocabulary-mismatch queries,
+  both at a perfect 1.000 — the only move available was downward, and four
+  queries lost their top spot (1.000 → 0.87–0.94). Averaged, you buy a
+  little recall and pay for it in rank quality.
+
+  So `cross_encoder` ships **selectable but recommended nowhere**: no
+  built-in profile uses it, no config template sets it, and nothing turns
+  it on for you. It is worth trying only if your own searches look like the
+  weak half of that split — and then measure, don't assume. The full run,
+  per-category tables and the method are in
+  `Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`.
 
 - **Three built-in presets rerank without you ticking anything.** Reranking
   is on for a profile whenever that profile carries a reranker config —
@@ -367,3 +398,19 @@ Full, High Accuracy, Research Papers, all `openai`; the other nine built-ins,
 including the default Hybrid Basic, carry none. The Settings cost line was
 changed to disclose the retried ceiling and re-pinned in
 `Tests/UI/test_settings_rag_profile_region.py`. No live provider call was made.*
+
+*Verified against `feat/rag-16965-cross-encoder` — 2026-08-17 (TASK-16965,
+doc-only on this page): the `cross_encoder` row and the "reranking has never
+been shown to improve search here" quirk above are the measurement's own
+output, not an estimate. The strategy was implemented as a local
+sentence-transformers cross-encoder and run over the 60-query golden set on
+the gated eval instrument in two pre-declared arms, against a decision rule
+fixed in `Docs/superpowers/plans/2026-08-17-cross-encoder-measurement.md`
+BEFORE the strategy was written; the probe reproduced the retrieval census
+from its own retrievals and asserted the model actually scored (3,621 rows
+scored, 0 failed) so a null could not be faked by a silently-degraded load.
+Zero network and zero provider spend, confirmed three ways. Numbers,
+per-category tables and the verbatim probe output:
+`Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`. `cross_encoder` is
+not exposed in this pane — it is a config-file strategy — and no built-in
+profile uses it, so nothing on this screen changed behaviour.*

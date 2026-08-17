@@ -503,7 +503,9 @@ Batch processing utilities for efficient indexing.
    - Merge overlapping content
 
 3. **Re-ranking**
-   - Apply cross-encoder models (if enabled)
+   - Apply cross-encoder models (if enabled -- off by default, and measured
+     net-harmful on average; see the note under "Re-ranking" in Future
+     Enhancements)
    - Score based on expanded context
    - Filter by relevance thresholds
 
@@ -2357,7 +2359,18 @@ Future support for domain-specific step types:
 
 1. **Advanced Search**
    - Query expansion with LLMs
-   - Re-ranking with cross-encoders
+   - ~~Re-ranking with cross-encoders~~ — **done and measured, not
+     planned.** TASK-16965 shipped `CrossEncoderReranker` (local
+     sentence-transformers, no provider/credential/network) and ran it over
+     the 60-query golden set on the gated instrument against a rule fixed
+     before the run. It came out **net harmful** on the averaged row
+     (semantic MRR 0.808 → 0.762, hybrid 0.812 → 0.787 at k=10; recall@10
+     +0.022) and **strongly bimodal**: hybrid `scoped` MRR 0.163 → 0.929
+     and `prompt` 0.022 → 0.200, paid for by demoting already-rank-1
+     answers in `paraphrase`/`vocabulary_mismatch` (1.000 → 0.87–0.94).
+     It stays selectable as `reranking_strategy = "cross_encoder"` and is
+     the default of nothing. Numbers:
+     `Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`.
    - Multi-lingual support
 
 2. **Scalability**

@@ -1,10 +1,21 @@
 """
-Reranking for improved search result relevance.
+Reranking: reorder search results after retrieval.
 
 Three strategies (pointwise/pairwise/listwise) evaluate and reorder search
 results with a language model; ``cross_encoder`` (TASK-16965) does it with a
 local sentence-transformers cross-encoder, requiring no provider, no
 credential and no network.
+
+**No strategy here is known to improve retrieval, and the one that has been
+measured made it worse on average.** ``cross_encoder`` is the only strategy
+the gated eval instrument can see (the other three are remote, priced and
+non-reproducible, so TASK-3502 left their value unmeasured). Measured under
+a rule fixed before the run, ``cross_encoder`` came out net HARMFUL on the
+averaged row and strongly BIMODAL by query category -- see
+``CrossEncoderReranker`` for the numbers and
+``Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`` for the run. It
+therefore ships selectable but is the default of nothing and the
+recommendation of nothing.
 """
 
 import asyncio
@@ -100,7 +111,13 @@ class RerankingConfig:
     temperature: float = 0.0  # Use deterministic scoring
     max_tokens: int = 100
 
-    # Reranking settings
+    # Reranking settings.
+    #
+    # ``cross_encoder`` is implemented and selectable (TASK-16965) but is
+    # NOT a recommendation: measured on the gated instrument it is net
+    # harmful on the averaged row and bimodal by category. It is the
+    # default of no profile and no config template; pick it only with
+    # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md in hand.
     strategy: Literal["pairwise", "listwise", "pointwise", "cross_encoder"] = (
         "pointwise"
     )
@@ -894,6 +911,50 @@ class CrossEncoderReranker(BaseReranker):
     entire product. Normalising is monotonic, so it preserves the model's
     ordering exactly while putting the numbers on the scale
     ``combine_original_score`` blends against.
+
+    **What it measured, so nobody has to re-run the probe to find out.**
+    TASK-16965 ran it over the 60-query golden set on the gated instrument,
+    against a rule fixed in the plan BEFORE the strategy was written, in
+    two pre-declared arms (rerank the k=10 window; and retrieve 20, rerank,
+    score the first 10 -- the second arm exists because permuting a <=k
+    list cannot move P@k/recall/F1 at all). **Verdict: HARMED.** On the
+    averaged overall row at k=10, arm B: semantic MRR 0.808 -> 0.762 and
+    NDCG 0.804 -> 0.776; hybrid MRR 0.812 -> 0.787 and NDCG 0.817 -> 0.805;
+    recall@10 +0.022 on both. The strategy is NOT inert -- 3,621 rows
+    scored, 0 failed, 1,950 rows moved -- and its effect is strongly
+    BIMODAL by query category:
+
+    * large gains where retrieval was weak: hybrid ``scoped`` MRR
+      0.163 -> 0.929 (NDCG 0.348 -> 0.947), hybrid ``prompt`` MRR
+      0.022 -> 0.200, semantic ``negation`` NDCG 0.000 -> 0.105;
+    * losses where retrieval was already perfect: ``paraphrase`` (13
+      queries) and ``vocabulary_mismatch`` (9) both sat at MRR 1.000, so
+      the only movement available was down -- four queries lost rank 1,
+      taking those categories to 0.87-0.94. Those are the cells that trip
+      the rule's regression clause.
+
+    Read on the overall row ALONE nothing moves beyond the 0.05 band, i.e.
+    a NULL; the rule's regression clause is written at category level, so
+    the reported verdict is HARMED. Either reading says the same thing in
+    practice: **do not enable this expecting better search.** Enable it
+    only if your corpus looks like the weak-retrieval half of that split,
+    and measure it yourself. Full run, per-category tables and the census:
+    ``Docs/superpowers/qa/2026-08-17-cross-encoder/report.md``.
+
+    **Why this class still exists, as TWO facts and not one.** (1) The
+    pre-registered rule was applied verbatim and said RETIRE the name --
+    HARMED, on the category clause, in both arms. (2) The owner ruled
+    otherwise on 2026-08-17, asked explicitly with the trade-offs shown:
+    *"KEEP THE CODE, RETIRE THE PROMISE."* The deciding dimension was the
+    bimodal split above -- the other three strategies bill a remote
+    provider per call, which the local deterministic gate cannot run, so
+    this is the ONLY reranking path anyone here can measure at all
+    (TASK-3502 scoped the question out for exactly that reason), and
+    deleting it for producing an unwelcome number would delete the
+    instrument along with the result. The price of keeping it is stated
+    rather than hidden: it ships selectable, the default of nothing, the
+    recommendation of nothing, with its measured harm attached at every
+    site that names it.
     """
 
     def __init__(self, config: RerankingConfig):

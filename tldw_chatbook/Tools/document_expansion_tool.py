@@ -12,8 +12,10 @@ an agent saw was a label it could not see behind.
 This tool is the pull-based answer: budgeted, gated OFF by default, and
 risk-tagged so an inherited `allow` is floored to `ask`. It is deliberately
 INDEPENDENT of reranking (AC#6) -- it consumes final result rows whatever
-produced them, and presumes nothing about TASK-3502's unimplemented
-`cross_encoder`.
+produced them. That independence has since been worth having: TASK-16965
+implemented `cross_encoder` (which TASK-3502 had left unimplemented) and
+MEASURED it as net harmful on average, so a tool that presumed a working
+reranker would now be built on a stage nobody recommends turning on.
 
 **The contract works from exactly what a row carries.** `source_type` +
 `source_id` is enough (that is all a label-only row has); `chunk_start`

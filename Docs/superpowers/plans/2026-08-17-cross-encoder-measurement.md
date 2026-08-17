@@ -70,6 +70,25 @@ Ties, partial movement, or a mixed picture resolve to **NULL** — the burden is
 - [ ] **Arm B (NULL/HARMED):** **retire the name** — remove `cross_encoder` from the strategy vocabulary and the config comment, keep the probe and its report as the record of why, and document Hybrid Full's `pointwise` as the permanent choice rather than a stopgap (AC#4). The implementation from T1 is reverted or kept behind no vocabulary — state which and why.
 - [ ] **Both arms:** gate reads `PASSED: No regression. 105 metric(s)` on the shipped state (AC#6); close TASK-16965's six ACs against evidence; Implementation Notes carry the census, the verdict, and the rule that was fixed beforehand. Push.
 
+> **DISPOSITION (2026-08-17, after the T2 verdict — TWO facts, kept adjacent).**
+> (1) **The rule ran to completion and said arm B: RETIRE.** T2 returned
+> **HARMED** (`paraphrase`/`vocabulary_mismatch` MRR/NDCG regress beyond the
+> 0.05 band in both arms, both modes); on an overall-row-only reading it is
+> NULL. Both readings point at arm B under the rule as written above, which is
+> left untouched — nothing here was renegotiated after seeing numbers.
+> (2) **The owner ruled a third arm ships instead:** asked explicitly with the
+> trade-offs on the table, *"KEEP THE CODE, RETIRE THE PROMISE."* The deciding
+> dimension was the bimodal split T2 measured (hybrid `scoped` MRR 0.163 →
+> 0.929, against rank-1 → rank-2 demotions in two zero-headroom categories) plus
+> the fact that `cross_encoder` is the only reranking path the gated instrument
+> can see at all. So: `CrossEncoderReranker` stays implemented and selectable;
+> every claim or implication that it HELPS is removed and replaced with the
+> measured verdict wherever the strategy is nameable; it is the default,
+> recommendation and profile-strategy of nothing; Hybrid Full keeps `pointwise`,
+> documented as permanent and measured. See
+> `Docs/superpowers/qa/2026-08-17-cross-encoder/report.md` (addendum) and
+> TASK-16965's Implementation Notes.
+
 ## Self-review (plan time)
 - AC#1→T3 (a recorded decision either way); #2→T2 with the rule above fixed in T-minus; #3→the NULL arm being pre-authorised to retire; #4→T3 arm B; #5→cached model + `HF_HUB_OFFLINE=1`, no provider path in T1's implementation; #6→T3.
 - The riskiest failure mode is renegotiating the rule after seeing numbers; it is therefore written here, before Task 1.

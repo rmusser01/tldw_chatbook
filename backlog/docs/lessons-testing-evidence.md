@@ -1993,6 +1993,15 @@ late reads as success on an env-var check while the flag it was meant to control
 `False`. And when closing a hole like this with a two-part fix, mutation-test each half
 independently — here, either half alone was silently insufficient.
 
+**`HF_HUB_OFFLINE` is not the only frozen constant in that module (TASK-16965,
+2026-08-17).** `huggingface_hub.constants.HF_HUB_CACHE` is likewise computed
+once at import, from `expanduser("~")` — so any fixture that sandboxes `HOME`
+(this repo's `Tests/conftest.py` does) points every later model load at an empty
+cache and makes a genuinely cached model unloadable under pytest. Same
+mechanism, opposite blast radius: this lesson's is a download you did not want,
+that one's is a load you did want and silently did not get. See "A metric can be
+graded on fallback content" at the end of this file for what that cost.
+
 ---
 
 ## "Order-dependent" in the backlog is a hypothesis, not a diagnosis — a state flip is not proof the DOM caught up
@@ -4999,3 +5008,41 @@ round, uniform timings as a budget being hit rather than work being done. Also:
 absence of an error log is not evidence of success when the code logs successes
 at INFO through stdlib `logging`, whose default level hides them; the runs above
 showed zero "Summarization successful" lines whether they worked or not.
+
+**Second instance, and the sharper rule when the number is a DELTA (TASK-16965,
+2026-08-17).** Same shape, opposite tell — and no tell at all. TASK-16965 had to
+answer "does cross-encoder reranking help retrieval here?" by running the gated
+eval set twice, once reranked and once not, and reading the difference.
+`CrossEncoderReranker` honours the TASK-3502 contract: a model that fails to
+load DEGRADES (returns the caller's ordering untouched) rather than raising. And
+`Tests/conftest.py` sandboxes `HOME`, while
+`huggingface_hub.constants.HF_HUB_CACHE` is computed from `expanduser("~")` **at
+import** — so under pytest `CrossEncoder(...)` raises `OSError` ("couldn't
+connect ... and couldn't find them in the cached files") on a machine where the
+model IS cached. Measured directly, before the probe was written. Compose those
+two facts: every window comes back in its original order, every metric is graded
+on un-reranked output, and the before/after table reads a flawless **0.000 delta
+on all 105 cells** — a NULL result, publishable-looking, pre-registered as an
+acceptable outcome, and entirely fabricated. Unlike task-17370's uniform `30.0s`
+timings there is no tell whatsoever: a real null and a never-ran null are the
+same table. The run therefore repoints the constant
+(`monkeypatch.setattr(constants, "HF_HUB_CACHE", real_cache)` — hf_hub 1.x reads
+it at call time off the module attribute) and **asserts the work happened**:
+`rows_scored > 0` and `rows_failed == 0`, per pass. It scored 3,621 rows, 0
+failed, and moved 1,950 — which is what makes the verdict it did produce
+(HARMED, bimodal) mean anything at all.
+
+**What to do.** Recording the path is enough when a bad path makes the number
+look good; it is NOT enough when the measurement is an A/B and the subject
+degrades to the identity, because then the failure mode is the null hypothesis
+itself and no reader can tell the two apart. So: **a measurement whose subject
+degrades silently must assert, inside the run, that it did work** — a positive
+count of units processed and a zero count of failures — or its null is
+unfalsifiable and must not be published. Write those assertions BEFORE you look
+at the numbers; a 0.000 delta is the one result that never prompts anyone to go
+looking for a bug. Corollary worth its own grep: the frozen-at-import
+huggingface_hub constants bite in more than one place — `HF_HUB_OFFLINE` (see
+"HF offline enforcement must be set before `huggingface_hub.constants`
+EVALUATES" above, where the blast radius is an unwanted download) and
+`HF_HUB_CACHE` (here, where the blast radius is a load you wanted and silently
+did not get, under any fixture that moves `HOME`).

@@ -252,7 +252,16 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "parent_size_multiplier": 3,
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
-            # "reranking_strategy": "cross_encoder"
+            # "reranking_strategy": "pointwise",
+            #
+            # Reranking strategies: "pointwise" | "pairwise" | "listwise"
+            # (each bills an LLM provider per call) or "cross_encoder" (a
+            # local model, no provider/credential/network). "cross_encoder"
+            # is implemented and selectable but is NOT recommended: it is
+            # the only strategy that has been measured here (TASK-16965)
+            # and it came out net harmful on average -- large gains where
+            # retrieval is weak, losses where it is already good. See
+            # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md.
         },
     },
     "memory_management": {

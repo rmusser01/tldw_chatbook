@@ -343,13 +343,29 @@ class ConfigProfileManager:
         hybrid_full_rag.search.include_citations = True
         hybrid_full_rag.search.max_context_size = 32000
 
-        # "cross_encoder" is not an implemented reranking strategy in
-        # chatbook -- reranker.py only implements the three LLM-driven
-        # strategies (pointwise/pairwise/listwise); there is no local
-        # cross-encoder model path. This profile previously requested
-        # "cross_encoder" and raised ValueError the moment its reranker
-        # tried to construct (task-3170 P0). "pointwise" is the closest
-        # available strategy to a cross-encoder's per-result scoring.
+        # "pointwise" here is a PERMANENT, MEASURED choice -- not the
+        # stopgap it used to be. History: this profile once requested
+        # "cross_encoder", which was not implemented and raised ValueError
+        # the moment its reranker tried to construct (task-3170 P0), so it
+        # was swapped for "pointwise" as the nearest available per-result
+        # scorer. TASK-16965 then IMPLEMENTED "cross_encoder" (a local
+        # sentence-transformers model, no provider/credential/network) and
+        # MEASURED it on the gated eval instrument against a rule fixed
+        # before the run. Verdict: net HARMFUL on the averaged row
+        # (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787 at k=10),
+        # and strongly BIMODAL -- large gains where retrieval is weak
+        # (hybrid `scoped` MRR 0.163 -> 0.929) paid for by demoting
+        # already-rank-1 answers in categories that were saturated
+        # (`paraphrase`/`vocabulary_mismatch` MRR 1.000 -> 0.87-0.94).
+        # Two facts, kept adjacent: the pre-registered rule said RETIRE the
+        # name, and the owner ruled otherwise on 2026-08-17 -- "keep the
+        # code, retire the promise" -- because this is the only reranking
+        # path the gated instrument can measure at all. So the strategy
+        # stays selectable but is recommended nowhere, and this profile
+        # keeps "pointwise" by measurement rather than by accident:
+        # switching Hybrid Full to "cross_encoder" is exactly what the
+        # measurement forbids. Full numbers:
+        # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
         hybrid_full_rerank = RerankingConfig(
             strategy="pointwise", top_k_to_rerank=15, include_reasoning=False
         )

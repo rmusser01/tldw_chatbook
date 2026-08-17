@@ -339,3 +339,40 @@ VERDICT: HARMED — arm(s) A, B regressed beyond tolerance
 
 wall clock: 25.7s
 ```
+
+---
+
+## Addendum — what the owner decided, and what shipped (2026-08-17, Task 3)
+
+Everything above is the measurement and is unchanged. This records the
+disposition, because the body of this report sends the verdict to "T3 arm B —
+retire" and that is **not** what happened.
+
+Asked explicitly, with the trade-offs on the table — the pre-registered rule
+says retire; the numbers also say the strategy is a large win exactly where
+retrieval is weak (hybrid `scoped` MRR 0.163 → 0.929) and loses only rank-1 →
+rank-2 in two categories that had no headroom left — **the owner ruled: "KEEP
+THE CODE, RETIRE THE PROMISE."**
+
+So, concretely:
+
+- `CrossEncoderReranker` stays implemented and stays selectable as
+  `reranking_strategy = "cross_encoder"`. The name is **not** retired from the
+  strategy vocabulary.
+- Every claim or implication that it *helps* is gone, and the verdict above now
+  travels with it: `RAG_Search/reranker.py` (module docstring, the `strategy`
+  Literal, the class docstring's numbers), `RAG_Search/config_profiles.py`,
+  `config.py`'s config template, `Helper_Scripts/rag_config_examples/rag_v2_example.toml`,
+  `Config_Files/rag_pipelines.toml`, `Docs/User_Guide/settings/rag.md`,
+  `Docs/Development/RAG/RAG-DESIGN.md` (it was sitting under *Future
+  Enhancements*), `Docs/Development/RAG/RAG-Documentation.md`, and
+  `Tools/document_expansion_tool.py` (whose docstring claimed it was
+  unimplemented).
+- It is the default of nothing, the recommendation of nothing, and the strategy
+  of no profile. **Hybrid Full keeps `pointwise`** — now documented as a
+  permanent, measured choice rather than the task-3170 stopgap it started as.
+
+The rule was not renegotiated: the verdict stands as HARMED, and nothing in
+this repo recommends the strategy. What the ruling changed is whether working,
+measurable code gets deleted for producing an unwelcome number — it does not,
+so long as the number travels with it.
