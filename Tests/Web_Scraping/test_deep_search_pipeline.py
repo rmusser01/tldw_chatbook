@@ -1358,10 +1358,12 @@ async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
 
     await WebSearch_APIs.search_result_relevance([paper, web], "q", [], "openai")
 
+    # Byte-identical eval INPUT for both kinds (prefix equality -- absence
+    # checks alone would miss any other drift in the input line).
     assert len(prompts) == 2
+    prefix = "Evaluate the relevance of the search result."
     for prompt in prompts:
-        assert "repository record" not in prompt
-        assert "metadata record" not in prompt
+        assert prompt.split("\n\n", 1)[0] == prefix
 
 
 @pytest.mark.asyncio
