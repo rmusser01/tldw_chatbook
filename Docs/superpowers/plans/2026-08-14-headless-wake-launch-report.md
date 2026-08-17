@@ -472,9 +472,39 @@ population runs were saturating the machine:
 
 Order dependence is therefore ruled out as well as timing flakiness.
 
-### 10.2 Final counts
+### 10.2 The whole Console population, one process each side
 
-*(filled in below from the completed runs)*
+Both sides ran **concurrently on the same machine**, so both carry the same
+contention; the comparison that matters is the failure SET, not the clock.
+
+| Run | Result |
+|---|---|
+| **Branch** — every `Tests/UI/test_console_*.py` (166 files) + `test_screen_residency` + probe | **22 failed, 3391 passed** (3657.8s, 1:00:57) |
+| **Baseline @ `ed49499b8`** (`.worktrees/headless-launch-base`, 165 files — it has no `test_console_launch_wake.py`) | **23 failed, 3381 passed** (3605.3s, 1:00:05) |
+
+**The headline: ZERO failures are unique to the branch.** `comm -23` over
+the sorted node-id lists is **empty** — the branch's 22 are a strict
+SUBSET of the baseline's 23. The one the baseline has extra,
+`test_console_background_effects::test_console_background_effect_enabled
+_renders_frame`, is an order-sensitive red that happened not to fire on
+the branch side.
+
+Net: **+10 passed, −1 failed.**
+
+**One honesty note about that first branch run, stated rather than glossed
+over.** It was launched before two tests were added to the new file, so it
+collected the **9-test** version of `test_console_launch_wake.py` (3413
+executed = the baseline's 3404 + 9), and all nine passed. Verified by
+`--collect-only` on both trees at the final state: branch **3415**, base
+**3404**, `comm` shows the difference is *exactly* the 11 node-ids of the
+new file and **nothing base-only** — so no existing test was lost, added
+or renamed by this branch. The branch population was then **re-run against
+the final tree** so all eleven are covered in one process; that run's
+counts are below.
+
+| Re-run | Result |
+|---|---|
+| **Branch, final tree** — same invocation, run alone | *(filled in below)* |
 
 ---
 
