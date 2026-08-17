@@ -543,12 +543,29 @@ to the conversation, and the `◈` mark stays set so you can see on return
 that something happened while you were away. Navigating back shows the
 completed turn already in the transcript.
 
-One honest limit remains. **Nothing wakes while the app is not running**
-— completions are recorded durably (mark + ledger) and claimed the next
-time the app starts and Console opens; a wake at launch, before Console
-has ever been opened in that session, is follow-up work (task-15860).
-A wake turn also spends model tokens with no window open — the `◈` mark
-is your signal that it did.
+**A wake you were owed is delivered at the next launch, without opening
+Console.** Nothing runs while the app is closed — a completion that
+lands then is recorded durably (the `◈` mark plus the ledger) and waits.
+At the next start, once the app is up and interactive, any conversation
+that still carries a `◈` mark *and* still owes a result has its
+supervisor woken there and then: the conversation is reopened in the
+background, the turn runs, and you find it already in the transcript
+with its `◈` still lit when you open Console. Nothing else is woken —
+never a conversation without a mark, and never one whose results were
+already delivered — and the whole thing is off when `[agents]
+autowake_enabled` is off (there is no separate launch switch). If you
+have never run a background sub-agent, launch does exactly what it did
+before: one indexed check that finds nothing.
+
+One case cannot be delivered and is cleaned up instead: sub-agent work
+started in a **temporary (unsaved) chat** belongs to a session that does
+not survive the app, so there is no conversation left to wake. Its `◈`
+mark is cleared at the next launch rather than left pointing at nothing.
+Save the chat before starting long background work you want to come back
+to.
+
+A wake turn spends model tokens with no window open — the `◈` mark is
+your signal that it did.
 
 **A headless wake that needs approval asks you, wherever you are.** When
 a woken turn reaches a tool that requires your approval, a toast names it
