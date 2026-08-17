@@ -27,7 +27,6 @@ from textual import events
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App
 from textual.pilot import _get_mouse_message_arguments
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -2059,6 +2058,119 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
         await pilot.pause()
         title = modal.query_one("#skill-trust-passphrase-title", Static)
         assert str(title.renderable) == "Approve Reviewed Skill Version"
+
+
+def _skill_trust_modal(kind: str):
+    from tldw_chatbook.UI.Screens.skills_screen import (
+        SkillTrustBootstrapModal,
+        SkillTrustPassphraseModal,
+    )
+
+    return (
+        SkillTrustPassphraseModal(confirm_bootstrap=False)
+        if kind == "passphrase"
+        else SkillTrustBootstrapModal()
+    )
+
+
+@pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_skill_trust_library_modal_contract_exact_negative_once(
+    kind: str,
+    source: str,
+) -> None:
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = _skill_trust_modal(kind)
+    selector = f"#skill-trust-{kind}-modal"
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        assert modal.query_one(selector)
+
+        if source == "visible":
+            await pilot.click(f"#skill-trust-{kind}-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert results == [None]
+
+
+@pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
+@pytest.mark.asyncio
+async def test_skill_trust_library_modal_contract_inside_and_non_primary_stay_open(
+    kind: str,
+) -> None:
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = _skill_trust_modal(kind)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        await pilot.click(f"#skill-trust-{kind}-message")
+        event = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=3,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+        await modal._dispatch_message(event)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert results == []
+
+
+@pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
+@pytest.mark.asyncio
+async def test_skill_trust_library_modal_contract_positive_is_str(kind: str) -> None:
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = _skill_trust_modal(kind)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        modal.query_one(f"#skill-trust-{kind}-input", Input).value = "secret"
+        if kind == "bootstrap":
+            modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = (
+                "secret"
+            )
+        await pilot.click(f"#skill-trust-{kind}-submit")
+        await pilot.pause()
+
+    assert results == ["secret"]
+    assert type(results[0]) is str
+
+
+@pytest.mark.parametrize("kind", ["passphrase", "bootstrap"])
+@pytest.mark.asyncio
+async def test_skill_trust_repeated_input_dismisses_once(kind: str) -> None:
+    app = ConsolidatedCSSApp()
+    results: list[str | None] = []
+    modal = _skill_trust_modal(kind)
+
+    async with app.run_test(size=(100, 36)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+
+    assert results == [None]
 
 
 @pytest.mark.asyncio

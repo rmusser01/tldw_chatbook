@@ -969,3 +969,29 @@ log events at the WIDGET level (menu received down/up, hit-test result,
 app-level `_mouse_down_widget`) and — when the chain completes but nothing
 happens — at the app's raw-event boundary. A fixed widget list cannot name a
 consumer you did not think to ask about; a screen-children dump can.
+
+---
+
+## A pytest probe outside the repo tree runs with NO conftest — no sandbox, no egress guard (TASK-16198, 2026-08-15)
+
+**Incident.** While tracing the knowledge_entry teardown egress, a scratch
+probe test was written to the session scratchpad (`/private/tmp/...`) and run
+with `pytest $SCRATCH/test_probe.py` from the worktree. pytest's conftest
+discovery walks the TEST FILE's ancestors, not the invoking directory's — so
+`Tests/conftest.py` never loaded: no `TLDW_CONFIG_PATH`/HOME sandbox, no
+network-guard install, no autouse isolation. The probe booted the full
+`TldwCli` against the LIVE `~/.config/tldw_cli/config.toml` and
+`~/.local/share/tldw_cli/default_user/` — opening the user's real databases
+and overwriting `model_catalog_cache.json` (two entries dropped). Only the
+app's own consent gate happened to prevent real network egress. The run
+LOOKED sandboxed: it printed `blocked_attempts=()` from an imported-but-never-
+installed guard module — a green that measured nothing.
+
+**What to do.** Scratch pytest probes that import the app go INSIDE the
+worktree's `Tests/` tree (delete after), never in /tmp or the scratchpad —
+placement is what activates the sandbox and the guard. If a probe must live
+outside, it does not get to import `tldw_chatbook` without first setting
+HOME/XDG_*/TLDW_CONFIG_PATH to a throwaway root by hand (and asserting the
+config path took). Treat an imported guard whose `install()` conftest never
+ran as adversarial: `blocked_attempts=()` from an uninstalled guard is not
+evidence of no egress.

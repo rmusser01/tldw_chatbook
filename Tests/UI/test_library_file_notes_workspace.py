@@ -2462,7 +2462,7 @@ async def test_conflict_reload_save_copy_and_leave_guards_preserve_draft(
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 @pytest.mark.parametrize("size", [(40, 20), (120, 40)])
-async def test_conflict_compare_preserves_draft_and_returns_focus(
+async def test_conflict_compare_preserves_draft_and_restores_opener_focus_once(
     tmp_path: Path,
     size: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
@@ -2481,17 +2481,26 @@ async def test_conflict_compare_preserves_draft_and_returns_focus(
     )
     ui_thread = threading.get_ident()
     comparison_threads: list[int] = []
+    compare_focus_calls = 0
     original_builder = workspace_module.build_conflict_comparison
+    original_focus = Button.focus
 
     def observed_builder(*args):
         comparison_threads.append(threading.get_ident())
         return original_builder(*args)
+
+    def count_compare_focus(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal compare_focus_calls
+        if self.id == "file-notes-compare":
+            compare_focus_calls += 1
+        return original_focus(self, *args, **kwargs)
 
     monkeypatch.setattr(
         workspace_module,
         "build_conflict_comparison",
         observed_builder,
     )
+    monkeypatch.setattr(Button, "focus", count_compare_focus)
 
     async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
@@ -2537,6 +2546,7 @@ async def test_conflict_compare_preserves_draft_and_returns_focus(
         assert editor.text == "draft line\nshared\n"
         assert source.read_text(encoding="utf-8") == "disk line\nshared\n"
 
+        compare_focus_calls = 0
         await pilot.press("escape")
         await _wait_until(
             pilot,
@@ -2548,6 +2558,7 @@ async def test_conflict_compare_preserves_draft_and_returns_focus(
             lambda: compare.has_focus,
             "focus did not return to Compare",
         )
+        assert compare_focus_calls == 1
         assert workspace.save_state == "conflict"
         assert editor.text == "draft line\nshared\n"
 

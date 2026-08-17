@@ -14,26 +14,90 @@ mounted Textual app), so these are plain, fast unit-level checks rather than
 a full pilot-driven screen.
 """
 
+import asyncio
+import threading
+from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 import pytest_asyncio
-from textual.app import App, ComposeResult
+from PIL import Image as PILImage
+from textual.app import ComposeResult
+from textual.widgets import Static
+
+import tldw_chatbook.UI.Console_Modules.session as session_module
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Static
-
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
-from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
-
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Character_Chat.visual_identity import (
+    VisualIdentityPublicationResult,
+    VisualIdentityResolution,
+)
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+from tldw_chatbook.UI.Console_Modules.session import (
+    CharacterSessionPromptSeed,
+    ConsoleSessionController,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
+from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
+    ConsoleReactionPickerModal,
+    ReactionOption,
+)
+
+
+def _avatar_png(color: tuple[int, int, int]) -> bytes:
+    output = BytesIO()
+    PILImage.new("RGB", (32, 32), color).save(output, format="PNG")
+    return output.getvalue()
+
+
+def _resolution(
+    character_id: int,
+    *,
+    requested: str,
+    manual: str | None,
+    source: str,
+    identity_suffix: str,
+    image: bytes | None,
+) -> VisualIdentityResolution:
+    return VisualIdentityResolution(
+        actor_kind="character",
+        actor_id=str(character_id),
+        requested_expression_key=requested,
+        manual_expression_key=manual,
+        resolved_expression_key=manual or requested,
+        pack_id=1,
+        pack_version_id=1,
+        asset_id=1,
+        expression_id=None,
+        storage_source="builtin",
+        storage_relpath=None,
+        content_type="image/png" if image else None,
+        is_animated=False,
+        resolution_source=source,
+        fallback_reason="none",
+        cache_identity=(
+            "visual-identity-v1",
+            "actor_kind=character",
+            f"actor_id={character_id}",
+            f"requested={requested}",
+            f"manual={manual or ''}",
+            f"source={source}",
+            identity_suffix,
+        ),
+        image_bytes=image,
+    )
 
 
 def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
@@ -43,6 +107,11 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     for the rationale (bypasses ``ChatScreen.__init__``).
     """
     screen = ChatScreen.__new__(ChatScreen)
+    screen._character = ConsoleCharacterController.__new__(ConsoleCharacterController)
+    screen._character._active_character_avatar = None
+    screen._character._active_character_avatar_name = None
+    screen._character._last_console_avatar_scope = None
+    screen._character._console_expression_spec_cache = {}
     screen._console_chat_store = store
     screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
     screen._session._chat_store_accessor = lambda: screen._console_chat_store
@@ -173,9 +242,7 @@ async def console_screen_with_character():
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
-        await _wait_for_selector(
-            screen, pilot, "#console-rail-section-header-details"
-        )
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield screen
 
 
@@ -204,9 +271,7 @@ async def console_screen_avatar_off():
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
-        await _wait_for_selector(
-            screen, pilot, "#console-rail-section-header-details"
-        )
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield screen
 
 
@@ -217,9 +282,7 @@ async def console_screen_generic():
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
-        await _wait_for_selector(
-            screen, pilot, "#console-rail-section-header-details"
-        )
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield screen
 
 
@@ -227,7 +290,9 @@ async def console_screen_generic():
 async def test_character_section_composes_when_config_on(
     console_screen_with_character,
 ):
-    screen = console_screen_with_character  # config default -> show_character_avatar True
+    screen = (
+        console_screen_with_character  # config default -> show_character_avatar True
+    )
     assert screen.query("#console-rail-section-body-character")  # section present
     assert screen.query("#console-character-name")
 
@@ -297,9 +362,7 @@ async def console_screen_with_db(avatar_db):
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
-        await _wait_for_selector(
-            screen, pilot, "#console-rail-section-header-details"
-        )
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield app, screen, avatar_db
 
 
@@ -314,9 +377,7 @@ async def console_screen_with_db_avatar_off(avatar_db):
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
-        await _wait_for_selector(
-            screen, pilot, "#console-rail-section-header-details"
-        )
+        await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
         yield app, screen, avatar_db
 
 
@@ -341,15 +402,19 @@ async def test_refresh_populates_avatar_cache_and_mounts(console_screen_with_db)
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar.get("character_id") == char_id
-    assert screen._active_character_avatar.get("pil") is not None or \
-           screen._active_character_avatar.get("pixels") is not None
+    assert (
+        screen._active_character_avatar.get("pil") is not None
+        or screen._active_character_avatar.get("pixels") is not None
+    )
 
     # FIX B: prove the widget actually landed in the DOM (not just the
     # cached spec dict) right after the refresh awaits the mount.
@@ -359,17 +424,20 @@ async def test_refresh_populates_avatar_cache_and_mounts(console_screen_with_db)
 
     # unchanged scope -> no re-fetch (spy the DB fetch)
     calls = []
-    orig = screen._fetch_character_card_for_avatar   # the off-thread fetch wrapper
-    screen._fetch_character_card_for_avatar = lambda cid: (calls.append(cid), orig(cid))[1]
-    await screen._refresh_active_character_avatar_if_scope_changed()
-    assert calls == []   # scope guard short-circuits before any fetch
+    orig = screen._fetch_character_card_for_avatar  # the off-thread fetch wrapper
+    screen._fetch_character_card_for_avatar = lambda cid: (
+        calls.append(cid),
+        orig(cid),
+    )[1]
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert calls == []  # scope guard short-circuits before any fetch
 
 
 @pytest.mark.asyncio
 async def test_refresh_clears_avatar_for_generic_session(console_screen_with_db):
     app, screen, db = console_screen_with_db
     _set_active_console_character(screen, None, None)
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is None
 
 
@@ -378,13 +446,17 @@ async def test_refresh_never_raises_on_bad_image(console_screen_with_db):
     app, screen, db = console_screen_with_db
     char_id = db.add_character_card({"name": "Bad", "image": b"not-an-image"})
     _set_active_console_character(screen, char_id, "Bad")
-    await screen._refresh_active_character_avatar_if_scope_changed()  # must not raise
+    await (
+        screen._character._refresh_active_character_avatar_if_scope_changed()
+    )  # must not raise
     # decode failed -> empty/text spec, name still set
     assert screen._active_character_avatar_name == "Bad"
 
 
 @pytest.mark.asyncio
-async def test_refresh_never_raises_when_mount_fails(console_screen_with_db, monkeypatch):
+async def test_refresh_never_raises_when_mount_fails(
+    console_screen_with_db, monkeypatch
+):
     """Whole-branch review, FIX 1: `_render_character_avatar_into_section`'s
     ``holder.mount(...)`` runs outside `_refresh_active_character_avatar_if_
     scope_changed`'s own try/except, at two call sites, and that refresh runs
@@ -396,7 +468,9 @@ async def test_refresh_never_raises_when_mount_fails(console_screen_with_db, mon
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
@@ -407,7 +481,9 @@ async def test_refresh_never_raises_when_mount_fails(console_screen_with_db, mon
 
     monkeypatch.setattr(holder, "mount", _boom)
 
-    await screen._refresh_active_character_avatar_if_scope_changed()  # must not raise
+    await (
+        screen._character._refresh_active_character_avatar_if_scope_changed()
+    )  # must not raise
 
 
 # --- P3c Task 4: wire the refresh into the Console sync tick -----------------
@@ -424,11 +500,15 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
-    await screen._sync_native_console_chat_ui()  # the real sync entrypoint, not the refresh directly
+    await (
+        screen._sync_native_console_chat_ui()
+    )  # the real sync entrypoint, not the refresh directly
 
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar_name == "Ada"
@@ -445,7 +525,7 @@ async def test_avatar_caption_projects_raw_character_name_to_one_line(
     char_id = db.add_character_card({"name": raw_name})
     _set_active_console_character(screen, char_id, raw_name)
 
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
 
     caption = screen.query_one("#console-character-name")
     assert str(caption.renderable) == "Nyx Admin?[/bold]"
@@ -457,7 +537,9 @@ async def test_avatar_caption_projects_raw_character_name_to_one_line(
 
 
 @pytest.mark.asyncio
-async def test_refresh_skips_db_fetch_when_config_off(console_screen_with_db_avatar_off):
+async def test_refresh_skips_db_fetch_when_config_off(
+    console_screen_with_db_avatar_off,
+):
     """Whole-branch review, FIX 2: per the spec's Error-handling section,
     `_refresh_active_character_avatar_if_scope_changed` must early-return
     when `resolve_show_character_avatar(...)` is False -- the rail section
@@ -467,22 +549,29 @@ async def test_refresh_skips_db_fetch_when_config_off(console_screen_with_db_ava
     app, screen, db = console_screen_with_db_avatar_off
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
     calls = []
     orig = screen._fetch_character_card_for_avatar
-    screen._fetch_character_card_for_avatar = lambda cid: (calls.append(cid), orig(cid))[1]
+    screen._fetch_character_card_for_avatar = lambda cid: (
+        calls.append(cid),
+        orig(cid),
+    )[1]
 
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
 
     assert calls == []  # config-off short-circuits before any DB fetch
     assert screen._active_character_avatar is None
 
 
 @pytest.mark.asyncio
-async def test_refresh_repopulates_after_config_toggle_off_then_on(console_screen_with_db):
+async def test_refresh_repopulates_after_config_toggle_off_then_on(
+    console_screen_with_db,
+):
     """Qodo #782-3 regression: the config-off branch clears the cache AND must
     invalidate the scope guard, otherwise re-enabling the feature without
     changing the active character hits the scope-equality early-return and the
@@ -491,23 +580,25 @@ async def test_refresh_repopulates_after_config_toggle_off_then_on(console_scree
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (10, 180, 60)).save(buf, format="PNG")
+
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (10, 180, 60)).save(buf, format="PNG")
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
     # (1) feature on (default): populates + records scope (char_id,)
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is not None
 
     # (2) toggle off: clears the cache AND invalidates the scope guard
     _set_chat_images_setting(app, "show_character_avatar", False)
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is None
     assert screen._last_console_avatar_scope is None  # guard invalidated
 
     # (3) toggle back on, SAME character: must repopulate (was stuck empty pre-fix)
     _set_chat_images_setting(app, "show_character_avatar", True)
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar.get("character_id") == char_id
 
@@ -521,49 +612,75 @@ async def test_refresh_repopulates_after_config_toggle_off_then_on(console_scree
 
 
 @pytest.mark.asyncio
-async def test_avatar_swaps_across_expression_states(console_screen_with_db, monkeypatch):
+async def test_avatar_swaps_across_expression_states(
+    console_screen_with_db, monkeypatch
+):
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
+
     def _png(color):
-        buf = BytesIO(); PILImage.new("RGB", (32, 32), color).save(buf, format="PNG"); return buf.getvalue()
+        buf = BytesIO()
+        PILImage.new("RGB", (32, 32), color).save(buf, format="PNG")
+        return buf.getvalue()
+
     char_id = db.add_character_card({"name": "Ada", "image": _png((10, 10, 10))})
     db.set_character_expression_image(char_id, "speaking", _png((0, 200, 0)))
     _set_active_console_character(screen, char_id, "Ada")
 
     # Drive the derived state directly (the pure resolver is unit-tested separately);
     # here we assert the refresh reacts to the state it computes.
-    import tldw_chatbook.UI.Screens.chat_screen as cs
+    import tldw_chatbook.UI.Console_Modules.character as cs
+
     state_box = {"v": "idle"}
-    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: state_box["v"])
+    monkeypatch.setattr(
+        cs, "resolve_console_expression_state", lambda *a, **k: state_box["v"]
+    )
 
     state_box["v"] = "idle"
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
     assert screen._active_character_avatar is not None
-    assert screen._last_console_avatar_scope == (char_id, "idle")
+    assert screen._last_console_avatar_scope[0][2] == str(char_id)
+    assert screen._last_console_avatar_scope[1:] == ("idle", None)
 
     state_box["v"] = "speaking"
-    await screen._refresh_active_character_avatar_if_scope_changed()
-    assert screen._last_console_avatar_scope == (char_id, "speaking")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert screen._last_console_avatar_scope[1:] == ("speaking", None)
 
     # Revisiting a state is served from the per-state cache (no re-decode).
-    assert (char_id, "speaking") in screen._console_expression_spec_cache
+    assert (
+        screen._active_character_avatar["resolution_cache_identity"]
+        in screen._console_expression_spec_cache
+    )
 
 
 @pytest.mark.asyncio
-async def test_expression_state_falls_back_to_idle_image(console_screen_with_db, monkeypatch):
+async def test_expression_state_falls_back_to_idle_image(
+    console_screen_with_db, monkeypatch
+):
     app, screen, db = console_screen_with_db
     from PIL import Image as PILImage
     from io import BytesIO
-    buf = BytesIO(); PILImage.new("RGB", (32, 32), (5, 5, 5)).save(buf, format="PNG")
-    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})   # idle image only
-    _set_active_console_character(screen, char_id, "Ada")
-    import tldw_chatbook.UI.Screens.chat_screen as cs
-    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: "thinking")
 
-    await screen._refresh_active_character_avatar_if_scope_changed()   # no thinking image -> idle image
-    assert screen._active_character_avatar is not None   # rendered the idle fallback, did not crash
-    assert screen._last_console_avatar_scope == (char_id, "thinking")
+    buf = BytesIO()
+    PILImage.new("RGB", (32, 32), (5, 5, 5)).save(buf, format="PNG")
+    char_id = db.add_character_card(
+        {"name": "Ada", "image": buf.getvalue()}
+    )  # idle image only
+    _set_active_console_character(screen, char_id, "Ada")
+    import tldw_chatbook.UI.Console_Modules.character as cs
+
+    monkeypatch.setattr(
+        cs, "resolve_console_expression_state", lambda *a, **k: "thinking"
+    )
+
+    await (
+        screen._character._refresh_active_character_avatar_if_scope_changed()
+    )  # no thinking image -> idle image
+    assert (
+        screen._active_character_avatar is not None
+    )  # rendered the idle fallback, did not crash
+    assert screen._last_console_avatar_scope[1:] == ("thinking", None)
 
 
 # --- P3d-1 Task 3 review fixes ------------------------------------------------
@@ -593,15 +710,18 @@ async def test_expression_spec_cache_is_bounded(console_screen_with_db, monkeypa
         for i in range(6)
     ]
 
-    import tldw_chatbook.UI.Screens.chat_screen as cs
+    import tldw_chatbook.UI.Console_Modules.character as cs
+
     state_box = {"v": "idle"}
-    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: state_box["v"])
+    monkeypatch.setattr(
+        cs, "resolve_console_expression_state", lambda *a, **k: state_box["v"]
+    )
 
     for char_id in char_ids:
         _set_active_console_character(screen, char_id, f"Char{char_id}")
         for state in ("idle", "thinking", "speaking"):
             state_box["v"] = state
-            await screen._refresh_active_character_avatar_if_scope_changed()
+            await screen._character._refresh_active_character_avatar_if_scope_changed()
 
     assert len(screen._console_expression_spec_cache) <= 16
 
@@ -614,7 +734,9 @@ async def test_expression_spec_cache_is_bounded(console_screen_with_db, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, monkeypatch):
+async def test_react_off_pins_idle_even_when_streaming(
+    console_screen_with_db, monkeypatch
+):
     """A genuinely "streaming" session (real assistant message, real
     ``store``, no ``resolve_console_expression_state`` monkeypatch -- unlike
     the P3d-1 Task 3 tests above) still resolves to "idle" once
@@ -627,8 +749,12 @@ async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, m
     from PIL import Image as PILImage
     from io import BytesIO
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
     def _png(c):
-        b = BytesIO(); PILImage.new("RGB", (16, 16), c).save(b, format="PNG"); return b.getvalue()
+        b = BytesIO()
+        PILImage.new("RGB", (16, 16), c).save(b, format="PNG")
+        return b.getvalue()
+
     char_id = db.add_character_card({"name": "Ada", "image": _png((1, 1, 1))})
     db.set_character_expression_image(char_id, "speaking", _png((0, 255, 0)))
     _set_active_console_character(screen, char_id, "Ada")
@@ -646,21 +772,613 @@ async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, m
     _set_chat_images_setting(app, "react_character_expressions", False)
     # Even though the raw status is "streaming", react-off must pin idle.
     # (resolve_console_expression_state honors react_enabled=False internally.)
-    await screen._refresh_active_character_avatar_if_scope_changed()
-    assert screen._last_console_avatar_scope == (char_id, "idle")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert screen._last_console_avatar_scope[1:] == ("idle", None)
 
 
 @pytest.mark.asyncio
-async def test_reactive_avatar_never_raises_on_corrupt_expression(console_screen_with_db, monkeypatch):
+async def test_reactive_avatar_never_raises_on_corrupt_expression(
+    console_screen_with_db, monkeypatch
+):
     app, screen, db = console_screen_with_db
     char_id = db.add_character_card({"name": "Bad"})
     db.set_character_expression_image(char_id, "speaking", b"not-an-image")
     _set_active_console_character(screen, char_id, "Ada")
-    import tldw_chatbook.UI.Screens.chat_screen as cs
-    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: "speaking")
+    import tldw_chatbook.UI.Console_Modules.character as cs
+
+    monkeypatch.setattr(
+        cs, "resolve_console_expression_state", lambda *a, **k: "speaking"
+    )
     # Must not raise into the sync tick even though the image is corrupt.
-    await screen._refresh_active_character_avatar_if_scope_changed()
-    assert screen._last_console_avatar_scope == (char_id, "speaking")
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    assert screen._last_console_avatar_scope[1:] == ("speaking", None)
+
+
+@pytest.mark.parametrize(
+    ("second_source", "second_identity_suffix"),
+    (
+        ("pack_operational", "pack_version_id=2|asset_id=9|sha256=bbb"),
+        ("card_avatar", "pack_version_id=1|asset_id=1|sha256=aaa"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_visual_identity_cache_uses_the_complete_resolution_identity(
+    console_screen_with_db,
+    monkeypatch,
+    second_source,
+    second_identity_suffix,
+):
+    """Version/asset/digest or source-only changes miss after invalidation."""
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    identity = {"value": "pack_version_id=1|asset_id=1|sha256=aaa"}
+    source = {"value": "pack_operational"}
+    calls: list[str] = []
+
+    def resolve(_scope, requested_state, manual_key):
+        calls.append(identity["value"])
+        return _resolution(
+            character_id,
+            requested="thinking",
+            manual=manual_key,
+            source=source["value"],
+            identity_suffix=identity["value"],
+            image=_avatar_png((10, len(calls), 20)),
+        )
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.character.resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    first_identity = screen._active_character_avatar["resolution_cache_identity"]
+    assert first_identity in screen._console_expression_spec_cache
+    assert (character_id, "thinking") not in screen._console_expression_spec_cache
+
+    source["value"] = second_source
+    identity["value"] = second_identity_suffix
+    await screen._session.invalidate_visual_identity_actor("character", character_id)
+    second_identity = screen._active_character_avatar["resolution_cache_identity"]
+
+    assert second_identity != first_identity
+    assert first_identity not in screen._console_expression_spec_cache
+    assert second_identity in screen._console_expression_spec_cache
+    assert len(calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_personas_publication_targets_mounted_console_cache_before_return(
+    console_screen_with_db, monkeypatch
+):
+    _app, console, _db = console_screen_with_db
+    invalidate = AsyncMock()
+    monkeypatch.setattr(console._session, "invalidate_visual_identity_actor", invalidate)
+    owner = SimpleNamespace(app=SimpleNamespace(screen_stack=(console,)))
+    result = VisualIdentityPublicationResult(
+        actor_kind="character",
+        actor_id="42",
+        old_pack_id=1,
+        old_version_id=1,
+        new_pack_id=2,
+        new_version_id=2,
+        version_directory=Path("unused"),
+    )
+
+    await PersonasScreen._invalidate_visual_identity_publication(owner, result)
+
+    invalidate.assert_awaited_once_with("character", "42")
+
+
+@pytest.mark.parametrize(
+    "context_change", ("actor", "session", "manual", "state", "config", "store")
+)
+@pytest.mark.asyncio
+async def test_decode_completion_live_fences_every_avatar_request_input(
+    console_screen_with_db, monkeypatch, context_change
+):
+    """B completes before blocked A; no stale request may paint afterward."""
+
+    app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    controller = screen._console_chat_controller
+    original_store = controller.store
+    state = {"value": "thinking"}
+
+    def expression_state(store, _session_id, *, react_enabled):
+        if not react_enabled:
+            return "idle"
+        if store is not original_store:
+            return "speaking"
+        return state["value"]
+
+    def resolve(scope, requested_state, manual_key):
+        actor_id = int(scope[2])
+        return _resolution(
+            actor_id,
+            requested=requested_state,
+            manual=manual_key,
+            source="pack_manual" if manual_key else "pack_operational",
+            identity_suffix=f"sha256={scope[0]}:{requested_state}:{manual_key or '-'}",
+            image=_avatar_png((actor_id % 255, 20, 30)),
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.character.resolve_console_expression_state",
+        expression_state,
+    )
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    _view, cache = screen._ensure_console_image_view()
+    original_prepare = cache.prepare
+    started = threading.Event()
+    release = threading.Event()
+    first = {"blocked": False}
+
+    def prepare(cache_key, image_bytes):
+        if not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            assert release.wait(timeout=5)
+        return original_prepare(cache_key, image_bytes)
+
+    monkeypatch.setattr(cache, "prepare", prepare)
+    painted: list[tuple[str, ...] | None] = []
+    original_build = screen._build_character_avatar_widget
+
+    def build(spec):
+        painted.append(
+            tuple(spec["resolution_cache_identity"]) if spec is not None else None
+        )
+        return original_build(spec)
+
+    monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
+
+    stale = asyncio.create_task(
+        screen._character._refresh_active_character_avatar_if_scope_changed(force=True)
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+    if context_change == "actor":
+        replacement_id = db.add_character_card(
+            {"name": "Mira", "image": _avatar_png((2, 2, 2))}
+        )
+        _set_active_console_character(screen, replacement_id, "Mira")
+    elif context_change == "session":
+        original_store.create_session(
+            session_id="replacement-session",
+            character_id=character_id,
+            character_name="Samira",
+            assistant_kind="character",
+            assistant_id=str(character_id),
+        )
+    elif context_change == "manual":
+        screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    elif context_change == "state":
+        state["value"] = "speaking"
+    elif context_change == "config":
+        _set_chat_images_setting(app, "react_character_expressions", False)
+    else:
+        replacement_store = type(
+            "ReplacementStore",
+            (),
+            {"active_session_id": original_store.active_session_id},
+        )()
+        controller.store = replacement_store
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    current_identity = tuple(
+        screen._active_character_avatar["resolution_cache_identity"]
+    )
+    current_paint = len(painted)
+    release.set()
+    await stale
+    controller.store = original_store
+
+    assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
+        current_identity
+    )
+    assert painted[current_paint:] == []
+
+
+@pytest.mark.parametrize("blocked_await", ("remove", "mount"))
+@pytest.mark.asyncio
+async def test_render_awaits_never_resume_a_stale_avatar_paint(
+    console_screen_with_db, monkeypatch, blocked_await
+):
+    """Once B paints, A may not mount or update labels after either await."""
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+
+    def resolve(_scope, requested_state, manual_key):
+        return _resolution(
+            character_id,
+            requested=requested_state,
+            manual=manual_key,
+            source="pack_manual" if manual_key else "pack_operational",
+            identity_suffix=f"sha256={manual_key or 'automatic'}",
+            image=_avatar_png((20 if manual_key else 10, 30, 40)),
+        )
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.character.resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+    holder = screen.query_one("#console-character-avatar")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    first = {"blocked": False}
+    original_remove = holder.remove_children
+    original_mount = holder.mount
+
+    async def remove_children():
+        await original_remove()
+        if blocked_await == "remove" and not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            await release.wait()
+
+    async def mount(*widgets, **kwargs):
+        await original_mount(*widgets, **kwargs)
+        if blocked_await == "mount" and not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            await release.wait()
+
+    monkeypatch.setattr(holder, "remove_children", remove_children)
+    monkeypatch.setattr(holder, "mount", mount)
+    builds: list[tuple[str, ...] | None] = []
+    original_build = screen._build_character_avatar_widget
+
+    def build(spec):
+        builds.append(
+            tuple(spec["resolution_cache_identity"]) if spec is not None else None
+        )
+        return original_build(spec)
+
+    monkeypatch.setattr(screen, "_build_character_avatar_widget", build)
+    name = screen.query_one("#console-character-name", Static)
+    reaction = screen.query_one("#console-character-reaction-state", Static)
+    original_name_update = name.update
+    original_reaction_update = reaction.update
+    updates: list[str] = []
+
+    def update_name(value):
+        updates.append("name")
+        return original_name_update(value)
+
+    def update_reaction(value):
+        updates.append("reaction")
+        return original_reaction_update(value)
+
+    monkeypatch.setattr(name, "update", update_name)
+    monkeypatch.setattr(reaction, "update", update_reaction)
+
+    stale = asyncio.create_task(
+        screen._character._refresh_active_character_avatar_if_scope_changed(force=True)
+    )
+    await asyncio.wait_for(started.wait(), timeout=5)
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    await screen._character._refresh_active_character_avatar_if_scope_changed(
+        force=True
+    )
+    current_identity = tuple(
+        screen._active_character_avatar["resolution_cache_identity"]
+    )
+    builds_after_current = len(builds)
+    updates_after_current = len(updates)
+    release.set()
+    await stale
+
+    assert tuple(screen._active_character_avatar["resolution_cache_identity"]) == (
+        current_identity
+    )
+    assert builds[builds_after_current:] == []
+    assert updates[updates_after_current:] == []
+
+
+def test_visual_identity_expected_errors_fail_soft(monkeypatch):
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = object
+    scope = ("session-a", "character", "7")
+
+    def expected_error(*_args, **_kwargs):
+        raise ValueError("invalid visual identity metadata")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.resolve_visual_identity",
+        expected_error,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.VisualIdentityRepository.get_active_actor_pack",
+        expected_error,
+    )
+
+    assert controller._resolve_visual_identity(scope, "idle", None) is None
+    assert controller._visual_identity_options(scope) == ()
+
+
+def test_visual_identity_unexpected_programming_errors_propagate(monkeypatch):
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = object
+    scope = ("session-a", "character", "7")
+
+    def programming_error(*_args, **_kwargs):
+        raise RuntimeError("programming defect")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.resolve_visual_identity",
+        programming_error,
+    )
+    with pytest.raises(RuntimeError, match="programming defect"):
+        controller._resolve_visual_identity(scope, "idle", None)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.session.VisualIdentityRepository.get_active_actor_pack",
+        programming_error,
+    )
+    with pytest.raises(RuntimeError, match="programming defect"):
+        controller._visual_identity_options(scope)
+
+
+@pytest.mark.asyncio
+async def test_late_avatar_load_never_overwrites_a_new_manual_reaction(
+    console_screen_with_db, monkeypatch
+):
+    """Load A, publish B, finish B then A: A must never be applied."""
+
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((1, 1, 1))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+    started = threading.Event()
+    release = threading.Event()
+    first = {"blocked": False}
+
+    def resolve(_scope, requested_state, manual_key):
+        if manual_key is None and not first["blocked"]:
+            first["blocked"] = True
+            started.set()
+            assert release.wait(timeout=5)
+        return _resolution(
+            character_id,
+            requested="thinking",
+            manual=manual_key,
+            source="pack_manual" if manual_key else "pack_operational",
+            identity_suffix=f"sha256={manual_key or 'automatic'}",
+            image=_avatar_png((200, 20 if manual_key else 10, 10)),
+        )
+
+    monkeypatch.setattr(screen._session, "_resolve_visual_identity", resolve)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.character.resolve_console_expression_state",
+        lambda *_args, **_kwargs: "thinking",
+    )
+
+    stale = asyncio.create_task(
+        screen._character._refresh_active_character_avatar_if_scope_changed()
+    )
+    assert await asyncio.to_thread(started.wait, 5)
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    screen._last_console_avatar_scope = None
+    current = asyncio.create_task(
+        screen._character._refresh_active_character_avatar_if_scope_changed()
+    )
+    await current
+    release.set()
+    await stale
+
+    assert screen._active_character_avatar["manual_expression_key"] == "custom:relief"
+    assert (
+        "manual=custom:relief"
+        in screen._active_character_avatar["resolution_cache_identity"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_reaction_picker_selects_and_clears_session_override(
+    console_screen_with_db, monkeypatch
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((20, 20, 20))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    option = ReactionOption("custom:relief", "Relief", "image/webp", False)
+    monkeypatch.setattr(
+        session_module,
+        "_visual_identity_options_for_db",
+        lambda _db, _scope: (option,),
+    )
+    await screen.recompose()
+
+    screen.query_one("#console-character-reaction-open").press()
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if isinstance(screen.app.screen, ConsoleReactionPickerModal):
+            break
+    assert isinstance(screen.app.screen, ConsoleReactionPickerModal)
+    first_modal = screen.app.screen
+    screen.app.screen.query_one("#console-reaction-picker-select").press()
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if screen.app.screen is screen:
+            break
+
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if screen._session._manual_reaction_key(actor_scope) == "custom:relief":
+            break
+    assert screen._session._manual_reaction_key(actor_scope) == "custom:relief"
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if "Relief (manual)" in str(
+            screen.query_one("#console-character-reaction-state").renderable
+        ):
+            break
+    assert "Relief (manual)" in str(
+        screen.query_one("#console-character-reaction-state").renderable
+    )
+
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if screen.app.screen is screen:
+            break
+    assert screen.app.screen is screen
+    screen.query_one("#console-character-reaction-open").press()
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if (
+            isinstance(screen.app.screen, ConsoleReactionPickerModal)
+            and screen.app.screen is not first_modal
+            and screen.app.screen.is_mounted
+        ):
+            break
+    modal = screen.app.screen
+    assert isinstance(modal, ConsoleReactionPickerModal)
+    modal.query_one("#console-reaction-picker-clear").press()
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if screen.app.screen is screen:
+            break
+
+    assert screen._session._manual_reaction_key(actor_scope) is None
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if "Automatic" in str(
+            screen.query_one("#console-character-reaction-state").renderable
+        ):
+            break
+    assert "Automatic" in str(
+        screen.query_one("#console-character-reaction-state").renderable
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_reaction_selection_preserves_prior_override_and_reports_error(
+    console_screen_with_db, monkeypatch
+):
+    app, screen, db = console_screen_with_db
+    character_id = db.add_character_card(
+        {"name": "Samira", "image": _avatar_png((20, 20, 20))}
+    )
+    _set_active_console_character(screen, character_id, "Samira")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    assert actor_scope is not None
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    monkeypatch.setattr(
+        session_module,
+        "_visual_identity_options_for_db",
+        lambda _db, _scope: (
+            ReactionOption("neutral", "Neutral", "image/webp", False),
+        ),
+    )
+    notifications: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, severity=None, **_kwargs: notifications.append(
+            (message, severity)
+        ),
+    )
+
+    await screen._session._select_console_reaction(
+        ReactionOption("custom:alarm", "Alarm", "image/webp", False)
+    )
+
+    assert screen._session._manual_reaction_key(actor_scope) == "custom:relief"
+    assert notifications == [("That reaction is no longer available.", "error")]
+
+
+@pytest.mark.asyncio
+async def test_successful_session_close_clears_only_that_sessions_reactions(
+    console_screen_with_db,
+):
+    _app, screen, _db = console_screen_with_db
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Samira")
+    scope = (session.id, "character", "7")
+    survivor = ("other-session", "character", "7")
+    screen._session._set_manual_reaction(scope, "custom:relief")
+    screen._session._set_manual_reaction(survivor, "custom:alarm")
+
+    await screen._session._close_console_session_tab(session.id)
+
+    assert screen._session._manual_reaction_key(scope) is None
+    assert screen._session._manual_reaction_key(survivor) == "custom:alarm"
+
+
+@pytest.mark.asyncio
+async def test_failed_session_close_preserves_reaction_override(
+    console_screen_with_db, monkeypatch
+):
+    _app, screen, _db = console_screen_with_db
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Samira")
+    scope = (session.id, "character", "7")
+    screen._session._set_manual_reaction(scope, "custom:relief")
+    controller = screen._ensure_console_chat_controller()
+    monkeypatch.setattr(
+        controller,
+        "close_session",
+        lambda _session_id: (_ for _ in ()).throw(RuntimeError("close failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await screen._session._close_console_session_tab(session.id)
+
+    assert screen._session._manual_reaction_key(scope) == "custom:relief"
+
+
+@pytest.mark.asyncio
+async def test_successful_actor_replacement_clears_old_actor_override(
+    console_screen_with_db, monkeypatch
+):
+    _app, screen, _db = console_screen_with_db
+    store = screen._ensure_console_chat_store()
+    session = store.ensure_session(title="Old")
+    object.__setattr__(session, "runtime_backend", "local")
+    object.__setattr__(session, "assistant_kind", "character")
+    object.__setattr__(session, "assistant_id", "7")
+    object.__setattr__(session, "character_id", 7)
+    old_scope = (session.id, "character", "7")
+    screen._session._set_manual_reaction(old_scope, "custom:relief")
+    monkeypatch.setattr(
+        store,
+        "swap_session_character_roleplay",
+        lambda *_args, **_kwargs: (session, None, True),
+    )
+
+    assert screen._session._swap_console_session_character(
+        store,
+        8,
+        CharacterSessionPromptSeed("New", "", "", "", ""),
+        global_default="User",
+    )
+
+    assert screen._session._manual_reaction_key(old_scope) is None
 
 
 # ---- task-1661: rail-derived avatar box + hugging holder ----
@@ -731,7 +1449,6 @@ async def test_avatar_holder_hugs_its_content():
     assert 'avatar_holder.styles.height = "auto"' in holder
 
 
-
 @pytest.mark.asyncio
 async def test_available_cols_measures_the_section_not_the_holder(
     console_screen_with_db,
@@ -751,7 +1468,7 @@ async def test_available_cols_measures_the_section_not_the_holder(
     PILImage.new("RGB", (400, 500), (200, 10, 10)).save(buf, format="PNG")
     cid = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, cid, "Ada")
-    await screen._refresh_active_character_avatar_if_scope_changed()
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
 
     body = screen.query_one("#console-rail-section-body-character")
     holder = screen.query_one("#console-character-avatar")
@@ -762,7 +1479,6 @@ async def test_available_cols_measures_the_section_not_the_holder(
         "holder should hug its content, so this test proves the two differ"
     )
     assert measured != holder.content_size.width
-
 
 
 @pytest.mark.unit
@@ -792,6 +1508,7 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
     assert character_avatar_box(48)[0] > 16, "an open rail should size larger"
 
     screen = ChatScreen.__new__(ChatScreen)
+    screen._character = ConsoleCharacterController.__new__(ConsoleCharacterController)
     screen._last_console_avatar_scope = (7, "idle")
     applied: list[tuple[str, bool]] = []
     screen._set_console_rail_preference = lambda **kw: applied.append(("pref", True))
@@ -830,7 +1547,6 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
     )
 
 
-
 # --- task-3793: explicit sizing regression pins -----------------------------
 #
 # The rail's avatar holder is width/height auto (task-1661); a default-width
@@ -858,9 +1574,7 @@ class _AvatarHolderApp(ConsolidatedCSSApp):
             # Built HERE, inside the active app context: the pixels fallback
             # reads `self.app.no_color` for its monochrome guard, which needs
             # a running app (a bare unit call degrades to the placeholder).
-            yield self._avatar_screen._build_character_avatar_widget(
-                self._avatar_spec
-            )
+            yield self._avatar_screen._build_character_avatar_widget(self._avatar_spec)
 
 
 @pytest.mark.asyncio

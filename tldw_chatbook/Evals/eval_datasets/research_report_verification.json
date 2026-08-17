@@ -1,0 +1,43 @@
+[
+  {
+    "id": "synthetic-clean-run",
+    "input": "What is retrieval augmented generation?",
+    "verification": {
+      "markers_total": 10, "markers_resolved": 10,
+      "quotes_checked": 2, "quotes_verified": 2,
+      "uncited_sentences": 2,
+      "claims": [
+        {"claim_id": "claim-1", "text": "Fully cited claim[1].", "status": "supported"},
+        {"claim_id": "claim-2", "text": "Quoted and verified claim[2].", "status": "supported"}
+      ],
+      "gate": {"relevant": 5, "raw": 5, "fallback": false}
+    }
+  },
+  {
+    "id": "synthetic-degraded-run",
+    "input": "What are mixture of experts language models?",
+    "verification": {
+      "markers_total": 8, "markers_resolved": 6,
+      "quotes_checked": 1, "quotes_verified": 0,
+      "uncited_sentences": 4,
+      "claims": [
+        {"claim_id": "claim-1", "text": "Supported claim[1].", "status": "supported"},
+        {"claim_id": "claim-2", "text": "Unsupported claim[9?].", "status": "unverified"}
+      ],
+      "gate": {"relevant": 4, "raw": 5, "fallback": false}
+    }
+  },
+  {
+    "id": "synthetic-gate-fallback-run",
+    "input": "How do graph neural networks work?",
+    "verification": {
+      "markers_total": 6, "markers_resolved": 6,
+      "quotes_checked": 0, "quotes_verified": 0,
+      "uncited_sentences": 3,
+      "claims": [
+        {"claim_id": "claim-1", "text": "Fallback evidence claim[1].", "status": "supported"}
+      ],
+      "gate": {"relevant": 3, "raw": 5, "fallback": true}
+    }
+  }
+]

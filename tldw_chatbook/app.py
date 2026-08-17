@@ -182,7 +182,7 @@ from tldw_chatbook.Chat.console_live_work import (
 from tldw_chatbook.Chat.console_image_edit_operations import (
     ImageEditOperationRegistry,
 )
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, dispose_console_runtime
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
@@ -436,6 +436,7 @@ from tldw_chatbook.config import (
     get_chachanotes_db_path,
     settings,
     get_chachanotes_db_lazy,
+    seed_builtin_content,
 )
 from .UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
 from .UI.Navigation.audio_cpp_model_handoff import AudioCppModelInstallOwner
@@ -5148,6 +5149,12 @@ def setup_owns_startup_networking(
     )
 
 
+def _select_profile_database(notes_service: object | None) -> Any:
+    """Return the seeded injected profile DB, or the seeded lazy global DB."""
+    injected = getattr(notes_service, "db", None)
+    return seed_builtin_content(injected) if injected else get_chachanotes_db_lazy()
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -5410,15 +5417,16 @@ class TldwCli(
         self.app_config = load_settings()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
-        # task-15860 (headless wake, Task 1): the Console runtime -- chat
-        # store, provider gateway, agent bridge, chat controller -- is
-        # constructed by the APP, not by `ChatScreen`. Screens are never
-        # cached (`_create_navigation_screen`), so anything that must
-        # eventually outlive a navigation cannot be built on one. Task 1 is
-        # a PURE ownership move: `ChatScreen.on_unmount` still disposes this
-        # (`dispose_console_runtime`), so a second Console visit still gets
-        # a brand-new store/gateway/bridge/controller, exactly as before.
+        # task-15860 (headless wake): the Console runtime -- chat store,
+        # provider gateway, agent bridge, chat controller -- is constructed
+        # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
+        # screen. Screens are never cached (`_create_navigation_screen`), so
+        # anything that must survive a navigation cannot be built on one.
+        # `ChatScreen.on_unmount` now ends one VISIT
+        # (`leave_console_runtime`); the runtime itself is destroyed once,
+        # here, at exit (`_shutdown_console_runtime`).
         self.console_runtime: ConsoleRuntime | None = ConsoleRuntime(self)
+        self._console_runtime_shutdown_task: asyncio.Task[None] | None = None
         self.generated_video_store = _build_generated_video_store()
         # TASK-13157: snapshot any TOML parse failure `load_settings()` just
         # hit -- captured here (mirroring `_instance_lock_status` below, the
@@ -5678,17 +5686,11 @@ class TldwCli(
             client_provider=self.server_context_provider,
         )
 
-        if (
-            self.notes_service
-            and hasattr(self.notes_service, "db")
-            and self.notes_service.db
-        ):
-            self.chachanotes_db = (
-                self.notes_service.db
-            )  # ChaChaNotesDB is used by NotesInteropService
+        if getattr(self.notes_service, "db", None):
+            self.chachanotes_db = _select_profile_database(self.notes_service)
             logging.info("Assigned self.notes_service.db to self.chachanotes_db")
         else:  # Fallback to global if notes_service didn't set it up as expected on itself
-            lazy_db = get_chachanotes_db_lazy()
+            lazy_db = _select_profile_database(self.notes_service)
             if lazy_db:
                 self.chachanotes_db = lazy_db
                 logging.info(
@@ -6992,53 +6994,12 @@ class TldwCli(
             server_service=self.server_outputs_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.local_research_service = LocalResearchService(
-                get_research_db_path(),
-                notification_dispatcher=self.notification_dispatch_service,
-                notification_app=self,
-            )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Local research service unavailable during app wiring"
-            )
-            self.local_research_service = None
-        try:
-            self.server_research_service = ServerResearchService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_research_service = ServerResearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_scope_service = ResearchScopeService(
-            local_service=self.local_research_service,
-            server_service=self.server_research_service,
-            policy_enforcer=self.service_policy_enforcer,
-            sync_scope_service=getattr(self, "sync_scope_service", None),
-        )
-        self.local_research_search_service = LocalResearchSearchService(
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        try:
-            self.server_research_search_service = (
-                ServerResearchSearchService.from_config(
-                    self.app_config,
-                    policy_enforcer=self.service_policy_enforcer,
-                )
-            )
-        except ValueError:
-            self.server_research_search_service = ServerResearchSearchService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.research_search_scope_service = ResearchSearchScopeService(
-            local_service=self.local_research_search_service,
-            server_service=self.server_research_search_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # Research services: ONE wiring path, not two. This used to duplicate
+        # `_wire_research_services` verbatim here (task-16332); the method's
+        # own already-wired guard makes calling it from this earlier-in-
+        # `__init__` bootstrap equivalent to the old embedded copy, and the
+        # later direct `_wire_research_services()` call then early-returns.
+        self._wire_research_services()
         self.local_chat_grammars_service = LocalChatGrammarsService(
             store_path=get_user_data_dir() / "tldw_chatbook_chat_grammars.json",
             policy_enforcer=self.service_policy_enforcer,
@@ -8169,6 +8130,18 @@ class TldwCli(
         UI freeze (root-caused 2026-07-11). UX continuity across visits is
         owned by ``ScreenStateStore`` through each screen's
         ``save_state``/``restore_state`` boundary, not instance reuse.
+
+        One documented exception, since task-15860: Console's message
+        history is NOT in that snapshot. It lives in the app-owned
+        ``ConsoleRuntime``'s ``ConsoleChatStore``, which outlives every
+        ``ChatScreen``; Console's snapshot carries only view state (image
+        view modes, the task-resume projection, the staged live-work
+        launch). Two sources of truth is what that snapshot had become --
+        a turn that ran while Console was unmounted persisted to
+        ChaChaNotes and was then overwritten, unseen, by a snapshot taken
+        before it (executed: ``Docs/superpowers/plans/2026-08-14-headless-
+        wake-task-0-report.md``, P3b). Screens still die on navigation;
+        only the runtime survives.
         """
         return screen_class(self)
 
@@ -8756,6 +8729,12 @@ class TldwCli(
                 if outgoing_screen_class is not None:
                     outgoing_key = resolved_outgoing_key
 
+        # A Console snapshot that fails to be replaced below must not survive
+        # with its published prompt-target projection attached (the stale
+        # target `publish_console_prompt_target` would otherwise be read back
+        # against). Since task-15860 this discards VIEW state only: Console's
+        # sessions and transcripts live in the app-owned `ConsoleRuntime`
+        # store, which no snapshot lifecycle can drop.
         if outgoing_key == TAB_CHAT:
             self.screen_state_store.discard(outgoing_key)
 
@@ -9950,6 +9929,11 @@ class TldwCli(
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
         # Start the background scheduler loop for reminders and scheduled tasks.
+        # A COROUTINE worker, never thread=True: scheduled watchlist checks
+        # dispatch from this loop, and the watchlists in-flight guard
+        # (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is lock-free on
+        # the invariant that every check entrant runs on the app's one event
+        # loop. Moving dispatch off-loop needs a lock there.
         self.scheduler_worker = self.run_worker(
             self.scheduler_loop.run(),
             exclusive=True,
@@ -10028,6 +10012,12 @@ class TldwCli(
             catalog_settings = load_model_catalog_settings(load_settings())
             if not catalog_settings.auto_refresh_enabled:
                 return
+            if not catalog_settings.refresh_consent_recorded:
+                # ADR-020 amendment: the startup check is confirm-first.
+                # Scheduling-side consent gate normally intercepts this
+                # before the worker spawns; keep the check here so the
+                # refresh never runs unconsented by any other path.
+                return
             report = await self.local_llm_provider_catalog_service.refresh_stale_configured_providers(
                 catalog_settings=catalog_settings,
                 disk_store=self.model_catalog_disk_store,
@@ -10066,7 +10056,12 @@ class TldwCli(
         after_setup_completion: bool = False,
         environ: Mapping[str, str] | None = None,
     ) -> bool:
-        """Schedule the automatic catalog pass once when setup releases it."""
+        """Schedule the automatic catalog pass once when setup releases it.
+
+        ADR-020 amendment (confirm-first): when the user has never answered
+        the consent question, a modal is shown instead of the refresh; the
+        refresh itself is only scheduled from the consent callback.
+        """
         if getattr(self, "_startup_model_catalog_refresh_scheduled", False):
             return False
         if not after_setup_completion and setup_owns_startup_networking(
@@ -10075,6 +10070,26 @@ class TldwCli(
         ):
             return False
 
+        try:
+            from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
+                load_model_catalog_settings,
+            )
+
+            catalog_settings = load_model_catalog_settings(load_settings())
+        except Exception as exc:
+            logger.error(
+                "Failed to load model catalog settings for startup refresh "
+                f"scheduling (after_setup_completion={after_setup_completion}): "
+                f"{type(exc).__name__}"
+            )
+            return False
+        if catalog_settings.auto_refresh_enabled and (
+            not catalog_settings.refresh_consent_recorded
+        ):
+            self._startup_model_catalog_refresh_scheduled = True
+            self.call_after_refresh(self._push_model_catalog_consent_modal)
+            return True
+
         self._startup_model_catalog_refresh_scheduled = True
         self.run_worker(
             self._refresh_model_catalogs,
@@ -10082,6 +10097,68 @@ class TldwCli(
             group="model-catalog-refresh",
         )
         return True
+
+    def _push_model_catalog_consent_modal(self) -> None:
+        """Show the one-time consent dialog for online model-list checks."""
+        if self.is_headless:
+            # Headless/embedded runs have no user to answer a modal; stay
+            # unconsented (no refresh) rather than blocking startup behind
+            # an unanswerable dialog.
+            return
+        try:
+            from tldw_chatbook.UI.Screens.model_catalog_consent import (
+                ModelCatalogConsentModal,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to import the model catalog consent modal "
+                f"(screen=model_catalog_consent): {type(exc).__name__}"
+            )
+            return
+        self.push_screen(ModelCatalogConsentModal(), self._handle_model_catalog_consent)
+
+    async def _handle_model_catalog_consent(self, allowed: bool | None) -> None:
+        """Persist the consent answer; on allow, run the startup refresh."""
+        # Only the boolean singleton True counts as consent — truthy garbage
+        # (e.g. a non-bool reaching this callback) falls through to the deny
+        # path, mirroring the settings parser's strict validator.
+        allowed = allowed is True
+        try:
+            from tldw_chatbook.config import save_settings_to_cli_config
+
+            section = {"refresh_consent_recorded": True}
+            if not allowed:
+                section["auto_refresh_enabled"] = False
+            saved = await asyncio.to_thread(
+                save_settings_to_cli_config, {"model_catalog": section}
+            )
+        except Exception as exc:
+            # No traceback: the log file sink runs with diagnose=True, which
+            # would dump frame locals (including the app's config) into the log.
+            logger.error(
+                "Failed to persist model catalog consent "
+                f"(allowed={allowed!r}, section=model_catalog): "
+                f"{type(exc).__name__}"
+            )
+            saved = False
+        if allowed:
+            if not saved:
+                self.notify(
+                    "Your choice couldn't be saved; you'll be asked again next launch.",
+                    title="Model catalog",
+                    severity="warning",
+                )
+            self.run_worker(
+                self._refresh_model_catalogs,
+                exclusive=True,
+                group="model-catalog-refresh",
+            )
+        else:
+            self.notify(
+                "Online model-list checks stay off. You can enable them any "
+                "time in Settings.",
+                title="Model catalog",
+            )
 
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
@@ -10744,6 +10821,45 @@ class TldwCli(
                 self._migrate_legacy_citations_idle_unit(),
                 name="deferred_legacy_citation_migration",
             )
+        self._schedule_launch_wake()
+
+    def _schedule_launch_wake(self) -> None:
+        """Deliver a supervisor wake this install already owed at launch.
+
+        task-15860 Task 6. A background sub-agent that finished while the
+        app was closed -- or one whose delivery the user quit out from
+        under -- used to wait for the next Console visit. It no longer
+        does, under the owner's mark-gated ruling: only a conversation
+        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
+        ``agent_runs`` row is delivered, behind the existing ``[agents]
+        autowake_enabled`` (there is no separate launch switch).
+
+        **The common path costs one indexed read and constructs nothing.**
+        With no marks -- every install that has never run a background
+        sub-agent, and every one whose results have all been seen -- this
+        returns before touching the Console store, provider gateway, agent
+        bridge (so ``agent_runs.db`` is not even opened) or controller.
+        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        """
+        try:
+            from tldw_chatbook.Chat.console_launch_wake import (
+                LAUNCH_WAKE_TASK_NAME,
+                deliver_launch_wakes,
+                marked_conversations_at_launch,
+            )
+
+            marked = marked_conversations_at_launch(self)
+            if not marked:
+                return
+            self._create_deferred_startup_task(
+                deliver_launch_wakes(self, marked),
+                name=LAUNCH_WAKE_TASK_NAME,
+            )
+        except Exception:  # noqa: BLE001 -- a launch never dies on this
+            logger.opt(exception=True).warning(
+                "Launch wake scheduling failed; owed wakes stay staged for "
+                "the next Console visit."
+            )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
         """Run one bounded recovery batch without blocking the UI loop."""
@@ -11191,6 +11307,25 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_console_runtime(self) -> None:
+        """Destroy the app-owned Console runtime exactly once, at exit.
+
+        task-15860: the runtime survives every navigation away from
+        Console, so the unmount Textual performs at exit is no longer what
+        ends it -- this is. `ConsoleRuntime.dispose` runs the permanent
+        teardown in the order `ChatScreen.on_unmount` used to:
+        `controller.shutdown()`, then `gateway.aclose()`. Idempotent: the
+        runtime detaches itself from the app on the way out.
+        """
+        task = self._console_runtime_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                dispose_console_runtime(self),
+                name="shutdown_console_runtime",
+            )
+            self._console_runtime_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
@@ -11198,6 +11333,7 @@ class TldwCli(
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
+        await self._shutdown_console_runtime()
         await self._shutdown_file_notes_session_owner()
 
     async def _shutdown(self) -> None:
@@ -11632,10 +11768,6 @@ class TldwCli(
             await collections_tag_events.handle_keyword_merge(self, event)
         elif event.__class__.__name__ == "KeywordDeleteEvent":
             await collections_tag_events.handle_keyword_delete(self, event)
-        elif event.__class__.__name__ == "BatchAnalysisStartEvent":
-            from .Event_Handlers import multi_item_review_events
-
-            await multi_item_review_events.handle_batch_analysis_start(self, event)
 
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:

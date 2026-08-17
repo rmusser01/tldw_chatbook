@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import configparser
+from contextlib import contextmanager
 from email.parser import Parser
 import hashlib
+from importlib import metadata
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
+import venv
 import zipfile
 
 import pytest
@@ -60,6 +64,59 @@ NOTE_FOLDER_MIGRATION_PATH = (
 PROVIDER_CONTINUATION_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql"
 )
+VISUAL_IDENTITY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql"
+)
+MESSAGE_TRAJECTORY_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v37_to_v38_message_trajectory_metadata.sql"
+)
+SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
+SAMIRA_REACTION_LABELS = (
+    "admiration",
+    "amusement",
+    "anger",
+    "annoyance",
+    "approval",
+    "caring",
+    "confusion",
+    "curiosity",
+    "desire",
+    "disappointment",
+    "disapproval",
+    "disgust",
+    "embarrassment",
+    "excitement",
+    "fear",
+    "gratitude",
+    "grief",
+    "joy",
+    "love",
+    "nervousness",
+    "neutral",
+    "optimism",
+    "pride",
+    "realization",
+    "relief",
+    "remorse",
+    "sadness",
+    "surprise",
+    "thinking",
+    "speaking",
+    "error",
+)
+SAMIRA_RESOURCE_PATHS = {
+    f"{SAMIRA_RESOURCE_ROOT}/{name}"
+    for name in (
+        "ASSET_LICENSE.md",
+        "Samira.character.json",
+        "Sammy.png",
+        "visual_identity_pack.json",
+    )
+} | {
+    f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
+    for label in SAMIRA_REACTION_LABELS
+}
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -71,6 +128,8 @@ RUNTIME_MIGRATION_PATHS = {
     DICTIONARY_ATTACHMENTS_MIGRATION_PATH,
     NOTE_FOLDER_MIGRATION_PATH,
     PROVIDER_CONTINUATION_MIGRATION_PATH,
+    MESSAGE_TRAJECTORY_MIGRATION_PATH,
+    VISUAL_IDENTITY_MIGRATION_PATH,
 }
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",
@@ -81,6 +140,50 @@ _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "COMSPEC",
     "PATHEXT",
 )
+_BUILD_TOOL_DISTRIBUTIONS = (
+    "build",
+    "setuptools",
+    "wheel",
+    "packaging",
+    "pyproject_hooks",
+)
+_BUILD_ENV_KEYS = frozenset(_PRIVATE_CHILD_BASELINE_ENV_KEYS) | {
+    "HOME",
+    "USERPROFILE",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "PYTHONDONTWRITEBYTECODE",
+    "PIP_CONFIG_FILE",
+    "PIP_DISABLE_PIP_VERSION_CHECK",
+    "PIP_NO_INDEX",
+}
+BUILD_TOOL_PROBE = r"""
+import importlib.util
+import os
+
+assert "PYTHONPATH" not in os.environ
+assert not any(
+    "PROXY" in name.upper()
+    or any(
+        marker in name.upper()
+        for marker in (
+            "API_KEY",
+            "APIKEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIAL",
+        )
+    )
+    for name in os.environ
+)
+for module_name in ("build", "setuptools", "wheel", "packaging", "pyproject_hooks"):
+    __import__(module_name)
+assert importlib.util.find_spec("PIL") is None
+assert importlib.util.find_spec("tldw_chatbook") is None
+print("curated-build-tools-ok")
+"""
 INSTALLED_PROBE = r"""
 from pathlib import Path
 import ast
@@ -701,7 +804,7 @@ assert package_file.is_relative_to(expected_target), (package_file, expected_tar
 home_path = Path(os.environ["HOME"]).resolve(strict=True)
 migration_path = validate_path("installed-migration-probe.sqlite", home_path)
 current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
-assert current_schema_version == 37
+assert current_schema_version == 39
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
 try:
     legacy_db = CharactersRAGDB(migration_path, client_id="installed-probe-v35")
@@ -720,8 +823,99 @@ installed_tables = {
     )
 }
 assert {"note_folders", "note_folder_memberships"} <= installed_tables
+assert {
+    "visual_identity_packs",
+    "visual_identity_pack_versions",
+    "visual_identity_assets",
+    "visual_identity_bindings",
+} <= installed_tables
 upgraded_db.close_connection()
-print("installed-wheel-v35-to-v37-ok")
+print("installed-wheel-v35-to-v39-ok")
+"""
+
+INSTALLED_SAMIRA_PROBE = r"""
+from importlib import resources
+import json
+import os
+from pathlib import Path
+
+from tldw_chatbook.Character_Chat.visual_identity import (
+    SAMIRA_REACTION_LABELS,
+    ensure_builtin_samira,
+    parse_visual_identity_manifest_json,
+    validate_visual_identity_assets,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
+package_root = Path(str(resources.files("tldw_chatbook"))).resolve(strict=True)
+assert package_root.is_relative_to(expected_target), (package_root, expected_target)
+samira_root = package_root / "assets" / "characters" / "samira"
+assert {path.name for path in samira_root.iterdir()} == {
+    "ASSET_LICENSE.md",
+    "Samira.character.json",
+    "Sammy.png",
+    "visual_identity_pack.json",
+    "expressions",
+}
+assert {path.name for path in (samira_root / "expressions").iterdir()} == {
+    f"{label}.webp" for label in SAMIRA_REACTION_LABELS
+}
+
+directory_bytes = sum(path.stat().st_size for path in samira_root.rglob("*") if path.is_file())
+manifest = parse_visual_identity_manifest_json(
+    (samira_root / "visual_identity_pack.json").read_bytes(),
+    require_samira_bundle=True,
+    directory_bytes=directory_bytes,
+)
+loaded = validate_visual_identity_assets(
+    manifest,
+    source_kind="builtin",
+    directory_bytes=directory_bytes,
+)
+assert len(loaded) == 31
+assert all(len(asset.data) <= 1024 * 1024 for asset in loaded)
+assert sum(len(asset.data) for asset in loaded) <= 16 * 1024 * 1024
+assert directory_bytes <= 20 * 1024 * 1024
+
+database_path = Path(os.environ["HOME"]) / "private-profile.sqlite"
+db = CharactersRAGDB(database_path, client_id="installed-samira-probe")
+try:
+    assert db.get_character_card_by_id(1)["name"] == "Default Assistant"
+    ensure_builtin_samira(db)
+    cards = [
+        dict(row)
+        for row in db.execute_query(
+            "SELECT * FROM character_cards WHERE deleted = 0 ORDER BY id"
+        ).fetchall()
+        if json.loads(row["extensions"] or "{}").get("tldw/builtin_id") == "samira"
+    ]
+    assert len(cards) == 1
+    card = cards[0]
+    graph = VisualIdentityRepository(db).get_active_actor_pack(
+        "character", card["id"]
+    )
+    assert graph is not None
+    assert graph["pack"]["source_kind"] == "builtin"
+    assert len(graph["assets"]) == 31
+    assert db.execute_query("SELECT COUNT(*) FROM visual_identity_packs").fetchone()[0] == 1
+    assert db.execute_query("SELECT COUNT(*) FROM visual_identity_pack_versions").fetchone()[0] == 1
+    assert db.execute_query("SELECT COUNT(*) FROM visual_identity_bindings").fetchone()[0] == 1
+    assert db.execute_query("SELECT COUNT(*) FROM visual_identity_assets").fetchone()[0] == 31
+
+    assert db.update_character_card(
+        card["id"],
+        {"description": "Installed distribution first edit marker"},
+        expected_version=card["version"],
+    )
+    edited = db.get_character_card_by_id(card["id"])
+    assert edited["description"] == "Installed distribution first edit marker"
+    assert [row["id"] for row in db.search_character_cards("distribution")] == [card["id"]]
+finally:
+    db.close_connection()
+
+print("installed-samira-distribution-ok")
 """
 
 
@@ -730,6 +924,18 @@ class BuiltDistributions(NamedTuple):
     dist_dir: Path
     sdist: Path
     wheel: Path
+
+
+class SdistWheel(NamedTuple):
+    source_root: Path
+    wheel: Path
+
+
+class InstalledPathState(NamedTuple):
+    mode: int
+    size: int
+    mtime_ns: int
+    digest: str | None
 
 
 def _copy_build_inputs(destination: Path) -> None:
@@ -807,6 +1013,127 @@ def built_distributions(tmp_path_factory: pytest.TempPathFactory) -> BuiltDistri
     return BuiltDistributions(source_root, dist_dir, sdists[0], wheels[0])
 
 
+@pytest.fixture(scope="module")
+def sdist_wheel(
+    built_distributions: BuiltDistributions,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> SdistWheel:
+    extract_root = tmp_path_factory.mktemp("sdist-source")
+    with tarfile.open(built_distributions.sdist, "r:gz") as archive:
+        archive.extractall(extract_root, filter="data")
+    source_roots = [path for path in extract_root.iterdir() if path.is_dir()]
+    assert len(source_roots) == 1
+    source_root = source_roots[0]
+    dist_dir = extract_root / "dist"
+    build_env = extract_root / "build-env"
+    venv.EnvBuilder(symlinks=True).create(build_env)
+    build_python = build_env / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
+    tool_layer = build_env / (
+        "Lib/site-packages"
+        if os.name == "nt"
+        else f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+    )
+    tool_layer.mkdir(parents=True, exist_ok=True)
+    _copy_build_tool_layer(tool_layer)
+    build_state = extract_root / "build-state"
+    build_env_vars = _sanitized_build_env(build_state)
+    probe_root = extract_root / "build-probe"
+    probe_root.mkdir()
+    probe = subprocess.run(
+        [str(build_python), "-I", "-c", BUILD_TOOL_PROBE],
+        cwd=probe_root,
+        env=build_env_vars,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    assert "curated-build-tools-ok" in probe.stdout
+    command = [
+        str(build_python),
+        "-I",
+        "-m",
+        "build",
+        "--wheel",
+        "--no-isolation",
+        "--outdir",
+        str(dist_dir),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=source_root,
+        env=build_env_vars,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert completed.returncode == 0, (
+        f"command: {command}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+    wheels = sorted(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1
+    return SdistWheel(source_root, wheels[0])
+
+
+def _copy_build_tool_layer(destination: Path) -> None:
+    copied: set[Path] = set()
+    for distribution_name in _BUILD_TOOL_DISTRIBUTIONS:
+        distribution = metadata.distribution(distribution_name)
+        files = distribution.files
+        assert files is not None, distribution_name
+        for relative in files:
+            relative_path = Path(str(relative))
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                continue
+            source = Path(distribution.locate_file(relative))
+            if not source.is_file():
+                continue
+            target = destination / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            copied.add(relative_path)
+    assert copied
+    assert {
+        distribution.metadata["Name"].lower().replace("-", "_")
+        for distribution in metadata.distributions(path=[str(destination)])
+    } == set(_BUILD_TOOL_DISTRIBUTIONS)
+    assert {
+        path.relative_to(destination)
+        for path in destination.rglob("*")
+        if path.is_file()
+    } == copied
+
+
+def _sanitized_build_env(state_root: Path) -> dict[str, str]:
+    state_root.mkdir(mode=0o700)
+    temp_root = state_root / "tmp"
+    temp_root.mkdir(mode=0o700)
+    env = {
+        name: value
+        for name in _PRIVATE_CHILD_BASELINE_ENV_KEYS
+        if (value := os.environ.get(name)) and not _is_sensitive_environment_name(name)
+    }
+    env.update(
+        {
+            "HOME": str(state_root),
+            "USERPROFILE": str(state_root),
+            "TMPDIR": str(temp_root),
+            "TEMP": str(temp_root),
+            "TMP": str(temp_root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PIP_CONFIG_FILE": os.devnull,
+            "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+            "PIP_NO_INDEX": "1",
+        }
+    )
+    assert set(env) <= _BUILD_ENV_KEYS
+    assert "PYTHONPATH" not in env
+    assert not any(_is_sensitive_environment_name(name) for name in env)
+    return env
+
+
 def _sdist_members(path: Path) -> set[str]:
     with tarfile.open(path, "r:gz") as archive:
         files = [member.name for member in archive.getmembers() if member.isfile()]
@@ -842,6 +1169,10 @@ def _install_wheel(
     built: BuiltDistributions,
     target: Path,
 ) -> None:
+    _install_wheel_path(built.wheel, target)
+
+
+def _install_wheel_path(wheel: Path, target: Path) -> None:
     command = [
         sys.executable,
         "-m",
@@ -850,7 +1181,7 @@ def _install_wheel(
         "--no-deps",
         "--target",
         str(target),
-        str(built.wheel),
+        str(wheel),
     ]
     completed = subprocess.run(
         command,
@@ -872,6 +1203,51 @@ def _target_hashes(target: Path) -> dict[str, str]:
         for path in sorted(target.rglob("*"))
         if path.is_file()
     }
+
+
+def _target_snapshot(target: Path) -> dict[str, InstalledPathState]:
+    snapshot = {}
+    for path in (target, *sorted(target.rglob("*"))):
+        path_stat = path.lstat()
+        snapshot[path.relative_to(target).as_posix()] = InstalledPathState(
+            stat.S_IMODE(path_stat.st_mode),
+            path_stat.st_size,
+            path_stat.st_mtime_ns,
+            hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
+        )
+    return snapshot
+
+
+@contextmanager
+def _read_only_installed_tree(
+    target: Path,
+) -> Iterator[dict[str, InstalledPathState]]:
+    paths = (target, *sorted(target.rglob("*")))
+    assert not any(path.is_symlink() for path in paths)
+    original_modes = {path: stat.S_IMODE(path.lstat().st_mode) for path in paths}
+    for path in paths:
+        if path.is_file():
+            path.chmod(original_modes[path] & ~0o222)
+    for path in reversed(paths):
+        if path.is_dir():
+            path.chmod(original_modes[path] & ~0o222)
+    before = _target_snapshot(target)
+    try:
+        yield before
+        assert _target_snapshot(target) == before, (
+            "installed package tree content or metadata changed"
+        )
+    finally:
+        current_paths = (target, *sorted(target.rglob("*")))
+        for path in current_paths:
+            if path.is_dir():
+                path.chmod(original_modes.get(path, 0o755))
+        for path in current_paths:
+            if path.is_file():
+                path.chmod(original_modes.get(path, 0o644))
+        assert {
+            path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+        } == original_modes
 
 
 def _is_sensitive_environment_name(name: str) -> bool:
@@ -991,6 +1367,23 @@ def test_private_child_env_excludes_host_credentials_and_proxy_config(
     assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 
+def test_sdist_build_env_excludes_host_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TASK16319_BUILD_API_KEY", "test-only-value")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("PYTHONPATH", "/host/purelib")
+
+    env = _sanitized_build_env(tmp_path / "build-state")
+
+    assert set(env) <= _BUILD_ENV_KEYS
+    assert "TASK16319_BUILD_API_KEY" not in env
+    assert "HTTPS_PROXY" not in env
+    assert "PYTHONPATH" not in env
+    assert env["PIP_NO_INDEX"] == "1"
+
+
 def _run_child(
     command: list[str],
     cwd: Path,
@@ -1016,32 +1409,44 @@ def test_built_artifacts_match_distribution_contract(
     sdist_members = _sdist_members(built_distributions.sdist)
     wheel_members = _wheel_members(built_distributions.wheel)
 
-    required_sdist = {
-        "LICENSE",
-        "README.md",
-        "CLAUDE.md",
-        "CHANGELOG.md",
-        "MANIFEST.in",
-        "pyproject.toml",
-        "requirements.txt",
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/css/components/stats_screen.css",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | RUNTIME_MIGRATION_PATHS
-    required_wheel = {
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-    } | RUNTIME_MIGRATION_PATHS
+    required_sdist = (
+        {
+            "LICENSE",
+            "README.md",
+            "CLAUDE.md",
+            "CHANGELOG.md",
+            "MANIFEST.in",
+            "pyproject.toml",
+            "requirements.txt",
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/css/components/stats_screen.css",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+    )
+    required_wheel = (
+        {
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+    )
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
+    for members in (sdist_members, wheel_members):
+        assert {
+            name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
+        } == SAMIRA_RESOURCE_PATHS
 
     retired_modules = {
         "tldw_chatbook/Audio/transcription_history.py",
@@ -1112,29 +1517,38 @@ def test_built_artifacts_match_distribution_contract(
     }
 
 
-def test_installed_wheel_migrates_v35_database_to_v37(
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+def test_installed_distribution_migrates_v35_database_to_v38(
     built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
     tmp_path: Path,
+    wheel_source: str,
 ) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
     target = tmp_path / "target"
     state_root = tmp_path / "state"
     run_root = tmp_path / "run"
     state_root.mkdir(mode=0o700)
     run_root.mkdir()
-    _install_wheel(built_distributions, target)
+    _install_wheel_path(wheel, target)
     env = _private_child_env(
         state_root,
         target,
-        built_distributions.source_root,
+        build_source_root,
     )
 
-    result = _run_child(
-        [sys.executable, "-c", INSTALLED_MIGRATION_PROBE],
-        run_root,
-        env,
-    )
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_MIGRATION_PROBE],
+            run_root,
+            env,
+        )
 
-    assert "installed-wheel-v35-to-v37-ok" in result.stdout
+    assert "installed-wheel-v35-to-v38-ok" in result.stdout
 
 
 def test_installed_wheel_loads_pinned_audio_cpp_artifact_manifest(
@@ -1167,7 +1581,8 @@ assert len(manifest.packages) == 45
 print("installed-audio-cpp-manifest-ok")
 """
 
-    result = _run_child([sys.executable, "-c", probe], run_root, env)
+    with _read_only_installed_tree(target):
+        result = _run_child([sys.executable, "-c", probe], run_root, env)
 
     assert "installed-audio-cpp-manifest-ok" in result.stdout
 
@@ -1252,6 +1667,46 @@ def test_release_checker_rejects_missing_runtime_data(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_missing_samira_reaction(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    missing = f"{SAMIRA_RESOURCE_ROOT}/expressions/anger.webp"
+    if archive_kind == "wheel":
+        wheel = next(dist_dir.glob("*.whl"))
+        rewritten = wheel.with_suffix(".rewritten")
+        with (
+            zipfile.ZipFile(wheel) as source,
+            zipfile.ZipFile(rewritten, "w") as destination,
+        ):
+            for member in source.infolist():
+                if member.filename != missing:
+                    destination.writestr(member, source.read(member.filename))
+        rewritten.replace(wheel)
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_name(f"{sdist.name}.rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                if member.name.endswith(f"/{missing}"):
+                    continue
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+        rewritten.replace(sdist)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
 def test_release_checker_rejects_missing_database_migration(
     built_distributions: BuiltDistributions,
@@ -1319,21 +1774,20 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         target,
         built_distributions.source_root,
     )
-    before = _target_hashes(target)
-    results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
+    with _read_only_installed_tree(target):
+        results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
 
-    script_path = os.pathsep.join(
-        str(path) for path in (target / "bin", target / "Scripts")
-    )
-    for name in ("tldw-cli", "tldw-serve"):
-        script = shutil.which(name, path=script_path)
-        assert script is not None, (
-            f"missing installed script {name!r}; "
-            f"target files: {sorted(_target_hashes(target))}"
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
         )
-        results.append(_run_child([script, "--help"], run_root, env))
+        for name in ("tldw-cli", "tldw-serve"):
+            script = shutil.which(name, path=script_path)
+            assert script is not None, (
+                f"missing installed script {name!r}; "
+                f"target files: {sorted(_target_hashes(target))}"
+            )
+            results.append(_run_child([script, "--help"], run_root, env))
 
-    after = _target_hashes(target)
     process_text = "\n".join(result.stdout + "\n" + result.stderr for result in results)
     log_text = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
@@ -1347,4 +1801,74 @@ def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
         "Error handling CSS file",
     ):
         assert forbidden not in observed_text
-    assert after == before
+
+
+@pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX mode bits are required to enforce read-only installed trees",
+)
+def test_read_only_installed_tree_rejects_rewrite_and_catches_touch(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    _install_wheel(built_distributions, target)
+    package_file = target / "tldw_chatbook" / "__init__.py"
+    original_modes = {
+        path: stat.S_IMODE(path.lstat().st_mode)
+        for path in (target, *sorted(target.rglob("*")))
+    }
+
+    with _read_only_installed_tree(target):
+        assert {
+            path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+        } == {path: mode & ~0o222 for path, mode in original_modes.items()}
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
+        )
+        assert all(
+            shutil.which(name, path=script_path) is not None
+            for name in ("tldw-cli", "tldw-serve")
+        )
+        original = package_file.read_bytes()
+        with pytest.raises(PermissionError):
+            package_file.write_bytes(original)
+    assert {
+        path: stat.S_IMODE(path.lstat().st_mode) for path in original_modes
+    } == original_modes
+
+    with pytest.raises(
+        AssertionError,
+        match="installed package tree content or metadata changed",
+    ):
+        with _read_only_installed_tree(target):
+            package_file.touch()
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+def test_installed_distribution_validates_and_seeds_samira_without_package_writes(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    env = _private_child_env(state_root, target, build_source_root)
+    with _read_only_installed_tree(target):
+        result = _run_child(
+            [sys.executable, "-c", INSTALLED_SAMIRA_PROBE],
+            run_root,
+            env,
+        )
+
+    assert "installed-samira-distribution-ok" in result.stdout

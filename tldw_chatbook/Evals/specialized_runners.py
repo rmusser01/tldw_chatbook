@@ -29,6 +29,7 @@ from pathlib import Path
 from loguru import logger
 
 from .eval_runner import BaseEvalRunner, EvalSampleResult, EvalSample
+from .research_report_scorer import score_research_report
 from .task_loader import TaskConfig
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
@@ -2943,3 +2944,54 @@ def list_specialized_runners() -> List[str]:
     )
 
     return sorted(runner_names)
+
+class ResearchReportRunner(BaseEvalRunner):
+    """Self-eval runner for deep-search research reports (task-16327).
+
+    Scores each sample's stored verification payload deterministically via
+    ``research_report_scorer.score_research_report`` -- no LLM call. The
+    payload comes from ``sample.metadata["verification"]`` (preferred) or a
+    JSON object in ``sample.input_text`` (the shape a completed run's
+    ``verification_summary.json`` / ``citation_verification`` block already
+    has). Metrics land in ``EvalSampleResult.metrics``; raw counts land in
+    ``metadata`` for aggregation.
+    """
+
+    async def run_sample(self, sample: EvalSample) -> EvalSampleResult:
+        start = time.time()
+        verification: dict = {}
+        source = "metadata"
+        metadata_verification = (sample.metadata or {}).get("verification")
+        if isinstance(metadata_verification, dict):
+            verification = metadata_verification
+        else:
+            try:
+                parsed = json.loads(sample.input_text or "{}")
+                if isinstance(parsed, dict):
+                    verification = parsed.get("verification") or parsed
+                    source = "input_text"
+            except (ValueError, TypeError):
+                verification = {}
+
+        metrics = score_research_report(verification)
+        counts = {
+            "total": verification.get("markers_total") or 0,
+            "resolved": verification.get("markers_resolved") or 0,
+        }
+        return EvalSampleResult(
+            sample_id=sample.id,
+            input_text=sample.input_text,
+            expected_output=sample.expected_output,
+            actual_output="scored",
+            metrics=metrics,
+            metadata={
+                "verification_source": source,
+                "marker_counts": counts,
+                "quote_counts": {
+                    "checked": verification.get("quotes_checked") or 0,
+                    "verified": verification.get("quotes_verified") or 0,
+                },
+                "uncited_sentences": verification.get("uncited_sentences") or 0,
+            },
+            processing_time=time.time() - start,
+        )

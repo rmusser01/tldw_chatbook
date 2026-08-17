@@ -129,10 +129,23 @@ class _DayHeader(ListItem):
     movement skips disabled children (`action_cursor_down` loops to the next
     enabled node), so `j`/`k` and the arrow keys walk ITEMS only while the
     headers stay visually interleaved.
+
+    task-15776: self-rendering -- the header IS the `ListItem`, no wrapped
+    child `Static`. Half the feed's mounted widgets were wrapper overhead
+    (two DOM nodes, two style computations, two layout passes per row),
+    measured at ~15-18% of the whole Watchlists screen push in task-15462's
+    audit. A childless `ListItem` declares no `layout`, so Textual sizes it
+    from its own `render()` exactly the way it sized the old inner `Static`.
+    The label is app-derived (`day_bucket`) and rendered as literal `Text`,
+    never markup-parsed.
     """
 
     def __init__(self, label: str) -> None:
-        super().__init__(Static(label, classes="article-day-header"), disabled=True)
+        self._content = Text(label)
+        super().__init__(disabled=True, classes="article-day-header")
+
+    def render(self) -> Text:
+        return self._content
 
 
 class _ArticleRow(ListItem):
@@ -152,13 +165,37 @@ class _ArticleRow(ListItem):
     disabled children and knows nothing about `display`, so a hidden row
     that stayed enabled would silently take the cursor (and `j`/`k`) while
     being invisible.
+
+    task-15776: self-rendering, same collapse as `_DayHeader` -- the row IS
+    the `ListItem` and `render()` returns the `_render_row` `Text` directly.
+    Repaints go through `update_content` (the `Static.update` contract:
+    swap the renderable, `refresh(layout=True)`), never through a child
+    widget that no longer exists.
     """
 
     def __init__(self, item: dict[str, Any], *, visible: bool = True) -> None:
         self.item_id_key = str(item.get("id") or "")
         self.display_overrides: dict[str, Any] = {}
-        super().__init__(Static(_render_row(item), classes="article-row"))
+        self._content = _render_row(item)
+        super().__init__(classes="article-row")
         self.set_row_visible(visible)
+
+    def render(self) -> Text:
+        return self._content
+
+    def update_content(self, content: Text) -> None:
+        """Swap the rendered `Text` in place (`_repaint_row`'s sink).
+
+        `refresh(layout=True)` mirrors `Static.update` exactly: it clears
+        the cached content dimensions and relayouts, because a repaint can
+        legitimately change the row's height (a snippet appearing on an
+        item whose full body arrived, for one).
+
+        Args:
+            content: The freshly rendered row.
+        """
+        self._content = content
+        self.refresh(layout=True)
 
     def set_row_visible(self, visible: bool) -> None:
         """Show or hide this row (see the class docstring on `disabled`).
@@ -254,7 +291,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
     #: the debounced reload from destroying the search box the user is
     #: still typing into 0.3 s later. `runtime_backend` is read by nothing
     #: in `compose()` at all; it was rebuilding the pane for free.
-    items = reactive[list[dict[str, Any]]]([])
+    items = reactive[list[dict[str, Any]]](list)
     selected_item = reactive[dict[str, Any] | None](None)
     status_filter = reactive("all")
     search_query = reactive("")
@@ -718,12 +755,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
         if item is None:
             return
         row.display_overrides.update(writes)
-        try:
-            row.query_one(Static).update(
-                _render_row({**item, **row.display_overrides})
-            )
-        except NoMatches:
-            return
+        row.update_content(_render_row({**item, **row.display_overrides}))
 
     def update_item_status_cell(self, item_id: Any, status: str) -> None:
         """Repaint one row after a status write.

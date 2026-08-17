@@ -27,6 +27,7 @@ from .prompt_collections import (
     PromptCollectionNameConflictError,
     PromptMembershipIdentity,
 )
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 
 CatalogLoader = Callable[..., Awaitable[PromptCollectionCatalogState | None]]
 CollectionCreator = Callable[[str], Awaitable[PromptCollectionCatalogState | None]]
@@ -37,10 +38,13 @@ _CREATE_ERROR = "Couldn't create collection. Retry."
 _RENAME_ERROR = "Couldn't rename collection. Retry."
 
 
-class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | None]):
+class PromptCollectionManagerModal(
+    SafeModalDismissMixin, ModalScreen[PromptCollectionManagerResult | None]
+):
     """One reusable presentation surface for browse and membership selection."""
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
+    SAFE_MODAL_CONTENT = "#prompt-collection-manager"
 
     DEFAULT_CSS = """
     PromptCollectionManagerModal {
@@ -122,8 +126,12 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         self._request_token = 0
         self._catalog = begin_prompt_collection_catalog(query="", request_token=1)
         self._outcome = ""
-        self._retry_action: tuple[str, int | None, str] | None = None
+        self._retry_action: (
+            tuple[Literal["load", "create", "rename"], int | None, str] | None
+        ) = None
         self._mutation_in_flight = False
+        self._mutation_epoch = 0
+        self._mutation_close_rejected = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="prompt-collection-manager"):
@@ -264,11 +272,18 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                     "Cancel",
                     id="prompt-collection-manager-cancel",
                     compact=True,
-                    disabled=self._mutation_in_flight,
                 )
 
     def on_mount(self) -> None:
+        self._mutation_epoch += 1
+        self._mutation_in_flight = False
+        self._mutation_close_rejected = False
         self._start_catalog_load(query="", offset=0)
+
+    def on_unmount(self) -> None:
+        self._mutation_epoch += 1
+        self._mutation_in_flight = False
+        self._mutation_close_rejected = False
 
     def _focus_control(self, control_id: str) -> None:
         if not self.is_mounted:
@@ -462,16 +477,16 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         ).value.strip()
 
     @on(Button.Pressed, "#prompt-collection-manager-create")
-    async def _create(self, event: Button.Pressed) -> None:
+    def _create(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._run_mutation("create", None, self._name_value())
+        self._start_mutation("create", None, self._name_value())
 
     @on(Button.Pressed, "#prompt-collection-manager-rename")
-    async def _rename(self, event: Button.Pressed) -> None:
+    def _rename(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._run_mutation("rename", self._rename_target_id(), self._name_value())
+        self._start_mutation("rename", self._rename_target_id(), self._name_value())
 
-    async def _run_mutation(
+    def _start_mutation(
         self, action: Literal["create", "rename"], collection_id: int | None, name: str
     ) -> None:
         if self._mutation_in_flight:
@@ -487,20 +502,65 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
             self._refresh(focus_id="prompt-collection-manager-new-name")
             return
         self._request_token += 1
+        self._mutation_epoch += 1
         self._mutation_in_flight = True
+        self._mutation_close_rejected = False
         self._outcome = (
             "Creating collection…" if action == "create" else "Renaming collection…"
         )
         self._retry_action = None
         self._refresh()
+        mutation_epoch = self._mutation_epoch
+        mount_generation = self._safe_mount_generation
+        self.run_worker(
+            self._run_mutation(
+                action,
+                collection_id,
+                name,
+                mutation_epoch=mutation_epoch,
+                mount_generation=mount_generation,
+            ),
+            group=f"prompt-collection-manager-{self._manager_token}-mutation",
+        )
+
+    def _mutation_is_current(
+        self, *, mutation_epoch: int, mount_generation: int
+    ) -> bool:
+        return (
+            self.is_mounted
+            and self._mutation_epoch == mutation_epoch
+            and self._safe_mount_generation == mount_generation
+        )
+
+    async def _run_mutation(
+        self,
+        action: Literal["create", "rename"],
+        collection_id: int | None,
+        name: str,
+        *,
+        mutation_epoch: int,
+        mount_generation: int,
+    ) -> None:
+        cancelled_error: asyncio.CancelledError | None = None
         try:
             if action == "create":
                 catalog = await self._create_collection_callback(name)
             else:
                 catalog = await self._rename_collection_callback(collection_id, name)  # type: ignore[arg-type]
-        except asyncio.CancelledError:
-            raise
+        except asyncio.CancelledError as exc:
+            if not self._mutation_is_current(
+                mutation_epoch=mutation_epoch, mount_generation=mount_generation
+            ):
+                raise
+            cancelled_error = exc
+            catalog = None
         except PromptCollectionNameConflictError:
+            if not self._mutation_is_current(
+                mutation_epoch=mutation_epoch, mount_generation=mount_generation
+            ):
+                return
+            self._mutation_in_flight = False
+            self._mutation_close_rejected = False
             self._outcome = "Name already exists — choose another."
             self._retry_action = None
             self._refresh(focus_id="prompt-collection-manager-new-name")
@@ -513,14 +573,18 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
                 type(exc).__name__,
             )
             catalog = None
-        finally:
-            self._mutation_in_flight = False
-        if not self.is_mounted:
+        if not self._mutation_is_current(
+            mutation_epoch=mutation_epoch, mount_generation=mount_generation
+        ):
             return
+        self._mutation_in_flight = False
+        self._mutation_close_rejected = False
         if catalog is None:
             self._outcome = _CREATE_ERROR if action == "create" else _RENAME_ERROR
             self._retry_action = (action, collection_id, name)
             self._refresh(focus_id="prompt-collection-manager-retry")
+            if cancelled_error is not None:
+                raise cancelled_error
             return
         self._catalog = catalog
         success = "Collection created." if action == "create" else "Collection renamed."
@@ -540,7 +604,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         )
 
     @on(Button.Pressed, "#prompt-collection-manager-retry")
-    async def _retry(self, event: Button.Pressed) -> None:
+    def _retry(self, event: Button.Pressed) -> None:
         event.stop()
         if self._mutation_in_flight:
             return
@@ -551,7 +615,7 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         if action == "load":
             self._start_catalog_load(query=value, offset=collection_id or 0)
             return
-        await self._run_mutation(action, collection_id, value)
+        self._start_mutation(action, collection_id, value)
 
     @on(Button.Pressed, "#prompt-collection-manager-done")
     def _done(self, event: Button.Pressed) -> None:
@@ -572,12 +636,21 @@ class PromptCollectionManagerModal(ModalScreen[PromptCollectionManagerResult | N
         )
 
     @on(Button.Pressed, "#prompt-collection-manager-cancel")
-    def _cancel_button(self, event: Button.Pressed) -> None:
+    async def _cancel_button(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_cancel()
+        await self.request_safe_cancel(source="visible")
 
-    def action_cancel(self) -> None:
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
         if self._mutation_in_flight:
+            if not self._mutation_close_rejected:
+                self._mutation_close_rejected = True
+                self._outcome = "Finish the current collection change before closing."
+                for outcome in self.query("#prompt-collection-manager-outcome").results(
+                    Static
+                ):
+                    outcome.update(self._outcome)
+                    break
             return
         self._request_token += 1
-        self.dismiss(None)
+        self.dismiss_safe_once(None)

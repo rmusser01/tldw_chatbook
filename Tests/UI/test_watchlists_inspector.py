@@ -1455,7 +1455,8 @@ def _queued_indicator_shown(pane: ArticleListPane, row_key: str) -> bool:
     list_view = pane.query_one("#items-table", ListView)
     for node in list_view.children:
         if isinstance(node, _ArticleRow) and node.item_id_key == row_key:
-            return ArticleListPane._QUEUED_GLYPH in node.children[0].render().plain
+            # task-15776: the row renders itself -- no inner Static.
+            return ArticleListPane._QUEUED_GLYPH in node.render().plain
     return False
 
 

@@ -160,7 +160,11 @@ of type 'pdf'."
   "No matches") and a "◀ Prev" / "Next ▶" pair that steps through matches
   and wraps at either end — in both views. Only the visual highlighting of
   the current match is Raw-only; Rendered shows the same step count with
-  no on-screen mark.
+  no on-screen mark. While a search is active, the search box, match
+  count, and "◀ Prev" / "Next ▶" pin to the top of the viewer pane so
+  they stay visible while you step through matches — even in a small
+  terminal, and no matter how far you scroll. Clearing the query
+  (submit an empty box) unpins them back into the Content section.
 - **"Analysis"** — a stored analysis text you can view and edit ("Edit
   analysis", or "Add analysis" when empty; "No analysis yet." otherwise).
   This section only edits text — it never calls a model; analysis is
@@ -212,9 +216,13 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 
 ### Open a media item and search inside it
 1. Click a row, then "Open in viewer".
-2. Type into "Search content…". The status shows "Match 1 of N matches" and
-   the matches are highlighted in the content.
-3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized.
+2. Type into "Search content…" and press Enter. The status shows
+   "Match 1 of N matches", the matches are highlighted in the content, and
+   the whole search bar pins to the top of the viewer for as long as the
+   search is active.
+3. Step through with "◀ Prev" / "Next ▶"; the current match is emphasized
+   and the pinned bar keeps the count and both controls in view while you
+   navigate.
 
 ### Highlight a passage
 1. In the viewer, scroll to **Highlights** and expand "Add highlight".
@@ -375,3 +383,9 @@ with ✓ on the active one; a pick applies directly (no more press-to-cycle),
 Escape cancels and refocuses the opener, and the footer/F1 read
 "enter choose type / esc cancel" while the strip is open. Checked live in
 both the wide side-by-side and stacked layouts, mouse and keyboard-only.)*
+*Verified against task/15774-burn @ 76e2b6c7e — 2026-08-15 (task-15774:
+an active content search now pins the search box, match count, and
+"◀ Prev" / "Next ▶" to the top of the viewer pane — at 80x24 they used to
+sit below the visible fold exactly while being used; compositor-strip
+evidence at exactly 80x24 before/after, plus a 120x40 pin that an
+inactive search keeps today's in-flow layout with no reserved space.)*

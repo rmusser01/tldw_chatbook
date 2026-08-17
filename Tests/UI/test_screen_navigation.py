@@ -389,23 +389,25 @@ def test_skills_route_resolves_to_library_screen():
     assert screen_class is LibraryScreen
 
 
-def test_research_route_resolves_to_library_screen():
-    """Verify the retired "research" route id resolves to ``LibraryScreen``.
+def test_research_route_resolves_to_research_screen():
+    """task-16322 (ADR-068) reverses task-255's library alias: the research
+    route is a real screen again.
 
-    The orphan "research" screen registration is removed (Task 255): no
-    shell destination or navigation call ever targeted it, and the Workbench
-    route inventory already mapped research -> library. The legacy "research"
-    route id (still a command-palette direct command via ``TAB_RESEARCH`` and
-    valid in saved startup configs) must resolve to ``LibraryScreen`` instead
-    of dead-ending, mirroring the "notes"/"prompts"/"skills" compatibility
-    aliases above. ``ResearchScreen`` itself is deleted; ``ResearchWindow``/
-    ``Research_Modules`` remain (their removal is a separate decision).
+    The local research execution engine now drives launched local runs
+    (planning -> collecting -> synthesizing -> packaging), so
+    ``ResearchWindow`` -- the only run/event observation surface -- is
+    reachable from navigation under the legacy "research" route id
+    (still a command-palette direct command via ``TAB_RESEARCH`` and valid
+    in saved startup configs). The Workbench migration owner stays
+    "library" (route_inventory).
     """
     from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
 
-    _screen_name, _canonical_tab, screen_class = resolve_screen_target("research")
-    assert screen_class is LibraryScreen
+    screen_name, canonical_tab, screen_class = resolve_screen_target("research")
+    assert screen_class is ResearchScreen
+    assert screen_name == "research"
+    assert canonical_tab == "research"
 
 
 def test_media_route_resolves_to_library_screen():
@@ -1772,6 +1774,10 @@ async def test_action_library_notes_files_back_returns_to_database(
             return False if lease is None else lease.release
 
         def cancel_reload_confirmation(self):
+            # Faithful to the real workspace for this test's state: with no
+            # reload confirmation pending, ``LibraryFileNotesWorkspace.
+            # cancel_reload_confirmation`` returns False
+            # (``_dismiss_reload_confirmation``'s None guard; task-15767).
             return False
 
     workspace = WorkspaceProbe()
@@ -1802,6 +1808,181 @@ async def test_action_library_notes_files_back_returns_to_database(
     after_recompose = owner.try_acquire_mutation(binding)
     assert after_recompose is not None
     after_recompose.release()
+
+
+@pytest.mark.asyncio
+async def test_action_library_notes_files_back_cancels_open_reload_confirmation_first(
+    monkeypatch,
+    tmp_path,
+):
+    """task-15767 AC3 (task-15503's Escape contract at the screen seam):
+    pressing back while the destructive-reload confirmation is open must
+    CANCEL the confirmation and stay on Files -- it must never run the
+    leave flush/transition or navigate away while the inline decision is
+    still pending. Only the SECOND back (confirmation gone) takes the
+    normal guarded return to Database Notes."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    app = _build_test_app()
+    owner = app.file_notes_session_owner
+    binding = owner.select_root(tmp_path / "notes")
+    confirmation_open = True
+    cancel_returns = []
+
+    class WorkspaceProbe:
+        async def flush_pending_work(self):
+            assert not confirmation_open, (
+                "back-mid-confirmation must cancel the pending reload "
+                "decision, not run the leave flush"
+            )
+            return not owner.mutation_active(binding)
+
+        def acquire_transition(self, kind):
+            assert not confirmation_open, (
+                "back-mid-confirmation must cancel the pending reload "
+                "decision, not admit a source transition"
+            )
+            lease = owner.try_acquire_transition(binding, kind)
+            return False if lease is None else lease.release
+
+        def cancel_reload_confirmation(self):
+            # Faithful to the real workspace: True exactly when a pending
+            # confirmation was dismissed, False when none was open
+            # (``_dismiss_reload_confirmation``'s None guard).
+            nonlocal confirmation_open
+            was_open = confirmation_open
+            confirmation_open = False
+            cancel_returns.append(was_open)
+            return was_open
+
+    workspace = WorkspaceProbe()
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+    screen._library_file_notes_workspace = workspace
+    screen._library_notes_source = "files"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    recompose_calls = []
+
+    async def recompose():
+        recompose_calls.append(True)
+
+    monkeypatch.setattr(screen, "recompose", recompose)
+    footer_calls = []
+    monkeypatch.setattr(
+        screen,
+        "_register_footer_shortcuts",
+        lambda: footer_calls.append(screen._library_notes_source),
+    )
+
+    # First back: cancels the open confirmation and STAYS on Files.
+    await screen.action_library_notes_files_back()
+    assert cancel_returns == [True]
+    assert screen._library_notes_source == "files"
+    assert recompose_calls == []
+    # The footer must drop its "esc cancel reload" hint immediately
+    # (task-15503 registered that hint while the decision is pending).
+    assert footer_calls == ["files"]
+
+    # Second back: no confirmation pending -- the normal guarded return
+    # runs and lands on Database Notes.
+    await screen.action_library_notes_files_back()
+    assert cancel_returns == [True, False]
+    assert screen._library_notes_source == "database"
+    assert recompose_calls == [True]
+    assert footer_calls == ["files", "database"]
+    after_recompose = owner.try_acquire_mutation(binding)
+    assert after_recompose is not None
+    after_recompose.release()
+
+
+def test_files_back_navigation_workspace_contract_matches_real_workspace():
+    """task-15767 AC2: the regression behind this task was production
+    widening the File Notes workspace contract (task-15503's
+    ``cancel_reload_confirmation`` call in ``action_library_notes_files_
+    back``) while this file's ``WorkspaceProbe`` doubles stayed on the old
+    shape -- surfacing as an opaque ``AttributeError`` mid-path. Pin the
+    contract structurally: enumerate every attribute the Files-mode leave
+    seams actually access on the workspace, and require (a) that set to be
+    exactly the pinned contract the probes implement, and (b) every pinned
+    name to exist on the REAL ``LibraryFileNotesWorkspace`` with the
+    async-ness the screen assumes. Future widening then fails HERE, naming
+    the probes to update, instead of deep inside an unrelated test."""
+    import ast
+    import inspect
+    import textwrap
+
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        LibraryFileNotesWorkspace,
+    )
+
+    def workspace_attribute_accesses(func) -> set[str]:
+        """Attributes accessed on the workspace object inside ``func``."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+        found: set[str] = set()
+
+        class Visitor(ast.NodeVisitor):
+            def visit_Attribute(self, node: ast.Attribute) -> None:
+                value = node.value
+                if isinstance(value, ast.Name) and value.id == "workspace":
+                    found.add(node.attr)
+                elif (
+                    isinstance(value, ast.Attribute)
+                    and value.attr == "_library_file_notes_workspace"
+                ):
+                    found.add(node.attr)
+                self.generic_visit(node)
+
+        Visitor().visit(tree)
+        return found
+
+    # The seams the Files-mode back navigation runs through (Escape action,
+    # the shared strip-button return path, and its two workspace helpers).
+    back_seams = (
+        LibraryScreen.action_library_notes_files_back,
+        LibraryScreen._return_to_library_database_notes,
+        LibraryScreen._flush_active_file_notes,
+        LibraryScreen._acquire_file_notes_transition,
+    )
+    called = set()
+    for seam in back_seams:
+        called |= workspace_attribute_accesses(seam)
+    probe_contract = {
+        "flush_pending_work",
+        "acquire_transition",
+        "cancel_reload_confirmation",
+    }
+    assert called == probe_contract, (
+        "the Files-mode back-navigation seams now touch a different "
+        f"workspace contract ({sorted(called)}) than the pinned probe "
+        f"contract ({sorted(probe_contract)}) -- update every "
+        "WorkspaceProbe in this file that those seams can reach, then "
+        "re-pin here (task-15767)"
+    )
+
+    # The cancel branch also re-registers footer shortcuts, whose chooser
+    # reads ``reload_confirmation_active``; the nav tests patch
+    # ``_register_footer_shortcuts`` out, so probes never see it -- but the
+    # real widget must still satisfy it.
+    footer_contract = workspace_attribute_accesses(
+        LibraryScreen._library_footer_shortcuts_for_current_state
+    )
+    assert "reload_confirmation_active" in footer_contract
+
+    # Every pinned name must exist on the REAL workspace with the
+    # async-ness the screen assumes (flush is awaited; the rest are called
+    # synchronously) -- so this pin cannot itself drift from the widget.
+    for name in probe_contract | footer_contract:
+        assert inspect.getattr_static(LibraryFileNotesWorkspace, name) is not None
+    assert inspect.iscoroutinefunction(LibraryFileNotesWorkspace.flush_pending_work)
+    assert not inspect.iscoroutinefunction(LibraryFileNotesWorkspace.acquire_transition)
+    assert not inspect.iscoroutinefunction(
+        LibraryFileNotesWorkspace.cancel_reload_confirmation
+    )
+    assert isinstance(
+        inspect.getattr_static(LibraryFileNotesWorkspace, "reload_confirmation_active"),
+        property,
+    )
 
 
 def test_check_action_gates_media_viewer_back_to_active_viewer():

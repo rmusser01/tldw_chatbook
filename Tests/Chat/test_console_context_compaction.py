@@ -1354,3 +1354,48 @@ async def test_manual_compact_now_is_explicit_and_transcript_neutral() -> None:
     assert gateway.calls == 1
     assert before == after
     assert len(controller._context_repository.memories) == 1
+
+
+def test_context_control_inputs_tolerate_unvalidatable_lineage() -> None:
+    """Settings inputs degrade to no memory when the lineage cannot be validated.
+
+    TASK-16501: an unpersisted user message on the active path makes
+    ``_durable_context_snapshots`` return None; the settings seam must not
+    crash on it (user-reported TypeError while opening Console settings).
+    """
+    controller, store, session, _assistant, _gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="not yet persisted",
+    )
+    assert controller._durable_context_snapshots(session.id) is None
+    controller._context_repository.memories.append(
+        _memory((_message("u1", "user", "one"),))
+    )
+
+    _overrides, _global_overrides, memory = controller.context_control_inputs(
+        session.id
+    )
+
+    assert memory is None
+
+
+def test_reset_active_context_memory_tolerates_unvalidatable_lineage() -> None:
+    """Reset deactivates nothing when the lineage cannot be validated (TASK-16501)."""
+    controller, store, session, _assistant, _gateway, _provider_messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="not yet persisted",
+    )
+    assert controller._durable_context_snapshots(session.id) is None
+    controller._context_repository.memories.append(
+        _memory((_message("u1", "user", "one"),))
+    )
+
+    assert controller.reset_active_context_memory(session.id) is None

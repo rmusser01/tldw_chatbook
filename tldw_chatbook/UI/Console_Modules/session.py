@@ -105,19 +105,24 @@ otherwise suggest belong here, for the reasons noted:
 - `_serialize_native_console_state`/`_restore_native_console_state` -- the
   WHOLE native-Console screen-state (de)serializers (image view modes,
   library RAG source types, the pending live-work launch, task-resume
-  state...), which call this cluster's own `_console_session_to_state`/
-  `_console_session_from_state` per-session helpers directly by name rather
-  than owning the per-session shape themselves.
+  state...). Since task-15860 Task 3 they carry VIEW state only: Console's
+  sessions and transcripts live in the app-owned `ConsoleRuntime` store,
+  which survives the navigation, so `_console_session_to_state`/
+  `_console_session_from_state` below have **no production caller left**
+  and are exercised only by their own tests. Their retirement is tracked
+  as task-16520; nothing in the app reads them today.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
+from sqlite3 import Error as SQLiteError
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import re
 import uuid
+import weakref
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -136,28 +141,40 @@ from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
+from ...Chat.console_expression_state import resolve_console_expression_state
+from ...Chat.console_image_view import resolve_react_character_expressions
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     effective_user_display_name,
     expand_character_template,
     normalize_chat_display_name,
 )
-from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
+from ...Chat.console_conversation_hydration import apply_resume_settings_overrides
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
-    build_default_console_session_settings,
+    default_console_session_settings,
 )
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
+from ...Character_Chat.visual_identity import (
+    VisualIdentityResolution,
+    resolve_visual_identity,
+)
+from ...DB.VisualIdentity_DB import VisualIdentityRepository
 from ...config import coerce_bool_setting
 from ...Widgets.Console import ConsoleComposerUndoHistory, ConsoleRenameSessionModal
+from ...Widgets.Console.console_reaction_picker_modal import (
+    ConsoleReactionPickerModal,
+    ReactionOption,
+)
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Workspaces import ConsoleConversationBrowserRow
 from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
 )
+from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
@@ -374,6 +391,64 @@ def _console_global_user_display_name(app_config: object) -> str:
         return "User"
 
 
+def _resolve_visual_identity_for_db(
+    db: Any,
+    scope: tuple[str, str, str],
+    requested_state: str,
+    manual_expression_key: str | None,
+) -> VisualIdentityResolution | None:
+    """Resolve one immutable preview request without retaining its screen."""
+
+    _session_id, actor_kind, actor_id = scope
+    try:
+        return resolve_visual_identity(
+            db,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            requested_state=requested_state,
+            manual_expression_key=manual_expression_key,
+        )
+    except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+        logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
+            "Console reaction resolution failed for actor_kind={} actor_id={} "
+            "error_type={}",
+            actor_kind,
+            actor_id,
+            type(exc).__name__,
+        )
+        return None
+
+
+def _visual_identity_options_for_db(
+    db: Any, scope: tuple[str, str, str]
+) -> tuple[ReactionOption, ...]:
+    """Read metadata-only preview options without retaining its screen."""
+
+    _session_id, actor_kind, actor_id = scope
+    try:
+        graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
+    except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
+        logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
+            "Console reaction inventory failed for actor_kind={} actor_id={} "
+            "error_type={}",
+            actor_kind,
+            actor_id,
+            type(exc).__name__,
+        )
+        return ()
+    if graph is None:
+        return ()
+    return tuple(
+        ReactionOption(
+            expression_key=str(asset["expression_key"]),
+            display_label=str(asset["display_label"]),
+            content_type=str(asset["content_type"]),
+            is_animated=bool(asset["is_animated"]),
+        )
+        for asset in graph["assets"]
+    )
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -423,6 +498,11 @@ class ConsoleSessionController:
         merge_workspace_rows: Callable[[list, tuple], list],
         session_id_for_workspace_conversation: Callable[[str], str | None],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
+        visual_identity_db_accessor: Callable[[], Any | None],
+        reaction_preview_coordinator_accessor: Callable[
+            [], ConsoleReactionPreviewCoordinator
+        ],
+        refresh_character_avatar: Callable[..., Any],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -530,6 +610,13 @@ class ConsoleSessionController:
                 as a named callable rather than through `self._screen`.
                 Not DOM: the pair is plain state plus a render cache, so
                 the zero-DOM rule is untouched.
+            visual_identity_db_accessor: Current profile-local character DB.
+                Late-bound so tests and profile switches are observed.
+            reaction_preview_coordinator_accessor: Current app's shared reaction
+                preview single-flight coordinator. Late-bound so replacement
+                Console screens cannot escape an older screen's draining work.
+            refresh_character_avatar: Late-bound forced avatar refresh after
+                a validated manual reaction change.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -561,12 +648,23 @@ class ConsoleSessionController:
             session_id_for_workspace_conversation
         )
         self._ensure_console_image_view_fn = ensure_console_image_view
+        self._visual_identity_db_accessor = visual_identity_db_accessor
+        self._reaction_preview_coordinator_accessor = (
+            reaction_preview_coordinator_accessor
+        )
+        self._refresh_character_avatar_fn = refresh_character_avatar
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._closing_session_requests: set[str] = set()
+        self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
+        self._reaction_preview_generation = 0
+        self._reaction_preview_worker: Any | None = None
+        self._reaction_preview_target_ref: (
+            weakref.ReferenceType[ConsoleReactionPickerModal] | None
+        ) = None
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -586,6 +684,12 @@ class ConsoleSessionController:
         """`Screen.app.push_screen_wait`, bound. See `__init__`'s docstring."""
 
         return self._screen.app.push_screen_wait
+
+    @property
+    def run_app_worker(self) -> Any:
+        """App worker service for work that must survive a modal dismissal."""
+
+        return self._screen.app.run_worker
 
     # -- Sibling cluster's reach-back (disclosed) ---------------------------
 
@@ -717,6 +821,398 @@ class ConsoleSessionController:
         """`ConsoleWorkspaceController._console_session_id_for_workspace_
         conversation`. Same prefix-drop as above."""
         return self._session_id_for_workspace_conversation_fn
+
+    # -- Session-local character reactions ----------------------------------
+
+    def _manual_reaction_key(self, scope: tuple[str, str, str]) -> str | None:
+        """Return one session-and-actor-local manual reaction key."""
+
+        return self._manual_reaction_overrides.get(scope)
+
+    def _set_manual_reaction(
+        self, scope: tuple[str, str, str], expression_key: str
+    ) -> None:
+        """Set one already-validated session-and-actor-local reaction key."""
+
+        self._manual_reaction_overrides[scope] = expression_key
+
+    def _clear_manual_reaction(self, scope: tuple[str, str, str]) -> None:
+        """Clear the manual reaction for one exact session and actor."""
+
+        self._manual_reaction_overrides.pop(scope, None)
+
+    def _clear_session_manual_reactions(self, session_id: str) -> None:
+        """Drop all in-memory reaction choices for one disposed session."""
+
+        for scope in tuple(self._manual_reaction_overrides):
+            if scope[0] == session_id:
+                self._manual_reaction_overrides.pop(scope, None)
+
+    def _clear_replaced_actor_reactions(
+        self, session_id: str, *, actor_kind: str, actor_id: str
+    ) -> None:
+        """Drop old-actor overrides after a session is rebound successfully."""
+
+        current = (session_id, actor_kind, actor_id)
+        for scope in tuple(self._manual_reaction_overrides):
+            if scope[0] == session_id and scope != current:
+                self._manual_reaction_overrides.pop(scope, None)
+
+    def _current_visual_identity_actor_scope(self) -> tuple[str, str, str] | None:
+        """Return the active local character's session-and-actor scope."""
+
+        session = self._active_native_console_session()
+        if session is None or session.runtime_backend != "local":
+            return None
+        actor_id = session.local_character_id()
+        if actor_id is None:
+            return None
+        return (session.id, "character", str(actor_id))
+
+    def _manual_reaction_label_for_current_actor(self) -> str | None:
+        """Return a compact display label for the active manual reaction."""
+
+        scope = self._current_visual_identity_actor_scope()
+        key = self._manual_reaction_key(scope) if scope else None
+        if not key:
+            return None
+        return key.rsplit(":", 1)[-1].replace("_", " ").replace("-", " ").title()
+
+    async def invalidate_visual_identity_actor(
+        self, actor_kind: str, actor_id: int | str
+    ) -> None:
+        """Invalidate and refresh one actor after Visual Identity publication."""
+
+        await self._refresh_character_avatar_fn(
+            invalidate_actor=(str(actor_kind), str(actor_id))
+        )
+
+    def _visual_identity_request_context(
+        self,
+    ) -> tuple[tuple[str, str, str] | None, str, str | None]:
+        """Snapshot the active actor, operational state, and manual key."""
+
+        scope = self._current_visual_identity_actor_scope()
+        store = self._console_chat_store
+        session_id = getattr(store, "active_session_id", None) if store else None
+        react = resolve_react_character_expressions(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+        state = resolve_console_expression_state(store, session_id, react_enabled=react)
+        manual = self._manual_reaction_key(scope) if scope else None
+        return scope, state, manual
+
+    def _resolve_visual_identity(
+        self,
+        scope: tuple[str, str, str],
+        requested_state: str,
+        manual_expression_key: str | None,
+    ) -> VisualIdentityResolution | None:
+        """Resolve one reaction synchronously for an off-thread caller."""
+
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return None
+        return _resolve_visual_identity_for_db(
+            db, scope, requested_state, manual_expression_key
+        )
+
+    def _visual_identity_options(
+        self, scope: tuple[str, str, str]
+    ) -> tuple[ReactionOption, ...]:
+        """Return metadata-only options for one active local actor pack."""
+
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return ()
+        return _visual_identity_options_for_db(db, scope)
+
+    async def _open_console_reaction_picker(self) -> None:
+        """Query reaction metadata off-thread and open the owned picker."""
+
+        context = self._visual_identity_request_context()
+        scope = context[0]
+        if scope is None:
+            self.app_instance.notify(
+                "Choose a local character before selecting a reaction.",
+                severity="warning",
+            )
+            return
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            options = ()
+        else:
+            options = await asyncio.to_thread(
+                _visual_identity_options_for_db, db, scope
+            )
+        if (
+            self._visual_identity_db_accessor() is not db
+            or self._visual_identity_request_context() != context
+        ):
+            return
+        if not options:
+            self.app_instance.notify(
+                "This character has no reaction pack.", severity="information"
+            )
+            return
+        self.push_screen(
+            ConsoleReactionPickerModal(
+                options=options,
+                message_target=self._screen,
+                preview_callback=self._dispatch_console_reaction_preview,
+                preview_cancel_callback=self._cancel_console_reaction_preview,
+                selection_callback=self._dispatch_console_reaction_selection,
+                clear_callback=self._dispatch_console_reaction_clear,
+            )
+        )
+
+    def _dispatch_console_reaction_preview(
+        self, option: ReactionOption, picker: ConsoleReactionPickerModal
+    ) -> None:
+        generation = getattr(self, "_reaction_preview_generation", 0) + 1
+        self._reaction_preview_generation = generation
+        picker_ref = weakref.ref(picker)
+        self._reaction_preview_target_ref = picker_ref
+        self._reaction_preview_worker = self.run_worker(
+            self._preview_console_reaction(option, picker_ref, generation),
+            group="console-reaction-preview",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _cancel_console_reaction_preview(
+        self, picker: ConsoleReactionPickerModal
+    ) -> None:
+        """Cancel work only for the picker that originally requested it."""
+
+        target_ref = getattr(self, "_reaction_preview_target_ref", None)
+        if target_ref is None or target_ref() is not picker:
+            return
+        self._reaction_preview_generation = (
+            getattr(self, "_reaction_preview_generation", 0) + 1
+        )
+        self._reaction_preview_target_ref = None
+        worker = getattr(self, "_reaction_preview_worker", None)
+        self._reaction_preview_worker = None
+        if worker is not None:
+            worker.cancel()
+
+    def _dispatch_console_reaction_selection(self, option: ReactionOption) -> None:
+        self.run_app_worker(
+            self._apply_console_reaction_selection(option),
+            group="console-reaction-selection",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _apply_console_reaction_selection(self, option: ReactionOption) -> None:
+        if await self._select_console_reaction(option):
+            await self._refresh_character_avatar_fn()
+
+    def _dispatch_console_reaction_clear(self) -> None:
+        if self._clear_current_console_reaction():
+            self.run_app_worker(
+                self._refresh_character_avatar_fn(),
+                group="console-reaction-selection",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    async def _select_console_reaction(self, option: ReactionOption) -> bool:
+        """Validate then replace the active actor's manual reaction key."""
+
+        context = self._visual_identity_request_context()
+        scope = context[0]
+        if scope is None:
+            return False
+        db = self._visual_identity_db_accessor()
+        if db is None:
+            return False
+        options = await asyncio.to_thread(_visual_identity_options_for_db, db, scope)
+        if (
+            self._visual_identity_db_accessor() is not db
+            or self._visual_identity_request_context() != context
+        ):
+            return False
+        if option.expression_key not in {
+            candidate.expression_key for candidate in options
+        }:
+            self.app_instance.notify(
+                "That reaction is no longer available.", severity="error"
+            )
+            return False
+        self._set_manual_reaction(scope, option.expression_key)
+        return True
+
+    def _clear_current_console_reaction(self) -> bool:
+        """Return the active actor to automatic operational reactions."""
+
+        scope = self._current_visual_identity_actor_scope()
+        if scope is None:
+            return False
+        self._clear_manual_reaction(scope)
+        return True
+
+    async def _run_serialized_preview_sync(
+        self, function: Callable[..., Any], *args: Any
+    ) -> Any:
+        """Delegate sync work to the current app's shared single-flight."""
+
+        return await self._reaction_preview_coordinator_accessor().run_sync(
+            function, *args
+        )
+
+    def _preview_request_is_current(
+        self,
+        *,
+        generation: int,
+        context: tuple[tuple[str, str, str] | None, str, str | None],
+        db: object,
+        expression_key: str,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+    ) -> bool:
+        picker = picker_ref()
+        return (
+            generation == getattr(self, "_reaction_preview_generation", 0)
+            and self._visual_identity_db_accessor() is db
+            and self._visual_identity_request_context() == context
+            and picker is not None
+            and picker.is_preview_current(expression_key)
+        )
+
+    def _apply_console_reaction_preview(
+        self,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+        expression_key: str,
+        renderable: object,
+    ) -> None:
+        picker = picker_ref()
+        if picker is not None:
+            picker.update_preview(expression_key, renderable)
+
+    async def _preview_console_reaction(
+        self,
+        option: ReactionOption,
+        picker_ref: weakref.ReferenceType[ConsoleReactionPickerModal],
+        generation: int,
+    ) -> None:
+        """Resolve and decode the latest preview with serialized sync work."""
+
+        context = self._visual_identity_request_context()
+        scope, state, _manual = context
+        db = self._visual_identity_db_accessor()
+        if (
+            scope is None
+            or db is None
+            or not self._preview_request_is_current(
+                generation=generation,
+                context=context,
+                db=db,
+                expression_key=option.expression_key,
+                picker_ref=picker_ref,
+            )
+        ):
+            return
+
+        options = await self._run_serialized_preview_sync(
+            _visual_identity_options_for_db, db, scope
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            db=db,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
+            return
+        if option.expression_key not in {
+            candidate.expression_key for candidate in options
+        }:
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
+            return
+
+        resolution = await self._run_serialized_preview_sync(
+            _resolve_visual_identity_for_db,
+            db,
+            scope,
+            state,
+            option.expression_key,
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            db=db,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
+            return
+        if (
+            resolution is None
+            or resolution.resolved_expression_key != option.expression_key
+            or not resolution.image_bytes
+        ):
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
+            return
+
+        identity = resolution.cache_identity
+        _view, cache = self._ensure_console_image_view()
+        cache_key = "visual-identity-preview:" + "|".join(identity)
+        prepared = await self._run_serialized_preview_sync(
+            cache.prepare, cache_key, resolution.image_bytes
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            db=db,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
+            return
+        if not prepared:
+            self._apply_console_reaction_preview(
+                picker_ref, option.expression_key, "Preview unavailable."
+            )
+            return
+
+        renderable = await self._run_serialized_preview_sync(
+            cache.get_pixels, cache_key
+        )
+        if not self._preview_request_is_current(
+            generation=generation,
+            context=context,
+            db=db,
+            expression_key=option.expression_key,
+            picker_ref=picker_ref,
+        ):
+            return
+        current = await self._run_serialized_preview_sync(
+            _resolve_visual_identity_for_db,
+            db,
+            scope,
+            state,
+            option.expression_key,
+        )
+        if (
+            not self._preview_request_is_current(
+                generation=generation,
+                context=context,
+                db=db,
+                expression_key=option.expression_key,
+                picker_ref=picker_ref,
+            )
+            or current is None
+            or current.cache_identity != identity
+        ):
+            return
+        self._apply_console_reaction_preview(
+            picker_ref,
+            option.expression_key,
+            renderable or "Preview unavailable.",
+        )
 
     # -- Session switcher / rename -------------------------------------------
 
@@ -851,6 +1347,7 @@ class ConsoleSessionController:
             _state, cache = self._ensure_console_image_view()
             cache.evict_session(closing_ids)
             self._ensure_console_chat_controller().close_session(session_id)
+            self._clear_session_manual_reactions(session_id)
             self._console_undo_histories.pop(session_id, None)
             await self._sync_native_console_chat_ui()
 
@@ -1205,17 +1702,10 @@ class ConsoleSessionController:
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
         """Build the default settings snapshot for a new native Console session."""
         provider, model = self._effective_console_provider_model()
-        settings = build_default_console_session_settings(
+        return default_console_session_settings(
             self._provider_readiness_app_config(),
             str(provider).strip() if _has_selected_text(provider) else None,
             str(model).strip() if _has_selected_text(model) else None,
-        )
-        provider_key = provider_config_key(settings.provider)
-        return replace(
-            settings,
-            base_url=None
-            if provider_key in {"llama_cpp", "local_llamacpp"}
-            else settings.base_url,
         )
 
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
@@ -1266,10 +1756,7 @@ class ConsoleSessionController:
                 canonical_settings_baseline=settings,
             )
             return settings
-        if (
-            session.has_user_work
-            or session.canonical_settings_baseline != settings
-        ):
+        if session.has_user_work or session.canonical_settings_baseline != settings:
             return settings
         try:
             if store.messages_for_session(session.id):
@@ -1295,13 +1782,49 @@ class ConsoleSessionController:
         )
         if not fresh_readiness.native_send_supported:
             return settings
+        previous_provider_key = provider_config_key(settings.provider)
+        next_provider_key = provider_config_key(fresh_defaults.provider)
         store.replace_session_settings(
             session.id,
             fresh_defaults,
             mark_user_work=False,
             canonical_settings_baseline=fresh_defaults,
         )
+        if previous_provider_key and next_provider_key != previous_provider_key:
+            # task-16475: the convergence itself is task-177 behavior, but a
+            # session whose provider identity changes under it must not do so
+            # silently -- from the user's seat the Provider chip just flipped
+            # to a provider they never chose.
+            self._notify_stale_default_provider_swap(
+                previous_provider_key,
+                next_provider_key or str(fresh_defaults.provider),
+            )
         return fresh_defaults
+
+    def _notify_stale_default_provider_swap(
+        self,
+        previous_provider_key: str,
+        next_provider_key: str,
+    ) -> None:
+        """Announce one stale-default refresh that changed the provider.
+
+        Best-effort: the refresh runs deep inside ensure/sync paths, so a
+        notification failure must never break them.
+        """
+        copy = (
+            f"Console provider changed {previous_provider_key} -> "
+            f"{next_provider_key}: this unused session now follows your saved "
+            "defaults (Settings > Providers & Models)."
+        )
+        logger.info(
+            "Stale-default refresh swapped session provider ({} -> {})",
+            previous_provider_key,
+            next_provider_key,
+        )
+        try:
+            self.app_instance.notify(copy, severity="warning")
+        except Exception:  # noqa: BLE001 -- display-only signal
+            logger.debug("Provider-swap notice could not be shown", exc_info=True)
 
     def _replace_active_console_session_settings(
         self,
@@ -1335,22 +1858,12 @@ class ConsoleSessionController:
             self._active_console_session_settings()
             or self._default_console_session_settings()
         )
-        raw_system_prompt = conversation.get("system_prompt")
-        # Only blank/whitespace-only text collapses to "no system prompt";
-        # anything else is restored verbatim (leading/trailing whitespace
-        # and internal formatting included) rather than stripped, so a
-        # formatting-sensitive prompt survives close/resume unchanged.
-        system_prompt = (
-            raw_system_prompt
-            if isinstance(raw_system_prompt, str) and raw_system_prompt.strip()
-            else None
-        )
-        pinned_prefill = pinned_prefill_from_conversation_metadata(
-            conversation.get("metadata")
-        )
-        return replace(
-            settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill
-        )
+        # task-15860 Task 6: what the CONVERSATION ROW contributes is shared
+        # with the launch wake's viewless hydration
+        # (`Chat/console_conversation_hydration.py`); only the BASE above --
+        # the currently active session's settings -- is screen state, and a
+        # launch has no active session to inherit from.
+        return apply_resume_settings_overrides(settings, conversation)
 
     def _apply_console_session_system_prompt(
         self, system_prompt: Optional[str]
@@ -1547,6 +2060,9 @@ class ConsoleSessionController:
                 severity="warning",
             )
             return False
+        self._clear_replaced_actor_reactions(
+            session_id, actor_kind="character", actor_id=str(character_id)
+        )
         return True
 
     async def _start_character_console_session(
@@ -1826,6 +2342,15 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
+        if not duplicate_handoff:
+            if local_character_id is None:
+                self._clear_session_manual_reactions(session.id)
+            else:
+                self._clear_replaced_actor_reactions(
+                    session.id,
+                    actor_kind="character",
+                    actor_id=str(local_character_id),
+                )
         try:
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)

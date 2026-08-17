@@ -8,6 +8,7 @@ import pytest_asyncio
 
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
@@ -199,7 +200,31 @@ async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
 
 
 def test_options_persist_to_config(monkeypatch):
-    """Submitting ingest options persists one atomic configuration batch."""
+    """Submitting ingest options persists one atomic configuration batch.
+
+    (task-15782) The "generic" group's expected persisted dict is derived
+    from ``ingest_capabilities.get_capabilities("generic").fields`` -- the
+    same schema `_build_ingest_options_snapshot` reads to fill every unset
+    field (`library_screen.py`'s `generic.setdefault(field.name,
+    field.default)`) -- instead of a hand-copied literal dict. A hardcoded
+    copy of that dict already drifted out from under this test once
+    (task-15470's notes: the assertion started failing on a "content
+    mismatch" once an earlier `run_worker` crash stopped masking it; fixed
+    reactively in 0acc6eeeb by hand-adding the seven fields the schema had
+    grown since the dict was last hand-copied -- `overwrite_existing`,
+    `custom_prompt`, `system_prompt`, `generate_embeddings`,
+    `keep_original_file`, `chunk_overlap`, `encoding`). That fix was itself
+    just another hardcoded dict, due to rot again the next time a
+    ``generic`` field is added or its default changes. Deriving the
+    expectation from the schema dataclass (never from
+    `_build_ingest_options_snapshot` itself, which would make the
+    assertion tautological) keeps the test self-updating for that class of
+    change while still catching the two regressions that actually matter:
+    a submitted override (`form.analyze`/`chunk`/`chunk_size`) failing to
+    win over the schema default, and the snapshot silently DROPPING a
+    schema field before it reaches the persisted batch (the task-3309
+    silent-drop class).
+    """
     saved_batches = []
 
     def fake_save(section_values):
@@ -245,27 +270,47 @@ def test_options_persist_to_config(monkeypatch):
     library_screen_module.LibraryScreen._do_submit_ingest(screen, "doc.pdf")
 
     assert len(submitted_jobs) == 1
+
+    # Source of truth for every "generic" field the submission did not
+    # explicitly override -- the same schema production reads from.
+    expected_generic = {
+        field.name: field.default for field in get_capabilities("generic").fields
+    }
+    expected_generic.update(
+        {
+            # Explicit form overrides (set on ``form`` above); asserted as
+            # literals rather than schema defaults because that is exactly
+            # what this test exercises -- a submitted value winning over
+            # the schema default, not just the default surviving untouched.
+            "analyze": False,  # form.analyze
+            "chunk": True,  # form.chunk
+            "chunk_size": 1024,  # form.chunk_size == "1024", coerced to int
+        }
+    )
+
+    # (task-3303 xhigh review round 2, F11) Every NEW snapshot carries the
+    # ebook chunk-method explicitly (scheme identity): the job-option
+    # builder reads an ABSENT value as "legacy snapshot, keep the
+    # pre-branch sentences scheme", so the seed persists too. Mirror
+    # production's own schema lookup + "chapters" fallback (`library_
+    # screen.py::_build_ingest_options_snapshot`) instead of hardcoding
+    # the resolved literal.
+    expected_ebook_chunk_method = next(
+        (
+            field.default
+            for field in get_capabilities("ebook").fields
+            if field.name == "chunk_method"
+        ),
+        "chapters",
+    )
+
     assert saved_batches == [
         {
             "library.ingest_options.pdf": {"pdf_engine": "pymupdf"},
-            "library.ingest_options.generic": {
-                "analyze": False,
-                "chunk": True,
-                "chunk_size": 1024,
-                "overwrite_existing": False,
-                "custom_prompt": "",
-                "system_prompt": "",
-                "generate_embeddings": True,
-                "keep_original_file": False,
-                "chunk_overlap": 100,
-                "encoding": "auto",
+            "library.ingest_options.generic": expected_generic,
+            "library.ingest_options.ebook": {
+                "chunk_method": expected_ebook_chunk_method
             },
-            # (task-3303 xhigh review round 2, F11) Every NEW snapshot
-            # carries the ebook chunk-method explicitly (scheme identity):
-            # the job-option builder reads an ABSENT value as "legacy
-            # snapshot, keep the pre-branch sentences scheme", so the seed
-            # persists too.
-            "library.ingest_options.ebook": {"chunk_method": "chapters"},
         }
     ]
 

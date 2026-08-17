@@ -69,8 +69,8 @@ class _RecordingLocalService:
         self._record("get_reading_progress", media_id)
         return {"media_id": media_id, "current_page": 1, "total_pages": 5}
 
-    def list_reading_highlights(self, item_id):
-        self._record("list_reading_highlights", item_id)
+    def list_highlights(self, item_id):
+        self._record("list_highlights", item_id)
         return []
 
     def list_document_versions(self, media_id, include_deleted=False):
@@ -85,16 +85,18 @@ class _RecordingLocalService:
         self._record("undelete_media", media_id)
         return True
 
-    def create_reading_highlight(self, item_id, **kwargs):
-        self._record("create_reading_highlight", item_id)
+    # task-15768: the scope service dispatches the unprefixed highlight leaf
+    # names -- the only ones the real LocalMediaReadingService implements.
+    def create_highlight(self, item_id, **kwargs):
+        self._record("create_highlight", item_id)
         return {"id": 5, "item_id": item_id, "quote": kwargs.get("quote", "")}
 
-    def update_reading_highlight(self, highlight_id, **changes):
-        self._record("update_reading_highlight", highlight_id)
+    def update_highlight(self, highlight_id, **changes):
+        self._record("update_highlight", highlight_id)
         return {"id": highlight_id, "item_id": 1, "quote": "q"}
 
-    def delete_reading_highlight(self, highlight_id):
-        self._record("delete_reading_highlight", highlight_id)
+    def delete_highlight(self, highlight_id):
+        self._record("delete_highlight", highlight_id)
         return True
 
     def save_analysis_version(
@@ -181,7 +183,7 @@ LOCAL_LEAF_CASES: list[tuple[str, Any, list[str]]] = [
     (
         "list_reading_highlights",
         lambda s: s.list_reading_highlights(mode="local", media_id=1),
-        ["list_reading_highlights"],
+        ["list_highlights"],
     ),
     (
         "list_document_versions",
@@ -201,19 +203,17 @@ LOCAL_LEAF_CASES: list[tuple[str, Any, list[str]]] = [
     (
         "create_reading_highlight",
         lambda s: s.create_reading_highlight(mode="local", media_id=1, quote="hi"),
-        ["create_reading_highlight"],
+        ["create_highlight"],
     ),
     (
         "update_reading_highlight",
-        lambda s: s.update_reading_highlight(
-            mode="local", highlight_id=5, quote="hi"
-        ),
-        ["update_reading_highlight"],
+        lambda s: s.update_reading_highlight(mode="local", highlight_id=5, note="hi"),
+        ["update_highlight"],
     ),
     (
         "delete_reading_highlight",
         lambda s: s.delete_reading_highlight(mode="local", highlight_id=5),
-        ["delete_reading_highlight"],
+        ["delete_highlight"],
     ),
     (
         "save_analysis_version",
@@ -402,26 +402,23 @@ async def test_item_click_detail_chain_runs_no_sqlite_on_the_event_loop(
     real_local_scope,
 ):
     """AC#1: the item-click chain -- detail (which internally also fetches
-    reading progress) and document versions -- the sequential queries the
-    audit named at `MediaWindow_v2.py:1188-1191`.
+    reading progress), reading highlights, and document versions -- the
+    sequential queries the audit named at `MediaWindow_v2.py:1188-1191`.
 
-    ``list_reading_highlights`` is deliberately NOT exercised here against
-    the real ``LocalMediaReadingService``: the scope service's local branch
-    calls ``service.list_reading_highlights(...)``, but
-    ``LocalMediaReadingService`` only implements ``list_highlights`` (no
-    ``reading_`` prefix) -- a pre-existing production gap (every local-mode
-    item click already hits `AttributeError` there today, caught by
-    `MediaWindow_v2._load_media_item_detail`'s broad `except Exception` and
-    presented as zero highlights) that predates and is unrelated to this
-    task's event-loop fix; see `test_local_leaf_threads_off_the_calling_
-    thread_when_file_backed[list_reading_highlights]` above for proof that
-    threading is correctly applied to that leaf whenever it exists.
+    ``list_reading_highlights`` is exercised against the real
+    ``LocalMediaReadingService`` since task-15768 fixed the scope service's
+    highlight dispatch to the unprefixed leaf names the local service
+    actually implements (it previously AttributeError'd here, which is why
+    an older revision of this test had to leave it out).
     """
     scope, db, media_id = real_local_scope
     loop_statements: list[str] = []
     db.get_connection().set_trace_callback(loop_statements.append)
     try:
         detail = await scope.get_media_detail(mode="local", media_id=media_id)
+        highlights = await scope.list_reading_highlights(
+            mode="local", media_id=media_id
+        )
         versions = await scope.list_document_versions(
             mode="local", media_id=media_id
         )
@@ -437,6 +434,7 @@ async def test_item_click_detail_chain_runs_no_sqlite_on_the_event_loop(
     # document version `add_media_with_keywords` creates automatically.
     assert detail["title"] == "Offloop Fixture"
     assert "reading_progress" in detail
+    assert highlights == []
     assert len(versions) == 1
     assert versions[0]["media_id"] == media_id
 

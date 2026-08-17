@@ -6,6 +6,7 @@ from tldw_chatbook.Character_Chat.expression_generation import (
     EXPRESSION_PROMPT_STATES,
     STATE_MODIFIERS,
     compose_expression_prompt,
+    compose_visual_identity_prompt,
 )
 
 
@@ -68,3 +69,43 @@ def test_style_template_composes_and_keeps_user_text():
     assert STATE_MODIFIERS["thinking"] in prompt
     assert negative == template.negative_prompt
     assert params == template.default_params
+
+
+def test_visual_identity_prompt_reuses_identity_base_and_accepts_direction():
+    prompt, negative, params = compose_visual_identity_prompt(
+        name="Samira",
+        description="silver hair, amber eyes",
+        personality="composed curator",
+        label="Admiration",
+        visual_direction="softened eyes and quiet impressed respect",
+    )
+
+    assert "Samira" in prompt
+    assert "silver hair, amber eyes" in prompt
+    assert "composed curator" in prompt
+    assert "Admiration" in prompt
+    assert "softened eyes and quiet impressed respect" in prompt
+    assert negative == ""
+    assert params == {}
+
+
+def test_visual_identity_prompt_uses_same_style_wrapper_as_legacy_prompt():
+    from tldw_chatbook.Media_Creation.generation_templates import get_template
+
+    template = get_template("style_anime")
+    prompt, negative, params = compose_visual_identity_prompt(
+        name="Samira",
+        description="silver hair",
+        label="Joy",
+        visual_direction="genuine warm smile and open eyes",
+        style_template=template,
+    )
+
+    assert "silver hair" in prompt
+    assert "genuine warm smile and open eyes" in prompt
+    assert negative == template.negative_prompt
+    assert params == template.default_params
+
+
+def test_visual_identity_prompt_does_not_expand_legacy_state_catalog():
+    assert EXPRESSION_PROMPT_STATES == ("avatar", "thinking", "speaking", "error")

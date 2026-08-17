@@ -153,7 +153,8 @@ Key sections:
 
 ### Testing
 
-- Run full suite before PRs
+- **Ask before full sweeps**: before running the full test suite, ask whether a full sweep is wanted. Unless the user opts in, verify with targeted runs only — the tests touching the modified files/functionality
+- Run the full suite only when the user asks for it (e.g. pre-PR/pre-merge verification they explicitly request)
 - Use real SQLite in-memory for DB tests
 - Property-based testing with Hypothesis
 - Markers: unit, integration, optional, asyncio

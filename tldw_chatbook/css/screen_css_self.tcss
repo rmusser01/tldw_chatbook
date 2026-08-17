@@ -8,52 +8,6 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
-/* ===== WIDGET: ScraperBuilderWindow (UI/ScraperBuilderWindow.py) ===== */
-
-    ScraperBuilderWindow {
-        background: $background;
-    }
-    
-    /* Layout */
-
-    
-
-    
-
-    
-    /* Header styling */
-
-    
-
-    
-    /* Selector testing */
-
-    
-
-    
-
-    
-    /* Preview panel */
-
-    
-
-    
-
-    
-
-    
-    /* Action buttons */
-
-    
-    /* Status indicator */
-
-    
-    /* Rule builder */
-
-    
-
-    
-
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
     NoteSelectionDialog {
@@ -128,9 +82,6 @@
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     EmojiPickerScreen { align: center middle; }
 
@@ -142,7 +93,8 @@
 
 
 
-
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
 
 

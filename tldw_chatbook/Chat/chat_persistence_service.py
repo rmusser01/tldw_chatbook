@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
@@ -26,7 +27,11 @@ from tldw_chatbook.Chat.console_speech_preferences import (
     parse_console_speech_preferences,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    ConflictError,
+    TrajectoryRowWrite,
+)
 
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
@@ -853,6 +858,42 @@ class ChatPersistenceService:
             message_id,
             expected_version=current_message["version"],
         )
+
+    def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:
+        """Persist trajectory sidecar rows; LOCAL-ONLY, never raises.
+
+        The trajectory sibling of :meth:`update_message_usage`: the
+        ``message_trajectory_metadata`` sidecar (schema v38) is local-only
+        with no sync triggers, so it never routes through the
+        version-bumping general-purpose row updater. A small bounded retry
+        absorbs transient write-write lock contention (concurrent Console
+        sessions, compaction auxiliary turns): ``upsert_trajectory_rows``
+        assigns ``seq`` inside its own transaction, so a rolled-back
+        attempt simply re-derives seqs on retry. Returns ``False`` (after
+        logging with row COUNT only -- never message contents or payloads)
+        when every attempt failed, so the store's best-effort capture knows
+        the batch was dropped.
+
+        Args:
+            rows: Sidecar rows to upsert.
+
+        Returns:
+            True when the rows were written; False when all attempts failed.
+        """
+        last_error: Exception | None = None
+        for attempt in range(5):
+            try:
+                self.db.upsert_trajectory_rows(rows)
+                return True
+            except Exception as exc:  # noqa: BLE001 -- never fail the turn
+                last_error = exc
+                # Brief escalating backoff: the losing writer of a
+                # concurrent pair only needs the winner's commit to land.
+                time.sleep(0.02 * (attempt + 1))
+        logger.bind(row_count=len(rows), error=repr(last_error)).warning(
+            "trajectory_rows_write_failed"
+        )
+        return False
 
     def update_message_metadata(self, *, message_id: str, metadata_json: str) -> bool:
         """Persist structured message metadata WITHOUT touching sync metadata.

@@ -51,18 +51,8 @@ Top to bottom:
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
-- **Status chip strip** — one row of chips directly above the composer:
-  **Provider**, **Model**, **Assistant**, **Library search**, **Sources**,
-  **Tools**, **Approvals**, and — once retrieval is narrowed — **Scope**.
-  The chips are actions, not just readouts: **Sources** and **Tools** open
-  the Inspector rail (the only way to reach it in single-pane mode, where
-  the edge handles hide), **Provider**/**Model** open the model picker,
-  **Library search** opens the search settings, **Approvals** jumps to the
-  pending approval card, and **Scope** opens the scope picker. The **Tools**
-  chip only appears once tools are counted for the session (after your
-  first send) — before that it stays hidden rather than guessing.
-- **Staged-evidence strip** — appears between the status chips and the
-  composer only while Library RAG evidence is staged (or briefly after a
+- **Staged-evidence strip** — appears directly above the composer only
+  while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md).
 - **Composer row** — the "Composer ▾" collapse toggle, the draft area
@@ -74,6 +64,17 @@ Top to bottom:
   choose a model to continue"), so you never have to hover to find out why.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
+- **Status chip strip** — the shell's bottom row, one row of chips directly
+  below the composer: **Provider**, **Model**, **Assistant**,
+  **Library search**, **Sources**, **Tools**, **Approvals**, and — once
+  retrieval is narrowed — **Scope**.
+  The chips are actions, not just readouts: **Sources** and **Tools** open
+  the Inspector rail (the only way to reach it in single-pane mode, where
+  the edge handles hide), **Provider**/**Model** open the model picker,
+  **Library search** opens the search settings, **Approvals** jumps to the
+  pending approval card, and **Scope** opens the scope picker. The **Tools**
+  chip only appears once tools are counted for the session (after your
+  first send) — before that it stays hidden rather than guessing.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
   Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
 
@@ -157,11 +158,23 @@ opens in about a second instead of tens of seconds. Scroll to the top of what is
 shown (wheel, Page Up, or the scrollbar) and the previous chunk is prepended
 under you, keeping the same message in view; the jump-to-latest pill or a new
 send takes you back to the tail. Nothing is deleted: exports, `/rewind`, and the
-context sent to the model always use the full history. Very long sessions still
-stop growing the view at the height watermarks, and once the mounted view
-reaches `prune_low_watermark` (12,000 rows by default) scrolling further back
-stops loading more — the alternative is the view churning rows in and out
-indefinitely. Tune it under `[chat_defaults]` in `config.toml`:
+context sent to the model always use the full history.
+
+Scroll-back no longer stops at the watermarks: the view slides rather than
+grows. Once the mounted stretch reaches `prune_low_watermark` (12,000 rows by
+default), scrolling further back keeps loading older history while the newest
+end of the stretch is set aside the same way — so a very long session stays
+reachable by scrolling, at a roughly constant memory cost. One deliberate
+exception: a selected message is never set aside, so a selection pinned at
+either end of the stretch pauses the sliding in that direction until you
+clear it (Esc) — after a jump to an old message, the jumped-to selection
+sits at the oldest end, so reading far enough past it eventually pauses the
+forward walk the same way (the view stays bounded instead of growing).
+Scrolling back down (or a jump to an old message — selecting one far outside
+the stretch lands you on a fresh window around it instead of loading
+everything in between) walks forward the same way, and the jump-to-latest
+pill or a new send always returns you straight to a fresh view of the tail.
+Tune it under `[chat_defaults]` in `config.toml`:
 
 - `transcript_window_lines` (144) and `transcript_scrollback_lines` (96) are
   **floors**, not the budget. The window actually used is the larger of the
@@ -170,7 +183,10 @@ indefinitely. Tune it under `[chat_defaults]` in `config.toml`:
   above `height × 6` to widen the window, or set `transcript_window_lines` to
   `0` to mount the whole history at load, as before.
 - `prune_low_watermark` / `prune_high_watermark` bound the mounted view itself
-  and keep working with the window disabled.
+  and keep working with the window disabled. With the window disabled (or with
+  watermarks set too small to hold a scroll-back step), sliding is off too:
+  history the watermarks pruned is then reachable only via export or a jump,
+  as before TASK-15777.
 
 ### Composer
 
@@ -394,4 +410,11 @@ on the Get started card, and the same handoff on a configured Console
 still lands on the unchanged staged-evidence strip). "Long conversations"
 verified against the TASK-15455 windowing (PR #1538) plus its reconciliation
 delta — shipped tests and an isolated 500-message load probe; not re-checked
-live.*
+live. "Long conversations" sliding scroll-back and bounded far jumps
+verified against TASK-15777 — shipped tests plus isolated 400/500-message
+mounted probes (scroll-back walks the full history with mounted rows bounded
+by the watermarks — measured ~150 rows / height ~600 at the default marks;
+a far jump mounted 5 rows instead of 490); not re-checked live. The
+head-pinned-selection pause (TASK-16851) verified by shipped tests — a
+post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
+it previously grew to 1966 and kept growing; not re-checked live.*

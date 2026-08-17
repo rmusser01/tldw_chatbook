@@ -73,7 +73,7 @@ class ItemsPane(RecomposeCaptureGuard, Vertical):
     #: `str` content") cannot bite here the way it could for a title or URL.
     _QUEUED_GLYPH = "●"
 
-    items = reactive[list[dict[str, Any]]]([], recompose=True)
+    items = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_item = reactive[dict[str, Any] | None](None)
     #: task-15460: plain reactives, all three. The two filters were
     #: `recompose=True`, so every character typed into the search box tore

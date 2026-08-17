@@ -1236,7 +1236,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         Builtin-source snapshots only, same gate as `_builtin_toggle_
         widgets()` -- spec review finding 5 (branch (b)): `_collect_
         snapshots()` never produces a `local:__local__` row, so this is the
-        only reachable place for ALL nine gates. Rendered under two
+        only reachable place for ALL of them. Rendered under two
         subheadings ("Agent built-ins" / "Local workspace, web, and Watchlists tools") so the
         accepted UX trade-off stays visible rather than papered over: this
         pane is badged as the built-in MCP SERVER, but these checkboxes

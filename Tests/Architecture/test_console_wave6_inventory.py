@@ -18,6 +18,7 @@ BASELINE_METHODS = 705
 POST_IMAGE_IMPLEMENTATION_BASE = "8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0"
 POST_IMAGE_BASELINE_LINES = 22_172
 POST_IMAGE_BASELINE_METHODS = 712
+TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
@@ -274,11 +275,11 @@ WAVE6_GROUPS = {
                 "_current_console_rail_character_id",
                 "_current_console_rail_character_name",
                 "_fetch_character_card_for_avatar",
-                "_fetch_expression_image_bytes",
                 "_apply_console_character_choice_async",
                 "_refresh_active_character_avatar_if_scope_changed",
             }
         ),
+        deleted=frozenset({"_fetch_expression_image_bytes"}),
         raw_lines=281,
     ),
     "fleet": Wave6Group(
@@ -403,6 +404,16 @@ COMPATIBILITY_TARGETS = {
         }
     ),
 }
+BROWSER_LEGACY_STATE_NAMES = frozenset(
+    {
+        "_console_workspace_conversation_query",
+        "_console_workspace_conversation_search_timer",
+        "_console_workspace_conversation_search_token",
+        "_console_workspace_conversation_search_rows",
+        "_console_workspace_conversation_search_total",
+        "_console_workspace_conversation_search_error",
+    }
+)
 EXTERNAL_COMPATIBILITY_NAME = "_console_video_store"
 EXTERNAL_WRITE_SOURCES = {
     "Tests/Chat/test_console_video_actions.py",
@@ -774,12 +785,191 @@ def _calls_query_one(node: ast.AST) -> bool:
     )
 
 
+def _calls_dom_query(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr in {"query", "query_one"}
+        for child in ast.walk(node)
+    )
+
+
 def _has_on_binding(method: ast.AST) -> bool:
     for decorator in method.decorator_list:  # type: ignore[attr-defined]
         function = decorator.func if isinstance(decorator, ast.Call) else decorator
         if isinstance(function, ast.Name) and function.id == "on":
             return True
     return False
+
+
+def _has_browser_search_on_binding(method: ast.AST) -> bool:
+    for decorator in method.decorator_list:  # type: ignore[attr-defined]
+        if not (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Name)
+            and decorator.func.id == "on"
+            and len(decorator.args) == 2
+        ):
+            continue
+        event_type, selector = decorator.args
+        if (
+            isinstance(event_type, ast.Attribute)
+            and isinstance(event_type.value, ast.Name)
+            and event_type.value.id == "Input"
+            and event_type.attr == "Changed"
+            and isinstance(selector, ast.Constant)
+            and selector.value == "#console-workspace-conversation-search"
+        ):
+            return True
+    return False
+
+
+def _controller_state_assignments(
+    class_node: ast.ClassDef, names: frozenset[str]
+) -> dict[str, str]:
+    targets: dict[str, str] = {}
+    for node in class_node.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if not (
+            isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_ControllerState"
+            and len(node.value.args) == 2
+            and all(isinstance(argument, ast.Constant) for argument in node.value.args)
+        ):
+            continue
+        owner_name, state_name = (argument.value for argument in node.value.args)
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in names:
+                assert state_name == target.id
+                targets[target.id] = owner_name
+    return targets
+
+
+def _self_owner_accesses(method: ast.AST, names: frozenset[str]) -> set[str]:
+    return {
+        node.attr
+        for node in ast.walk(method)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+        and node.attr in names
+    }
+
+
+def _direct_self_writes(method: ast.AST, names: frozenset[str]) -> set[str]:
+    def targets_inside(target: ast.AST):
+        yield target
+        if isinstance(target, (ast.List, ast.Tuple)):
+            for element in target.elts:
+                yield from targets_inside(element)
+        elif isinstance(target, ast.Starred):
+            yield from targets_inside(target.value)
+
+    writes: set[str] = set()
+    for node in ast.walk(method):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        writes.update(
+            target.attr
+            for assignment_target in targets
+            for target in targets_inside(assignment_target)
+            if isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+            and target.attr in names
+        )
+    return writes
+
+
+def _direct_writer_inventory(
+    methods: dict[str, ast.AST],
+    names: frozenset[str],
+    *,
+    excluded: frozenset[str] = frozenset(),
+) -> dict[str, list[str]]:
+    return {
+        name: sorted(writes)
+        for name, method in methods.items()
+        if name not in excluded and (writes := _direct_self_writes(method, names))
+    }
+
+
+def _workspace_delegate_calls(method: ast.AST) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Attribute)
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "self"
+        and node.func.value.attr == "_workspace"
+    ]
+
+
+def _workspace_delegate_targets(method: ast.AST) -> set[str]:
+    return {call.func.attr for call in _workspace_delegate_calls(method)}  # type: ignore[union-attr]
+
+
+def _assert_browser_search_delegate_contract(method: ast.AST) -> None:
+    """Require the Textual handler to pass only plain search values."""
+    assert isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+    assert len(method.args.args) == 2
+    expected_annotation = ast.parse("Changed", mode="eval").body
+    assert method.args.args[1].annotation is not None
+    assert ast.dump(method.args.args[1].annotation) == ast.dump(expected_annotation)
+    event_name = method.args.args[1].arg
+    assert len(method.body) == 4
+
+    stop_calls = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == event_name
+        and node.func.attr == "stop"
+    ]
+    assert len(stop_calls) == 1
+    assert not stop_calls[0].args and not stop_calls[0].keywords
+    first = method.body[0]
+    assert isinstance(first, ast.Expr) and first.value is stop_calls[0]
+
+    workspace_calls = _workspace_delegate_calls(method)
+    assert len(workspace_calls) == 1
+    transition_call = workspace_calls[0]
+    assert len(transition_call.args) == 2 and not transition_call.keywords
+    assert all(isinstance(argument, ast.Name) for argument in transition_call.args)
+    query_name, disabled_name = (
+        argument.id
+        for argument in transition_call.args  # type: ignore[union-attr]
+    )
+    assert event_name not in {query_name, disabled_name}
+
+    query_statement, disabled_statement, final_statement = method.body[1:]
+    assert isinstance(query_statement, ast.Assign)
+    assert isinstance(disabled_statement, ast.Assign)
+    assert isinstance(final_statement, ast.Expr)
+    assert final_statement.value is transition_call
+    assert len(query_statement.targets) == 1
+    assert isinstance(query_statement.targets[0], ast.Name)
+    assert query_statement.targets[0].id == query_name
+    assert len(disabled_statement.targets) == 1
+    assert isinstance(disabled_statement.targets[0], ast.Name)
+    assert disabled_statement.targets[0].id == disabled_name
+    expected_query = ast.parse(f"str({event_name}.value or '')", mode="eval").body
+    expected_disabled = ast.parse(
+        f"bool(getattr(getattr({event_name}, 'input', None), 'disabled', False))",
+        mode="eval",
+    ).body
+    assert ast.dump(query_statement.value) == ast.dump(expected_query)
+    assert ast.dump(disabled_statement.value) == ast.dump(expected_disabled)
+    assert not _direct_self_writes(
+        method,
+        COMPATIBILITY_TARGETS["_workspace"] | BROWSER_LEGACY_STATE_NAMES,
+    )
 
 
 def _has_real_delegate_binding(
@@ -889,6 +1079,7 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
     assert len(screen_source.splitlines()) <= POST_IMAGE_BASELINE_LINES, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
+    assert len(screen_source.splitlines()) <= TASK10_SCREEN_LINE_CEILING
     assert _method_count(screen_class) <= POST_IMAGE_BASELINE_METHODS, (
         POST_IMAGE_IMPLEMENTATION_BASE
     )
@@ -966,15 +1157,140 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
 
 
 @pytest.mark.unit
+def test_browser_family_has_completed_workspace_ownership() -> None:
+    """Require every reviewed browser method to have its final sole owner."""
+    group = WAVE6_GROUPS["browser"]
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    target_methods = _methods(_REPO_ROOT / group.target_path, group.target_class)
+
+    assert not (group.moved & screen_methods.keys()), (
+        "browser methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys(), (
+        "browser methods missing from ConsoleWorkspaceController: "
+        f"{sorted(group.moved - target_methods.keys())}"
+    )
+    assert not (group.delegates & target_methods.keys())
+    assert group.delegates <= screen_methods.keys()
+
+
+@pytest.mark.unit
+def test_browser_search_handler_is_exact_bounded_textual_delegate() -> None:
+    """Keep the framework handler bound and within its five-line residue."""
+    group = WAVE6_GROUPS["browser"]
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    method_name = next(iter(group.delegates))
+    method = screen_methods[method_name]
+
+    assert _has_browser_search_on_binding(method)
+    assert _span(method) <= 5
+    _assert_browser_search_delegate_contract(method)
+
+
+@pytest.mark.unit
+def test_browser_compatibility_descriptors_all_target_workspace() -> None:
+    """Require all nine assignable browser names to proxy through Workspace."""
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    names = COMPATIBILITY_TARGETS["_workspace"]
+
+    assert _controller_state_assignments(screen_class, names) == {
+        name: "_workspace" for name in names
+    }
+
+
+@pytest.mark.unit
+def test_workspace_browser_methods_never_query_the_dom() -> None:
+    """Reject both Textual query APIs in every moved Workspace method."""
+    group = WAVE6_GROUPS["browser"]
+    target_methods = _methods(_REPO_ROOT / group.target_path, group.target_class)
+
+    assert group.moved <= target_methods.keys(), (
+        "cannot prove the DOM boundary until every browser method has moved"
+    )
+    offenders = {name for name in group.moved if _calls_dom_query(target_methods[name])}
+    assert not offenders, (
+        f"Workspace browser methods query the DOM: {sorted(offenders)}"
+    )
+
+
+@pytest.mark.unit
+def test_workspace_browser_methods_have_no_sibling_controller_reach_through() -> None:
+    """Require moved browser dependencies to use named constructor callables."""
+    group = WAVE6_GROUPS["browser"]
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    target_methods = _methods(_REPO_ROOT / group.target_path, group.target_class)
+    forbidden = frozenset(
+        {
+            "_screen",
+            "_session",
+            "_agent",
+            "_workspace",
+            "_fleet",
+            "_hands_free",
+            "_retrieval",
+            "_image",
+            "_video",
+            "_skill",
+            "_character",
+            "_message",
+            "_prompts",
+            "_prompt_queue",
+        }
+    )
+    owners = {
+        name: target_methods.get(name) or screen_methods.get(name)
+        for name in group.moved
+    }
+    assert all(owners.values()), "reviewed browser inventory contains a missing method"
+    offenders = {
+        name: sorted(_self_owner_accesses(method, forbidden))
+        for name, method in owners.items()
+        if method is not None and _self_owner_accesses(method, forbidden)
+    }
+
+    delegate_name = next(iter(group.delegates))
+    transition_names = _workspace_delegate_targets(screen_methods[delegate_name])
+    if transition_names:
+        assert len(transition_names) == 1
+        transition_name = next(iter(transition_names))
+        assert transition_name in target_methods
+        transition_offenders = _self_owner_accesses(
+            target_methods[transition_name], forbidden
+        )
+        if transition_offenders:
+            offenders[transition_name] = sorted(transition_offenders)
+
+    assert not offenders, f"browser methods reach sibling owners directly: {offenders}"
+
+
+@pytest.mark.unit
+def test_chat_screen_has_no_direct_browser_state_writers() -> None:
+    """Keep browser/cache writes behind Workspace, including the Clear branch."""
+    group = WAVE6_GROUPS["browser"]
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+    state_names = COMPATIBILITY_TARGETS["_workspace"] | BROWSER_LEGACY_STATE_NAMES
+    writers = _direct_writer_inventory(
+        screen_methods,
+        state_names,
+        excluded=group.delegates,
+    )
+
+    assert "on_button_pressed" not in writers, (
+        "the browser Clear button is still a duplicate state writer: "
+        f"{writers.get('on_button_pressed')}"
+    )
+    assert not writers, f"ChatScreen still writes Workspace browser state: {writers}"
+
+
+@pytest.mark.unit
 def test_wave6_projection_clears_both_ratchet_overages() -> None:
     """Require the remaining post-image projection to clear both overages.
 
     The conservative line and method estimates must retain implementation
     margin after all documented residue is included.
     """
-    remaining = {
-        name: group for name, group in WAVE6_GROUPS.items() if name != "image"
-    }
+    remaining = {name: group for name, group in WAVE6_GROUPS.items() if name != "image"}
     raw_lines = sum(group.raw_lines for group in remaining.values())
     residue_lines = sum(group.residue_lines for group in remaining.values())
     removed_methods = sum(group.removed_methods for group in remaining.values())
@@ -1053,6 +1369,32 @@ def test_wave6_compatibility_inventory_is_complete_and_phase_safe() -> None:
 
 
 @pytest.mark.unit
+def test_character_controller_has_only_named_non_dom_dependencies() -> None:
+    """Lock Task10 orchestration behind the approved controller boundary."""
+
+    path = _REPO_ROOT / "tldw_chatbook/UI/Console_Modules/character.py"
+    _, controller = _class_node(path, "ConsoleCharacterController")
+    methods = _methods_from_class(controller)
+    init = methods["__init__"]
+    assert isinstance(init, ast.FunctionDef)
+    assert [argument.arg for argument in init.args.args] == ["self"]
+    assert {argument.arg for argument in init.args.kwonlyargs} == {
+        "app_config_accessor",
+        "chat_store_accessor",
+        "actor_scope_accessor",
+        "character_name_accessor",
+        "manual_reaction_key",
+        "resolve_visual_identity",
+        "ensure_console_image_view",
+        "console_image_default_mode",
+        "is_mounted",
+        "render_character_avatar",
+    }
+    assert "_screen" not in _self_assignments(controller)
+    _assert_no_dom_access(methods.values())
+
+
+@pytest.mark.unit
 def test_descriptor_contract_oracle_is_non_vacuous() -> None:
     """Prove the phase-safe descriptor oracle rejects known regressions.
 
@@ -1107,9 +1449,12 @@ def test_wave6_structural_oracles_are_non_vacuous() -> None:
     sample = ast.parse(
         """
 class Sample:
+    browser_state = _ControllerState('_workspace', 'browser_state')
+
     def __init__(self):
         seen = self.state
         self.state = {}
+        self.browser_state = ()
 
     def caller(self):
         return self.delegate()
@@ -1123,6 +1468,21 @@ class Sample:
 
     def touches_dom(self):
         return self.query_one('#forbidden')
+
+    def touches_dom_collection(self):
+        return self.query('.forbidden')
+
+    def reaches_sibling(self):
+        return self._agent.refresh()
+
+    def workspace_delegate(self):
+        return self._workspace.transition('query', False)
+
+    def unpacks_browser_state(self, values):
+        self.other, [*self.browser_state] = values
+
+    def writes_legacy_browser_state(self):
+        self._console_workspace_conversation_query = 'legacy'
 """
     ).body[0]
     assert isinstance(sample, ast.ClassDef)
@@ -1130,7 +1490,28 @@ class Sample:
     with pytest.raises(AssertionError):
         _assert_controller_default(sample_methods["__init__"], "state", ("dict",))
     with pytest.raises(AssertionError):
-        _assert_screen_reads_after_build(sample_methods["__init__"], "state", 5)
+        _assert_screen_reads_after_build(sample_methods["__init__"], "state", 100)
+    assert _controller_state_assignments(sample, frozenset({"browser_state"})) == {
+        "browser_state": "_workspace"
+    }
+    assert _direct_self_writes(
+        sample_methods["__init__"], frozenset({"browser_state"})
+    ) == {"browser_state"}
+    assert _direct_self_writes(
+        sample_methods["unpacks_browser_state"], frozenset({"browser_state"})
+    ) == {"browser_state"}
+    assert _direct_writer_inventory(sample_methods, BROWSER_LEGACY_STATE_NAMES) == {
+        "writes_legacy_browser_state": ["_console_workspace_conversation_query"]
+    }
+    assert _self_owner_accesses(
+        sample_methods["reaches_sibling"], frozenset({"_agent"})
+    ) == {"_agent"}
+    assert _workspace_delegate_targets(sample_methods["workspace_delegate"]) == {
+        "transition"
+    }
+    assert _calls_dom_query(sample_methods["touches_dom"])
+    assert _calls_dom_query(sample_methods["touches_dom_collection"])
+    assert not _calls_dom_query(sample_methods["caller"])
     original_binding = DELEGATE_BINDINGS.get("delegate")
     DELEGATE_BINDINGS["delegate"] = "caller"
     try:
@@ -1147,6 +1528,47 @@ class Sample:
             del DELEGATE_BINDINGS["delegate"]
         else:
             DELEGATE_BINDINGS["delegate"] = original_binding
+
+
+@pytest.mark.unit
+def test_browser_search_delegate_oracle_is_non_vacuous() -> None:
+    """Prove the bounded delegate oracle rejects event and writer leakage."""
+    reference = """
+class Sample:
+    def handler(self, event: Changed):
+        event.stop()
+        query = str(event.value or '')
+        disabled = bool(getattr(getattr(event, 'input', None), 'disabled', False))
+        self._workspace.transition(query, disabled)
+"""
+
+    def handler(source: str) -> ast.AST:
+        sample = ast.parse(source).body[0]
+        assert isinstance(sample, ast.ClassDef)
+        return _methods_from_class(sample)["handler"]
+
+    _assert_browser_search_delegate_contract(handler(reference))
+    mutations = (
+        reference.replace("event.stop()", "event.stop(); event.stop()"),
+        reference.replace("str(event.value or '')", "str(event)"),
+        reference.replace(
+            "bool(getattr(getattr(event, 'input', None), 'disabled', False))",
+            "bool(event)",
+        ),
+        reference.replace("transition(query, disabled)", "transition(event, disabled)"),
+        reference.replace(
+            "event.stop()",
+            "event.stop()\n        self._console_conversation_browser_query = ''",
+        ),
+    )
+    for mutant in mutations:
+        with pytest.raises(AssertionError):
+            _assert_browser_search_delegate_contract(handler(mutant))
+
+    writer_mutant = handler(mutations[-1])
+    assert _direct_self_writes(writer_mutant, COMPATIBILITY_TARGETS["_workspace"]) == {
+        "_console_conversation_browser_query"
+    }
 
 
 @pytest.mark.unit

@@ -1486,3 +1486,192 @@ describes the engine path and does not transfer to the pipeline path.
    scoring anything — re-stamp deliberately (see above), with the new
    fixture content named as the reason in the PR, not silently absorbed
    into an unrelated change's re-stamp.
+
+## This corpus as an ANSWER-level instrument (TASK-16174, 2026-08-15)
+
+Everything above measures **retrieval**: whether the right document
+arrives, scored rank-wise at the document level. TASK-16174 needed a
+different question — *what happens after it arrives?* — and reused this
+corpus for it, without touching a fixture, a golden query, or a baseline.
+The gated suite read **`[rag-eval baselines] PASSED: No regression. 105
+metric(s) within 0.05 of baseline.`** with all 105 cells at `(+0.000)`
+before and after the arc; that is the proof the answer-level work changed
+no retrieval behaviour.
+
+**What the arc shipped.**
+
+- **Phase K — the knobs retired.** `SearchConfig.include_parent_docs`,
+  `parent_size_threshold` and `parent_inclusion_strategy` were deleted,
+  along with nine writes across three shipped RAG profiles. A grep had
+  proved zero reads: they were a user-switchable surface wired to nothing.
+  `RAGConfig.from_dict` now filters unknown `[search]` keys with a logged
+  notice, so a saved config still carrying them loads instead of raising
+  `TypeError`. (`Docs/Development/CHUNKING-*.md` carried the false claim
+  that this feature was implemented; those documents now carry a
+  correction.)
+- **Phase T — the tool.** `expand_document`
+  (`tldw_chatbook/Tools/document_expansion_tool.py`), a gateable built-in
+  behind `[tools] expand_document_enabled` (OFF by default) and
+  `risk_tags=("reads",)`, which floors it to *ask*. It takes exactly what
+  a row carries — `source_type` + `source_id` required, plus optional
+  `chunk_start` (the window anchor) and `offset` (continuation) — and
+  returns a budgeted window of the note / media / conversation / prompt
+  behind the hit. `chunk_id` is NOT a parameter: it is an index
+  (`f"{doc_id}_chunk_{i}"`), nothing in the tool reads it, and the final
+  review found it shipped as agent-facing schema wired to nothing — the
+  fix wave retired it (a pasted row still works: it rides the
+  `**_provenance` swallow).
+- **Phase P — the policy, wired.** `Library/library_expand_policy.py`
+  computes a per-row `{expandable, reason}` verdict, and
+  `Agents/library_rag_tool_provider._project_row` attaches it *plus* the
+  `source_type`/`source_id` the tool requires, under exactly the hint's
+  own precondition. The agent is told which rows are labels rather than
+  left to infer it, and is given an identity it can act on rather than
+  one it must guess. A row also carries `chunk_id` when it has one and
+  `chunk_start` **when its provenance carries a usable anchor** (fix wave,
+  after the final review): a head anchor (`0`) or an unparseable one is
+  dropped, because `expand_document` centres its window only for
+  `anchor > 0` and a key that changes nothing is bytes spent for no
+  behaviour. Cost re-measured by T3b's strip-and-reserialize method on a
+  ten-row payload with five anchored rows: **+19.0 B per anchored row,
+  +95 B total (9.5 B/row), 11.7 % of the 32 KiB ceiling**; an unanchored
+  payload pays nothing.
+
+**Phase E — the oracle run.** Eight fixed questions over this corpus,
+each naming one media or conversation document and carrying a fact-oracle
+regex grep-verified to appear only in that document's **body** — never in
+a title (the agent sees titles), never in another document, never in the
+question. The real agent loop (`AgentService` → `chat_api_call` →
+`api.anthropic.com`, `claude-haiku-4-5`, temperature 0) answered each
+question twice: once in the shipped default posture (gate off) and once
+with the gate on. Scoring is mechanical oracle inclusion in the final
+answer — **no LLM grader**. The route is `plain`
+(`default_search_mode = "plain"`), which is what emits the label-only
+`Matched media · document` / `Matched conversation · N messages` rows the
+tool exists for; under `hybrid` there is nothing label-only to expand.
+
+| question | target (label-only row) | oracle | tool-OFF | tool-ON | ON tool calls |
+|---|---|---|---|---|---|
+| `q1-quillon-access` | `media-quillon-antenna` (media) | `/rescue certification/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q2-pellucid-lag` | `media-pellucid-gauge` (media) | `/lowest decade/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q3-ashgrove-seal` | `conv-ashgrove-pump` (conversation) | `/shimming/` | miss | HIT | search_library_rag, expand_document |
+| `q4-obsidian-bearing` | `media-obsidian-lathe` (media) | `/brinelling/` | miss | HIT | search_library_rag, expand_document |
+| `q5-dunnock-cooling` | `conv-dunnock-row-cooling` (conversation) | `/blown sand/` | miss | HIT | search_library_rag, search_library_rag, expand_document |
+| `q6-gatehouse-ups` | `conv-gatehouse-power` (conversation) | `/(?:ninety\|90)\s*minutes/` | miss | miss | search_library_rag, search_library_rag |
+| `q7-filling-head-mtbf` | `media-filling-head-reliability` (media) | `/(?:nine hundred\|900)\s+(?:running\s+)?hours/` | miss | HIT | search_library_rag, search_library_rag, search_library_rag, expand_document |
+| `q8-larkspur-lubrication` | `media-larkspur-turbine` (media) | `/starved a bearing/` | miss | HIT | search_library_rag, expand_document |
+| **TOTAL** | | | **0/8** | **7/8** | |
+
+Total spend $0.177 (plus $0.022 for a one-question smoke run). The single
+tool-ON miss is a **retrieval** failure present in both arms — both of
+`q6`'s searches returned `status: "empty"`, so there was never a row to
+expand (the four-seam keyword path ANDs every query token, and the model's
+own phrasings over-constrained; the document is reachable at rank 1 for
+`gate house UPS`). Conditioned on the target row actually being returned,
+the tool-ON arm answered **7 of 7**. Four tool-OFF questions retrieved the
+label-only row and still scored zero, saying so unprompted: *"I can only
+see that it's a media document and cannot access its full contents through
+the search results."*
+
+Method, isolation proof, per-question attribution, disclosed limits and
+the full artifact:
+`Docs/superpowers/qa/2026-08-15-rag-agentic-expansion/` (`questions.toml`,
+`oracle_run.py`, `report.md`, `run-artifacts.json`). The run is a
+**script, never a test** — the suite is network-blocked by default, and
+`oracle_run.py --dry-run` reproduces everything except the model calls.
+
+**If you extend this instrument**, keep two properties or it stops
+measuring anything: an oracle must never appear in a title (the agent sees
+titles), and the route must stay `plain` unless you are deliberately
+measuring a different regime.
+
+## The semantic/hybrid routes, measured (TASK-16588, 2026-08-16)
+
+The Phase E oracle run above is a `plain`-route instrument by construction —
+that route emits no chunked rows and its `source_id` is always a real
+database id, so it can neither exercise `chunk_start` nor ever need an
+identity fallback. TASK-16588 closed that gap with a **mechanical** probe (no
+LLM, no network, no spend, no TUI boot) over `semantic` and `hybrid`, against
+TWO index kinds — because the identity gap is a property of the INDEX's
+metadata vocabulary, not of the route:
+
+* **canonical** — 20 items (12 notes, 4 media, 4 conversations) through the
+  app's own `note_document`/`media_document`/`conversation_document` builders
+  + `index_entries`. Chunk metadata carries `source_id`/`source_type`, so
+  `_semantic_row` resolves a real id.
+* **non-canonical** — the same 12 notes through a hand-built `IndexEntry`
+  with `{"type","note_id","title"}` metadata (the shape TASK-15810's
+  committed QA seeder writes). No `source_id`, so `_semantic_row` falls
+  through to the vector store's POINT id.
+
+Rows come from the production surface (`LibraryRagToolProvider.invoke`,
+`mode="rag"`, the sealed 32 KiB payload). Every identity-bearing row is then
+expanded by a DIRECT `ExpandDocumentTool().execute(...)` call in three arms
+over the SAME row: `pre` (the `note_id`/`doc_id` keys stripped — the payload
+as it was before this task, without a checkout dance), `post` (as shipped),
+and `head` (`post` minus `chunk_start`, the control).
+
+| index × route | rows | hinted | expandable | not_found PRE (hinted / expandable) | not_found POST | `chunk_start` carried | marker windows (post / head) | variant rows w/o hint |
+|---|---|---|---|---|---|---|---|---|
+| canonical × semantic | 100 | 100 | 64 | 0 / 0 | 0 / 0 | 69 | 7/7 · 0/7 | 0 |
+| canonical × hybrid | 100 | 100 | 61 | 0 / 0 | 0 / 0 | 56 | 7/7 · 0/7 | 0 |
+| non-canonical × semantic | 70 | 70 | 49 | **70 / 49** | 0 / 0 | 45 | 4/4 · 0/4 | 0 |
+| non-canonical × hybrid | 70 | 70 | 45 | **66 / 45** | 0 / 0 | 43 | 4/4 · 0/4 | 0 |
+
+All three pre-registered expectations held. **The window question is answered
+for the first time on any route:** 22 of 22 rows whose matched chunk carried
+the planted marker returned a `chunk_start`-anchored window CONTAINING it
+(marker planted 9,624–9,736 chars into a ~12,300-char document, past
+`expand_document`'s 8,000-char budget), and 0 of 22 head windows did — the
+control that makes the check failable. **The identity question is answered
+too:** on a non-canonical index every row the hint declared expandable came
+back `not_found` before the fallbacks shipped and `ok` after; on a canonical
+index the reading was 0 both before and after, so the fix is
+defensive-plus-legacy and the report says so rather than overclaiming.
+
+A broader per-row check ran in every arm and is the stronger AC#3 reading:
+does the returned window contain the first 160 chars of that row's OWN
+snippet? Over all 340 rows — **340 / 340 post-fix**, 186/340 on the `head`
+(anchor-stripped) arm, and on the `pre` (fallback-stripped) arm 200/200
+canonical but only **4 / 140** non-canonical. The post-fix 340/340 proves the
+expansion resolved the RIGHT document on every rescued row, not merely *a*
+document; the head arm's 154 failures make the anchor control failable across
+all 340 rows rather than the 22 marker ones.
+
+Byte cost, re-measured by strip-and-reserialize on the 34 real route
+payloads: **45.94 B per carrying row canonical (a redundant `doc_id`), 102.0
+B non-canonical (`note_id` + `doc_id`)** — 3–7× the +15.0 B/row the unit
+fixture reports, because real ids are UUIDs and the fixture's were `n1`.
+Largest payload 17,350 B of 32,768 (53 %); `returned == 10` on every payload,
+so the sealing loop dropped nothing.
+
+**If you extend this instrument**, keep the property that makes it work: the
+marker must sit past the tool's default budget, or the anchored-window check
+becomes unfailable, and the head-window arm is what proves it has not. And
+know the limit this run does NOT escape: all 22 anchored windows are the
+document **TAIL** (`[total − 8000, total]`), because a ~12.3k-char document
+and an 8,000-char budget leave a `chunk_start` of ~9,200 only two reachable
+outcomes, head or tail. 22/22 therefore proves "off the head", not "centred
+on the match". To show a true mid-document slice, make the document 3–5× the
+budget AND plant markers past the budget but NOT within one budget of the
+tail (`budget/2 < chunk_start < total − budget/2`). Two more things this
+probe deliberately does NOT measure: `label_only` rows (0 of 340
+— they are a `plain`-route product of the Library's four-seam keyword path,
+which is Phase E's regime), and retrieval quality (every marker query put its
+target at rank 1 by design; the gated suite is the instrument for that, and
+it read 105/105 at (+0.000) throughout).
+
+The table's last column is the answer to TASK-16174's finding 6:
+**canonicalization-VARIANT rows (`notes`, `media_chunk`, `conversations`,
+`chat`, `prompts` — spellings `_SEMANTIC_SOURCE_TYPE_MAP` treats as live but
+`library_expand_policy.EXPANDABLE_SOURCE_TYPES` does not) read 0 of 340**,
+against a committed positive control showing the same `expand_hint` helper
+fires on every variant and on no singular; on that measured zero TASK-16688
+RECORDED the exclusion (a module docstring note plus a both-directions pin in
+`Tests/Library/test_library_expand_policy.py`) rather than broadening the
+allowlist for a producer that does not exist.
+
+Method, isolation proof, per-row detail and the full artifact:
+`Docs/superpowers/qa/2026-08-16-rag-semantic-identity/` (`route_probe.py`,
+`report.md`, `probe-artifacts.json`). The probe is a **script, never a test**
+— it builds two real embedding indexes in two scratch profiles.

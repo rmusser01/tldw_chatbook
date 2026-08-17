@@ -8,120 +8,6 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
-/* ===== WIDGET: ScraperBuilderWindow (UI/ScraperBuilderWindow.py) ===== */
-
-
-    
-    /* Layout */
-    ScraperBuilderWindow .builder-container {
-        height: 100%;
-        layout: grid;
-        grid-size: 2 1;
-        grid-columns: 1fr 1fr;
-        grid-rows: 1fr;
-        padding: 1;
-    }
-    
-    ScraperBuilderWindow .left-panel {
-        height: 100%;
-        border: solid $primary;
-        padding: 1;
-        overflow: auto;
-    }
-    
-    ScraperBuilderWindow .right-panel {
-        height: 100%;
-        border: solid $secondary;
-        padding: 1;
-        margin-left: 1;
-        overflow: auto;
-    }
-    
-    /* Header styling */
-    ScraperBuilderWindow .builder-header {
-        height: 5;
-        background: $surface;
-        padding: 1;
-        margin-bottom: 1;
-    }
-    
-    ScraperBuilderWindow .url-input-container {
-        height: 3;
-        margin-bottom: 1;
-    }
-    
-    /* Selector testing */
-    ScraperBuilderWindow .selector-test {
-        margin: 1 0;
-        padding: 1;
-        border: tall $accent;
-    }
-    
-    ScraperBuilderWindow .selector-input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    ScraperBuilderWindow .test-result {
-        height: 10;
-        padding: 1;
-        background: $surface;
-        border: solid $primary;
-        overflow: auto;
-    }
-    
-    /* Preview panel */
-    ScraperBuilderWindow .preview-container {
-        height: 100%;
-        overflow: auto;
-    }
-    
-    ScraperBuilderWindow .preview-header {
-        height: 3;
-        background: $surface;
-        padding: 0 1;
-        margin-bottom: 1;
-    }
-    
-    ScraperBuilderWindow .html-preview {
-        height: 50%;
-        overflow: auto;
-        margin-bottom: 1;
-    }
-    
-    ScraperBuilderWindow .extracted-preview {
-        height: 50%;
-        overflow: auto;
-    }
-    
-    /* Action buttons */
-    ScraperBuilderWindow .action-buttons {
-        dock: bottom;
-        height: 3;
-        padding: 1 0;
-    }
-    
-    /* Status indicator */
-    ScraperBuilderWindow .status-indicator {
-        height: 3;
-        padding: 1;
-        background: $surface;
-        text-align: center;
-    }
-    
-    /* Rule builder */
-    ScraperBuilderWindow .rule-item {
-        margin: 1 0;
-        padding: 1;
-        border: tall $primary;
-    }
-    
-    ScraperBuilderWindow .rule-actions {
-        dock: right;
-        width: auto;
-    }
-    
-
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
 
@@ -303,9 +189,6 @@
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
-    /* Local fallbacks so this CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
 
     EmojiPickerScreen #dialog { 
@@ -357,11 +240,8 @@
     EmojiPickerScreen EmojiButton.emoji_button:hover { 
         background: $primary-background; 
     }
-    EmojiPickerScreen EmojiButton.emoji_button:focus { 
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* EmojiButton :focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
     EmojiPickerScreen .no_emojis_message { 
         width: 100%; 
         content-align: center middle; 

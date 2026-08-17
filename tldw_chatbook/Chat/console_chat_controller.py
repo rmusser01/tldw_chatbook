@@ -28,6 +28,7 @@ from typing import (
 from uuid import uuid4
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
@@ -173,6 +174,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
+from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
 from tldw_chatbook.Agents.run_context import current_run_id
@@ -241,37 +243,38 @@ CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
 )
 
 
-#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
-#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
-#: default (task-201/T2), read directly here since the controller has no
-#: dependency on that service (T6 wires the service into `MCPToolProvider`,
-#: not into this controller).
+#: ADR-067: 0 -- the default for all three human-prompt timeouts below --
+#: means "no deadline": the round stays armed until the user answers or the
+#: run is stopped/cancelled. A positive value still fails undecided calls
+#: closed to ``"timeout"``. A human prompt is not a wedged tool; making the
+#: user race a clock to keep their run was the defect, auto-deny is opt-in.
 #:
-#: task-545/T6: built-in tool approvals reuse this SAME timeout (routed
-#: through `request_mcp_approvals`/`build_tool_review_hook`), so this value
-#: must stay strictly BELOW `RunBudget.max_tool_call_seconds` (300s at
-#: defaults, `Agents/agent_models.py`) -- never equal, never above. The
-#: approval wait happens INSIDE `agent_service._call_with_timeout`'s own
-#: per-call wrapper (task-327): if the approval timeout were >= the
-#: tool-call ceiling, `_call_with_timeout` would fire first, tell the agent
-#: the call failed/timed out, and the underlying `invoke()` call would
-#: still be running on the (by then abandoned) worker thread -- so a late
-#: approval from the user would execute the tool for real after the
-#: runtime already moved on and reported failure. Any future change to
-#: either constant must preserve `approval_timeout < max_tool_call_seconds`.
-_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
+#: The PRE-ADR default was 120.0, kept strictly below
+#: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
+#: ``Agents/agent_models.py``) because the invoke-path approval wait runs
+#: INSIDE ``agent_service._call_with_timeout``'s per-call wrapper: an
+#: approval timeout at/above the wrapper ceiling would let the wrapper fire
+#: first, report the call failed, and a late approval would then execute
+#: the tool for real on the abandoned thread. That invariant is SUPERSEDED:
+#: the wrapper's deadline now PAUSES while a human decision is pending for
+#: the run (``Agents/human_input_wait`` marks the wait;
+#: ``_call_with_timeout``'s ``pauses_deadline`` re-arms the ceiling each
+#: poll slice), so wall-clock counts tool execution, not human deliberation
+#: -- an indefinite wait can no longer lose that race. Cancellation was
+#: already closed by ``revoke_approval_rounds_for_run`` and is unaffected.
+_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 0.0
 #: Poll granularity for `request_mcp_approvals`'s wait loop (binding, from
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
 #: configured timeout/cancellation before this method observes it.
 _MCP_APPROVAL_POLL_SECONDS = 1.0
-#: Fallback used when no `skill_install_confirm_timeout_seconds` seam is
-#: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
-#: `request_skill_install_confirm`'s own wait loop.
-_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
-#: Fallback used when no `skill_script_confirm_timeout_seconds` seam is
-#: injected -- mirrors `_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS`'s
-#: role for `request_skill_script_confirm`'s own wait loop.
-_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 120.0
+#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: `request_skill_install_confirm`'s own wait loop (fallback used when no
+#: `skill_install_confirm_timeout_seconds` seam is injected).
+_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
+#: Same ADR-067 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
+#: `request_skill_script_confirm`'s own wait loop (fallback used when no
+#: `skill_script_confirm_timeout_seconds` seam is injected).
+_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
 #: safely with the round-keyed `_pending_approvals` accounting (see that
@@ -1399,7 +1402,66 @@ class ConsoleChatController:
         #: a single session's Stop must never deny another session's
         #: unrelated approval round; only real process teardown (the one
         #: case where every session's run legitimately ends at once) does.
+        #:
+        #: task-15860 (the lifetime landing): this Event is now
+        #: **PER-VISIT**, not per-instance. Its old "never reset" contract
+        #: rested on one premise, stated verbatim in ``shutdown``'s
+        #: docstring -- "``ChatScreen`` never reuses an instance after
+        #: unmounting it". An app-owned runtime falsifies that premise: the
+        #: SAME controller now serves visit after visit. So ``leave_console
+        #: ()`` sets THIS Event (denying every round armed during the visit
+        #: that is ending), and the NEXT ``attach_view`` calls
+        #: ``begin_visit()``, which REPLACES the attribute with a fresh,
+        #: unset Event. ``shutdown()``/``begin_shutdown()`` keep the old
+        #: permanent meaning and additionally set ``_disposed``, after
+        #: which ``begin_visit`` refuses to install anything.
+        #:
+        #: **Because the attribute is replaced, every poll site must have
+        #: captured the Event it answers to at ARM time.** A site that
+        #: re-read ``self._shutdown_requested`` on each poll would see the
+        #: NEXT visit's fresh, unset Event and resurrect a round the
+        #: previous visit's teardown already denied. See
+        #: ``_bind_visit_cancel_signal``.
         self._shutdown_requested = threading.Event()
+        #: The cancellation Event for rounds armed with NO Console visit
+        #: open (task-15860, plan Task 5). ``None`` until the first such
+        #: round arms.
+        #:
+        #: ``_shutdown_requested`` answers the question "did the visit that
+        #: armed this round end?". A round armed while the runtime is
+        #: DETACHED was not armed during any visit, so reading that
+        #: (already-set) Event for it answered a different question and
+        #: denied the round at the first 1.0s poll -- measured, 1.01s to
+        #: ``deny``, with nothing ever surfaced. That is the same category
+        #: error the wake-fires landing fixed one layer up, where
+        #: ``_attempt`` read "a visit ended" as "the app is exiting".
+        #:
+        #: This Event stands in for the visit that has not happened yet:
+        #: unset while detached (so the round waits for the user to open
+        #: Console and answer it) and set by the next ``leave_console()``
+        #: -- by then the user HAS seen it and navigated away, which is
+        #: exactly the case AC#2's "leaving denies parked approvals" is
+        #: about -- or by ``begin_shutdown()`` at app exit. It is dropped
+        #: once set, so the next detached round binds a fresh one.
+        #:
+        #: Nothing here weakens a fail-closed gate: the round still cannot
+        #: resolve to anything but a human's own decision, a CONFIGURED
+        #: deadline (unchanged, never paused or extended -- ADR-067's
+        #: ``<= 0`` default is "no deadline" for the mounted case too),
+        #: this run's own cancel event, or these two teardown signals.
+        self._headless_visit_cancel: threading.Event | None = None
+        #: True once this controller has been torn down for good
+        #: (``begin_shutdown``). Blocks ``begin_visit`` from ever handing
+        #: a disposed controller a fresh, unset cancellation Event.
+        self._disposed = False
+        #: Sessions running an ``AGENT_WAKE`` turn right now. ``leave_
+        #: console()`` skips them: the owner ruled that cancelling an
+        #: in-flight wake turn re-creates the exact "only completes if you
+        #: stay" gap this arc exists to close, and a wake turn is
+        #: structurally the same class of work as the fleet survivor AC#2
+        #: already keeps running. ``shutdown()`` (app exit) still takes
+        #: everything.
+        self._agent_wake_turn_sessions: set[str] = set()
         # Rebase note (dev citation-repair vs. Task 3b): dev added this as a
         # singular slot (no per-session awareness); rescoped here the same
         # way as the two maps above -- keyed by the run's OWNING session id,
@@ -1559,7 +1621,9 @@ class ConsoleChatController:
         #: Optional override for how long ``request_mcp_approvals`` waits
         #: for a human decision before failing every undecided call to
         #: ``"timeout"``. Defaults to reading ``[mcp] approval_timeout_
-        #: seconds`` (T2's ``approval_timeout_seconds``) when unset.
+        #: seconds`` (T2's ``approval_timeout_seconds``) when unset --
+        #: ADR-067: that default is 0 = no deadline (wait indefinitely);
+        #: a positive value re-arms the auto-deny clock.
         self.mcp_approval_timeout_seconds: Callable[[], float] | None = None
         #: Task 9 (Fix round 1): each batch-approval round's release signal
         #: + shared decisions holder + owning session id, keyed by a
@@ -3174,6 +3238,11 @@ class ConsoleChatController:
             if citation_repair_contract is not None
             else None
         )
+        # task-15860: a wake turn in flight is exempt from `leave_console()`
+        # (owner ruling -- see that method). Registered here, released in
+        # the `finally` below, so the exemption cannot outlive the turn.
+        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            self._agent_wake_turn_sessions.add(session.id)
         try:
             assistant = self.store.append_message(
                 session.id,
@@ -3205,6 +3274,8 @@ class ConsoleChatController:
                 committed_context_epoch=committed_context_epoch,
             )
         finally:
+            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+                self._agent_wake_turn_sessions.discard(session.id)
             if assistant is not None:
                 self.store.clear_terminal_citation_state(assistant.id)
             del terminal_citation_finalizer
@@ -3693,8 +3764,58 @@ class ConsoleChatController:
             return None
         return self._active_cancel_events.get(session_id)
 
+    def _bind_visit_cancel_signal(self) -> threading.Event:
+        """Capture THIS visit's teardown Event, ONCE, at ARM time.
+
+        task-15860 (the lifetime landing). ``_shutdown_requested`` used to
+        be per-instance and never reset, so reading it live on every poll
+        was safe. It is now per-VISIT: ``leave_console()`` sets it and the
+        next ``attach_view`` REPLACES the attribute with a fresh, unset
+        Event.
+
+        A poll site that re-read ``self._shutdown_requested`` would
+        therefore answer with the NEXT visit's Event and **resurrect a
+        round the previous visit's teardown already denied** -- a round
+        armed on visit 1, still polling while the user is on visit 2,
+        would silently un-deny itself and go on to approve or execute a
+        tool call for a UI that no longer exists. Same discipline, same
+        reason, as ``_bind_round_cancel_signal``'s arm-time binding of the
+        per-run cancel event.
+
+        Every site fails CLOSED today: an armed round observes its
+        captured Event set and denies. Nothing here can make a round
+        fail open.
+
+        **task-15860, plan Task 5 -- the DETACHED arm.** With the runtime
+        outliving the screen, a round can be armed when no visit is open
+        at all (a headless wake turn reaching a risk-tagged tool). That
+        round was not armed *during* the visit whose Event is currently
+        set, so answering to it is a category error -- measured, it denied
+        the round at the first 1.0s poll, silently, making a headless wake
+        unable to use any risk-tagged tool and giving the user no chance
+        to answer. Such a round binds ``_headless_visit_cancel`` instead:
+        unset now, set by the NEXT ``leave_console()`` (the user has seen
+        it by then) or by ``begin_shutdown()``. A DISPOSED controller is
+        excluded -- it keeps the permanently-set Event, so an app-exit
+        round still denies immediately.
+
+        Returns:
+            The Event whose set() this round must treat as cancellation.
+        """
+        if self._disposed or not self._shutdown_requested.is_set():
+            return self._shutdown_requested
+        event = self._headless_visit_cancel
+        if event is None or event.is_set():
+            event = threading.Event()
+            self._headless_visit_cancel = event
+        return event
+
     def _is_session_cancelled(
-        self, session_id: str | None, *, cancel_event: threading.Event | None
+        self,
+        session_id: str | None,
+        *,
+        cancel_event: threading.Event | None,
+        visit_event: threading.Event,
     ) -> bool:
         """Cancellation check for the three worker-thread approval/confirm
         bridges below, scoped to the round's OWN cancel event
@@ -3796,14 +3917,19 @@ class ConsoleChatController:
         this branch's checks unset.
         """
         if session_id is not None:
-            if self._shutdown_requested.is_set():
+            # task-15860: `visit_event`, NOT a fresh read of
+            # `self._shutdown_requested` -- that attribute is replaced by
+            # the next visit's `begin_visit()`, and re-reading it here
+            # would resurrect a round this visit's teardown already denied.
+            # See `_bind_visit_cancel_signal`.
+            if visit_event.is_set():
                 return True
             # PR3a-1 Task 6b (audit F4): the ARM-TIME binding, not a fresh
             # `self._active_cancel_events.get(session_id)` per poll. See
             # `_bind_round_cancel_signal` for the two silent cross-turn
             # failures that re-read produced.
             return cancel_event is not None and cancel_event.is_set()
-        return self._shutdown_requested.is_set() or self._is_active_session_cancelled()
+        return visit_event.is_set() or self._is_active_session_cancelled()
 
     # -- MCP batch-approval bridge (task-5) ----------------------------------
 
@@ -3845,19 +3971,24 @@ class ConsoleChatController:
         later, and ``park_pending_approval`` fires the fleet badge +
         one-shot toast instead of touching the mounted-card slot). Either
         way it then polls ``event.wait(1.0)`` re-checking this run's OWN
-        cancel signal (``_is_session_cancelled``) and a deadline every
-        second until one of three things happens: the user submits a
-        decision (``resolve_pending_approval``, called from the UI thread
-        once the card's own stamped ``round_id`` is delivered back, sets
-        the Event -- Fix round 1: NOT "whichever round belongs to the
-        active session", see ``resolve_pending_approval``'s own docstring
-        for why that was a real cross-session misattribution hazard), the
-        run is cancelled/torn down (``_is_session_cancelled`` -- F5 fix,
-        Qodo wave: this round's OWN cancel event, or real process teardown
-        via ``_shutdown_requested``, never any OTHER session's bare Stop --
-        see that method's own docstring), or the configured approval
-        timeout elapses. Whichever unique ``llm_name`` never received an
-        explicit decision by then fails closed to ``"deny"``
+        cancel signal (``_is_session_cancelled``) and -- only when a
+        POSITIVE timeout is configured (ADR-067: the default is 0 = none)
+        -- a deadline, every second until one of three things happens: the
+        user submits a decision (``resolve_pending_approval``, called from
+        the UI thread once the card's own stamped ``round_id`` is delivered
+        back, sets the Event -- Fix round 1: NOT "whichever round belongs
+        to the active session", see ``resolve_pending_approval``'s own
+        docstring for why that was a real cross-session misattribution
+        hazard), the run is cancelled/torn down (``_is_session_cancelled``
+        -- F5 fix, Qodo wave: this round's OWN cancel event, or real
+        process teardown via ``_shutdown_requested``, never any OTHER
+        session's bare Stop -- see that method's own docstring), or the
+        configured approval timeout elapses. With no deadline armed the
+        round simply waits for one of the first two, however long the
+        human takes -- the wait is marked in ``Agents.human_input_wait``
+        so a per-call wrapper hosting it pauses its ceiling. Whichever
+        unique ``llm_name`` never received an explicit decision by then
+        fails closed to ``"deny"``
         (cancellation) or ``"timeout"`` (deadline) -- see
         ``MCPToolProvider._apply_verdict`` for how each decision string is
         consumed. The mounted card (if any) is always cleared afterwards
@@ -3890,6 +4021,15 @@ class ConsoleChatController:
                 call_by_name[call.llm_name] = call
         if not unique_names:
             return {}
+        if self.app is None:
+            # ADR-067: with no app bridge nothing can ever surface or
+            # resolve this round, and the no-deadline default means the
+            # loop below would never end -- fail closed on the spot,
+            # mirroring both skill confirms' own no-app guards. (A wired
+            # app with a missing card seam is NOT this case: the round
+            # stays resolvable via `resolve_pending_approval`/cancel, and
+            # `_marshal_pending_approval` already no-ops its missing seam.)
+            return {name: "deny" for name in unique_names}
 
         event = threading.Event()
         decisions: dict[str, str] = {}
@@ -3917,6 +4057,10 @@ class ConsoleChatController:
         # to, resolved once, HERE, and passed to every poll below. See
         # `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
         # PR2a Task 7: which RUN armed this round. Read from the
         # `run_context` ContextVar, which `AgentService` binds around both
         # arming paths -- the per-turn review hook (`build_tool_review_
@@ -3955,7 +4099,13 @@ class ConsoleChatController:
             self._pending_approval_rounds[round_id] = round_state
 
         timeout_seconds = self._resolve_mcp_approval_timeout_seconds()
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline -- the round waits for a decision
+        # or this run's cancellation, however long the human takes (the
+        # card renders no countdown copy for 0; see
+        # `format_approval_deadline`).
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         payload = {
             "round_id": round_id,
             "session_id": owning_session_id,
@@ -4019,41 +4169,56 @@ class ConsoleChatController:
                 self._parked_approval_payloads[session_id] = payload
 
         try:
-            if is_parked:
+            if self._approval_view_is_detached():
+                # task-15860 Task 5: no Console view exists, so BOTH the
+                # mount seam and the park seam are `None` and neither
+                # branch below would surface anything at all. Announce
+                # app-wide instead -- the toast renders on whatever screen
+                # the user is actually on, which is the only seam that can
+                # reach them here.
+                self._announce_detached_approval(owning_session_id)
+            elif is_parked:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_approval(payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
-                ):
-                    # Finding I3: a stop/unmount that resolves THIS round
-                    # denies every still-undecided call, but
-                    # `run_agent_loop`'s own `should_cancel()` check fires
-                    # for every call in this turn's batch BEFORE any of
-                    # them reaches `invoke()` -- so the "deny" verdict
-                    # stamped below is never consumed there and would
-                    # otherwise leave no audit record at all (contrast
-                    # with the timeout branch, whose calls DO still reach
-                    # `invoke()`'s own gate and get logged there, since a
-                    # timeout is not itself a cancellation). Log directly
-                    # here, best-effort, for exactly the names this branch
-                    # is about to fail closed.
-                    cancelled_names = [
-                        name for name in unique_names if name not in decisions
-                    ]
-                    for name in unique_names:
-                        decisions.setdefault(name, "deny")
-                    self._record_cancelled_approval_decisions(
-                        cancelled_names,
-                        call_by_name,
-                    )
-                    break
-                if time.monotonic() >= deadline:
-                    for name in unique_names:
-                        decisions.setdefault(name, "timeout")
-                    break
+            # ADR-067: mark this run as waiting on a human decision for the
+            # duration of the wait, so a per-call wrapper hosting this round
+            # (the invoke-path fallback approval) pauses its deadline -- an
+            # indefinite wait must not trip `max_tool_call_seconds`.
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        # Finding I3: a stop/unmount that resolves THIS round
+                        # denies every still-undecided call, but
+                        # `run_agent_loop`'s own `should_cancel()` check fires
+                        # for every call in this turn's batch BEFORE any of
+                        # them reaches `invoke()` -- so the "deny" verdict
+                        # stamped below is never consumed there and would
+                        # otherwise leave no audit record at all (contrast
+                        # with the timeout branch, whose calls DO still reach
+                        # `invoke()`'s own gate and get logged there, since a
+                        # timeout is not itself a cancellation). Log directly
+                        # here, best-effort, for exactly the names this branch
+                        # is about to fail closed.
+                        cancelled_names = [
+                            name for name in unique_names if name not in decisions
+                        ]
+                        for name in unique_names:
+                            decisions.setdefault(name, "deny")
+                        self._record_cancelled_approval_decisions(
+                            cancelled_names,
+                            call_by_name,
+                        )
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        for name in unique_names:
+                            decisions.setdefault(name, "timeout")
+                        break
             # PR2a Task 7: a revoked round answers "deny" for every name,
             # unconditionally -- it does not consult `decisions` at all.
             # The run this round belongs to has been cancelled or
@@ -4323,6 +4488,113 @@ class ConsoleChatController:
         """Push ``payload`` (or clear it) onto the UI thread, if wired."""
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
+
+    def remount_pending_approval_for_active_session(self) -> bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+
+        **Known limitation, not fixed here:**
+        ``_parked_approval_payloads`` holds ONE payload per session
+        (last-armed wins -- see ``request_mcp_approvals``' ``finally``),
+        so with two rounds armed for one session only the newest can
+        mount. Filed as task-15661; pinned by
+        ``Tests/UI/test_console_headless_approval.py::
+        test_two_headless_rounds_share_one_payload_slot_and_only_one_mounts``.
+
+        Returns:
+            True when a card was mounted.
+        """
+        if self.set_pending_approval is None:
+            return False
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+        with self._approval_state_lock:
+            still_armed = any(
+                state.get("session_id") == session_id
+                for state in self._pending_approval_rounds.values()
+            )
+            payload = (
+                self._parked_approval_payloads.get(session_id)
+                if still_armed
+                else None
+            )
+        if payload is None:
+            return False
+        self.set_pending_approval(payload)
+        return True
+
+    def _approval_view_is_detached(self) -> bool:
+        """True when NO Console view can surface an approval round.
+
+        task-15860 Task 5. Deliberately a property of the SEAMS, not of
+        ``ConsoleRuntime.view``: these two slots are what an announcement
+        would travel through, and ``detach_view`` clears them together
+        (``CONSOLE_VIEW_HOOK_SLOTS``). Asking the runtime instead would
+        make this method wrong in exactly the case it exists for -- a
+        controller whose seams are unwired for any other reason would
+        still surface nothing while claiming a view.
+        """
+        return self.set_pending_approval is None and self.park_pending_approval is None
+
+    def _announce_detached_approval(self, session_id: str) -> None:
+        """Raise the app-wide toast for a round armed with no Console view.
+
+        WORKER THREAD. ``App.notify`` is documented thread-safe (it posts
+        a message), so this needs no ``call_from_thread`` marshal -- and
+        the toast renders on whatever screen the user is currently
+        looking at, which is the whole point: the screen-owned seam
+        (``ChatScreen._park_console_approval``) is unreachable here.
+
+        Best-effort in both directions. An app double with no ``notify``
+        (several controller-level tests) is silently skipped, and a
+        raising/incompatible ``notify`` is logged rather than allowed to
+        break the round -- a missing toast must never turn into a missing
+        approval.
+
+        Args:
+            session_id: The round's owning session, used only to name the
+                conversation in the notice.
+        """
+        app = self.app
+        notify = getattr(app, "notify", None) if app is not None else None
+        if not callable(notify):
+            return
+        title = ""
+        try:
+            for session in self.store.sessions():
+                if session.id == session_id:
+                    title = str(getattr(session, "title", "") or "")
+                    break
+        except Exception:  # noqa: BLE001 -- a missing title never blocks the notice
+            title = ""
+        where = f" in {escape_markup(title)}" if title else ""
+        message = (
+            f"Agent{where} needs approval to use a tool. "
+            "Open Console to review -- nothing runs until you answer."
+        )
+        try:
+            notify(message, severity="warning")
+        except TypeError:
+            # An app double whose `notify` takes the message alone.
+            try:
+                notify(message)
+            except Exception:  # noqa: BLE001
+                logger.debug("Detached approval notice could not be delivered")
+        except Exception as exc:  # noqa: BLE001 -- surfacing is best-effort
+            logger.debug(
+                "Detached approval notice raised (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _resolve_mcp_approval_timeout_seconds(self) -> float:
         if self.mcp_approval_timeout_seconds is not None:
@@ -5020,6 +5292,15 @@ class ConsoleChatController:
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
+        # ADR-067: same run stamp as `request_mcp_approvals` -- keys the
+        # human-input wait mark below (the install confirm is primary-agent
+        # only and in-loop, so no wrapper hosts it today, but the mark
+        # keeps every human wait on one contract).
+        owning_run_id = current_run_id()
         with self._pending_skill_install_lock:
             self._pending_skill_install_rounds[request_id] = {
                 "event": event,
@@ -5032,7 +5313,11 @@ class ConsoleChatController:
             if self.skill_install_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
         )
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         payload = {
             "url": url,
             "timeout_seconds": timeout_seconds,
@@ -5066,13 +5351,18 @@ class ConsoleChatController:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_skill_install(payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
-                ):
-                    break
-                if time.monotonic() >= deadline:
-                    break
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see `request_mcp_approvals`' identical wrap for the why).
+            with use_human_input_wait(owning_run_id):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
             return bool(decision.get("allow", False))
         finally:
             with self._pending_skill_install_lock:
@@ -5315,6 +5605,10 @@ class ConsoleChatController:
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        # task-15860: the visit's teardown Event, captured at ARM time for
+        # the same reason the run's cancel event is -- see
+        # `_bind_visit_cancel_signal`.
+        visit_cancel_event = self._bind_visit_cancel_signal()
         # PR2a Task 7 (review M1): same run-ownership stamp
         # `request_mcp_approvals` carries, and for a WIDER hazard --
         # `run_skill_script` is all-agents scope (no agent_kind gate in
@@ -5342,7 +5636,11 @@ class ConsoleChatController:
             if self.skill_script_confirm_timeout_seconds is not None
             else _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS
         )
-        deadline = time.monotonic() + timeout_seconds
+        # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
+        # for a decision or the owning run's cancellation.
+        deadline = (
+            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+        )
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
@@ -5363,13 +5661,20 @@ class ConsoleChatController:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             else:
                 self._marshal_pending_skill_script(card_payload)
-            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
-                if self._is_session_cancelled(
-                    session_id, cancel_event=round_cancel_event
-                ):
-                    break
-                if time.monotonic() >= deadline:
-                    break
+            # ADR-067: mark the owning run as waiting on a human decision
+            # (see `request_mcp_approvals`' identical wrap for the why).
+            with use_human_input_wait(
+                str(script_round_state.get("run_id") or "")
+            ):
+                while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                    if self._is_session_cancelled(
+                        session_id,
+                        cancel_event=round_cancel_event,
+                        visit_event=visit_cancel_event,
+                    ):
+                        break
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
             # PR2a Task 7 (review M1): a revoked round denies
             # unconditionally, without consulting `decision` at all --
             # `resolve_pending_skill_script` writes into that shared box
@@ -5735,10 +6040,146 @@ class ConsoleChatController:
                 self._active_cancel_events.pop(session_id, None)
 
     def begin_shutdown(self) -> None:
-        """Tombstone future queue work before any teardown cancellation."""
+        """Tombstone future queue work before any teardown cancellation.
 
+        The PERMANENT form (app exit / `prepare_for_quit`). `_disposed`
+        is what stops a later `begin_visit()` from handing this instance a
+        fresh, unset cancellation Event.
+        """
+
+        self._disposed = True
         self.prompt_queue_coordinator.shutdown()
         self._shutdown_requested.set()
+        self._cancel_headless_rounds()
+
+    def _cancel_headless_rounds(self) -> None:
+        """Deny every round armed while no Console visit was open.
+
+        task-15860 Task 5. Called by both teardown paths
+        (``leave_console``, ``begin_shutdown``); a no-op when no detached
+        round ever armed. The Event is DROPPED once set so the next
+        detached round binds a fresh, unset one rather than inheriting a
+        pre-set Event and denying instantly -- which would silently
+        restore the exact 1.01s self-deny this task removed.
+        """
+        event = self._headless_visit_cancel
+        if event is None:
+            return
+        self._headless_visit_cancel = None
+        event.set()
+
+    def begin_visit(self) -> None:
+        """Open a new Console visit on a controller that survived the last.
+
+        task-15860. Called by `ConsoleRuntime.attach_view` when a NEW view
+        claims the runtime. Two things reset, and only two:
+
+        1. A **fresh** `_shutdown_requested` Event. The previous visit's
+           Event stays set forever, so every round that captured it at arm
+           time stays denied (`_bind_visit_cancel_signal`), while this
+           visit's sends, approvals and wake attempts start clean.
+        2. Prompt-queue **admission re-opens**. `leave_console()`
+           tombstones the visit's chains through the coordinator's
+           `shutdown()`, which is a permanent `_shutting_down` latch --
+           without this the queue would be dead for the rest of the app's
+           life after the first navigation away.
+
+        A disposed controller (app exit) is never re-opened.
+        """
+
+        if self._disposed:
+            return
+        self._shutdown_requested = threading.Event()
+        self._stop_requested = False
+        reopen = getattr(self.prompt_queue_coordinator, "reopen", None)
+        if callable(reopen):
+            reopen()
+
+    async def leave_console(self) -> None:
+        """End ONE Console visit. This controller SURVIVES it.
+
+        The nav-away half of the teardown split (task-15860). Everything
+        AC#2 names as screen-scoped still happens:
+
+        - this visit's queue chains are tombstoned, before any
+          cancellation, exactly as `begin_shutdown` did it;
+        - this visit's cancellation Event is set, which denies every parked
+          approval/confirm round armed during the visit (each captured the
+          Event at arm time);
+        - this visit's in-flight USER turns are signalled, cancelled and
+          awaited, with `cancel_reason="shutdown"` stamped on each one's
+          in-flight citation repair -- the same stamp `shutdown()` makes,
+          for the same reason (`commit_canceled()` needs to know it was not
+          the user who stopped it);
+        - cross-turn fleet SURVIVORS keep running, untouched, as they
+          already did.
+
+        What does NOT happen: a wake is not blocked. task-15860's
+        wake-fires-headless slice moved `ConsoleFleetWakeCoordinator.
+        _attempt`'s gate onto `_disposed`, so a survivor settling after
+        this call delivers a full wake turn with no Console mounted;
+        only `begin_shutdown()` (app exit) refuses one.
+
+        What does NOT happen, by owner ruling: an in-flight `AGENT_WAKE`
+        turn is not cancelled. Cancelling it would re-create the exact
+        "only completes if you stay" gap this arc exists to close, and a
+        wake turn is structurally the same class of work as the survivor
+        AC#2 keeps running. AC#2 names USER turns only.
+
+        The provider gateway is NOT closed here -- it is app-owned now and
+        a surviving turn still needs it. `ConsoleRuntime.dispose` closes it
+        at exit.
+        """
+
+        # Tombstone first: `begin_shutdown`'s ordering contract ("before any
+        # teardown cancellation"), unchanged.
+        self.prompt_queue_coordinator.shutdown()
+        self._shutdown_requested.set()
+        # task-15860 Task 5: a round armed while DETACHED deferred to this
+        # moment. The user has now had a Console visit in which to answer
+        # it and has navigated away instead, so AC#2's rule applies to it
+        # exactly as it does to a round armed during the visit.
+        self._cancel_headless_rounds()
+        for message_id in tuple(self._original_attempts):
+            self.clear_original_attempt(message_id)
+        wake_sessions = set(self._agent_wake_turn_sessions)
+        tasks = {
+            session_id: task
+            for session_id, task in self._active_stream_tasks.items()
+            if session_id not in wake_sessions
+        }
+        if not tasks:
+            return
+        current = asyncio.current_task()
+        for session_id in tasks:
+            repair_session = self._active_citation_repair_sessions.get(session_id)
+            if (
+                repair_session is not None
+                and not repair_session.selection_committed
+                and repair_session.phase in {"checking", "repair_streaming"}
+            ):
+                repair_session.cancel_reason = "shutdown"
+            self._signal_stop(session_id=session_id)
+        for task in tasks.values():
+            if task is not current:
+                task.cancel()
+        for task in tasks.values():
+            if task is current:
+                # Left running from inside its own task, exactly as
+                # `shutdown()` does: its own `finally` still fires.
+                continue
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:  # noqa: BLE001 - teardown never crashes on a stale task
+                pass
+        self._stop_requested = False
+        for session_id, task in tasks.items():
+            if self._active_stream_tasks.get(session_id) is task:
+                self._active_stream_tasks.pop(session_id, None)
+                self._active_assistant_message_ids.pop(session_id, None)
+                self._active_cancel_events.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -8323,12 +8764,17 @@ class ConsoleChatController:
             self._context_repository is not None
             and owner.persisted_conversation_id is not None
         ):
-            memory = select_valid_memory(
-                self._context_repository.list_active_memories(
-                    owner.persisted_conversation_id
-                ),
-                self._durable_context_snapshots(session_id),
-            )
+            snapshots = self._durable_context_snapshots(session_id)
+            # Truthiness on purpose: None (unvalidatable lineage) and ()
+            # (no durable rows yet) both select no memory — an empty prefix
+            # can't validate any candidate — matching the send-path guards.
+            if snapshots:
+                memory = select_valid_memory(
+                    self._context_repository.list_active_memories(
+                        owner.persisted_conversation_id
+                    ),
+                    snapshots,
+                )
         return owner.context_policy_overrides, global_overrides, memory
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
@@ -8343,9 +8789,13 @@ class ConsoleChatController:
             or owner.persisted_conversation_id is None
         ):
             return None
+        snapshots = self._durable_context_snapshots(session_id)
+        # Truthiness on purpose: None and () both mean nothing can be reset.
+        if not snapshots:
+            return None
         memory = select_valid_memory(
             repository.list_active_memories(owner.persisted_conversation_id),
-            self._durable_context_snapshots(session_id),
+            snapshots,
         )
         if memory is None:
             return None
@@ -9140,6 +9590,19 @@ class ConsoleChatController:
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
         stream_signals = ConsoleProviderStreamSignals()
+        # Trajectory sidecar (schema v38): arm this turn's timing capture at
+        # the single dispatch choke point covering BOTH the direct-provider
+        # and agent paths, BEFORE the provider call. First-token is stamped
+        # at the store's chunk seam; completion at usage-attach. Best-effort
+        # -- a sidecar failure must never fail the send.
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id, step_started_at=time.time()
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_step_start_failed"
+            )
         try:
             if (
                 bool(
@@ -9503,6 +9966,22 @@ class ConsoleChatController:
         call's ``prompt_tokens`` would be priced against an earlier call's
         stale ``prompt_tokens_details.cached_tokens``.
         """
+        # Trajectory sidecar (schema v38): completion stamp + finalize flush.
+        # Runs BEFORE the usage early-returns so a turn with no usage still
+        # gets its completed_at stamped and its assistant row flushed. Never
+        # fails the send (same posture as the usage attach below).
+        try:
+            self.store.record_trajectory_timing(
+                assistant_message_id,
+                completed_at=time.time(),
+                model=str(getattr(resolution, "model", "") or "") or None,
+                provider=str(getattr(resolution, "provider", "") or "") or None,
+                flush=True,
+            )
+        except Exception as exc:
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "trajectory_completion_failed"
+            )
         if stream_signals is None:
             return
         payloads = self._usage_payloads(stream_signals)

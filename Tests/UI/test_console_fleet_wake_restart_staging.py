@@ -92,7 +92,7 @@ async def test_unseen_mark_reaches_membership_rows_without_a_session(tmp_path):
 
         await _wait_for_selector(console, pilot, "#console-session-surface")
         bump_fleet_unseen_revision(app)
-        rows = console._membership_console_browser_rows()
+        rows = console._workspace._membership_console_browser_rows()
         by_conversation = {row.conversation_id: row for row in rows}
         assert "conv-marked" in by_conversation, f"membership rows: {rows!r}"
         assert by_conversation["conv-marked"].run_marker == "◈", (
@@ -127,7 +127,9 @@ async def test_unseen_mark_reaches_persisted_rows_without_a_session(tmp_path):
 
         await _wait_for_selector(console, pilot, "#console-session-surface")
         bump_fleet_unseen_revision(app)
-        rows, _total, error = await console._persisted_console_browser_rows("")
+        rows, _total, error = await console._workspace._persisted_console_browser_rows(
+            ""
+        )
         assert not error
         by_conversation = {row.conversation_id: row for row in rows}
         assert "conv-marked" in by_conversation, f"persisted rows: {rows!r}"
@@ -271,9 +273,7 @@ async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
         await console._sync_console_native_session_tabs()
         await pilot.pause()
         assert wake.has_pending(session.id), "precondition: the wake is owed"
-        assert marks.has_mark(
-            session.id, ConversationLocalMarksService.FLEET_UNSEEN
-        ), (
+        assert marks.has_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN), (
             "task-15864 AC#3: viewing must not clear the mark while the "
             "wake is still owed -- a restart in that window leaves an owed, "
             "unmarked run the marks-indexed mount-claim never seeds"
@@ -300,8 +300,8 @@ async def test_marks_indexed_mount_claim_alone_misses_an_unmarked_owed_run(
     window instead of trying to claim from the ledger globally (which
     would also sweep in restart-orphans the corrected spec §3 deliberately
     leaves to next-turn handling)."""
-    chacha, app, runs_db, store, session, gateway, bridge, controller = (
-        _controller_rig(tmp_path)
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
     )
     try:
         _parent, _run_id = _terminal_subagent_run(runs_db, "conv-unmarked")

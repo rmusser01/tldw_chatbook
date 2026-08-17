@@ -159,10 +159,14 @@ class ConversationSelectionDialog(ModalScreen[Optional[Dict[str, Any]]]):
                     id="conversation-search-input",
                 )
 
-            # Conversations list
+            # Conversations list. Deliberately NOT wrapped in a RadioSet: the
+            # per-conversation radios sit inside item layout containers, and
+            # RadioSet only manages direct RadioButton children -- a nested
+            # radio crashes its pressed_index bookkeeping (ValueError) and its
+            # handler consumes the Changed event before this dialog sees it.
+            # Mutual exclusivity is enforced in on_radio_button_changed below.
             with ScrollableContainer(id="conversations-list-container"):
-                with RadioSet(id="conversations-radio-set"):
-                    yield Vertical(id="conversations-list")
+                yield Vertical(id="conversations-list")
 
             # Options section
             with Vertical(classes="options-section"):
@@ -210,7 +214,7 @@ class ConversationSelectionDialog(ModalScreen[Optional[Dict[str, Any]]]):
     def load_conversations(self, conversations: List[Dict[str, Any]]) -> None:
         """Load conversations into the list"""
         conversations_list = self.query_one("#conversations-list", Vertical)
-        conversations_list.clear()
+        conversations_list.remove_children()
         self.conversation_items.clear()
 
         for conv in conversations:
@@ -244,20 +248,30 @@ class ConversationSelectionDialog(ModalScreen[Optional[Dict[str, Any]]]):
                 item.display = True
 
     def on_radio_button_changed(self, event: RadioButton.Changed) -> None:
-        """Handle radio button selection"""
-        if event.radio_button.name == "conversation-selection" and event.value:
-            # Extract conversation ID from the radio button ID
-            radio_id = event.radio_button.id
-            if radio_id and radio_id.startswith("conv-radio-"):
-                try:
-                    self.selected_conversation_id = int(
-                        radio_id.replace("conv-radio-", "")
-                    )
-                    self.query_one("#generate-btn", Button).disabled = False
-                except ValueError:
-                    logger.error(
-                        f"Invalid conversation ID from radio button: {radio_id}"
-                    )
+        """Handle conversation radio selection, enforcing mutual exclusivity."""
+        if event.radio_button.name != "conversation-selection":
+            return
+        radio_id = event.radio_button.id or ""
+        try:
+            conversation_id = int(radio_id.removeprefix("conv-radio-"))
+        except ValueError:
+            logger.error(f"Invalid conversation ID from radio button: {radio_id}")
+            return
+        if event.value:
+            # One-of-N is this dialog's job (see compose): turn the previous
+            # selection off without re-entering this handler.
+            previous_id = self.selected_conversation_id
+            if previous_id is not None and previous_id != conversation_id:
+                with self.prevent(RadioButton.Changed):
+                    self.query_one(
+                        f"#conv-radio-{previous_id}", RadioButton
+                    ).value = False
+            self.selected_conversation_id = conversation_id
+            self.query_one("#generate-btn", Button).disabled = False
+        elif conversation_id == self.selected_conversation_id:
+            # The selected radio was toggled back off.
+            self.selected_conversation_id = None
+            self.query_one("#generate-btn", Button).disabled = True
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""

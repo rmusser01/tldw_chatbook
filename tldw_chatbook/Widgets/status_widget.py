@@ -79,7 +79,7 @@ class EnhancedStatusWidget(RecomposeCaptureGuard, Widget):
     }
     """
 
-    messages: reactive[List[StatusMessage]] = reactive([], recompose=True)
+    messages: reactive[List[StatusMessage]] = reactive(list, recompose=True)
     max_messages: reactive[int] = reactive(100)
     show_timestamp: reactive[bool] = reactive(True)
     title: reactive[str] = reactive("Status")

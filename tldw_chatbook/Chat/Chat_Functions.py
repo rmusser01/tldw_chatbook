@@ -410,6 +410,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "koboldcpp": {
         "api_key": "api_key",
@@ -481,6 +483,8 @@ PROVIDER_PARAM_MAP = {
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local-llm": {
         "messages_payload": "input_data",
@@ -494,6 +498,8 @@ PROVIDER_PARAM_MAP = {
         "max_tokens": "max_tokens",
         "seed": "seed",
         "stop": "stop",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "ollama": {  # api_url consideration
         "api_key": "api_key",  # api_key is not used by ollama directly, url is more important
@@ -556,6 +562,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "custom-openai-api-2": {
         "api_key": "api_key",
@@ -578,6 +586,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "top_logprobs": "top_logprobs",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "mlx_lm": {
         "api_key": "api_key",  # chat_with_mlx_lm doesn't use it, but map for consistency if passed via chat_api_call
@@ -626,6 +636,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_llamafile": {
         "api_key": "api_key",
@@ -645,6 +657,8 @@ PROVIDER_PARAM_MAP = {
         "n": "n_probs",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_ollama": {
         "api_key": "api_key",
@@ -682,6 +696,8 @@ PROVIDER_PARAM_MAP = {
         "frequency_penalty": "frequency_penalty",
         "logprobs": "logprobs",
         "user_identifier": "user_identifier",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "local_mlx_lm": {
         "api_key": "api_key",
@@ -706,6 +722,8 @@ PROVIDER_PARAM_MAP = {
         "user_identifier": "user_identifier",
         "tools": "tools",
         "tool_choice": "tool_choice",
+        "reasoning_effort": "reasoning_effort",
+        "thinking_budget_tokens": "thinking_budget_tokens",
     },
     "moonshot": {
         "api_key": "api_key",
@@ -786,6 +804,34 @@ def extract_response_content(resp: Any) -> str:
     if not content:
         return ""
     return content if isinstance(content, str) else str(content)
+
+
+def safe_endpoint_for_display(api_endpoint: Any) -> str:
+    """Return an endpoint string that is safe to log, label, or raise.
+
+    TASK-17165. `api_endpoint` is caller-supplied text, and a mis-ordered
+    caller can put a CREDENTIAL there -- `BaseReranker._call_llm_impl` does
+    exactly that today (TASK-17065), which is how an API key reached an
+    ERROR log line, an INFO line on every call, and a metrics label.
+
+    The rule is an ALLOWLIST, not a blocklist: a registered endpoint is safe
+    by definition and prints verbatim, so real diagnostics stay readable;
+    anything else is unknown-provenance text and is elided to its length.
+    Pattern-matching key SHAPES would miss any credential that does not look
+    like one, and this sink cannot know what it was handed.
+
+    Args:
+        api_endpoint: The raw endpoint argument, of any type.
+
+    Returns:
+        The lowercased endpoint when registered, else a redaction marker
+        carrying only its length.
+    """
+    text = str(api_endpoint or "")
+    lowered = text.lower()
+    if lowered in API_CALL_HANDLERS:
+        return lowered
+    return f"<unrecognised endpoint, {len(text)} chars, redacted>"
 
 
 def chat_api_call(
@@ -904,14 +950,24 @@ def chat_api_call(
         :rtype: str | dict | Generator[str, Any, None]
     """
     endpoint_lower = api_endpoint.lower()
-    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_lower}")
-    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_lower})
+    # TASK-17165: never echo the raw value -- these two fire on EVERY call,
+    # not just failures, and the label additionally lands in exported
+    # metrics (where it is also an unbounded-cardinality hazard).
+    endpoint_display = safe_endpoint_for_display(api_endpoint)
+    logger.info(f"Chat API Call - Routing to endpoint: {endpoint_display}")
+    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_display})
     start_time = time.time()
 
     handler = API_CALL_HANDLERS.get(endpoint_lower)
     if not handler:
-        logger.error(f"Unsupported API endpoint requested: {api_endpoint}")
-        raise ValueError(f"Unsupported API endpoint: {api_endpoint}")
+        logger.error(f"Unsupported API endpoint requested: {endpoint_display}")
+        # The message lists what IS valid instead of echoing what was passed:
+        # more useful for a genuine typo, and safe when the value is a
+        # credential (TASK-17165).
+        raise ValueError(
+            f"Unsupported API endpoint: {endpoint_display}. "
+            f"Valid endpoints: {', '.join(sorted(API_CALL_HANDLERS))}"
+        )
 
     params_map = PROVIDER_PARAM_MAP.get(endpoint_lower, {})
     call_kwargs = {}
@@ -977,10 +1033,76 @@ def chat_api_call(
         )
         log_counter("chat_api_call_success", labels={"api_endpoint": endpoint_lower})
 
+        # Provider handlers disagree on return shape: cloud and local
+        # OpenAI-compatible handlers return the raw normalized response DICT
+        # (tool_calls, finish_reason, usage -- the Console gateway parses
+        # all of these), so chat_api_call must pass dicts through UNCHANGED
+        # (an earlier normalization to content strings here broke the
+        # Console's tool/continuation paths). String-expecting consumers
+        # extract content via ``chat_reply_text`` (task-16331 correction).
+        # Usage recording reads the dict without altering it.
+        if isinstance(response, dict):
+            choices = response.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str):
+                    usage = response.get("usage")
+                    if not isinstance(usage, dict):
+                        usage = {}  # absent usage -> estimates path, not an AttributeError
+                    try:
+                        from .usage_recorder import active_recorder
+
+                        recorder = active_recorder()
+                        # Providers normalize to the OpenAI chat shape but
+                        # may keep their own usage field names (Anthropic:
+                        # input_tokens/output_tokens); OpenAI names win when
+                        # both are present (task-16335). Exact counts when
+                        # the provider reported usage, estimates otherwise.
+                        usage_prompt = usage.get("prompt_tokens")
+                        if usage_prompt is None:
+                            usage_prompt = usage.get("input_tokens")
+                        usage_completion = usage.get("completion_tokens")
+                        if usage_completion is None:
+                            usage_completion = usage.get("output_tokens")
+                        if recorder is not None and isinstance(usage, dict) and (
+                            usage_prompt is not None or usage_completion is not None
+                        ):
+                            recorder.record_usage(
+                                prompt_tokens=usage_prompt,
+                                completion_tokens=usage_completion,
+                            )
+                        elif recorder is not None:
+                            recorder.record_exchange(
+                                prompt_text=_estimate_prompt_text(
+                                    messages_payload, system_message
+                                ),
+                                completion_text=content,
+                            )
+                    except Exception:  # noqa: BLE001 - accounting must never break a call
+                        logger.debug("usage recording skipped", exc_info=True)
+
         if isinstance(response, str):
             logger.debug(
                 f"Debug - Chat API Call - Response type=str; length={len(response)}"
             )
+            # task-16329: token-usage plumbing. When a usage scope is active
+            # (research budget ledger), record estimated prompt/completion
+            # tokens for this exchange. One contextvar get when no scope is
+            # active -- zero behavior change for every other caller.
+            try:
+                from .usage_recorder import active_recorder
+
+                recorder = active_recorder()
+                if recorder is not None:
+                    recorder.record_exchange(
+                        prompt_text=_estimate_prompt_text(
+                            messages_payload, system_message
+                        ),
+                        completion_text=response,
+                    )
+            except Exception:  # noqa: BLE001 - accounting must never break a call
+                logger.debug("usage recording skipped", exc_info=True)
         elif hasattr(response, "__iter__") and not isinstance(
             response, (str, bytes, dict)
         ):
@@ -1097,9 +1219,10 @@ def chat_api_call(
         )
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
+            safe_endpoint = safe_endpoint_for_display(endpoint_lower)
             raise ChatConfigurationError(
-                provider=endpoint_lower,
-                message=f"Unsupported API endpoint: {endpoint_lower}",
+                provider=safe_endpoint,
+                message=f"Unsupported API endpoint: {safe_endpoint}",
             )
         else:
             error_detail = safe_llm_exception_message(e)
@@ -1122,6 +1245,61 @@ def chat_api_call(
             ),
             status_code=500,
         )
+
+
+def _estimate_prompt_text(
+    messages_payload: Any, system_message: Optional[str]
+) -> str:
+    """Text used for ESTIMATED prompt tokens (task-16814): the system
+    message is part of the prompt and must count; multimodal content lists
+    contribute only their text parts so base64 image payloads cannot
+    explode the estimate."""
+    parts: list = []
+    if system_message:
+        parts.append(str(system_message))
+    for message in messages_payload or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(
+                str(item.get("text") or "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+    return "\n".join(part for part in parts if part)
+
+
+def chat_reply_text(response: Any) -> str:
+    """Best-effort assistant text out of one ``chat_api_call`` reply
+    (task-16331 correction).
+
+    Provider handlers disagree on shape: handlers returning strings pass
+    through; handlers returning OpenAI-shaped response dicts (cloud AND
+    local OpenAI-compatible providers -- tool_calls/finish_reason/usage for
+    the Console gateway) extract ``choices[0].message.content`` (or the
+    legacy ``choices[0].text``). Anything unparseable yields "" so string
+    consumers' existing falsy/fallback handling applies -- never a dict
+    that would silently fail every downstream parse.
+    """
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+            text = choices[0].get("text")
+            if isinstance(text, str):
+                return text
+    return ""
 
 
 _CHAT_API_GENERIC_PARAMS = frozenset(inspect.signature(chat_api_call).parameters) - {

@@ -340,8 +340,13 @@ def test_aggregate_success_typed_and_numbered(monkeypatch):
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
-    assert set(out) == {"text", "evidence", "confidence", "chunks"}
+    # Success branch carries the citation-verification verdict (task-16331);
+    # failure/empty branches (pinned by their own tests) omit the key.
+    assert set(out) == {"text", "evidence", "confidence", "chunks", "citation_verification"}
     assert out["text"] == "Answer citing [1]."
+    cv = out["citation_verification"]
+    assert cv["markers_total"] == 1 and cv["markers_resolved"] == 1
+    assert cv["unknown_marker_ids"] == []
     assert out["evidence"][0]["id"] == 1
     assert out["evidence"][0]["url"] == "https://one.example/"
     assert "[1]" in captured["prompt"]          # numbered payload shown to the LLM
@@ -1209,3 +1214,180 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_abse
 
     await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
     assert captured["respect_robots_txt"] is False
+
+
+# --- relevance gate robustness (task-16333) --------------------------------------
+
+@pytest.mark.asyncio
+async def test_relevance_judgment_runs_at_classification_temperature(monkeypatch):
+    captured = []
+
+    def fake_chat(**kwargs):
+        captured.append(kwargs)
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    monkeypatch.setattr(WebSearch_APIs, "scrape_article", failing_scrape_noop)
+    results = [_std_result("T", "https://e.example/", "c")]
+    await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+
+    eval_calls = [
+        c for c in captured
+        if str(c["messages_payload"][0]["content"]).startswith("Evaluate the relevance")
+    ]
+    assert eval_calls, "the judgment call must be identifiable by its input"
+    assert all(c["temp"] <= 0.2 for c in eval_calls)
+
+
+async def failing_scrape_noop(url, **k):
+    raise RuntimeError("no scrape")
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
+                        _fake_chat(["Selected Answer: False\nReasoning: off-topic"] * 5))
+    results = [_std_result(f"T{i}", f"https://e{i}.example/", f"snippet {i}") for i in range(5)]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+
+    assert out, "all-rejected must not produce an empty evidence set when raw results exist"
+    assert len(out) <= 3  # bounded fallback
+    first = next(iter(out.values()))
+    assert first["gate_unverified"] is True
+    assert first["url"] == "https://e0.example/"  # original rank order
+    assert "snippet 0" in (first["content"] or "")  # snippet-level, no summarize spend
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
+    import asyncio
+    evt = asyncio.Event()
+
+    def fake_chat(**kwargs):
+        evt.set()
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    results = [_std_result("T", "https://e.example/", "c")]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", cancel_event=evt)
+
+    assert out == {}  # a cancelled/deadline run reports honestly, no fallback
+
+
+@pytest.mark.asyncio
+async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
+    import time as _t
+
+    def hanging_chat(**kwargs):
+        _t.sleep(0.3)
+        return "Selected Answer: True\nReasoning: slow"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", hanging_chat)
+    results = [_std_result("T", "https://e.example/", "c")]
+
+    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", llm_timeout_s=0.05)
+
+    assert out == {}  # never-evaluated results are not promoted (existing pin, unchanged)
+
+
+@pytest.mark.asyncio
+async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch):
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "A[1].")
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "s")
+
+    out = WebSearch_APIs.aggregate_results(
+        {"1": {"content": "c", "original_content": "o", "reasoning": "gate fallback",
+               "url": "https://e.example/", "title": "T", "gate_unverified": True}},
+        "q", [], "openai",
+    )
+    assert out["evidence"][0]["gate_unverified"] is True
+
+
+# --- source-type-aware gate prompt (task-17066) -------------------------------------
+
+@pytest.mark.asyncio
+async def test_relevance_gate_carries_source_note_for_repository_records(monkeypatch):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    result = _std_result("Folding dataset", "https://zenodo.org/records/1", "Simulations of folding")
+    result["metadata"] = {"source": "academic", "provider": "zenodo", "doi": "10.5281/x"}
+
+    await WebSearch_APIs.search_result_relevance([result], "how do proteins fold", [], "openai")
+
+    assert "repository record" in captured["prompt"]
+    assert "does NOT need to directly answer" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypatch):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    result = _std_result("Registry record", "https://openalex.org/W1", "Citation metadata")
+    result["metadata"] = {"source": "academic", "provider": "openalex"}
+
+    await WebSearch_APIs.search_result_relevance([result], "any question", [], "openai")
+
+    assert "metadata record" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
+    prompts = []
+
+    def fake_chat(**kwargs):
+        prompts.append(kwargs["messages_payload"][0]["content"])
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    paper = _std_result("A paper", "https://arxiv.org/abs/1", "Full text")
+    paper["metadata"] = {"source": "academic", "provider": "arxiv"}
+    web = _std_result("A page", "https://example.com/", "content")
+
+    await WebSearch_APIs.search_result_relevance([paper, web], "q", [], "openai")
+
+    # Byte-identical eval INPUT for both kinds (prefix equality -- absence
+    # checks alone would miss any other drift in the input line).
+    assert len(prompts) == 2
+    prefix = "Evaluate the relevance of the search result."
+    for prompt in prompts:
+        assert prompt.split("\n\n", 1)[0] == prefix
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
+    captured = []
+
+    def fake_chat(**kwargs):
+        captured.append(kwargs["messages_payload"][0]["content"])
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    plain_result = _std_result("T", "https://e.example/", "c")
+    paper = _std_result("P", "https://arxiv.org/abs/1", "c")
+    paper["metadata"] = {"source": "academic", "provider": "arxiv"}
+
+    await WebSearch_APIs.search_result_relevance(
+        [plain_result, paper], "q", [], "openai"
+    )
+
+    # The eval INPUT (everything before the "\n\nSearch Results" payload)
+    # must be byte-identical for unclassified and paper-classified results
+    # -- only the embedded result content differs.
+    prefix = "Evaluate the relevance of the search result."
+    assert len(captured) == 2
+    for prompt in captured:
+        input_line = prompt.split("\n\n", 1)[0]
+        assert input_line == prefix  # no note, no extra text

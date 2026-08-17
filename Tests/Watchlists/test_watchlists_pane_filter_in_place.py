@@ -110,7 +110,7 @@ def _visible_rows(pane: ArticleListPane) -> list[str]:
     not yield at all when nothing matched.
     """
     return [
-        str(node.query_one(Static).renderable)
+        str(node.render())
         for node in _list_nodes(pane)
         if node.display and not node.disabled
     ]
@@ -118,7 +118,7 @@ def _visible_rows(pane: ArticleListPane) -> list[str]:
 
 def _visible_headers(pane: ArticleListPane) -> list[str]:
     return [
-        str(node.query_one(Static).renderable)
+        str(node.render())
         for node in _list_nodes(pane)
         if node.display and node.disabled
     ]

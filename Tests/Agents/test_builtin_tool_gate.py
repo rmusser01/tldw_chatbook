@@ -439,7 +439,7 @@ def _no_override_get_cli_setting(section, key=None, default=None):
     return default
 
 
-def test_all_tool_gates_enumerates_nine_gates_with_sections_and_groups(monkeypatch):
+def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypatch):
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
@@ -448,10 +448,13 @@ def test_all_tool_gates_enumerates_nine_gates_with_sections_and_groups(monkeypat
     monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
 
     gates = all_tool_gates()
-    assert len(gates) == 9
+    # Derived, not a literal (TASK-16174): the arity is "every builtin row
+    # plus the local group's two", so adding a gateable built-in must not
+    # make this test the thing that fails.
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 2
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
-    # The 7 _GATEABLE_BUILTINS rows come first, in registration order,
+    # The _GATEABLE_BUILTINS rows come first, in registration order,
     # constants-not-literals (a re-typed key here would drift silently the
     # moment _GATEABLE_BUILTINS gains or reorders an entry).
     builtin_gates = gates[: len(_GATEABLE_BUILTINS)]
@@ -565,11 +568,14 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
         tool_gate_breadcrumb,
     )
 
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
     monkeypatch.setattr(config_module, "get_cli_setting", _no_override_get_cli_setting)
-    gates = all_tool_gates()  # master defaults on; the other 8 gates default off
+    gates = all_tool_gates()  # master defaults on; every other gate defaults off
+    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
     text = tool_gate_breadcrumb(gates)
     assert text is not None
-    assert "8" in text
+    assert str(off_count) in text
     assert "Tools mode" in text
     assert "web_search, web_fetch, web_crawl" not in text
 
@@ -608,16 +614,18 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
     (it runs on every Permissions-mode resync; construction also spams
     warnings for optional tools missing on this system)."""
     from tldw_chatbook.Agents import builtin_tool_gate, tool_catalog
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     def explode(entry):
         raise AssertionError(f"count path constructed a tool: {entry}")
 
     monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
     monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda s, k, d=None: d)
-    assert builtin_tool_gate.count_off_tool_gates() == 8
+    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    assert builtin_tool_gate.count_off_tool_gates() == off_count
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
     assert breadcrumb is not None
-    assert "8 tool gate(s)" in breadcrumb
+    assert f"{off_count} tool gate(s)" in breadcrumb
     assert "workspace, web, and Watchlists master switch in Tools mode" in breadcrumb
     assert "local/web" not in breadcrumb
     assert "built-in server detail" in breadcrumb

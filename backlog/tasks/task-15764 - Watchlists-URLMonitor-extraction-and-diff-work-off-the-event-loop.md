@@ -119,3 +119,54 @@ shapes remain unchanged.
 - Lessons hygiene: no reusable lesson was added because the work surfaced no
   new generalizable repository trap.
 <!-- SECTION:NOTES:END -->
+
+## Reconciliation (2026-08-15, duplicate-implementation event -- task-596 playbook)
+
+Two sessions implemented this task independently: the merged-first
+implementation above (Codex, commits `8f638f815` + `8fbd1426d`, PR #1650,
+merged 2026-08-14 17:38 -0700) STANDS; a second session on burn-down base
+`bb91fef73` (task file still `To Do` at that base) produced a structurally
+convergent implementation (`d07cfc50f` on `task/15764-burn`, independently
+reviewed with verdict MERGE), whose review-hardened delta is ported on top.
+Incident recorded in `lessons-backlog-hygiene.md` (4th "status is not a
+lock" instance).
+
+**Incumbent audit (by the second session, against base `bb91fef73`):**
+
+- Segment-once sharing: PRESERVED -- `_build_significant_change_details`
+  segments each side exactly once and hands the segments to both consumers.
+- Semantic identity: VERIFIED byte-identical across 11 full baseline+change
+  cycles (whole `change_info` minus `published_date`, both dispositions,
+  all persisted snapshot rows) covering the truncation path, unicode,
+  markup-only/unchanged, additions/removals-only, empty-page both
+  directions, and the below-threshold withheld path. No defect found; no
+  production change needed.
+- `response.text` decode placement: identical to the reviewed version
+  (decoded once on the loop, ~0.5 ms at the 10 MB cap per the review's
+  measurement); the incumbent's comments make no claims, so nothing
+  overclaims.
+
+**Ported delta:**
+
+- `Tests/Subscriptions/test_url_monitor_off_loop.py` -- whole-check
+  extraction thread-identity through `check_url` (the incumbent probes
+  `_fetch_url_content` directly); the url_list coverage AC #3 was ticked
+  without: two URLs x two runs through the real `launch_run`/`execute_run`
+  path, every URL's extraction AND diff off-loop; the `_segment_for_diff`
+  called-exactly-twice pin. Born-red evidence against the incumbent
+  implementation via per-hop runtime re-inlining (a shim replacing only
+  `monitoring_engine.asyncio.to_thread` for one target at a time):
+  extract -> extraction+url_list tests fail; percentage -> diff+url_list
+  fail; details -> diff+url_list fail; clean run 3/3 green.
+- `lessons-testing-evidence.md`: the review-CORRECTED cost-profile lesson
+  (the original 16.2 s / "99.8%" figures on 160 KB Latin text did not
+  reproduce -- autojunk fast path, 20-40 ms; the quadratic regime is
+  repertoire-dependent, ~7 min at the 10 MB cap on CJK/unicode-heavy text,
+  so the off-loop move is MORE justified than the original numbers implied).
+
+**Review follow-ups queued for filing:** per-(subscription,url) in-flight
+guard (pre-existing scheduled-vs-Check-Now double-report window, present at
+`bb91fef73`); bound `calculate_change_percentage` by input size (a worker
+thread can hold the GIL for minutes at the fetch cap on large-repertoire
+text); autojunk makes the reported change percentage meaningless for large
+Latin-text pages (pre-existing correctness oddity).

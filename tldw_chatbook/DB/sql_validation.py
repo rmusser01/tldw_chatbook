@@ -62,6 +62,7 @@ VALID_TABLES = {
         "learning_paths",
         "message_attachments",
         "message_generation_metadata",
+        "message_trajectory_metadata",
         "messages",
         "mindmap_nodes",
         "mindmaps",
@@ -121,6 +122,29 @@ VALID_TABLES = {
 
 # Define valid columns for each table (for most commonly used tables)
 VALID_COLUMNS = {
+    # Research interop DB (task-16814: registered so engine-controlled
+    # UPDATE columns can be schema-validated rather than trusted)
+    "research_runs": {
+        "id",
+        "session_id",
+        "query",
+        "status",
+        "phase",
+        "control_state",
+        "progress_percent",
+        "progress_message",
+        "source_policy",
+        "autonomy_mode",
+        "limits_json",
+        "provider_overrides_json",
+        "chat_handoff_json",
+        "follow_up_json",
+        "created_at",
+        "updated_at",
+        "deleted",
+        "client_id",
+        "version",
+    },
     # ChaChaNotes DB
     "character_cards": {
         "id",

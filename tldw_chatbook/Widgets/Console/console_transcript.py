@@ -7,7 +7,7 @@ import difflib
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Callable, Iterable, Literal, Mapping
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleTranscriptStyle,
     resolve_console_message_presentation,
 )
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCard,
@@ -77,6 +78,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
 )
+from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
@@ -2321,8 +2323,22 @@ class ConsoleTranscript(VerticalScroll):
     )
     """Widget classes that must keep the current selection active when clicked."""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
+        #: Turn-file-card spec: a zero-arg callable returning the shared
+        #: change-review provider, or ``None``. Late-binding (the same
+        #: builder convention as the region's other constructor callables)
+        #: so a stale reference is never cached across session switches.
+        #: Always set post-construction via ``set_change_review_provider_
+        #: factory`` (the screen's sync loop keeps it current on the
+        #: mounted instance every tick, mirroring ``set_summary_boundary``/
+        #: ``set_image_specs``) -- no constructor kwarg for this, so every
+        #: harness that builds this widget directly starts with the card
+        #: switched off until the setter runs.
+        self._change_review_provider_factory: Callable[[], Any] | None = None
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
@@ -2342,6 +2358,14 @@ class ConsoleTranscript(VerticalScroll):
         self.summary_boundary_message_id: str | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
+        #: TASK-16851: when the last ``scroll_end`` (the End key) was issued.
+        #: The prune's restore compares this against its ENTRY capture: an
+        #: End that lands inside the entry->restore window engages the raw
+        #: anchor AFTER the capture, and without the stamp the restore reads
+        #: that engagement as the shrink-clamp's spurious re-attach and
+        #: quietly cancels the user's drain (the frame-wide End-during-prune
+        #: race the TASK-15777 round-3 review filed).
+        self._scroll_end_intent_time = 0.0
         self._refresh_lock = asyncio.Lock()
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
@@ -2409,6 +2433,28 @@ class ConsoleTranscript(VerticalScroll):
         self._selection_origin_row: (
             ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
         ) = None
+        #: TASK-15777: view-only hidden TAIL — the second window boundary.
+        #: Always a contiguous SUFFIX of ``_messages`` derived from one index
+        #: (``_hidden_tail_start``), so mounted rows stay one contiguous slice
+        #: by construction: two boundary indices over one list can never
+        #: produce islands, which is why no gap-seam row is needed (the
+        #: failure mode TASK-15455 rejected came from two independently
+        #: mutated sets). Empty in every one-sided regime — the kill switch,
+        #: disabled pruning, and degenerate watermarks never populate it.
+        self._hidden_tail_ids: set[str] = set()
+        self._hidden_tail_start: int | None = None
+        self._tailward_hydration_scheduled = False
+        #: One-shot id consumed by ``refresh_messages``: after a re-centered
+        #: far jump the old scroll offset is meaningless, so the revealed
+        #: target is scrolled to the top of the viewport once its row mounts.
+        self._reveal_scroll_target: str | None = None
+        #: Review E: while the re-center's reconcile + placement are in
+        #: flight, the layout transits states (an emptied arrangement, the
+        #: target parked at y~0) that look exactly like top-boundary hits and
+        #: fired one spurious upward hydration — the jump landed with an
+        #: extra chunk mounted ABOVE the target. Latched in
+        #: ``_recenter_window_on``, released once the placement lands.
+        self._suppress_boundary_hydration = False
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -2465,9 +2511,28 @@ class ConsoleTranscript(VerticalScroll):
             return True
         return super().allow_vertical_scroll
 
-    def _is_following_tail(self) -> bool:
-        """Return True when the view is pinned to the newest content."""
+    def _raw_anchor_engaged(self) -> bool:
+        """Return Textual's anchor state: pinned to the bottom of the MOUNTED rows."""
         return bool(self.is_anchored and not getattr(self, "_anchor_released", False))
+
+    def _is_following_tail(self) -> bool:
+        """Return True when the view is pinned to the NEWEST content.
+
+        TASK-15777 (review A): Textual re-engages the anchor without calling
+        ``anchor()`` — ``Widget.scroll_end()`` (the End key) and
+        ``_check_anchor()`` both clear ``_anchor_released`` directly — so the
+        raw anchor state can be engaged while a hidden tail exists ("ghost
+        follow": pinned to the bottom of a stale slice, not the newest
+        content). Treating that state as following suppressed the jump pill
+        (whose visibility is gated on NOT following) exactly when it was the
+        only recovery, and let streamed replies accumulate unseen in the
+        hidden tail. The predicate is therefore the belt: whatever path
+        flips Textual's flag, a non-empty hidden tail means NOT following.
+        The braces are the convergence paths — the ``_hydrate_tailward``
+        chain and the ``set_messages`` ghost-follow heal — which drain or
+        drop the suffix so the raw state becomes true again.
+        """
+        return self._raw_anchor_engaged() and not self._hidden_tail_ids
 
     def sync_jump_indicator(self, run_status: str) -> None:
         """Show/hide the jump-to-latest pill for the current run + scroll state.
@@ -2536,6 +2601,17 @@ class ConsoleTranscript(VerticalScroll):
         # than waiting for the next 0.2s sync tick.
         self.sync_jump_indicator(self._last_run_status)
 
+    def _release_anchor_quietly(self) -> None:
+        """Release the raw anchor WITHOUT stamping user scroll intent.
+
+        For programmatic corrections (the prune restoring a detached reader
+        the shrink-clamp re-attached — TASK-15777 review round 2). The
+        public ``release_anchor`` records the release as a user gesture,
+        which would let a maintenance scroll outrank a later send's follow
+        intent (TASK-336 ordering).
+        """
+        super().release_anchor()
+
     @on(events.MouseScrollUp)
     def _hydrate_scrollback_on_boundary_wheel(
         self, _event: events.MouseScrollUp
@@ -2544,6 +2620,14 @@ class ConsoleTranscript(VerticalScroll):
         if self.scroll_y <= SCROLLBACK_HYDRATION_THRESHOLD:
             self._schedule_scrollback_hydration()
 
+    @on(events.MouseScrollDown)
+    def _hydrate_tailward_on_boundary_wheel(
+        self, _event: events.MouseScrollDown
+    ) -> None:
+        """Notice a downward wheel gesture against a hidden tail (TASK-15777)."""
+        if self._hidden_tail_ids and self._at_bottom_boundary():
+            self._schedule_tailward_hydration()
+
     def action_page_up(self) -> None:
         """Page upward and hydrate when the current window is already at y=0."""
         at_boundary = self.scroll_y <= SCROLLBACK_HYDRATION_THRESHOLD
@@ -2551,14 +2635,31 @@ class ConsoleTranscript(VerticalScroll):
         if at_boundary:
             self._schedule_scrollback_hydration()
 
+    def action_page_down(self) -> None:
+        """Page downward and reveal the hidden tail at the bottom boundary."""
+        at_boundary = bool(self._hidden_tail_ids) and self._at_bottom_boundary()
+        super().action_page_down()
+        if at_boundary:
+            self._schedule_tailward_hydration()
+
+    def _at_bottom_boundary(self) -> bool:
+        """Return True when the view cannot scroll meaningfully further down."""
+        return self.scroll_y >= self.max_scroll_y - SCROLLBACK_HYDRATION_THRESHOLD
+
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Hydrate the previous window when a detached reader reaches the top."""
+        """Hydrate the neighboring window when a detached reader hits a boundary."""
         super().watch_scroll_y(old_value, new_value)
         if (
             new_value <= old_value
             and new_value <= SCROLLBACK_HYDRATION_THRESHOLD
         ):
             self._schedule_scrollback_hydration()
+        elif (
+            new_value >= old_value
+            and self._hidden_tail_ids
+            and self._at_bottom_boundary()
+        ):
+            self._schedule_tailward_hydration()
 
     def _window_viewport_height(self) -> int:
         """Return a stable viewport height for line-budget calculations."""
@@ -2648,6 +2749,128 @@ class ConsoleTranscript(VerticalScroll):
             message.id for message in self._messages[:start]
         }
 
+    def _set_hidden_tail(self, start: int | None) -> None:
+        """Replace the view-only hidden tail with one contiguous suffix.
+
+        Args:
+            start: Index of the first hidden-tail message, or ``None`` (or an
+                index at/past the end) to mount through the true tail.
+        """
+        if start is None or start >= len(self._messages):
+            self._hidden_tail_start = None
+            self._hidden_tail_ids = set()
+            return
+        start = max(0, start)
+        self._hidden_tail_start = start
+        self._hidden_tail_ids = {
+            message.id for message in self._messages[start:]
+        }
+
+    def _hidden_tail_start_index(self) -> int:
+        """Return the hidden-tail boundary index (``len`` when no tail is hidden)."""
+        if self._hidden_tail_start is None:
+            return len(self._messages)
+        return self._hidden_tail_start
+
+    def _two_sided_active(self) -> bool:
+        """Return True when the hidden-tail boundary is allowed to engage.
+
+        TASK-15777: two-sided windowing requires ALL of
+        - windowing enabled (the kill switch restores the exact pre-15455
+          behavior, including the pruned prefix being unreachable by scroll),
+        - pruning enabled (``high_mark > 0``; with pruning off there is no
+          ceiling to lift and no height contract to trim against), and
+        - watermarks that can hold at least one scrollback chunk plus a
+          couple of viewports of reader context, with a chunk of headroom
+          between low and high.
+
+        The last condition is the fixed-point loop-breaker's replacement: with
+        sane marks, post-hydration trimming returns the mounted height to
+        ~``low`` before the prune check runs — and the trim works in the
+        prune's own MEASURED units (review B: an estimated trim held only
+        while ``measured/estimated <= high/low``, and ordinary short
+        messages exceed that at tight ratios) — so the prune (which fires
+        only above ``high``) cannot chase hydration, except while a
+        protected group (selection, focus) blocks the trim, where scroll-back
+        stalls bounded rather than churning free. Degenerate marks (e.g. the
+        45/70 test configuration, where a single chunk overshoots ``high``)
+        keep the TASK-15455 refusal-at-low-watermark behavior instead — there
+        the refusal IS the loop-breaker and must survive.
+        """
+        if not self._windowing_enabled():
+            return False
+        low_mark, high_mark = self._prune_watermarks()
+        if high_mark <= 0:
+            return False
+        chunk = self._scrollback_chunk_line_budget()
+        viewport = self._window_viewport_height()
+        return low_mark >= chunk + 2 * viewport and high_mark - low_mark >= chunk
+
+    def _reveal_tail_window(self) -> None:
+        """Drop the hidden tail and re-window onto a fresh bounded tail.
+
+        Every "take me to the newest content" path (the jump pill, a new
+        user send, any ``anchor()``) funnels here when a hidden tail exists:
+        simply clearing the suffix would remount everything between the
+        reader's scroll-back position and the tail in one pass — the exact
+        unbounded reveal this task removes — so the prefix boundary moves
+        FORWARD to a fresh tail window instead, the same shape a session
+        load produces. The dropped scroll-back stays in the store and
+        rehydrates chunk-by-chunk if the reader scrolls up again.
+        """
+        self._set_hidden_tail(None)
+        # A jump-to-latest between a re-center and its placement supersedes
+        # the placement; do not leave upward hydration suppressed (review E).
+        self._suppress_boundary_hydration = False
+        if self._windowing_enabled():
+            self._set_hidden_prefix(
+                self._tail_window_start(
+                    self._messages,
+                    line_budget=self._initial_window_line_budget(),
+                )
+            )
+
+    def anchor(self, *args, **kwargs) -> None:
+        """Engage tail-follow; a hidden tail is revealed first.
+
+        Anchoring means "follow the newest content", which requires the
+        newest content to be mounted. ``jump_to_latest`` and the send path
+        handle their windows explicitly before anchoring; this override is
+        the safety net for every other caller (TASK-15777).
+        """
+        if self._hidden_tail_ids:
+            self._reveal_tail_window()
+            if self.is_mounted:
+                self.call_later(self.refresh_messages)
+        super().anchor(*args, **kwargs)
+
+    def scroll_end(self, *args, **kwargs) -> None:
+        """Jump to the bottom; with a hidden tail, plant the drain's first link.
+
+        Review A, round 2: ``Widget.scroll_end`` (the End key) re-engages
+        the raw anchor synchronously, but its actual scroll can be
+        superseded by the compositor's anchor path, which moves an anchored
+        widget WITHOUT firing the ``scroll_y`` watcher (measured: a pill
+        display toggle between End and the deferred scroll left
+        ``watch_scroll_y`` completely silent across the 32->580 jump). Every
+        scroll-EVENT hook (wheel, PageDown, the watcher) can therefore miss
+        this entry entirely, so the End action itself schedules the first
+        tailward chunk; from there the ``_hydrate_tailward`` self-chain
+        carries the drain on the raw ANCHOR STATE, which needs no scroll
+        events. Callers that already handled the window (``jump_to_latest``
+        via ``anchor()``, the prune's following-branch restore) reach here
+        with no hidden tail, making this a no-op for them.
+
+        TASK-16851: the intent stamp lets a prune whose entry-capture
+        predates this call recognize the anchor engagement as the user's
+        End rather than the shrink-clamp's re-attach (see
+        ``_run_prune_check``'s restore).
+        """
+        self._scroll_end_intent_time = monotonic()
+        super().scroll_end(*args, **kwargs)
+        if self._hidden_tail_ids:
+            self._schedule_tailward_hydration()
+
     def _schedule_scrollback_hydration(self) -> None:
         """Coalesce one lazy prepend after explicit detached upward scrolling.
 
@@ -2665,17 +2888,28 @@ class ConsoleTranscript(VerticalScroll):
         mark, so a prune can never restore a hydratable state. An explicit
         ``_hydrate_scrollback()`` call is deliberately NOT gated — a caller
         asking for one chunk is not a loop.
+
+        TASK-15777: with sane watermarks the refusal is replaced by two-sided
+        windowing — hydration proceeds past the low mark and the tail is
+        trimmed back into the hidden suffix instead (see ``_two_sided_active``
+        for why the fixed point still holds). The refusal remains for the
+        kill switch and degenerate watermark configurations.
         """
         if (
             self._scrollback_hydration_scheduled
             or self._hydrating_scrollback
+            or self._suppress_boundary_hydration
             or not self.is_mounted
             or self._is_following_tail()
             or self._first_visible_message_index() <= 0
         ):
             return
         low_mark, high_mark = self._prune_watermarks()
-        if high_mark > 0 and self.virtual_size.height >= low_mark:
+        if (
+            high_mark > 0
+            and self.virtual_size.height >= low_mark
+            and not self._two_sided_active()
+        ):
             return
         self._scrollback_hydration_scheduled = True
         self.call_later(self._hydrate_scrollback)
@@ -2724,11 +2958,305 @@ class ConsoleTranscript(VerticalScroll):
                     animate=False,
                     release_anchor=False,
                 )
-                self._schedule_prune_check()
+                # TASK-15777: two-sided windowing — after the reader is back
+                # on the same content, trim the far end of the mounted slice
+                # into the hidden tail so sustained scroll-back keeps the DOM
+                # bounded instead of hitting the low-watermark ceiling. The
+                # trim lands the MEASURED height back at ~low BEFORE the
+                # prune check runs (refresh_messages schedules it), so the
+                # prune (which fires only above the measured high mark)
+                # cannot chase hydration — measured, not estimated, is what
+                # makes that ordering an argument (review B).
+                trim_start = (
+                    self._compute_tail_trim_start()
+                    if self._two_sided_active()
+                    else None
+                )
+                if trim_start is not None:
+                    self._set_hidden_tail(trim_start)
+                    self.call_later(self.refresh_messages)
+                else:
+                    self._schedule_prune_check()
             finally:
                 self._hydrating_scrollback = False
 
         self.call_after_refresh(_restore_reader)
+
+    def _compute_tail_trim_start(self) -> int | None:
+        """Return the message index where the hidden tail should start, if any.
+
+        Walks the MOUNTED rows from the newest end in MEASURED heights (the
+        same ``outer_size.height`` + margin-collapse accounting the prune's
+        ``_compute_prunable_prefix`` uses), keeping at least
+        ``max(low_mark, scroll_y + 2 viewports)`` mounted — the low watermark
+        is the same budget every other mounted state is allowed, and the
+        viewport term guarantees the trim can never touch content the reader
+        is looking at (or about to reach).
+
+        Measuring is load-bearing, not a refinement (review B): the prune
+        fires on measured ``virtual_size.height``, so an ESTIMATED trim only
+        kept the prune away while ``measured/estimated <= high/low`` — and
+        ordinary short one-line messages measure ~1.35-1.7x their estimate,
+        which at tight watermark ratios produced a permanent 2-cycle where
+        the prune removed exactly what each hydration added and scroll-back
+        never progressed. Trimming in the prune's own units makes the fixed
+        point hold for any content shape.
+
+        Protections stop the walk (contiguity forbids skipping): the
+        SELECTED message (same contract as the prune — review D: trimming it
+        unmounted its action row and made ``j`` teleport) and a group whose
+        row holds keyboard focus (removing a focused widget silently steals
+        the user's keyboard context). While a protection blocks the trim,
+        the prune still bounds total height from the top; scroll-back past
+        a bottom-pinned selection stalls until the selection is cleared —
+        the same stance the prune already takes when a selection blocks its
+        walk. A streaming row is deliberately NOT protected here: hidden, it
+        costs nothing and updates nothing; the pill and the ghost-follow
+        heal bring it back.
+
+        Returns:
+            The new hidden-tail start index, or ``None`` when nothing should
+            be trimmed.
+        """
+        first = self._first_visible_message_index()
+        tail_start = self._hidden_tail_start_index()
+        if tail_start - first <= 1:
+            return None
+        low_mark, high_mark = self._prune_watermarks()
+        if high_mark <= 0:
+            return None
+        keep_floor = max(
+            low_mark,
+            int(self.scroll_y) + 2 * self._window_viewport_height(),
+        )
+        remaining = self.virtual_size.height
+        if remaining <= keep_floor:
+            return None
+        groups = self._measured_message_groups()
+        if len(groups) <= 1:
+            return None
+        protected_ids: set[str] = set()
+        if self.selected_message_id is not None:
+            protected_ids.add(self.selected_message_id)
+        focused_id = self._focused_row_message_id()
+        if focused_id is not None:
+            protected_ids.add(focused_id)
+        index_by_id = {
+            message.id: index for index, message in enumerate(self._messages)
+        }
+        trim_start_id: str | None = None
+        blocking_id: str | None = None
+        # Never trim the topmost group: the window must stay non-empty.
+        for message_id, group_height in reversed(groups[1:]):
+            if message_id in protected_ids:
+                blocking_id = message_id
+                break
+            if remaining - group_height <= keep_floor:
+                break
+            remaining -= group_height
+            trim_start_id = message_id
+        if trim_start_id is None:
+            if blocking_id is not None and remaining > keep_floor:
+                # Mirror of the prune's blocked-walk log: without it a
+                # paused slide (selection or focus pinned at the mounted
+                # bottom) is indistinguishable from the trim simply having
+                # nothing to do.
+                logger.debug(
+                    "Console transcript tail trim blocked: mounted height "
+                    f"{remaining} over keep floor {keep_floor} but message "
+                    f"{blocking_id!r} (selected or focused) pins the newest "
+                    "end of the slice"
+                )
+            return None
+        return index_by_id.get(trim_start_id)
+
+    def _measured_message_groups(self) -> list[tuple[str, int]]:
+        """Return measured ``(message_id, height)`` per mounted group, top-down.
+
+        The per-row accounting mirrors ``_compute_prunable_prefix`` (outer
+        size + collapsed vertical margins), scoped per message group. The
+        walk ends at the first non-message child (trailing end-rule, empty
+        panel, docked jump pill), exactly like the prune's walk.
+
+        Latent mirror divergence, deliberate and currently exact (review
+        round 2): the prune's walk carries ``group_height``/``group_margin``
+        cumulatively ACROSS group boundaries, so a group's first row
+        collapses against the previous group's trailing margin; this walk
+        resets both per group, skipping that inter-group collapse — a
+        per-boundary difference of ``min(prev_bottom, top)``. Today every
+        transcript row has zero vertical margin, so the sum matches the
+        measured virtual height exactly (probe: constant -3 delta = the
+        three non-message chrome rows, at any group count) and the sign is
+        conservative. If a row style ever gains a vertical margin, this
+        walk will overcount each boundary by that collapse amount — still
+        conservative (trims slightly less), but worth knowing.
+        """
+        key_by_widget_id = {
+            id(widget): key for key, widget in self._row_widgets.items()
+        }
+        message_ids = {message.id for message in self._messages}
+        groups: list[tuple[str, int]] = []
+        group_id: str | None = None
+        group_height = 0
+        group_margin = 0
+        for child in self.children:
+            key = key_by_widget_id.get(id(child))
+            row_message_id: str | None = None
+            if key is not None and ":" in key:
+                candidate = key.split(":", 1)[1]
+                if candidate in message_ids:
+                    row_message_id = candidate
+            if row_message_id is None:
+                break
+            if row_message_id != group_id:
+                if group_id is not None:
+                    groups.append((group_id, group_height))
+                group_id = row_message_id
+                group_height = 0
+                group_margin = 0
+            if not child.display:
+                continue
+            top, _, bottom, _ = child.styles.margin
+            group_height = (
+                (group_height - group_margin + max(group_margin, top))
+                + bottom
+                + child.outer_size.height
+            )
+            group_margin = bottom
+        if group_id is not None:
+            groups.append((group_id, group_height))
+        return groups
+
+    def _focused_row_message_id(self) -> str | None:
+        """Return the message id of the row group holding keyboard focus."""
+        try:
+            focused = self.app.focused
+        except NoActiveAppError:
+            return None
+        if focused is None:
+            return None
+        node = focused
+        while node is not None and node.parent is not self:
+            node = node.parent
+        if node is None:
+            return None
+        key = next(
+            (key for key, widget in self._row_widgets.items() if widget is node),
+            None,
+        )
+        if key is None or ":" not in key:
+            return None
+        candidate = key.split(":", 1)[1]
+        if any(message.id == candidate for message in self._messages):
+            return candidate
+        return None
+
+    def _schedule_tailward_hydration(self) -> None:
+        """Coalesce one downward reveal after reaching the bottom boundary.
+
+        TASK-15777: the counterpart of ``_schedule_scrollback_hydration`` for
+        the hidden tail — without it, everything the tail-trim hid would only
+        be reachable via the jump pill or a send, a new reachability hole in
+        the other direction.
+        """
+        if (
+            self._tailward_hydration_scheduled
+            or self._hydrating_scrollback
+            or not self.is_mounted
+            or not self._hidden_tail_ids
+        ):
+            return
+        self._tailward_hydration_scheduled = True
+        self.call_later(self._hydrate_tailward)
+
+    async def _hydrate_tailward(self) -> None:
+        """Reveal one newer chunk from the hidden tail below the reader.
+
+        No scroll compensation is needed: revealed rows mount BELOW the
+        reader, which does not move content above them. Growth on this end
+        is bounded by the existing prefix prune (over the high mark it trims
+        the oldest rows, with its own measured scroll compensation), so an
+        up-then-down round trip oscillates between the two marks instead of
+        accumulating.
+
+        TASK-16851: that bound is real only while the prune can actually
+        make room. A far jump SELECTS its target and lands it at the window
+        HEAD, and the prune's walk stops at the first protected group — so a
+        head-pinned selection blocks the prune entirely while this chain
+        kept revealing (round-3 review: 490 rows / height 2.18x the high
+        mark, growing with session length). Hydration must not outrun a
+        prune that cannot make room: while the measured height is at/over
+        the high mark AND the prune walk is blocked, the reveal is refused
+        and the walk stalls BOUNDED instead (the mirror of the trim's
+        blocked-by-selection pause on the other boundary — the eviction
+        alternative would unmount the selection's action row, review D's
+        teleport). Clearing the selection (Esc) or the jump pill restores
+        full downward reachability.
+        """
+        self._tailward_hydration_scheduled = False
+        if (
+            self._hydrating_scrollback
+            or not self.is_mounted
+            or not self._hidden_tail_ids
+        ):
+            return
+        async with self._refresh_lock:
+            # Re-check under the lock: the guards above ran while another
+            # reconcile (a prune's, most often) could still be in flight,
+            # and the refusal below walks ``self.children`` — reading them
+            # mid-reconcile sees a transient order whose first child may not
+            # be a message row, which makes the prune walk look blocked when
+            # it is not (measured: the walk broke immediately and stalled a
+            # selection-free drain).
+            if not self.is_mounted or not self._hidden_tail_ids:
+                return
+            low_mark, high_mark = self._prune_watermarks()
+            if (
+                high_mark > 0
+                and self.virtual_size.height >= high_mark
+                and not self._compute_prunable_prefix(
+                    self.virtual_size.height, low_mark
+                )[0]
+            ):
+                # Mirror of the prune's and the trim's blocked-walk logs: an
+                # unexplained stalled downward walk must be diagnosable.
+                logger.debug(
+                    "Console transcript tailward hydration refused: mounted "
+                    f"height {self.virtual_size.height} at/over high mark "
+                    f"{high_mark} and the prune walk is blocked (a protected "
+                    "group holds the window head) — hydration must not "
+                    "outrun a prune that cannot make room"
+                )
+                return
+            tail_start = self._hidden_tail_start_index()
+            budget = self._scrollback_chunk_line_budget()
+            used = 0
+            end = tail_start
+            while end < len(self._messages) and used < budget:
+                used += self._estimated_message_lines(self._messages[end])
+                end += 1
+            self._hydrating_scrollback = True
+            self._set_hidden_tail(end if end < len(self._messages) else None)
+            try:
+                await self._reconcile_rows(self._transcript_rows())
+            finally:
+                self._hydrating_scrollback = False
+        self._schedule_prune_check()
+        # Chain while the reader is still pinned to the bottom: a reader whose
+        # anchor re-engaged at the slice bottom is auto-scrolled to the new
+        # bottom DURING the reveal (while the in-flight latch swallows the
+        # boundary signal), and once there, further scroll intents produce no
+        # ``scroll_y`` change to re-fire the watcher. Re-checking here keeps
+        # the walk converging toward the true tail; a detached reader
+        # mid-window is left alone (the reveal grew ``max_scroll_y`` past
+        # them, so they are no longer at the boundary). Review A: the raw
+        # anchor state is part of the condition because the anchor's
+        # auto-scroll can land a tick AFTER this re-check reads
+        # ``scroll_y`` — an anchored reader must converge regardless.
+        if self._hidden_tail_ids and (
+            self._at_bottom_boundary() or self._raw_anchor_engaged()
+        ):
+            self._schedule_tailward_hydration()
 
     def set_presentation_context(
         self,
@@ -2840,7 +3368,9 @@ class ConsoleTranscript(VerticalScroll):
             message.id
             for message in self._messages
             if message.id not in self._pruned_message_ids
+            and message.id not in self._hidden_tail_ids
         ]
+        previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
         # Expansion is per message id, so ids that left the transcript (a
@@ -2861,6 +3391,32 @@ class ConsoleTranscript(VerticalScroll):
             if message_id in index_by_id
         ]
         preserved_start = min(preserved_indices) if preserved_indices else None
+        # TASK-15777: the hidden tail is sticky across streaming ingests,
+        # anchored to its first still-present id — otherwise every 0.2s sync
+        # tick would remount the trimmed tail under a scrolled-back reader.
+        # Because the suffix is derived from ONE index over the new list,
+        # ids appended at the end (a streamed reply while the reader is deep
+        # in scroll-back) join it automatically. A disjoint ingest (session
+        # switch) has no surviving id and clears it.
+        surviving_tail_indices = [
+            index_by_id[message_id]
+            for message_id in previous_hidden_tail_ids
+            if message_id in index_by_id
+        ]
+        self._set_hidden_tail(
+            min(surviving_tail_indices) if surviving_tail_indices else None
+        )
+        if self._hidden_tail_ids and self._raw_anchor_engaged():
+            # Ghost-follow heal (review A): Textual's anchor re-engaged
+            # WITHOUT anchor() (End key / _check_anchor), so the reader is
+            # pinned to the bottom of a stale slice while replies pile into
+            # the hidden tail — and a reply WITHOUT a new user message never
+            # takes the send branch below. Following means the newest content
+            # must mount: drop the suffix and re-window onto a fresh tail
+            # (``preserved_start = None`` routes the boundary computation
+            # below through the same fresh-tail path a session load uses).
+            self._set_hidden_tail(None)
+            preserved_start = None
         if not self._windowing_enabled():
             # TASK-15455 (reconciliation): `[chat_defaults]
             # transcript_window_lines = 0` mounts the whole history, the
@@ -2875,6 +3431,15 @@ class ConsoleTranscript(VerticalScroll):
             # sticky across ingests (`_pruned_message_ids &= message_ids`);
             # carrying the preserved boundary forward reproduces that, while a
             # fresh or disjoint ingest still starts at 0 = mount everything.
+            #
+            # Review C: the kill switch must clear the hidden TAIL too — the
+            # escape hatch exists so a windowing bug can be switched off
+            # without a release, and carrying the sticky suffix forward left
+            # the trimmed tail hidden forever after a mid-session flip. Safe
+            # against the 15458 per-tick churn: no tail-creating path runs
+            # with windowing off, so this clear is one-shot, and the
+            # watermark-pruned PREFIX stays sticky exactly as before.
+            self._set_hidden_tail(None)
             window_start = 0 if preserved_start is None else preserved_start
         elif preserved_start is None:
             window_start = self._tail_window_start(
@@ -2903,6 +3468,20 @@ class ConsoleTranscript(VerticalScroll):
             # send/resume intent wins — the coalesced sync can deliver this
             # anchor late, and it must not yank a reader who has already
             # scrolled back.
+            #
+            # TASK-15777: a send from deep scroll-back re-windows onto a
+            # fresh bounded tail. Keeping the preserved (far-back) window
+            # start while clearing the hidden tail would remount everything
+            # from the reader's position to the tail in one pass. The
+            # ``anchor()`` override also clears the suffix, but the boundary
+            # it sets would be overwritten by ``_set_hidden_prefix`` below —
+            # hence the explicit ``window_start`` recompute here.
+            if self._hidden_tail_ids and self._windowing_enabled():
+                self._set_hidden_tail(None)
+                window_start = self._tail_window_start(
+                    self._messages,
+                    line_budget=self._initial_window_line_budget(),
+                )
             self.anchor()
         self._seen_message_ids = message_ids
         # task-501: apply a swipe-handoff selection once its id is actually in
@@ -2923,7 +3502,23 @@ class ConsoleTranscript(VerticalScroll):
                 window_start = self._turn_aligned_start(
                     self._messages, pending_index
                 )
+            elif pending_index >= self._hidden_tail_start_index():
+                # TASK-15777: same contract on the other boundary — a
+                # handed-off selection inside the hidden tail extends the
+                # mounted slice down through it.
+                self._set_hidden_tail(
+                    pending_index + 1
+                    if pending_index + 1 < len(self._messages)
+                    else None
+                )
             self.pending_selection_id = None
+        if (
+            self._hidden_tail_start is not None
+            and self._hidden_tail_start <= window_start
+        ):
+            # Degenerate reorder: the two boundaries crossed. Mounting through
+            # the tail is always safe; a crossed window never is.
+            self._set_hidden_tail(None)
         self._set_hidden_prefix(window_start)
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
@@ -3001,6 +3596,23 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
+    def set_change_review_provider_factory(
+        self, factory: Callable[[], Any] | None
+    ) -> None:
+        """Update the change-summary turn-file-card's provider factory.
+
+        Screen-owned (mirrors ``set_summary_boundary``/``set_image_specs``):
+        the screen's sync loop keeps this current on the mounted instance
+        every tick, so a session switch or a bridge becoming available never
+        needs a fresh transcript instance to take effect.
+
+        Args:
+            factory: Zero-arg callable yielding a change-review provider
+                for the active session (may return ``None`` when no run
+                is reviewable), or ``None`` to render plain marker rows.
+        """
+        self._change_review_provider_factory = factory
+
     def sync_empty_state(
         self,
         card_state: ConsoleSetupCardState,
@@ -3033,7 +3645,42 @@ class ConsoleTranscript(VerticalScroll):
         """Reconcile mounted message rows from the current transcript state."""
         async with self._refresh_lock:
             await self._reconcile_rows(self._transcript_rows())
+        # TASK-15777: a re-centered far jump replaced the whole window, so the
+        # previous scroll offset points at arbitrary content — put the jump
+        # target at the top of the viewport once its row has a layout.
+        target_id = self._reveal_scroll_target
+        if target_id is not None:
+            self._reveal_scroll_target = None
+            target_widget = self._row_widgets.get(f"message:{target_id}")
+            if target_widget is not None:
+                self.call_after_refresh(
+                    self._scroll_reveal_target_into_view, target_widget
+                )
+            else:
+                # No row to place: release the review-E latch here, since
+                # the placement callback that normally releases it will
+                # never run.
+                self._suppress_boundary_hydration = False
         self._schedule_prune_check()
+
+    def _scroll_reveal_target_into_view(self, widget: Widget) -> None:
+        """Scroll a just-revealed jump target to the top of the viewport."""
+        try:
+            if not self.is_mounted or widget.parent is not self:
+                return
+            # Textual's internal switch: this is a programmatic placement,
+            # not a fresh user gesture (the jump already released the
+            # anchor).
+            self._scroll_to(
+                y=max(0.0, float(widget.virtual_region.y) - 1.0),
+                animate=False,
+                release_anchor=False,
+            )
+        finally:
+            # The placement has landed (the watcher for it ran synchronously
+            # inside the _scroll_to above); boundary hydration is the
+            # reader's again.
+            self._suppress_boundary_hydration = False
 
     def _schedule_prune_check(self) -> None:
         """Run one watermark pruning check after the pending refresh settles.
@@ -3096,6 +3743,8 @@ class ConsoleTranscript(VerticalScroll):
             f"(estimated height {estimated_height})"
         )
         following = self._is_following_tail()
+        raw_anchor_at_entry = self._raw_anchor_engaged()
+        entry_time = monotonic()
         anchor_y = self.scroll_y
         self._pruned_message_ids.update(prune_ids)
         logger.info(
@@ -3112,10 +3761,52 @@ class ConsoleTranscript(VerticalScroll):
                 self.anchor()
                 self.scroll_end(animate=False)
             else:
-                # Keep the same content in view: shift the offset up by the
-                # height actually removed (measured, not estimated).
+                # Restore the reader's state FAITHFULLY, in two parts.
+                #
+                # Anchor state (review round 2's blocker): the shrink from
+                # the reconcile CLAMPS scroll_y to the new maximum, and if
+                # the reader happened to sit at the bottom, Textual's
+                # `_check_anchor` silently re-engages the raw anchor at
+                # that clamp — before this callback runs. The old public
+                # `scroll_to` released the anchor as a side effect, which
+                # accidentally undid that for detached readers but ALSO
+                # disarmed the End-drain's convergence braces (raw anchor
+                # engaged + hidden tail), stalling the drain mid-history
+                # forever. So: restore the anchor state captured at prune
+                # entry — quietly re-release a detached reader the clamp
+                # re-attached (no user-intent stamp: a programmatic shift
+                # must never outrank a later send's follow intent,
+                # TASK-336), and leave an entry-engaged anchor engaged so
+                # the drain keeps converging.
+                if not raw_anchor_at_entry and self._raw_anchor_engaged():
+                    if self._scroll_end_intent_time > entry_time:
+                        # TASK-16851 (the round-3 residual): this engagement
+                        # is a user End that landed INSIDE the entry->restore
+                        # window, not the shrink-clamp's re-attach — its
+                        # deferred scroll was enqueued before this callback,
+                        # so quietly releasing here would cancel the drain
+                        # after ~one chunk (the pill stayed up and a second
+                        # End resumed). Honor it instead: keep the anchor,
+                        # skip the now-stale entry-offset compensation (the
+                        # user asked for the bottom, not their old position),
+                        # and re-arm the drain's self-chain.
+                        if self._hidden_tail_ids:
+                            self._schedule_tailward_hydration()
+                        return
+                    self._release_anchor_quietly()
+                # Content: keep the same rows in view by shifting the
+                # offset up by the height actually removed (measured, not
+                # estimated), via Textual's internal switch — this is a
+                # COMPENSATION, not a user gesture, exactly like the
+                # hydration restore above. Ordering matters: release first,
+                # or the still-engaged anchor pulls the compensating scroll
+                # back to the bottom.
                 removed = total_height - self.virtual_size.height
-                self.scroll_to(y=max(0.0, anchor_y - removed), animate=False)
+                self._scroll_to(
+                    y=max(0.0, anchor_y - removed),
+                    animate=False,
+                    release_anchor=False,
+                )
 
         self.call_after_refresh(_restore_scroll)
 
@@ -3257,15 +3948,76 @@ class ConsoleTranscript(VerticalScroll):
             False when the message was already mounted or is not in this
             transcript. Deliberately does NOT refresh: callers already own a
             refresh, and the restore path needs to sequence its own.
+
+        TASK-15777: a FAR reveal — one where the newly revealed stretch
+        between the target and the current window would exceed the low
+        watermark in estimated lines — re-centers the window on the target
+        instead of extending the boundary, mounting an initial-window-sized
+        slice from the target's turn (the same shape a session load produces)
+        with everything past it in the hidden tail. Near reveals (a j/k step
+        over the boundary, a nearby restore) keep the plain boundary
+        extension, so small-session behavior is unchanged. Only meaningful
+        under ``_two_sided_active``.
         """
         for index, message in enumerate(self._messages):
             if message.id != message_id:
                 continue
-            if index >= self._first_visible_message_index():
+            first_visible = self._first_visible_message_index()
+            tail_start = self._hidden_tail_start_index()
+            if first_visible <= index < tail_start:
                 return False
-            self._set_hidden_prefix(self._turn_aligned_start(self._messages, index))
+            if index < first_visible:
+                revealed_start = self._turn_aligned_start(self._messages, index)
+                revealed_end = first_visible
+            else:
+                revealed_start = tail_start
+                revealed_end = index + 1
+            if self._two_sided_active() and self._estimated_window_lines(
+                revealed_start, revealed_end
+            ) > self._prune_watermarks()[0]:
+                self._recenter_window_on(index, message_id)
+                return True
+            if index < first_visible:
+                self._set_hidden_prefix(revealed_start)
+            else:
+                self._set_hidden_tail(
+                    revealed_end if revealed_end < len(self._messages) else None
+                )
             return True
         return False
+
+    def _estimated_window_lines(self, start: int, end: int) -> int:
+        """Return the estimated rendered lines of ``_messages[start:end]``."""
+        return sum(
+            self._estimated_message_lines(message)
+            for message in self._messages[start:end]
+        )
+
+    def _recenter_window_on(self, index: int, message_id: str) -> None:
+        """Mount a bounded, load-shaped window with the target's turn on top.
+
+        The far jump detaches the reader from the tail (it IS a user
+        navigation away from it — a later send's follow intent still
+        outranks it, per TASK-336's ordering), and the target row is
+        scrolled to the top of the viewport once mounted, because the old
+        scroll offset is meaningless in the new window.
+        """
+        start = self._turn_aligned_start(self._messages, index)
+        budget = self._initial_window_line_budget()
+        used = 0
+        end = index
+        while end < len(self._messages) and used < budget:
+            used += self._estimated_message_lines(self._messages[end])
+            end += 1
+        self._set_hidden_prefix(start)
+        self._set_hidden_tail(end if end < len(self._messages) else None)
+        self.release_anchor()
+        self._reveal_scroll_target = message_id
+        # Review E: the reconcile that realizes this window transits an
+        # emptied arrangement, and the placement parks the target near y=0 —
+        # both read as top-boundary hits and hydrated one spurious chunk
+        # ABOVE the jump target. Suppressed until the placement lands.
+        self._suppress_boundary_hydration = True
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
@@ -4122,12 +4874,13 @@ class ConsoleTranscript(VerticalScroll):
         Keyboard selection walks this list so j/k never lands on a pruned
         (row-less) message; the store-facing ``_messages`` keeps full history.
         """
-        if not self._pruned_message_ids:
+        if not self._pruned_message_ids and not self._hidden_tail_ids:
             return self._messages
         return [
             message
             for message in self._messages
             if message.id not in self._pruned_message_ids
+            and message.id not in self._hidden_tail_ids
         ]
 
     def _notify_selection_changed(self) -> None:
@@ -4141,9 +4894,14 @@ class ConsoleTranscript(VerticalScroll):
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
         for message in self._messages:
-            if message.id in self._pruned_message_ids:
+            if (
+                message.id in self._pruned_message_ids
+                or message.id in self._hidden_tail_ids
+            ):
                 # TASK-1365: pruned by the height watermarks; the store keeps
                 # the message, the view window drops every row derived from it.
+                # TASK-15777: the hidden tail is the same view-only contract
+                # on the other boundary.
                 continue
             message = self._with_expanded_tool_output(message)
             selected = message.id == self.selected_message_id
@@ -4479,6 +5237,20 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-original-attempt",
             )
         if row.kind == "message" and row.message is not None:
+            review_run_id = getattr(row.message, "change_review_run_id", None)
+            if (
+                review_run_id
+                and self._change_review_provider_factory is not None
+                and bool(get_cli_setting("console", "turn_file_cards", True))
+            ):
+                return ConsoleTurnFileCard(
+                    str(row.message.content),
+                    str(review_run_id),
+                    self._change_review_provider_factory,
+                    message_id=row.message.id,
+                    selected=row.selected,
+                    id=f"console-turn-file-card-{row.message.id}",
+                )
             presentation = self._message_presentation(row.message)
             if (
                 row.message.role is ConsoleMessageRole.ASSISTANT
@@ -4569,6 +5341,35 @@ class ConsoleTranscript(VerticalScroll):
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleTurnFileCard)
+        ):
+            # A card row's signature (`_message_row_signature`, shared with
+            # every other "message" kind row) folds in `selected` -- so
+            # moving keyboard/click selection onto or off this row DOES
+            # change the signature and reaches this method. Marker text and
+            # run id are fixed at append time (TOOL markers never mutate),
+            # so a mismatch here can only mean the row identity itself
+            # changed underneath the same key -- fall through to a full
+            # rebuild for that case; otherwise sync in place. Rebuilding on
+            # every selection flip would collapse whatever diffs were
+            # expanded and drop the diff cache for no reason.
+            review_run_id = getattr(row.message, "change_review_run_id", None)
+            still_a_card = (
+                review_run_id is not None
+                and self._change_review_provider_factory is not None
+                and bool(get_cli_setting("console", "turn_file_cards", True))
+            )
+            if (
+                still_a_card
+                and widget.marker_text == str(row.message.content)
+                and widget.run_id == str(review_run_id)
+            ):
+                widget.update_selected(row.selected)
+                return widget
+            return self._build_row_widget(row, track=True)
         if (
             row.kind == "message"
             and row.message is not None

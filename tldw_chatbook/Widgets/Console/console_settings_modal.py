@@ -36,6 +36,9 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.local_server_discovery import (
     normalize_probe_base_url,
     LocalModelProbeResult,
@@ -54,8 +57,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
+    console_settings_warnings,
     normalize_console_model_value,
     normalize_llamacpp_base_url,
+    reasoning_effort_hint_for_model,
     resolve_effective_chat_configuration,
     validate_console_session_settings,
 )
@@ -126,6 +131,33 @@ PROVIDER_CHOICE_INPUTS = (
         "off, low, medium, high, xhigh, max",
     ),
 )
+# ADR-066: local thinking execution keys. These providers consume only the
+# reasoning-effort level (and the token budget) via their local thinking
+# payload fields; the other provider-specific choice inputs have no effect.
+_LOCAL_THINKING_EXECUTION_KEYS = frozenset(
+    {
+        "llama_cpp",
+        "local_llamacpp",
+        "local_llamafile",
+        "local-llm",
+        "vllm",
+        "local_vllm",
+        "local_mlx_lm",
+        "custom-openai-api",
+        "custom-openai-api-2",
+    }
+)
+# Choice inputs with no effect on local thinking providers. The reasoning
+# effort input is excluded: local providers consume it via
+# chat_template_kwargs / reasoning_effort.
+_LOCAL_NO_EFFECT_CHOICE_INPUT_IDS = frozenset(
+    {
+        "console-settings-thinking-effort",
+        "console-settings-reasoning-summary",
+        "console-settings-verbosity",
+    }
+)
+PROVIDER_CHOICE_NO_EFFECT_SUFFIX = " (no effect on this provider)"
 STREAMING_ON_LABEL = "On"
 STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
@@ -175,6 +207,21 @@ def _settings_screen_region(widget: Any) -> Any:
         exposes one; otherwise the mounted widget region used by this project.
     """
     return getattr(widget, "screen_region", None) or widget.region
+
+
+def _is_local_thinking_provider(provider: str | None) -> bool:
+    """Return whether a provider executes through a local thinking key.
+
+    Args:
+        provider: Raw provider name from Console controls or session settings.
+
+    Returns:
+        True when the resolved execution key is one of the local thinking
+        keys, i.e. the provider-specific choice inputs other than the
+        reasoning-effort level have no effect on sends.
+    """
+    identity = resolve_console_provider_identity(provider)
+    return identity.execution_key in _LOCAL_THINKING_EXECUTION_KEYS
 
 
 async def _default_model_prober(
@@ -1408,6 +1455,8 @@ class ConsoleSettingsModal(
         result = self._validated_result_or_show_errors()
         if result is None:
             return
+        for warning in console_settings_warnings(result.settings):
+            self.notify(warning, severity="warning", timeout=8000)
         self.dismiss(result)
 
     @on(Button.Pressed, "#console-settings-save-default")
@@ -1438,6 +1487,11 @@ class ConsoleSettingsModal(
                 CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
             )
             return
+        # Warnings surface only after the write succeeded, so a failed
+        # default-persist shows the error copy alone instead of warnings
+        # for values that were not actually persisted.
+        for warning in console_settings_warnings(result.settings):
+            self.notify(warning, severity="warning", timeout=8000)
         self.dismiss(result)
 
     @on(Button.Pressed, "#console-context-reset-overrides")
@@ -1757,10 +1811,26 @@ class ConsoleSettingsModal(
 
     def _choice_placeholder(self, input_id: str) -> str:
         """Return the accepted-values placeholder for an enumerated choice input."""
+        if input_id == "console-settings-reasoning-effort":
+            hint = reasoning_effort_hint_for_model(self._settings.model)
+            if hint is not None:
+                return " / ".join(sorted(hint)) + " (consumed by this model)"
         for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
             if choice_input_id == input_id:
+                if (
+                    input_id in _LOCAL_NO_EFFECT_CHOICE_INPUT_IDS
+                    and _is_local_thinking_provider(self._active_provider)
+                ):
+                    return placeholder + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
                 return placeholder
         return ""
+
+    def _sync_provider_choice_placeholders(self) -> None:
+        """Refresh choice-input placeholders after the provider changes."""
+        for _label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
+            self.query_one(f"#{input_id}", Input).placeholder = (
+                self._choice_placeholder(input_id)
+            )
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -1794,6 +1864,7 @@ class ConsoleSettingsModal(
         self._sync_model_controls(provider, model)
         self._sync_base_url_control(provider, base_url)
         self._sync_model_discover_controls(provider)
+        self._sync_provider_choice_placeholders()
         self._sync_readiness_display()
         self._sync_visual_representation_availability()
 

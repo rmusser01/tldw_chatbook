@@ -15,7 +15,6 @@ from textual import on
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.app import App
 from textual.content import Content
 from textual.css.query import NoMatches
 from textual.pilot import OutOfBounds
@@ -38,6 +37,7 @@ from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+from tldw_chatbook.Workspaces import ConsoleConversationBrowserInputRow
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
@@ -210,43 +210,75 @@ def test_console_workspace_conversation_search_worker_uses_dedicated_group():
     # contract this test pins (the search runs in its own exclusive worker
     # group, so a newer search cancels an in-flight one) is unchanged; only
     # the function that expresses it moved.
-    source = inspect.getsource(ChatScreen._start_console_conversation_browser_search)
+    source = inspect.getsource(
+        ConsoleWorkspaceController._start_console_conversation_browser_search
+    )
 
     assert 'group="console-workspace-conversation-search"' in source
     assert "exclusive=True" in source
 
-    handler = inspect.getsource(
-        ChatScreen.on_console_workspace_conversation_search_changed
+    transition = inspect.getsource(ConsoleWorkspaceController.transition_browser_search)
+    assert "_start_console_conversation_browser_search" in transition
+    assert "_schedule_console_browser_timer(" in transition
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
+    app = _build_test_app()
+    console = ChatScreen(app)
+    timer = Mock()
+    sync_calls: list[None] = []
+    focus_calls: list[None] = []
+    console._sync_console_workspace_context = lambda: sync_calls.append(None)
+    console._focus_console_workspace_conversation_search = lambda: focus_calls.append(
+        None
     )
-    assert "_start_console_conversation_browser_search" in handler
-    assert "self.set_timer(" in handler
+    console.call_after_refresh = lambda callback: callback()
+    console._console_conversation_browser_query = "alpha"
+    console._console_conversation_browser_search_token = 6
+    console._console_conversation_browser_search_timer = timer
+    console._console_conversation_browser_rows = (
+        ConsoleConversationBrowserInputRow(
+            row_key="conv-alpha",
+            conversation_id="conv-alpha",
+            native_session_id=None,
+            title="Alpha",
+            scope_type="workspace",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+            workspace_label="Chats",
+            status="saved",
+            selected=False,
+            source_kind="persisted",
+        ),
+    )
+    console._console_conversation_browser_total = 3
+    console._console_conversation_browser_error = "old"
+    event = Button.Pressed(Button(id="console-workspace-conversation-search-clear"))
 
+    await console.on_button_pressed(event)
 
-def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
-    source = inspect.getsource(ChatScreen.on_button_pressed)
-    clear_branch = source.split(
-        'if button_id == "console-workspace-conversation-search-clear":',
-        1,
-    )[1].split(
-        'if button_id and button_id.startswith("console-workspace-conversation-")',
-        1,
-    )[0]
-
-    assert "_console_workspace_conversation_search_timer.stop()" in clear_branch
-    assert "_console_workspace_conversation_search_timer = None" in clear_branch
+    timer.stop.assert_called_once_with()
+    assert console._console_conversation_browser_search_timer is None
+    assert console._console_conversation_browser_search_token == 7
+    assert console._console_conversation_browser_query == ""
+    assert console._console_conversation_browser_rows == ()
+    assert console._console_conversation_browser_total is None
+    assert console._console_conversation_browser_error == ""
+    assert sync_calls == [None]
+    assert focus_calls == [None]
 
 
 def test_console_workspace_conversation_search_selection_refresh_invalidates_token():
     source = inspect.getsource(
-        ConsoleWorkspaceController._refresh_console_workspace_conversation_search_after_selection
+        ConsoleWorkspaceController._refresh_console_conversation_browser_after_selection
     )
     active_query_branch = source.split("if not query.strip():", 1)[1]
     before_refresh = active_query_branch.split(
-        "await self._refresh_console_workspace_conversation_search",
+        "await self._refresh_console_conversation_browser_search",
         1,
     )[0]
 
-    assert "_console_workspace_conversation_search_token += 1" in before_refresh
+    assert "_console_conversation_browser_search_token += 1" in before_refresh
 
 
 class _ReadyResolutionGateway:
@@ -2314,7 +2346,15 @@ async def test_console_native_missing_key_blocks_before_clearing_generic_draft()
         composer.load_draft("preserve this")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "missing API key")
+        # task-16474: this used to wait for "missing API key", a string that
+        # only existed inside the COLLAPSED inspector rail's row Statics --
+        # rows the rail-collapse cascade stamps display=False on, so their
+        # scrape-visibility depended on whether an ambient post-mount sync
+        # happened to restore them (the compact-bar mount burst used to
+        # provide that extra cycle). The composer's own blocked copy is the
+        # deterministic, user-facing statement of the same missing-key
+        # block, so that is what the contract pins now.
+        await _wait_for_text(console, pilot, "add an API key to continue")
 
         assert composer.draft_text() == "preserve this"
 
@@ -6918,7 +6958,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         assert ws_b_row is not None
         assert not _row_is_selected(ws_b_row)
         assert (
-            console._find_console_browser_row(
+            console._workspace._find_console_browser_row(
                 "workspace:missing:conversation:shared-open-chat",
                 conversation_id="shared-open-chat",
             )
@@ -6953,14 +6993,18 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         )
         selected_native_rows = [
             row
-            for row in console._native_console_browser_rows("shared-open-chat")
+            for row in console._workspace._native_console_browser_rows(
+                "shared-open-chat"
+            )
             if row.conversation_id == "shared-open-chat" and row.selected
         ]
         assert len(selected_native_rows) == 1
         assert selected_native_rows[0].native_session_id == active_session.id
         selected_membership_rows = [
             row
-            for row in console._membership_console_browser_rows("shared-open-chat")
+            for row in console._workspace._membership_console_browser_rows(
+                "shared-open-chat"
+            )
             if row.conversation_id == "shared-open-chat" and row.selected
         ]
         assert len(selected_membership_rows) == 1
@@ -7362,7 +7406,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         console._console_conversation_browser_search_token += 1
         stale_token = console._console_conversation_browser_search_token
         stale_task = asyncio.create_task(
-            console._refresh_console_conversation_browser_search("alpha", stale_token)
+            console._workspace._refresh_console_conversation_browser_search(
+                "alpha", stale_token
+            )
         )
         for _ in range(40):
             if app.chat_conversation_scope_service.started.is_set():
@@ -7378,7 +7424,9 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         console._console_conversation_browser_query = "beta"
         console._console_conversation_browser_search_token += 1
         fresh_token = console._console_conversation_browser_search_token
-        await console._refresh_console_conversation_browser_search("beta", fresh_token)
+        await console._workspace._refresh_console_conversation_browser_search(
+            "beta", fresh_token
+        )
 
         # TASK-1900: assert the CLAIM first, on state that is correct
         # synchronously once the refresh returns. The widget check below waits
@@ -8192,14 +8240,23 @@ async def test_console_workspace_switch_clears_conversation_search_and_restores_
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversation-search")) == 1
+        stale_token = console._console_conversation_browser_search_token
 
         service.set_active_workspace(workspace_b.workspace_id)
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
+        state = console._workspace._build_console_workspace_context_state()
         assert len(console.query("#console-workspace-conversation-search")) == 1
+        assert console._console_conversation_browser_search_token == stale_token + 1
+        assert console._console_conversation_browser_search_timer is None
+        assert console._console_conversation_browser_query == ""
+        assert state.conversation_browser is not None
+        assert state.conversation_browser.query == ""
+        assert state.conversation_section is not None
+        assert state.conversation_section.query == ""
         assert (
             console.query_one("#console-workspace-conversation-search", Input).value
-            == "alpha"
+            == ""
         )
 
         service.set_active_workspace(workspace_a.workspace_id)
@@ -8250,7 +8307,7 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.create_workspace(workspace_id="ws-stale-b", name="Stale B")
-    app.chat_conversation_scope_service = SearchableConversationService(
+    slow_service = SlowFirstSearchableConversationService(
         {
             "stale-a": {
                 "conversation": {
@@ -8271,16 +8328,25 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
             pilot,
             "#console-workspace-conversation-search",
         )
-        console._console_workspace_conversation_query = "Alpha"
-        stale_token = console._console_workspace_conversation_search_token + 1
-        console._console_workspace_conversation_search_token = stale_token
-        service.set_active_workspace("ws-stale-b")
-        await console._workspace._refresh_console_workspace_conversation_search(
-            active_workspace.workspace_id,
-            "Alpha",
-            stale_token,
+        await pilot.pause()
+        app.chat_conversation_scope_service = slow_service
+        await _set_console_conversation_browser_search(console, pilot, "Alpha")
+        await asyncio.wait_for(
+            slow_service.started.wait(),
+            timeout=_ASYNC_SETTLE_TIMEOUT,
         )
-        assert "Stale Alpha" not in _visible_text(console)
+        stale_token = console._console_workspace_conversation_search_token
+
+        service.set_active_workspace("ws-stale-b")
+        console._sync_console_workspace_context()
+        assert console._console_workspace_conversation_search_token > stale_token
+
+        slow_service.release.set()
+        await pilot.pause(0.5)
+        assert all(
+            row.title != "Stale Alpha"
+            for row in console._console_conversation_browser_rows
+        )
 
 
 @pytest.mark.asyncio
@@ -8307,9 +8373,6 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         console.query_one("#console-workspace-conversation-search", Input)
         await _set_console_conversation_browser_search(console, pilot, "")
 
-        assert "Workspace conversation search is unavailable." not in _visible_text(
-            console
-        )
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""
@@ -9860,6 +9923,95 @@ def test_native_console_state_serializes_plain_string_message_role():
     assert serialized["role"] == "assistant"
 
 
+def _console_snapshot_with_sessions(screen: ChatScreen) -> dict | None:
+    """The screen-state payload as it looked BEFORE task-15860 Task 3.
+
+    Console message state stopped travelling through `ScreenStateStore`
+    when the app-owned `ConsoleRuntime`'s store became the single source of
+    truth for history: `_serialize_native_console_state` no longer emits
+    `sessions`/`messages_by_session`/`active_session_id`, and
+    `_restore_native_console_state` no longer calls
+    `ConsoleChatStore.restore_state`.
+
+    The per-session and per-message (de)serializers themselves are still
+    live code with no production caller (retirement tracked as task-16520),
+    and the tests below are about THEIR shape -- legacy-payload tolerance,
+    character-provenance narrowing, byte-free message projection. So the
+    round trip they need is spelled out here, next to them, instead of
+    borrowed from a production method that no longer performs it.
+
+    Returns:
+        The live view-state payload with the retired session/message keys
+        added back, or ``None`` when the screen has no sessions (the same
+        condition the production serializer returns ``None`` for).
+    """
+    payload = screen._serialize_native_console_state()
+    if payload is None:
+        return None
+    store = screen._console_chat_store
+    payload["active_session_id"] = store.active_session_id
+    payload["sessions"] = [
+        screen._session._console_session_to_state(session)
+        for session in store.sessions()
+    ]
+    payload["messages_by_session"] = {
+        session.id: [
+            ChatScreen._serialize_console_message(message)
+            for message in store.messages_for_session(session.id)
+        ]
+        for session in store.sessions()
+    }
+    return payload
+
+
+def _restore_console_snapshot_with_sessions(screen: ChatScreen, payload) -> None:
+    """The mirror of `_console_snapshot_with_sessions` -- see its docstring.
+
+    Reproduces the retired half of `_restore_native_console_state` in the
+    same order it ran (rehydrate, `store.restore_state`, hydrate generation
+    metadata) and then hands the payload to the LIVE method for the view
+    state it still owns.
+    """
+    if not isinstance(payload, dict):
+        screen._restore_native_console_state(payload)
+        return
+    raw_sessions = payload.get("sessions")
+    if isinstance(raw_sessions, list) and raw_sessions:
+        store = screen._ensure_console_chat_store()
+        raw_messages = payload.get("messages_by_session")
+        messages_by_session = raw_messages if isinstance(raw_messages, dict) else {}
+        restored_sessions = []
+        restored_messages: dict[str, list] = {}
+        for raw_session in raw_sessions:
+            if not isinstance(raw_session, dict):
+                continue
+            session = screen._session._console_session_from_state(raw_session)
+            restored_sessions.append(session)
+            restored_messages[session.id] = []
+            raw_list = messages_by_session.get(session.id, [])
+            if not isinstance(raw_list, list):
+                continue
+            for raw_message in raw_list:
+                message = ChatScreen._restore_console_message(raw_message)
+                if message is None:
+                    continue
+                screen._rehydrate_console_message_image(message)
+                restored_messages[session.id].append(message)
+        screen._rehydrate_console_message_attachments(
+            [message for messages in restored_messages.values() for message in messages]
+        )
+        active_session_id = payload.get("active_session_id")
+        store.restore_state(
+            sessions=restored_sessions,
+            messages_by_session=restored_messages,
+            active_session_id=(
+                str(active_session_id) if active_session_id is not None else ""
+            ),
+        )
+        screen._rehydrate_console_message_generation_metadata(store, restored_messages)
+    screen._restore_native_console_state(payload)
+
+
 def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
     """Build a native-console screen shell for direct serialize/restore calls.
 
@@ -10021,13 +10173,13 @@ def test_native_console_state_round_trip_preserves_session_updated_at():
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert payload["sessions"][0]["updated_at"] == "2020-01-01T00:00:00+00:00"
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
@@ -10058,7 +10210,7 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert (
         payload["sessions"][0]["settings"]["system_prompt"]
@@ -10067,7 +10219,7 @@ def test_native_console_state_round_trip_preserves_session_system_prompt():
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.settings is not None
@@ -10089,7 +10241,7 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
         messages_by_session={session.id: []},
         active_session_id=session.id,
     )
-    payload = _bare_console_screen(store)._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(_bare_console_screen(store))
     assert payload is not None
     settings_payload = payload["sessions"][0]["settings"]
     assert settings_payload is not None
@@ -10115,9 +10267,9 @@ def test_native_console_restore_ignores_legacy_identity_without_mutation_or_conf
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
     restored_session = restored_store.sessions()[0]
-    serialized = restored_screen._serialize_native_console_state()
+    serialized = _console_snapshot_with_sessions(restored_screen)
 
     assert payload == payload_before
     assert (
@@ -10160,7 +10312,7 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
     )
     screen = _bare_console_screen(store)
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert {
         key: payload["sessions"][0][key]
@@ -10183,7 +10335,7 @@ def test_native_console_state_round_trip_preserves_source_aware_character_identi
 
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.runtime_backend == "local"
@@ -10217,7 +10369,7 @@ def test_live_server_session_never_exposes_local_character_projection():
 
     assert screen._current_console_rail_character_id() is None
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     assert payload["sessions"][0]["character_id"] is None
     assert session.character_id == 7
@@ -10245,7 +10397,7 @@ def test_native_console_state_restore_adapts_legacy_local_character_without_auth
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     restored_session = restored_store.sessions()[0]
     assert restored_session.runtime_backend == "local"
@@ -10292,7 +10444,7 @@ def test_source_aware_native_console_state_rejects_character_without_valid_sourc
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == ""
@@ -10341,7 +10493,7 @@ def test_native_console_state_restore_does_not_coerce_identity_scalars():
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == "local"
@@ -10387,7 +10539,7 @@ def test_native_console_state_restore_drops_server_numeric_local_projection():
     restored_store = ConsoleChatStore()
     restored_screen = _bare_console_screen(restored_store)
 
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
 
     session = restored_store.sessions()[0]
     assert session.runtime_backend == "server"
@@ -10425,7 +10577,7 @@ def test_native_console_state_restore_tolerates_legacy_payload_without_updated_a
     restored_screen = _bare_console_screen(restored_store)
 
     before = datetime.now(timezone.utc)
-    restored_screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(restored_screen, payload)
     after = datetime.now(timezone.utc)
 
     restored_session = restored_store.sessions()[0]
@@ -11224,7 +11376,7 @@ def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11292,7 +11444,7 @@ def test_restore_native_console_state_rehydrates_generation_metadata_end_to_end(
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11373,7 +11525,7 @@ def test_restore_generation_metadata_survives_stale_session_key_in_payload():
         },
     }
 
-    screen._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(screen, payload)
 
     store = screen._ensure_console_chat_store()
     restored = store.messages_for_session("session-1")
@@ -11507,13 +11659,13 @@ def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
     state, _cache = screen._ensure_console_image_view()
     state.restore({message.id: "hidden", "stale-id": "graphics"})
 
-    payload = screen._serialize_native_console_state()
+    payload = _console_snapshot_with_sessions(screen)
     assert payload is not None
     # Live override survives; the stale one is pruned at serialize time.
     assert payload["image_view_modes"] == {message.id: "hidden"}
 
     fresh = ChatScreen(app)
-    fresh._restore_native_console_state(payload)
+    _restore_console_snapshot_with_sessions(fresh, payload)
     fresh_state, _ = fresh._ensure_console_image_view()
     assert fresh_state.serialize() == {message.id: "hidden"}
 

@@ -7,6 +7,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 
 def _db(tmp_path):
@@ -63,57 +64,39 @@ def test_local_marks_table_exists_on_fresh_schema_with_expected_shape(tmp_path):
 
 def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
     db_path = tmp_path / "chacha.sqlite"
-    db = CharactersRAGDB(str(db_path), client_id="test-client")
-    conn = db.get_connection()
-    conn.execute("DROP INDEX IF EXISTS idx_conversation_local_marks_type")
-    conn.execute("DROP TABLE IF EXISTS conversation_local_marks")
-    # A fresh DB is created at the current schema version (>= V18), which
-    # already includes the V17->V18 `system_prompt` column/triggers. Undo
-    # that too so replaying V16->V17->V18 from a true V16-shaped DB doesn't
-    # hit "duplicate column name" when V17->V18 re-adds it.
-    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
-    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
-    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
-    conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
-    # A V16 fixture also predates the V27->V28 character-authority column.
-    conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
-    # A V16 fixture also predates the V29->V30 local-only usage_json column.
-    conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
-    # A V16 fixture predates the V33->V34 visual-compaction preference.
-    conn.execute(
-        "ALTER TABLE console_conversation_context_policy "
-        "DROP COLUMN compaction_representation"
-    )
-    conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
-    # A V16 fixture predates the V35->V36 note-folder tables.
-    conn.execute("DROP TABLE IF EXISTS note_folder_memberships")
-    conn.execute("DROP TABLE IF EXISTS note_folders")
-    # A V16 fixture must not retain citation tables introduced at V26->V27.
-    for table in (
-        "rag_artifact_owner_operations",
-        "rag_artifact_owner_leases",
-        "rag_source_observations",
-        "rag_message_trace_owners",
-        "rag_trace_evidence_refs",
-        "rag_answer_attempt_payloads",
-        "rag_evidence_runs",
-        "rag_citation_traces",
-        "rag_evidence_snapshots",
-        "rag_payload_tombstones",
-        "rag_legacy_migration_journal",
-        "rag_identity_context",
-    ):
-        conn.execute(f"DROP TABLE {table}")
-    conn.execute(
-        """
-        UPDATE db_schema_version
-           SET version = 16
-         WHERE schema_name = ?
-        """,
-        (db._SCHEMA_NAME,),
-    )
-    conn.commit()
-    db.close_connection()
+    # Build a genuinely V16-shaped DB: the production migration chain itself,
+    # run under a patched _CURRENT_SCHEMA_VERSION, stops and stamps at 16
+    # (task-16840; replaces the retired shared rollback registry). One caveat:
+    # the v4 base schema ships the marks table baked in (the V16->V17
+    # migration replays IF NOT EXISTS over it on the fresh path), so drop the
+    # migration-under-test's own two artifacts to prove the V16->V17 step
+    # genuinely creates them on replay. That is knowledge about the single
+    # migration this test pins — no future schema bump can invalidate it.
+    with chachanotes_db_at_version(db_path, 16, client_id="test-client") as db:
+        conn = db.get_connection()
+        conn.execute("DROP INDEX IF EXISTS idx_conversation_local_marks_type")
+        conn.execute("DROP TABLE IF EXISTS conversation_local_marks")
+        conn.commit()
+
+        # Guard the replay preconditions before reopening: the marks table
+        # the V16->V17 migration must create is absent, and — genuine-shape
+        # facts a rolled-back fixture could never assert — so is every
+        # later migration's table (note_folders was the artifact that broke
+        # the registry-era fixture in task-16197).
+        table_names = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        assert "conversation_local_marks" not in table_names
+        assert "note_folders" not in table_names
+        assert "note_folder_memberships" not in table_names
+        version_before = conn.execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        ).fetchone()
+        assert version_before["version"] == 16
 
     migrated = CharactersRAGDB(str(db_path), client_id="test-client")
 
@@ -253,9 +236,7 @@ def test_fleet_unseen_mark_survives_into_a_fresh_service_handle(tmp_path):
 
     fresh_db = CharactersRAGDB(path, client_id="reader")
     fresh = ConversationLocalMarksService(fresh_db)
-    assert fresh.has_mark(
-        "conv-restart", ConversationLocalMarksService.FLEET_UNSEEN
-    )
+    assert fresh.has_mark("conv-restart", ConversationLocalMarksService.FLEET_UNSEEN)
     assert fresh.list_marked_conversation_ids(
         ConversationLocalMarksService.FLEET_UNSEEN
     ) == ("conv-restart",)
@@ -273,8 +254,7 @@ def test_get_mark_returns_timestamps_with_created_at_stable_across_refreshes(
     db = _db(tmp_path)
     service = ConversationLocalMarksService(db)
     assert (
-        service.get_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
-        is None
+        service.get_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN) is None
     )
 
     service.set_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
@@ -285,9 +265,7 @@ def test_get_mark_returns_timestamps_with_created_at_stable_across_refreshes(
     assert first.created_at and first.updated_at
 
     service.set_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
-    refreshed = service.get_mark(
-        "conv-a", ConversationLocalMarksService.FLEET_UNSEEN
-    )
+    refreshed = service.get_mark("conv-a", ConversationLocalMarksService.FLEET_UNSEEN)
     assert refreshed is not None
     assert refreshed.created_at == first.created_at
     assert refreshed.updated_at >= first.updated_at

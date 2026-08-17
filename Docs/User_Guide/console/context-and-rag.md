@@ -13,8 +13,8 @@ reply back to its citations.
 
 Open Console with **Ctrl+2**. This page's surfaces: the **Chat Context**
 viewer (**Ctrl+Shift+P**), the **Inspector** rail on the right (click its
-handle to expand), the status chips above the composer, and the composer
-for `/prompt`, `/system`, and `/prefill`.
+handle to expand), the composer for `/prompt`, `/system`, and `/prefill`,
+and the status chips below the composer.
 
 ## Layout tour
 
@@ -28,10 +28,10 @@ Where this page's controls live:
   retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom.
-- **The status chips** above the composer — "RAG: on/off", "Sources: N
+- **The status chips** below the composer — "RAG: on/off", "Sources: N
   staged", and the "Scope: N" chip once retrieval is narrowed.
-- **The staged-evidence strip** — between the status chips and the
-  composer; shown only while something is staged (or right after a send
+- **The staged-evidence strip** — directly above the composer; shown only
+  while something is staged (or right after a send
   that used it).
 - **The composer** — where `/prompt`, `/system`, and `/prefill` are typed;
   the left rail's Model section carries the clickable `System:` line.
@@ -249,8 +249,8 @@ staying silent. A zero-result outcome currently clears the in-flight
 placeholder with no further notice.
 
 The Inspector tray is not the only place staged evidence shows up: a
-**staged-evidence strip** sits on the main surface itself, between the
-status chips and the composer, so staging is visible without opening the
+**staged-evidence strip** sits on the main surface itself, directly above
+the composer, so staging is visible without opening the
 Inspector at all. Staged, it lists the titles (up to three, "+N more"
 beyond that) with an **Un-stage** button that drops the whole bundle in
 one click; after a send that used it, the strip briefly instead reads

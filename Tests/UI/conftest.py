@@ -81,6 +81,44 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _disable_model_catalog_refresh(monkeypatch):
+    """Keep UI full-app boots off the ADR-020 catalog network seam (task-16198).
+
+    Incident: the knowledge_entry suite went red on pristine dev with the
+    egress guard's teardown error naming ``104.18.3.115:443`` and
+    ``104.18.2.115:443`` — openrouter.ai's two A records. The one keyless
+    path to that host is the startup catalog refresh:
+    ``TldwCli._refresh_model_catalogs`` →
+    ``LocalLLMProviderCatalogService.refresh_stale_configured_providers``,
+    which exempts OpenRouter from the no-credentials skip ("OpenRouter's
+    catalog is public") and issues a real
+    ``GET https://openrouter.ai/api/v1/models``. The refresh is consent-gated
+    and the per-test sandbox config defaults consent off, so a green run is
+    the norm — but any leak of consented settings into the process (a shared
+    ``TLDW_TEST_CONFIG_ROOT`` between concurrent sessions, config-cache
+    pollution) turns every full-app UI boot into live egress, timed by the
+    refresh worker racing test teardown. Tests/ProductionApp/conftest.py and
+    Tests/RuntimePolicy/test_runtime_policy_full_app.py already pin this same
+    seam shut; this fixture closes the remaining full-app surface (Tests/UI)
+    so no settings content can re-open it.
+
+    Only ``TldwCli._refresh_model_catalogs`` is patched: stub hosts that bind
+    their own ``_refresh_model_catalogs`` instance attribute (e.g. the
+    phase1 first-run schedule tests) and direct service-level tests are
+    unaffected. A test that needs the real seam monkeypatches the method
+    back within its own scope.
+    """
+
+    async def _offline_refresh(_app) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.TldwCli._refresh_model_catalogs",
+        _offline_refresh,
+    )
+
+
 @pytest_asyncio.fixture
 async def mock_app_config():
     """Provide a standard mock app configuration for tests."""

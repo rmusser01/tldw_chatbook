@@ -196,10 +196,14 @@ class ConsoleModelPopover(
                 )
                 model_select = Select(
                     model_options,
+                    # Select.NULL, not Select.BLANK: on this Textual version
+                    # BLANK doesn't exist on Select and silently resolves to
+                    # Widget.BLANK (False), an illegal value that crashes the
+                    # Select at mount (TASK-16502).
                     value=(
                         self._settings.model
                         if self._settings.model
-                        else Select.BLANK
+                        else Select.NULL
                     ),
                     id="console-popover-model",
                     allow_blank=True,
@@ -416,7 +420,7 @@ class ConsoleModelPopover(
         settings = replace(
             self._settings,
             provider=str(provider_value),
-            model=None if model_value in (None, Select.BLANK) else str(model_value),
+            model=None if model_value in (None, Select.NULL) else str(model_value),
             temperature=temperature,
             streaming=self._streaming,
         )

@@ -13,7 +13,7 @@ MCP tools plug in. For the Console screen itself see [Console](../console.md).
 Open Console (**Ctrl+2**) and send a message — runs happen wherever you
 chat, no separate mode to enable. The surfaces this page covers: the
 transcript's inline tool rows, the **Agent** section in the left "Console
-context" rail, the Inspector's status rows, the status chips above the
+context" rail, the Inspector's status rows, the status chips below the
 composer, and the approval and confirm cards that appear above the
 transcript.
 
@@ -56,7 +56,7 @@ reply:
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
 sources / tools / approvals for the next send.
 
-**In the status chips** (above the composer) — "Tools: N ready" counts the
+**In the status chips** (below the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
@@ -87,6 +87,13 @@ appears above the transcript:
   flags reads that could exfiltrate file contents; and a path warning —
   "path outside allowed folders; will fail even if approved" — means the file
   path will be rejected regardless of your decision.
+
+An armed approval card does not expire — the run waits for your decision
+however long you take. Stopping the run or closing the session withdraws a
+pending card; nothing else does. If you'd rather have undecided calls
+auto-denied on a clock, set `[mcp] approval_timeout_seconds` in
+`config.toml` (seconds; `0`, the default, waits indefinitely — the skill
+install and run-script confirm cards follow the same rule).
 
 **Always allow** (MCP tools only) is remembered per tool, tied to the tool's
 current definition — if the server later changes the tool, the approval card
@@ -194,6 +201,44 @@ already streaming.
   `definition_fingerprint` (a content hash of its instructions, tools, and
   model at spawn time) are written on every named-agent spawn. Neither is
   currently surfaced in **View full log** or anywhere else in the UI.
+
+### Change review — reviewing a turn's file changes
+
+When an agent turn edits files, the transcript shows a **turn file card**
+directly under that turn instead of a plain summary line: a header with the
+counts ("✎ Edited 3 files  +92 −468"), then one row per changed file. Press
+**Enter** or click a row to expand its diff in place — expanding is
+per-row and the diff loads (and is cached) the first time you open it, so
+collapsing and reopening a row is instant. The card never mutates
+anything; there is no undo or revert control on it.
+
+**`v`** still opens the full **Review** screen for that turn — the same
+key as before the card shipped. Reach it from the selected transcript row
+or the run inspector's **Review changes** action. Revert-all and the other
+destructive actions live only on that screen, behind a confirm, never as a
+one-keystroke action in the transcript.
+
+If change tracking failed for one of a turn's roots, that failure shows up
+as its own plain-text disclosure row next to the card, not inside it — the
+same row the transcript rendered before the card shipped. When *every*
+root in a turn failed to track, there is nothing left to count, so the
+turn gets no card and no summary row at all — only the per-root failure
+disclosures. And if a change spans a nested repository the tracker
+excluded, the card and the marker row are both silent about it; that
+exclusion is visible only in the full **Review** screen (`v`), which reads
+it from the stored snapshot.
+
+**`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
+presentation kill switch: set it to `false` to fall back to the original
+plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
+byte-identical to the pre-card behavior). `v` and the inspector's Review
+changes action work identically either way.
+
+The "✎ A sub-agent edited N files after this turn" row (see [Parallel
+sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
+by design it covers the same run's full set of tracked changes — turn and
+post-turn windows alike — the same union the `v` Review screen shows for
+that run.
 
 ### Parallel sub-agents (the fleet)
 
@@ -491,13 +536,56 @@ defines which completions are still owed.
   accepted prompt chain, and a wake starts none. While a wake turn is
   streaming, sending behaves like any other busy moment — it waits.
 
-**If Console isn't open, no wake fires** — that is the honest limit of
-the current release. The completion is still recorded (toast + `◈`
-mark + ledger), and the staged wake is claimed the next time the
-Console screen mounts: marked conversations are read, the ledger says
-which runs are still owed, and deliveries run one at a time under all
-the same rules above. A supervisor that acts with no Console mounted at
-all is follow-up work (task-15860).
+**Leaving Console no longer parks the supervisor.** A sub-agent that
+finishes while you are on Library, Watchlists, or any other screen wakes
+its supervisor there and then: the wake turn runs, its result is written
+to the conversation, and the `◈` mark stays set so you can see on return
+that something happened while you were away. Navigating back shows the
+completed turn already in the transcript.
+
+**A wake you were owed is delivered at the next launch, without opening
+Console.** Nothing runs while the app is closed — a completion that
+lands then is recorded durably (the `◈` mark plus the ledger) and waits.
+At the next start, once the app is up and interactive, any conversation
+that still carries a `◈` mark *and* still owes a result has its
+supervisor woken there and then: the conversation is reopened in the
+background, the turn runs, and you find it already in the transcript
+with its `◈` still lit when you open Console. Nothing else is woken —
+never a conversation without a mark, and never one whose results were
+already delivered — and the whole thing is off when `[agents]
+autowake_enabled` is off (there is no separate launch switch). If you
+have never run a background sub-agent, launch does exactly what it did
+before: one indexed check that finds nothing.
+
+If Console is your startup tab, the woken conversation opens as another
+tab beside the one you landed on; it never switches you away from the tab
+you started in.
+
+One case cannot be delivered and is cleaned up instead: sub-agent work
+started in a **temporary (unsaved) chat** belongs to a session that does
+not survive the app, so there is no conversation left to wake. Its `◈`
+mark is cleared at the next launch rather than left pointing at nothing.
+Save the chat before starting long background work you want to come back
+to.
+
+A wake turn spends model tokens with no window open — the `◈` mark is
+your signal that it did.
+
+**A headless wake that needs approval asks you, wherever you are.** When
+a woken turn reaches a tool that requires your approval, a toast names it
+on whatever screen you're on ("Agent in “…” needs approval to use a tool.
+Open Console to review — nothing runs until you answer."), the session
+picks up its usual approval badge, and the card is waiting, already
+mounted, the moment you open Console. The tool does not run until you
+answer it. Nothing auto-approves: navigating away from Console again
+denies the request (the same rule as any card you leave unanswered), and
+so does quitting the app. If you have set a positive `[mcp]
+approval_timeout_seconds`, it still expires the request on schedule —
+being away does not buy the request extra time. The shipped default is
+`0`, which means no deadline: the request waits for you. One limitation:
+if a woken turn arms two approval rounds for the same conversation, only
+the most recent one has a card to mount; the older one still has to be
+answered, and until it is, it keeps the badge lit (task-15661).
 
 **Turning the wake off.** Set `[agents] autowake_enabled = false` in
 `config.toml` (default `true`; no Settings UI switch). OFF loses
@@ -708,6 +796,11 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   above.
 - **Settings > Agents** — create and manage the named agent definitions the
   supervisor can delegate to; see [Named agents](#named-agents) above.
+- **`[console] turn_file_cards`** in `config.toml` — whether a turn's file
+  changes render as the expandable card described in [Change
+  review](#change-review--reviewing-a-turns-file-changes) above, or the
+  original plain-text marker row (default `true`, card on). No Settings UI
+  switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
@@ -818,4 +911,16 @@ and the bullet had described that leak as intended behavior. Navigation
 now unmounts the outgoing screen, so leaving Console stages. Pinned by
 `Tests/UI/test_screen_residency.py`; the live off-view evidence above is
 unaffected — it was gathered with a palette covering an open Console and
-a different session tab active, not by navigating away.)*
+a different session tab active, not by navigating away.) The "Change
+review" section added @ 6fc069cc0 — 2026-08-15 (turn file card feature:
+docs-only pass against shipped code and the whole-module test run —
+`Tests/Chat/test_console_turn_file_entries.py`,
+`Tests/UI/test_console_turn_file_card.py`,
+`Tests/UI/test_console_turn_file_card_factory.py`,
+`Tests/UI/test_console_native_chat_flow.py`, and
+`Tests/UI/test_console_internals_decomposition.py`, 457 passed — not an
+interactive live-tmux walkthrough of the card itself. The card is a pure
+presentation layer over TASK-1972's existing change-review subsystem; the
+`[console] turn_file_cards` kill switch reverts to the pre-card plain-text
+marker row byte-for-byte, confirmed by
+`test_summary_row_stays_plain_marker_when_disabled`.)*

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
@@ -217,6 +218,88 @@ async def test_confirm_dismisses_typed_positive_decision() -> None:
         await pilot.pause()
 
     assert app.results == [PromptDeleteDecision(confirmed=True, fingerprint="editor:42")]
+    assert type(app.results[0]) is PromptDeleteDecision
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_prompt_delete_library_modal_contract_exact_negative_once(
+    source: str,
+) -> None:
+    app = ModalHarness()
+    request = PromptDeleteRequest(items=(_item("Draft"),), fingerprint="editor:42")
+    modal = PromptDeleteConfirmationModal(request)
+
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        assert modal.query_one("#prompt-delete-modal")
+        modal.request = PromptDeleteRequest(
+            items=request.items,
+            fingerprint="editor:current",
+        )
+
+        if source == "visible":
+            await pilot.click("#prompt-delete-cancel")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+
+    assert app.results == [
+        PromptDeleteDecision(confirmed=False, fingerprint="editor:current")
+    ]
+    assert type(app.results[0]) is PromptDeleteDecision
+
+
+@pytest.mark.asyncio
+async def test_prompt_delete_library_modal_contract_inside_and_non_primary_stay_open() -> None:
+    app = ModalHarness()
+    modal = PromptDeleteConfirmationModal(
+        PromptDeleteRequest(items=(_item("Draft"),), fingerprint="editor:42")
+    )
+
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        await pilot.click("#prompt-delete-copy")
+        event = events.Click(
+            modal,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=3,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=0,
+            screen_y=0,
+        )
+        await modal._dispatch_message(event)
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_prompt_delete_repeated_input_dismisses_once() -> None:
+    app = ModalHarness()
+    modal = PromptDeleteConfirmationModal(
+        PromptDeleteRequest(items=(_item("Draft"),), fingerprint="editor:42")
+    )
+
+    async with app.run_test(size=(90, 30)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        await pilot.press("escape", "escape")
+        await pilot.pause()
+
+    assert app.results == [
+        PromptDeleteDecision(confirmed=False, fingerprint="editor:42")
+    ]
 
 
 @pytest.mark.asyncio

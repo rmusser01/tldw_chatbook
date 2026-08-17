@@ -42,6 +42,7 @@ import json
 import re
 import uuid
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import threading
@@ -174,6 +175,48 @@ class ConflictError(CharactersRAGDBError):
 _EXPRESSION_IMAGE_STATE_IDS = frozenset({"thinking", "speaking", "error"})
 
 
+# --- Trajectory metadata sidecar (schema v38) ---
+# ``message_trajectory_metadata`` is LOCAL-ONLY: no sync triggers, no sync
+# serialization. It records this device's own per-turn step observations for
+# the Console trajectory view.
+@dataclass
+class TrajectoryRowWrite:
+    """Input row for :meth:`CharactersRAGDB.upsert_trajectory_rows`.
+
+    ``seq=None`` means "assign the next seq for this conversation inside
+    the write transaction"; explicit seqs are honored as-is.
+    """
+
+    message_id: str
+    conversation_id: str
+    turn_id: str
+    seq: Optional[int]
+    event_kind: str
+    step_started_at: Optional[float] = None
+    first_token_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    payload_json: Optional[str] = None
+
+
+@dataclass
+class TrajectoryRowRead:
+    """A stored trajectory sidecar row, as returned by reads."""
+
+    message_id: str
+    conversation_id: str
+    turn_id: str
+    seq: int
+    event_kind: str
+    step_started_at: Optional[float] = None
+    first_token_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    payload_json: Optional[str] = None
+
+
 # --- Database Class ---
 class CharactersRAGDB:
     """
@@ -201,7 +244,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 37  # Durable provider continuation on assistant messages.
+    _CURRENT_SCHEMA_VERSION = 39  # Local Visual Identity pack metadata.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3195,7 +3238,7 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
-    def transaction(self) -> "TransactionContextManager":
+    def transaction(self, *, immediate: bool = False) -> "TransactionContextManager":
         """
         Returns a context manager for database transactions.
 
@@ -3212,10 +3255,18 @@ UPDATE db_schema_version
         managed contexts only track depth and defer completion to their outer
         transaction.
 
+        Args:
+            immediate: Start the outermost manager-owned transaction with
+                ``BEGIN IMMEDIATE`` (write lock up front). Required for
+                read-then-write transactions (e.g. seq assignment via
+                MAX(seq)+1) that would otherwise risk SQLite's
+                non-retryable deferred-upgrade deadlock under concurrent
+                writers. Ignored for nested/borrowed transactions.
+
         Returns:
             TransactionContextManager: An object to be used in a `with` statement.
         """
-        return TransactionContextManager(self)
+        return TransactionContextManager(self, immediate=immediate)
 
     # --- Schema Initialization and Migration ---
     def _get_db_version(self, conn: sqlite3.Connection) -> int:
@@ -5029,6 +5080,85 @@ UPDATE db_schema_version
                 f"Migration from V36 to V37 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v37_to_v38(self, conn: sqlite3.Connection) -> None:
+        """Add the local-only message trajectory metadata sidecar table."""
+        if self._get_db_version(conn) != 37:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V37→V38] Migration requires schema version 37"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v37_to_v38_message_trajectory_metadata.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    statement = pending
+                    pending = ""
+                    cursor.execute(statement)
+                if pending.strip():
+                    raise SchemaError(
+                        "Trajectory metadata migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 38:
+                    raise SchemaError(
+                        "Trajectory metadata schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V37 to V38 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v38_to_v39(self, conn: sqlite3.Connection) -> None:
+        """Add local Visual Identity packs, versions, assets, and bindings."""
+        if self._get_db_version(conn) != 38:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V38→V39] Migration requires schema version 38"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v38_to_v39_visual_identity.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    cursor.execute(pending)
+                    pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Visual Identity migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 39:
+                    raise SchemaError(
+                        "Visual Identity schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V38 to V39 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5197,6 +5327,8 @@ UPDATE db_schema_version
                     34: self._migrate_from_v34_to_v35,
                     35: self._migrate_from_v35_to_v36,
                     36: self._migrate_from_v36_to_v37,
+                    37: self._migrate_from_v37_to_v38,
+                    38: self._migrate_from_v38_to_v39,
                 }
 
                 if current_db_version == 0:
@@ -9901,6 +10033,156 @@ UPDATE db_schema_version
             )
             raise CharactersRAGDBError(
                 f"Database error writing local metadata: {e}"
+            ) from e
+
+    def get_next_trajectory_seq(self, conversation_id: str) -> int:
+        """Return the next trajectory seq for a conversation (max(seq) + 1).
+
+        Standalone read against the ``message_trajectory_metadata``
+        sidecar. This opens its own transaction, so it must NOT be called
+        from inside another transaction on this DB instance; code already
+        inside a transaction should use the private
+        :meth:`_next_trajectory_seq` helper instead (as
+        :meth:`upsert_trajectory_rows` does).
+        """
+        with self.transaction() as conn:
+            return self._next_trajectory_seq(conn, conversation_id)
+
+    def _next_trajectory_seq(self, conn: sqlite3.Connection, conversation_id: str) -> int:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM message_trajectory_metadata"
+            " WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        return int(row[0]) + 1
+
+    def upsert_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> None:
+        """Upsert trajectory sidecar rows for one or more conversations.
+
+        LOCAL-ONLY: the ``message_trajectory_metadata`` table has no sync
+        triggers and is never serialized into sync payloads. Rows written
+        with ``seq=None`` are assigned ``max(seq) + 1`` per conversation
+        inside the same transaction as the insert; explicit seqs are
+        honored. Upsert key: ``(message_id, event_kind, seq)``.
+
+        Args:
+            rows: The rows to write.
+
+        Raises:
+            CharactersRAGDBError: On database errors.
+        """
+        if not rows:
+            return
+        try:
+            # IMMEDIATE (write lock up front): this is a read-then-write
+            # transaction (MAX(seq)+1 assignment before the inserts). With a
+            # DEFERRED begin, two concurrent writers on one conversation hit
+            # SQLite's non-retryable snapshot/upgrade deadlock and the loser
+            # rolls back with "database is locked" regardless of the busy
+            # timeout. IMMEDIATE makes concurrent writers queue on the busy
+            # timeout instead, so seq assignment stays unique.
+            with self.transaction(immediate=True) as conn:
+                next_seq: Dict[str, int] = {}
+                for row in rows:
+                    if row.seq is None:
+                        if row.conversation_id not in next_seq:
+                            next_seq[row.conversation_id] = (
+                                self._next_trajectory_seq(conn, row.conversation_id)
+                            )
+                        seq = next_seq[row.conversation_id]
+                        next_seq[row.conversation_id] = seq + 1
+                    else:
+                        seq = row.seq
+                    conn.execute(
+                        """
+                        INSERT INTO message_trajectory_metadata (
+                            message_id, conversation_id, turn_id, seq,
+                            event_kind, step_started_at, first_token_at,
+                            completed_at, model, provider, payload_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(message_id, event_kind, seq) DO UPDATE SET
+                            conversation_id = excluded.conversation_id,
+                            turn_id = excluded.turn_id,
+                            step_started_at = excluded.step_started_at,
+                            first_token_at = excluded.first_token_at,
+                            completed_at = excluded.completed_at,
+                            model = excluded.model,
+                            provider = excluded.provider,
+                            payload_json = excluded.payload_json
+                        """,
+                        (
+                            row.message_id,
+                            row.conversation_id,
+                            row.turn_id,
+                            seq,
+                            row.event_kind,
+                            row.step_started_at,
+                            row.first_token_at,
+                            row.completed_at,
+                            row.model,
+                            row.provider,
+                            row.payload_json,
+                        ),
+                    )
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error upserting trajectory rows: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error upserting trajectory rows: {e}"
+            ) from e
+
+    def get_trajectory_rows(self, conversation_id: str) -> List[TrajectoryRowRead]:
+        """Return a conversation's trajectory sidecar rows ordered by ``seq``.
+
+        Includes rows whose message was later soft-deleted: the trajectory
+        projection layer (not the DB) decides how to render deleted turns.
+
+        Args:
+            conversation_id: The conversation whose rows to read.
+
+        Returns:
+            Rows ordered by ``seq`` ascending.
+
+        Raises:
+            CharactersRAGDBError: On database errors.
+        """
+        try:
+            with self.transaction() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT message_id, conversation_id, turn_id, seq,
+                           event_kind, step_started_at, first_token_at,
+                           completed_at, model, provider, payload_json
+                      FROM message_trajectory_metadata
+                     WHERE conversation_id = ?
+                     ORDER BY seq ASC
+                    """,
+                    (conversation_id,),
+                )
+                return [
+                    TrajectoryRowRead(
+                        message_id=r["message_id"],
+                        conversation_id=r["conversation_id"],
+                        turn_id=r["turn_id"],
+                        seq=int(r["seq"]),
+                        event_kind=r["event_kind"],
+                        step_started_at=r["step_started_at"],
+                        first_token_at=r["first_token_at"],
+                        completed_at=r["completed_at"],
+                        model=r["model"],
+                        provider=r["provider"],
+                        payload_json=r["payload_json"],
+                    )
+                    for r in cursor.fetchall()
+                ]
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Database error reading trajectory rows for conversation"
+                f" {conversation_id}: {e}"
+            )
+            raise CharactersRAGDBError(
+                f"Database error reading trajectory rows: {e}"
             ) from e
 
     def soft_delete_message(
@@ -16015,11 +16297,26 @@ UPDATE db_schema_version
 
 # --- Transaction Context Manager Class (Helper for `with db.transaction():`) ---
 class TransactionContextManager:
-    def __init__(self, db_instance: CharactersRAGDB):
+    def __init__(
+        self,
+        db_instance: CharactersRAGDB,
+        *,
+        immediate: bool = False,
+    ):
         self.db = db_instance
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
+        # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
+        # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
+        # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
+        # when a concurrent writer commits in between -- the losing
+        # transaction rolls back with "database is locked" no matter how
+        # long the busy timeout is. IMMEDIATE takes the write lock before
+        # the first read, so concurrent writers queue on the busy timeout
+        # instead of deadlocking. Only affects the OUTERMOST
+        # manager-owned transaction; nested/borrowed paths are untouched.
+        self.immediate = bool(immediate)
 
     def __enter__(self):
         # Ensure transaction_depth is initialized for this thread
@@ -16046,7 +16343,7 @@ class TransactionContextManager:
                 return self.conn.cursor()
 
             # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
-            self.conn.execute("BEGIN")
+            self.conn.execute("BEGIN IMMEDIATE" if self.immediate else "BEGIN")
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
             logger.debug(

@@ -730,3 +730,45 @@ def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monke
     assert "Deep answer [1]." in out  # the run DID fully succeed
     assert "deadline reached: partial synthesis" not in out.lower()
     assert "deadline reached" in out.lower() and "may be incomplete" in out.lower()
+
+
+def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
+    final_answer = dict(_FINAL)
+    final_answer["gate"] = {"relevant": 3, "raw": 5, "fallback": True}
+    final_answer["evidence"] = [
+        {"id": 1, "url": "https://e.com/", "title": "T", "content": "c",
+         "original_content": "o", "reasoning": "gate fallback", "chunk_index": 0,
+         "gate_unverified": True},
+    ]
+
+    async def fake_aa(wsr, sqd, params, cancel_event=None):
+        return {"final_answer": final_answer, "relevant_results": {"1": {}},
+                "web_search_results_dict": wsr}
+
+    monkeypatch.setattr(WebSearch_APIs, "analyze_and_aggregate", fake_aa)
+    out = web_deep_search("what is love")
+    assert "not relevance-verified" in out
+
+
+# --- shared pipeline param assembly (task-16484) ----------------------------------
+
+def test_deep_search_pipeline_params_shape_and_overrides():
+    from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
+
+    params = deep_search_pipeline_params()
+
+    for key in (
+        "engine", "relevance_analysis_llm", "final_answer_llm",
+        "relevance_llm_timeout_s", "relevance_scrape_timeout_s",
+        "search_default_max_queries", "result_count", "subquery_generation",
+        "phase1_time_budget_s", "respect_robots_txt",
+    ):
+        assert key in params, key
+
+    bounded = deep_search_pipeline_params(
+        engine="duckduckgo", max_results=3, subquery=False, max_queries=1
+    )
+    assert bounded["engine"] == "duckduckgo"
+    assert bounded["result_count"] == 3
+    assert bounded["subquery_generation"] is False
+    assert bounded["search_default_max_queries"] == 1

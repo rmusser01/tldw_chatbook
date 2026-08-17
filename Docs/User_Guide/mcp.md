@@ -92,8 +92,13 @@ Select the built-in server's row in Servers mode; its detail pane has a
 **Tool gates** group under the existing enable/expose checkboxes, split
 into two subheadings:
 
-- **Agent built-ins** — the app's own file/note tools (read/list/write a
-  file, glob/grep the workspace, create/update a note).
+- **Agent built-ins** — the app's own file, note and library tools: read /
+  list / write a file, glob / grep the workspace, create / update a note,
+  and **expand a retrieval hit into its document** (`expand_document`,
+  TASK-16174 — it opens the note, media item, conversation or prompt behind
+  a Library search result, so it reads your library and, like every
+  risk-tagged tool, is floored to **Ask**: expect one approval card per
+  call until you set Allow).
 - **Local workspace, web, and Watchlists tools** — a master switch, labeled
   **Local workspace, web, and Watchlists tools (master switch)**, mirroring the
   direct Tools-mode control. `web_deep_search` (multi-query web research that
@@ -118,6 +123,35 @@ If the local master is off, both the Permissions matrix's legend and the
 Tools-mode empty state explicitly name `web_search`, `web_fetch`, and
 `web_crawl` and point to the direct Tools-mode control. Other disabled gates
 still report the total number of gates that are off.
+
+### `expand_document` and the Library consent boundary
+
+`expand_document` does **not** defer to `[console] direct_library_tools` —
+the toggle that decides whether Console agents may read your Library
+directly (Settings ▸ Library RAG defaults; default **on**, and when it is
+**off** agents get bounded `search_library_rag` excerpts instead of direct
+reads). Expansion is governed by its own registration gate,
+`[tools] expand_document_enabled` in the **Tool gates** group above, which
+is **off by default**, plus the per-call **Ask** floor every risk-tagged
+tool carries.
+
+What that means in practice: with the gate on and "always allow" set for
+this tool, an agent has a **read-by-raw-id primitive** — hand it a
+`source_type` and the row's backing database id and it returns the whole
+note, media item, conversation transcript or prompt in bounded windows.
+That duplicates what the direct Library get-tools do (6 of the 18
+`library_*` tools; expansion overlaps 4 of the 6 seams) while bypassing
+their opaque `type:<base64url>` ID codec, which normally means a get-tool
+can only open a row some earlier search actually returned.
+
+Why this ships anyway: the gate is off until you turn it on; the tool is
+risk-tagged (`reads`), so an inherited **Allow** is floored back to **Ask**
+and you see one approval card per call until you choose otherwise; and the
+raw backing id was already leaving the Library RAG adapter as each row's
+`result_id` before expansion existed — the tool types an exposure that was
+already there rather than creating one. If you want the stricter posture,
+leave `expand_document_enabled` off (its default) or answer **Ask** per
+call; turning `direct_library_tools` off will **not** disable it.
 
 ### Watchlists evidence tool contract
 
@@ -337,4 +371,14 @@ a permission the app could not read shows as "Unknown" (never a false
 "Off") in the matrix, the State column, and the inspector alike.
 Verified against ee68f42ed — 2026-08-08 (task-3240): documented the new
 Servers-mode "Tool gates" group (builtin registration switches, at last
-reachable from live navigation) and its two discoverability breadcrumbs.*
+reachable from live navigation) and its two discoverability breadcrumbs.
+Docs pass 2026-08-15 (TASK-16174 fix wave, against the branch's code and
+tests, not a live screen): the "Agent built-ins" enumeration gained the
+eighth gate, `expand_document` — the pane renders one row per
+`_GATEABLE_BUILTINS` entry via `all_tool_gates()`, so the count follows
+that table. Docs pass 2026-08-16 (TASK-16688 AC#3, against code and tests,
+not a live screen): added "`expand_document` and the Library consent
+boundary" — expansion does not defer to `[console] direct_library_tools`
+(default on) but to its own `[tools] expand_document_enabled` gate
+(default off) plus the risk-tag Ask floor, and the raw-id read that
+implies is recorded with its mitigations.*

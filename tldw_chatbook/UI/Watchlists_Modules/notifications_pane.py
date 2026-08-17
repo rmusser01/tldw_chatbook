@@ -48,7 +48,7 @@ class DismissNotificationRequested(Message):
 class NotificationsPane(RecomposeCaptureGuard, Vertical):
     """Review and update the local client-notification inbox."""
 
-    notifications = reactive[list[dict[str, Any]]]([], recompose=True)
+    notifications = reactive[list[dict[str, Any]]](list, recompose=True)
     selected_notification = reactive[dict[str, Any] | None](None, recompose=True)
 
     #: task-876: Rich's own terminal-agnostic "current item" idiom (see

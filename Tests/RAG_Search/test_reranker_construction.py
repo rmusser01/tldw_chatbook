@@ -29,8 +29,10 @@ Two more review findings on this same task, both fixed here (task-3170 P0):
     every provider call failing under a missing credential) returns
     NORMALLY with an unchanged ordering and the reranking_skipped tag never
     fires. Fixed by having every reranker count per-result/per-comparison
-    scoring failures (BaseReranker.last_rerank_failures/last_rerank_total)
-    and tagging `reranking_degraded` when nonzero.
+    scoring failures and tagging `reranking_degraded` when nonzero. (Those
+    counts started life as instance attributes; TASK-3502 AC#4 moved them
+    into `rerank()`'s returned `RerankOutcome` so a concurrent search on the
+    shared reranker singleton cannot misattribute them.)
 """
 
 import asyncio
@@ -381,10 +383,12 @@ async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_resu
 
 @pytest.mark.asyncio
 async def test_pairwise_reranker_counts_failed_comparisons():
-    """The shared BaseReranker seam (last_rerank_failures/last_rerank_total)
-    must actually work for PairwiseReranker too, not just Pointwise -- it's
-    comparison-based rather than per-result, so a "failure" is a comparison
-    whose LLM call raised and fell back to comparing original scores."""
+    """The shared BaseReranker seam (`RerankOutcome`) must actually work for
+    PairwiseReranker too, not just Pointwise -- it's comparison-based rather
+    than per-result, so a "failure" is a comparison whose LLM call raised and
+    fell back to comparing original scores. (TASK-3502 AC#4 moved these
+    counts off the instance and into `rerank()`'s return value; see
+    Tests/RAG_Search/test_reranker_degraded_paths.py for why.)"""
     cfg = RerankingConfig(strategy="pairwise", top_k_to_rerank=5)
     reranker = PairwiseReranker(cfg)
 
@@ -399,11 +403,11 @@ async def test_pairwise_reranker_counts_failed_comparisons():
         SearchResult(id="c", score=0.2, document="doc c", metadata={}),
     ]
 
-    reranked = await reranker.rerank("query", results)
+    outcome = await reranker.rerank("query", results)
 
-    assert len(reranked) == 3
-    assert reranker.last_rerank_total > 0
-    assert reranker.last_rerank_failures == reranker.last_rerank_total
+    assert len(outcome.results) == 3
+    assert outcome.total > 0
+    assert outcome.failed == outcome.total
 
 
 @pytest.mark.asyncio
@@ -424,11 +428,11 @@ async def test_listwise_reranker_counts_total_failure():
         SearchResult(id="b", score=0.5, document="doc b", metadata={}),
     ]
 
-    reranked = await reranker.rerank("query", results)
+    outcome = await reranker.rerank("query", results)
 
-    assert [r.id for r in reranked] == ["a", "b"]
-    assert reranker.last_rerank_failures == 2
-    assert reranker.last_rerank_total == 2
+    assert [r.id for r in outcome.results] == ["a", "b"]
+    assert outcome.failed == 2
+    assert outcome.total == 2
 
 
 def test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity():
@@ -472,6 +476,25 @@ def test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity():
     # band "strong" on cosine thresholds.
     assert "rerank_score" in reranked.metadata
     assert reranked.score >= 0.5
+
+    # ...and the other half of the contract (TASK-3502 note-b): a row whose
+    # scoring call FAILED carries the original score forward, so it is NOT a
+    # reranked row and must not be stamped. Stamping it made a 14/15-failed
+    # rerank render " | reranked" on fourteen rows no model ever scored.
+    not_scored = reranker._apply_scores(
+        [original],
+        [
+            RerankingResult(
+                original_rank=0,
+                new_rank=0,
+                original_score=0.83,
+                rerank_score=0.83,
+                scored=False,
+            )
+        ],
+    )[0]
+    assert "rerank_score" not in not_scored.metadata
+    assert not_scored.score == original.score
 
     row = LibraryRagResultRow.from_result(
         {

@@ -1202,7 +1202,8 @@ async def test_opening_an_item_repaints_its_row_in_the_list():
         list_view = pane.query_one("#items-table", ListView)
         for node in list_view.children:
             if isinstance(node, _ArticleRow) and node.item_id_key == str(item_id):
-                return node.children[0].render().plain
+                # task-15776: the row renders itself -- no inner Static.
+                return node.render().plain
         raise AssertionError(f"no rendered row for {item_id!r}")
 
     host = DestinationHarness(app, "watchlists_collections")

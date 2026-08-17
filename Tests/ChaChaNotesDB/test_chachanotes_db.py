@@ -22,6 +22,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
 )
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 
 #
@@ -220,53 +221,56 @@ class TestDBInitialization:
     def test_conversations_migrate_from_v17_to_v18_adds_system_prompt_column(
         self, db_path, client_id
     ):
-        db = CharactersRAGDB(db_path, client_id)
-        conn = db.get_connection()
+        # Build a genuinely v17-shaped DB: the production migration chain
+        # itself, run under a patched _CURRENT_SCHEMA_VERSION, stops and
+        # stamps at 17 (task-16840; replaces the retired rollback registry,
+        # which had to fake this state by dropping artifacts from a
+        # current-version DB and could never carry the real v17 triggers).
+        with chachanotes_db_at_version(db_path, 17, client_id=client_id) as db:
+            conn = db.get_connection()
 
-        # Simulate a v17-shaped DB: drop the sync triggers that reference the
-        # new column (SQLite refuses to drop a column referenced by a
-        # trigger), drop the column itself, then roll the recorded schema
-        # version back to 17 so re-opening replays the V17->V18 migration.
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_create")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_update")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_delete")
-        conn.execute("DROP TRIGGER IF EXISTS conversations_sync_undelete")
-        # A version-only rollback is not a valid pre-v25 fixture because the
-        # citation migration deliberately rejects pre-existing/partial tables.
-        # Remove the current provenance schema before replaying from v17.
-        for table in (
-            "note_folder_memberships",
-            "note_folders",
-            "rag_artifact_owner_operations",
-            "rag_artifact_owner_leases",
-            "rag_source_observations",
-            "rag_message_trace_owners",
-            "rag_trace_evidence_refs",
-            "rag_answer_attempt_payloads",
-            "rag_evidence_runs",
-            "rag_citation_traces",
-            "rag_evidence_snapshots",
-            "rag_payload_tombstones",
-            "rag_legacy_migration_journal",
-            "rag_identity_context",
-        ):
-            conn.execute(f"DROP TABLE {table}")
-        # A V17 fixture also predates the V27->V28 character-authority column.
-        conn.execute("ALTER TABLE conversations DROP COLUMN assistant_authority_id")
-        # A V17 fixture also predates the V29->V30 local-only usage_json column.
-        conn.execute("ALTER TABLE messages DROP COLUMN usage_json")
-        # A V17 fixture predates the V33->V34 visual-compaction preference.
-        conn.execute(
-            "ALTER TABLE console_conversation_context_policy "
-            "DROP COLUMN compaction_representation"
-        )
-        conn.execute("ALTER TABLE conversations DROP COLUMN system_prompt")
-        conn.execute(
-            "UPDATE db_schema_version SET version = 17 WHERE schema_name = ?",
-            (db._SCHEMA_NAME,),
-        )
-        conn.commit()
-        db.close_connection()
+            # Guard the replay preconditions: the column the V17->V18
+            # migration must add is absent, the conversations sync triggers
+            # EXIST in their real pre-V18 form (none references
+            # system_prompt) — so replay exercises the migration's genuine
+            # redefine-live-triggers path, which the registry-era fixture
+            # could not (it had to drop the triggers to drop the column) —
+            # and no later migration's table exists (note_folders was the
+            # artifact that broke the registry-era fixture in task-15765).
+            columns_before = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            assert "system_prompt" not in columns_before
+            trigger_sql = {
+                row["name"]: row["sql"]
+                for row in conn.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' "
+                    "AND name LIKE 'conversations_sync_%'"
+                ).fetchall()
+            }
+            assert set(trigger_sql) == {
+                "conversations_sync_create",
+                "conversations_sync_update",
+                "conversations_sync_delete",
+                "conversations_sync_undelete",
+            }
+            assert all(
+                "system_prompt" not in sql for sql in trigger_sql.values()
+            )
+            table_names = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            assert "note_folders" not in table_names
+            assert "note_folder_memberships" not in table_names
+            version_before = conn.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                (db._SCHEMA_NAME,),
+            ).fetchone()
+            assert version_before["version"] == 17
 
         migrated = CharactersRAGDB(db_path, client_id)
         migrated_conn = migrated.get_connection()

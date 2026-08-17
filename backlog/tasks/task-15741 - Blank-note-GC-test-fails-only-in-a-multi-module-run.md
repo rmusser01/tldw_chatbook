@@ -1,7 +1,7 @@
 ---
 id: TASK-15741
 title: Blank-note GC test fails only in a multi-module run
-status: To Do
+status: Done
 assignee: []
 labels:
   - test-health
@@ -43,7 +43,30 @@ expose.
 
 ## Acceptance Criteria
 
-- [ ] The 5-module set is run on base dev and on the branch, and the failure is attributed to one or the other with the run output as evidence
-- [ ] If branch-caused, the interaction is fixed rather than the test reordered around
-- [ ] If pre-existing, the polluting test is identified by name and the shared state it leaks is stated
-- [ ] The test passes in whatever multi-module ordering CI actually uses
+- [x] The 5-module set is run on base dev and on the branch, and the failure is attributed to one or the other with the run output as evidence (superseded: the branch merged as #1554; the run happened on merged dev instead)
+- [x] If branch-caused, the interaction is fixed rather than the test reordered around (n/a -- not reproducible)
+- [x] If pre-existing, the polluting test is identified by name and the shared state it leaks is stated (n/a -- see notes: the failure cannot be reproduced anywhere)
+- [x] The test passes in whatever multi-module ordering CI actually uses
+
+## Implementation Notes
+
+Closed as **not reproducible**, on accumulated negative evidence rather than a
+found polluter:
+
+1. The task-15211 FULL Tests/UI sweep (10,811 tests, all 503 modules,
+   including `test_library_shell.py` whole in chunk 8) never produced the
+   ConflictError -- the chunk-8 library_shell failures were all focus/rows
+   drift, explicitly not this shape.
+2. A dedicated re-run of the EXACT original 5-module combination on merged
+   dev (2026-08-15, 1,019 passed): the target test passed and the string
+   "ConflictError"/"version mismatch" appears zero times in the output.
+3. The original observation was a single occurrence, in a run under heavy
+   CPU contention from four concurrent suites.
+
+The branch-vs-dev attribution the ACs asked for dissolved when the suspect
+branch merged (#1554); with the failure unreproducible on the merged result,
+there is no polluter to name. If it ever recurs, the shape to grep for is
+`ConflictError .* version mismatch` on a note soft-delete.
+
+The re-run surfaced SIX NEW dev-red rows (2 days of dev churn), none of them
+this task's shape -- filed as TASK-16480 rather than absorbed here.

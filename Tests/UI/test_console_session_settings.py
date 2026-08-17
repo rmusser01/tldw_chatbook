@@ -68,9 +68,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_CONTROL_HEIGHT,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
+    PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
+    _is_local_thinking_provider,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
@@ -2511,6 +2513,94 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         assert identity.placeholder == "Default Name"
         assert "Chat identity" in _visible_text(app)
         assert "Leave blank to use the global default." in _visible_text(app)
+
+
+def test_local_thinking_provider_detection_covers_execution_key_aliases() -> None:
+    assert _is_local_thinking_provider("llama_cpp") is True
+    assert _is_local_thinking_provider("local_llamacpp") is True
+    assert _is_local_thinking_provider("local_llamafile") is True
+    assert _is_local_thinking_provider("local_llm") is True
+    assert _is_local_thinking_provider("vllm") is True
+    assert _is_local_thinking_provider("local_vllm") is True
+    assert _is_local_thinking_provider("local_mlx_lm") is True
+    # Readiness aliases resolve to their custom-openai execution keys.
+    assert _is_local_thinking_provider("custom") is True
+    assert _is_local_thinking_provider("custom_2") is True
+    assert _is_local_thinking_provider("anthropic") is False
+    assert _is_local_thinking_provider("openai") is False
+    assert _is_local_thinking_provider(None) is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_local_provider_marks_no_effect_choices() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        summary = app.screen.query_one("#console-settings-reasoning-summary", Input)
+        verbosity = app.screen.query_one("#console-settings-verbosity", Input)
+        effort = app.screen.query_one("#console-settings-reasoning-effort", Input)
+        # Local providers consume only the reasoning-effort level; the other
+        # provider-specific choice inputs say so right in the placeholder.
+        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert summary.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert verbosity.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in effort.placeholder
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_remote_provider_keeps_thinking_hint_plain() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="anthropic", model="claude-3-5-sonnet-latest"
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        thinking = app.screen.query_one("#console-settings-thinking-effort", Input)
+        assert PROVIDER_CHOICE_NO_EFFECT_SUFFIX not in thinking.placeholder
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_select.value = "llama_cpp"
+        await pilot.pause()
+
+        assert thinking.placeholder.endswith(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
 
 
 @pytest.mark.asyncio
@@ -5403,10 +5493,28 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
 
 @pytest.mark.asyncio
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume():
-    class RecordingPersistence:
+    class HungFirstWritePersistence:
+        """One shared-store double: the FIRST system-prompt write blocks.
+
+        task-16815 fixture correction: the Console runtime/store became
+        app-owned (task-15860), so two co-mounted ChatScreens share ONE
+        store -- the original per-screen persistence pair aliased to a
+        single store and the repair write bound to the hung double
+        (stack-verified 2026-08-16). One double now serves both roles:
+        the hung screen's refresh write blocks until released; every
+        later write (the app-level repair force-persist) records. The
+        contract under test is unchanged: unmount bounds a stuck writer,
+        and the repair persists the latest identity even while the
+        original write is still blocked.
+        """
+
         def __init__(self) -> None:
             self.durable_system = "Speak with Alpha."
             self.durable_greeting = "Hello Alpha."
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.finished = threading.Event()
+            self.first_system_write_seen = False
 
         def create_message(self, **kwargs):
             self.durable_greeting = kwargs["content"]
@@ -5416,6 +5524,20 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             return True
 
         def update_conversation_system_prompt(self, **kwargs):
+            first_write = not self.first_system_write_seen
+            self.first_system_write_seen = True
+            if first_write:
+                self.started.set()
+                try:
+                    assert self.release.wait(10)
+                    # The released write still applies its side effect, as
+                    # the original HungPersistence did via super() -- a
+                    # completed write must persist what it carried (Qodo
+                    # review, PR #1726).
+                    self.durable_system = kwargs["system_prompt"]
+                    return True
+                finally:
+                    self.finished.set()
             self.durable_system = kwargs["system_prompt"]
             return True
 
@@ -5423,39 +5545,17 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             self.durable_greeting = kwargs["content"]
             return True
 
-    class HungPersistence(RecordingPersistence):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-            self.finished = threading.Event()
-
-        def create_message(self, **kwargs):
-            self.durable_greeting = kwargs["content"]
-            return "msg-hung"
-
-        def update_conversation_system_prompt(self, **kwargs):
-            self.started.set()
-            try:
-                assert self.release.wait(10)
-                return super().update_conversation_system_prompt(**kwargs)
-            finally:
-                self.finished.set()
-
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
-    app.app_config.setdefault("console", {})[
-        "roleplay_refresh_teardown_timeout_seconds"
-    ] = 0.05
+    app.app_config.setdefault("console", {})["roleplay_refresh_teardown_timeout_seconds"] = 0.05
     host = ConsoleHarness(app)
-    repair_persistence = RecordingPersistence()
-    hung_persistence = HungPersistence()
+    hung_persistence = HungFirstWritePersistence()
 
     async with host.run_test(size=(160, 48)) as pilot:
         resumed = host.screen_stack[-1]
         await _wait_for_selector(resumed, pilot, "#console-settings-summary")
         resumed_store = resumed._ensure_console_chat_store()
-        resumed_store.persistence = repair_persistence
+        resumed_store.persistence = hung_persistence
         resumed_session = resumed_store.ensure_session()
         resumed_session.settings = ConsoleSessionSettings(
             provider="llama_cpp", system_prompt="Speak with Alpha."
@@ -5474,7 +5574,6 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         await host.push_screen(hung)
         await _wait_for_selector(hung, pilot, "#console-settings-summary")
         hung_store = hung._ensure_console_chat_store()
-        hung_store.persistence = hung_persistence
         hung_session = hung_store.ensure_session()
         hung_session.settings = ConsoleSessionSettings(
             provider="llama_cpp", system_prompt="Speak with Alpha."
@@ -5518,15 +5617,15 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
                         0,
                     )
                     == 1
-                    and repair_persistence.durable_system == "Speak with Cecelia."
-                    and repair_persistence.durable_greeting == "Hello Cecelia."
+                    and hung_persistence.durable_system == "Speak with Cecelia."
+                    and hung_persistence.durable_greeting == "Hello Cecelia."
                 ):
                     break
                 await pilot.pause(0.01)
             assert app._console_roleplay_repair_consumed_generation == 1
             assert host.screen_stack[-1] is resumed
-            assert repair_persistence.durable_system == "Speak with Cecelia."
-            assert repair_persistence.durable_greeting == "Hello Cecelia."
+            assert hung_persistence.durable_system == "Speak with Cecelia."
+            assert hung_persistence.durable_greeting == "Hello Cecelia."
 
             del hung, hung_store, hung_session
             for _ in range(50):
@@ -7062,11 +7161,20 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
             _basic_modal(settings, app), callback=app.capture_saved_settings
         )
         await pilot.pause()
+        # llama.cpp is a local thinking provider: only the reasoning-effort
+        # level is consumed, so the other choice inputs carry the no-effect
+        # suffix.
         placeholders = {
             "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
-            "console-settings-reasoning-summary": "auto, concise, detailed, none",
-            "console-settings-verbosity": "low, medium, high",
-            "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
+            "console-settings-reasoning-summary": (
+                "auto, concise, detailed, none" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
+            "console-settings-verbosity": (
+                "low, medium, high" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
+            "console-settings-thinking-effort": (
+                "off, low, medium, high, xhigh, max" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
+            ),
         }
         for input_id, expected in placeholders.items():
             assert app.screen.query_one(f"#{input_id}", Input).placeholder == expected

@@ -49,6 +49,18 @@ application. Assert containment and compositor text, not only a child widget's
 declared height. A shortened DOM or partial stylesheet can make both overflow
 and clipping tests pass for a product path that still hides its controls.
 
+**Recurred, TASK-16478, 2026-08-15.** A picker-comparison investigation
+rendered `EnhancedFileOpen` in a bare `App` (widget DEFAULT_CSS only) and
+concluded the dialog was fine; the user's live app showed no Select/Cancel
+buttons at all. Under the app bundle, the bare `Select { width: 100% }` rule
+beat the dialog's DEFAULT_CSS, crushed the filename input to 6 columns, and
+laid the buttons out at x=161/178 inside a 152-wide dialog -- clipped. The
+bare-host screenshot even contained the buttons, and a truncated text
+extraction of the bundled render hid their absence. The fix's regression test
+(`Tests/UI/test_enhanced_file_dialog_bundle_css.py`) registers the exact
+`TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
+against the unfixed bundle without touching app code.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test
@@ -302,6 +314,17 @@ LIVE_RESPONSE = { ... }                                    # pasted from the wir
 ```
 
 A fake can agree with a wrong assumption; `inspect.signature` cannot.
+
+**Sharpest variant (task-16847, 2026-08-16).** A double can stand in for an attribute
+that does not exist at all. `a8082fe85`'s launch test set
+`instance.call_from_thread = ...` and `instance.push_screen = ...` on a
+`ChatScreen.__new__` instance — but `Screen` defines *neither* (both are App-only in
+Textual 8), so pressing `y` in the real app raised `AttributeError` inside the thread
+worker while the test stayed green, and the repo-wide guard
+(`Tests/test_call_from_thread_guard.py`) sat red on dev for two days. When a unit test
+must fake threading/navigation seams, patch the **collaborator** (`app`) — never spell
+a new attribute onto the class under test; an instance monkeypatch is also an
+existence claim, and nothing checks it.
 
 ---
 
@@ -1828,9 +1851,6 @@ and still be a no-op because of unit or key-name mismatches downstream
 (`size` vs `max_size` was ALSO live here — `improved_chunking_process` reads
 only the latter). The kwargs-arrival test and the governance test catch
 disjoint bug classes; you need both.
-
----
-
 
 ---
 
@@ -4315,3 +4335,473 @@ version participates in the atomic mutation that grants the effect. Reproduce th
 read/write interleaving deterministically, assert the stale write changes nothing,
 and cover every idempotent write shape (new row, revive, and already-active row).
 Green sequential and crash-recovery suites do not substitute for either probe.
+
+## An AC's enumeration of hot call sites is not the cost profile (task-15764, 2026-08-15)
+
+Task-15764's AC enumerated the difflib work to move off the event loop by name --
+`_segment_for_diff` x2, `build_change_diff`, `added_and_removed_text`,
+`classify_change_type` -- and an implementation scoped to that list would have been
+green on every thread-identity test while leaving most of the stall in place. The
+dominant cost was `ContentExtractor.calculate_change_percentage`, a
+`difflib.SequenceMatcher.ratio` over the two full raw texts that sits three lines
+above the enumerated block and is not in the enumeration. Mechanism, corrected by
+the independent review (the implementer's 16.2 s / "99.8%" figure on a 160 KB Latin
+page pair did NOT reproduce -- Latin text at that size hits `autojunk`'s fast path,
+20-40 ms across four content shapes, and autojunk incidentally returns a
+meaningless `pct` for it, a separate pre-existing oddity): character-level
+`ratio()` goes quadratic only when the character repertoire is large enough that
+autojunk junks nothing (CJK / unicode-heavy pages) -- measured clean 4x per
+doubling, extrapolating to ~1 s at 160 K chars and **~7 minutes at the 10 MB
+fetch cap**. The off-loop move is thus MORE justified than the original numbers
+suggested, and the review's own stall probe corroborated the shape independently
+(164.7 ms -> 18.4 ms max stall on the same seam). Keep both halves of this
+incident: measure the whole operation, and expect your headline number to be
+re-run by a skeptic. The lesson: before implementing a perf task scoped by a list of
+call sites, run one measurement that would catch an omission -- a wall/stall probe
+around the whole operation, not around the listed calls. If the numbers do not drop
+when the listed sites move, the list was wrong, and the AC's own wording ("the
+difflib work") almost always licenses fixing the omission in the same change --
+record the addition explicitly rather than silently widening scope.
+
+## A version-stamp rollback fixture is a promise every future migration must keep — centralize it or it breaks serially (task-15765/task-16197, 2026-08-15)
+
+Three "historical" ChaChaNotes fixtures were built top-down: bootstrap a fresh
+DB (which lands at `_CURRENT_SCHEMA_VERSION`), hand-drop the newer artifacts,
+stamp `db_schema_version` back, reopen, and let the migration chain replay.
+Each fixture carried its own private drop list — and every migration that
+shipped a non-idempotent artifact broke them serially: `88f5f535a` (V33→V34
+unguarded `ADD COLUMN compaction_representation`) broke them and task-15730
+repaired them one by one; two days later `9174975b0` (V35→V36 bare
+`CREATE TABLE note_folders`, task-15705) broke them AGAIN — and, decisively,
+its author fixed the ONE fixture they knew about
+(`test_dictionary_attachment_index.py`) and missed the other two, producing
+task-15765 and task-16197 with the identical "table note_folders already
+exists" error, each then repaired in a separate task (16201, 16207). Four
+repair tasks for two migrations is the signature of state duplicated where no
+gate forces it to stay in sync. The fix is structural, not another patch: one
+shared per-version removal registry (`Tests/ChaChaNotesDB/schema_rollback.py`)
+consumed by every rollback fixture, a completeness ratchet that fails BY NAME
+with instructions the moment `_CURRENT_SCHEMA_VERSION` outruns the registry,
+and a rollback-replay sweep over every historical target that compares the
+replayed schema's object inventory against a fresh bootstrap. The sweep paid
+for itself on its first run: a defensively-copied trigger drop in the V28
+entry left DBs rolled back to V20..V27 silently missing ALL conversations
+sync triggers after replay — a corruption no per-test fixture would ever
+notice, caught only because the sweep asserts parity with a fresh DB rather
+than "the test I care about passes".
+
+**Final shape (task-16840, 2026-08-16): the registry was itself the debt, and
+the durable end state is no second copy at all.** Within a week of shipping,
+the registry had grown hand-written v38/v39 entries — the ratchet was
+enforcing exactly the toil the guard existed to remove. The replacement is
+the knowledge-free primitive that already lived in the repo: patch
+`_CURRENT_SCHEMA_VERSION` to N and bootstrap, and the production chain itself
+builds a genuinely vN-shaped DB (`Tests/ChaChaNotesDB/historical_bootstrap.py`)
+— real sync triggers, zero future artifacts, so the "already exists"
+collision class is impossible by construction and a schema bump costs
+nothing anywhere. Three generalisable findings from the replacement:
+(1) **a parity oracle derived from the system under test is the identity on
+that system's deterministic defects** — the old sweep caught its mutations
+only where the registry happened to be a DIVERGENT second copy (the review
+verified: true for the DROP COLUMN shape — entry 30's bare DROP would have
+raised — but FALSE for the emptied-step shape, whose entry 36 was DROP IF
+EXISTS and would have stayed green too; the old design deserves less credit
+than this entry first gave it);
+re-run against the single-source architecture, the review's own MUT shapes
+(emptied V35→V36 step; a `DROP COLUMN messages.usage_json` seeded into
+V37→V38) leave the bootstrap-replay-parity sweep 35/35 green while the
+migrations' CONSUMER tests red by name (9 note-folder tests; 7 usage_json
+tests) — so artifact correctness must be pinned by consumers, and the sweep's
+honest job is the genuine historical upgrade matrix (resume from every vN,
+stamp/dispatch wiring, stop-resume vs straight-through parity; an unwired
+`migration_steps` entry reds all 35 cases with "Migration path undefined").
+(2) **check the claimed-pristine baseline**: the "v4" base schema has drifted
+to bake in `conversation_local_marks` (a V17 artifact), so a bootstrap at ANY
+version carries it — a fixture whose migration-under-test must CREATE an
+artifact the base also ships has to drop that one artifact itself
+(single-migration knowledge no future bump can invalidate), or the test
+silently pins the base's copy instead of the migration's. (3) the
+genuine-shape fixtures came out STRONGER and cheaper: the v17 fixture now
+proves V17→V18 redefines LIVE sync triggers (the registry version had to
+assert them absent), and bootstrap-at-vN measured FASTER than
+bootstrap-current-then-rollback (~80-130ms vs ~220-255ms + replay) — the
+registry was never even a perf win.
+
+## A silently-shadowed upstream sentinel is a defect class, not a file-local bug (task-16502, 2026-08-15)
+
+Textual 8.x removed `Select.BLANK` (the blank-selection sentinel, renamed
+`Select.NULL`) — but referencing it does NOT raise: the lookup falls through the
+MRO to `Widget.BLANK: ClassVar[bool] = False`, an unrelated render flag added in
+the same major version. Every use of the old sentinel silently became the boolean
+`False`: comparisons went permanently dead, and passing it as a Select's initial
+`value=` crashed at mount with `InvalidSelectValueError: Illegal select value
+False.` Task-565 (2026-07-25) established exactly this mechanism and swept it —
+**scoped to settings_screen.py only**, because that was the file under review.
+Three weeks later the identical construct in `console_model_popover.py` crashed
+the Alt+M popover at mount for any session without a configured model, and was
+reported by a user. A grep at that point found **66 remaining `Select.BLANK`
+usages across 23 files**, including several sites that had independently
+discovered the trap and worked around it locally with comments, and several that
+deliberately exploit the `False` value as a synthetic placeholder option — so the
+eventual sweep (task-16503) needs per-site classification, not find-and-replace.
+
+**What to do.** When a fix reveals that an upstream rename/removal fails
+*silently* (shadowed attribute, `getattr` default, `__getattr__` fallback) rather
+than loudly, the first grep result count is the real scope of the defect. Sweep
+repo-wide in the same arc, or file the sweep task immediately with the grep count
+and the classification burden recorded — a Done task documenting the mechanism
+does not stop the next file from shipping the same crash. Evidence here: the
+mechanism was fully documented on the board for three weeks while the
+user-reachable crash sat live in another file.
+## A dodged flake can be the only visible symptom of a deterministic bug (task-15773, 2026-08-15)
+
+Task-15478 hit a once-in-a-full-file-run flake in `ChapterEditorWidget`/`Select`'s
+mount sequence when the chapter table populated ~999 rows in one reactive update,
+and (honestly, documented as a dodge) reduced the test's chapter density until it
+went 0/4. Task-15773 owned the flake and started, per the reproduce-first brief, by
+stress-running the interleave -- 34 un-gated iterations across three shapes, zero
+trips. What found it was a five-minute CHARACTERIZATION probe of what the code
+deterministically does: `chapters = reactive([], recompose=True)` on a widget whose
+`compose()` is static meant `watch_chapters` populated the current DataTable and the
+scheduled recompose then threw that subtree away -- the settled table had **0 rows
+after every single update**, in the minimal host and in the real STTS host alike
+(`detected=13 table_rows=0` at HEAD). The "rare flake" was just the narrow-window
+crash variant of a 100%-reproducible data-loss defect: the remount re-ran the
+Select's Compose->Mount on every data arrival, and any teardown landing between the
+fresh Select's registration and its Compose dispatch made its child-mount a silent
+no-op (`_pruning`) while `Mount` still fired -- `NoMatches: No nodes match
+'SelectOverlay'`. Once the mechanism was named, a gated `_on_compose` interleave
+reproduced the exact exception on the first run, every run, and the fix (drop the
+recompose; populate the persistent children in place) closed both the flake and the
+always-empty table. Two halves to keep: (1) before stress-running a flake, spend one
+probe characterizing what the code does deterministically under the flake's stimulus
+-- the flake may be the tail of a bug whose body is fully reproducible; (2) a
+repetition budget that finds nothing (34/34 clean here) is not evidence the race is
+gone -- the gated one-run interleave was both stronger and cheaper.
+
+## Re-verify a residual's CAUSAL hypothesis before building the fix around it (task-15778, 2026-08-15)
+
+Task-15461's Implementation Notes recorded a residual with a cause attached:
+the cold Read tab's wall-clock regressed "because the scoped path does the
+CONTENT remount as its own discrete remove/mount pair rather than inside one
+batched recompose -- Textual's `batch()` is the obvious next move." Task-15778
+was filed around that hypothesis. A neutered-batch A/B on the same HEAD
+refuted it: **zero** in-swap layout passes and zero compositor refreshes with
+AND without `App.batch_update`, because the entire swap already runs inside
+`_drain_surface_refresh`'s single `call_next` callback -- a paint-atomicity
+that 15461's own `run_worker` -> `call_next` move had bought silently, one
+task before it filed the residual blaming its absence. The batch shipped
+anyway, but as an explicit contract (survives a future awaiting factory or a
+drain restructure), documented as such -- not as the measured win the task
+title promised. Two probe traps that nearly hid this: (1) counting layout
+passes over the whole settle window attributed 3 post-swap passes (loader,
+reseed) to the swap -- bracket the exact call under test, not the settle;
+(2) the first probe "confirmed" the premise with numbers that were real but
+belonged to a different mechanism. The residual's fix-shaped hypothesis is a
+hypothesis; A/B the mechanism (here: neuter the proposed fix on the same
+HEAD) before writing the Implementation Notes around it.
+
+## "Nothing happened" cannot name WHICH guard stopped it — count the dispatch (task-15860, 2026-08-16)
+
+Second occurrence in one arc, so it is a class rather than an accident. A
+headless-wake test asserted the shipped behaviour "a wake into a busy session
+never streams" by giving the loop a window and checking the provider double
+recorded no payload. Mutating the guard it was written for -- bypassing
+`send_refusal_copy` inside `ConsoleFleetWakeCoordinator._attempt` -- left it
+**green**, because `submit_draft` refuses a busy session on its own. The read
+site is double-guarded, so an absence-of-effect assertion is satisfied by
+EITHER guard and can never say which one it is testing; the test claimed
+coverage of the coordinator's gate while actually pinning the controller's.
+(The viewless landing hit the identical shape earlier in the same arc: an
+unguarded `_apply_world_info` survived because the applier was unreachable in
+that rig AND wrapped in a broad `except`.) The repair is cheap and general:
+count the DISPATCH, not the effect -- wrap the next seam (`controller.
+submit_draft`) with a recorder and assert the list is empty, which fails the
+moment the outer guard stops firing. Under the same mutation the repaired test
+died with its sibling (2 failed); restored, 13 passed. Corollary for the other
+direction: a mutation that leaves everything green is a finding about your
+tests, not a nuisance -- both survivors in this arc were real gaps.
+
+## A registry that self-heals on the next attempt is invisible to every test that takes another attempt (task-15860, 2026-08-16)
+
+Mutating `_deliver` so delivered run ids never left the in-memory pending
+registry killed exactly ONE test out of fourteen -- and not the exactly-once
+test, which is the one whose subject it is. The reason: `_rows_for` drops any
+run the durable ledger already shows delivered, so the leak is repaired by the
+very next `_attempt`, and any assertion taken after a retry sees a healthy
+registry. Only an observation taken at a moment when no further attempt is
+coming can see it; here that moment was app exit (`ConsoleRuntime.dispose()`
+mid-delivery). When a component has a self-healing path, the state it heals is
+untestable through the normal flow -- so a test for it has to pin a TERMINAL
+moment (quit, crash, teardown) on purpose. That is also the argument for
+keeping such a test when it looks redundant next to the happy-path one.
+---
+
+---
+
+## An unbounded wait default turns leaked test rounds into post-suite interpreter hangs
+
+**TASK-16789, 2026-08-15.** After flipping the human-prompt timeouts to a
+no-deadline default (ADR-067), `Tests/Chat/test_console_skill_script_confirm.py`
+printed "1 failed, 28 passed in 7.49s" — and then the pytest process sat at 0%
+CPU for 20+ minutes producing no output (the `| tail` wrapper hid everything
+until exit). `sample <pid>` showed the main thread in
+`wait_for_thread_shutdown`: the run was over, and the interpreter was waiting
+for a non-daemon worker thread. The failing test's assert had skipped its
+`resolve_pending_skill_script(...)` cleanup, leaving the confirm round armed;
+with the old 120s default that leaked worker self-resolved at process exit in
+≤120s (invisible), with no deadline its 1s poll loop never exits at all.
+
+**What to do.** When a wait loop's default becomes unbounded, every fixture
+that can arm a round must fail it closed on teardown — the file's
+`make_controller` now sets `_shutdown_requested` after each test, which
+resolves any still-armed round at its next poll. Diagnosis signature to
+recognize next time: pytest's own timing says the suite finished but the
+process idles at 0% CPU; macOS `sample` shows `wait_for_thread_shutdown`;
+`kill -ABRT` (with `PYTHONFAULTHANDLER=1`) dumps the stuck thread stacks into
+stderr.
+
+---
+
+## A cross-suite ordering failure can be an app KILLING ITSELF, not an object crossing the boundary (task-15860, 2026-08-16)
+
+`Tests/UI/test_console_headless_wake_fires.py` +
+`Tests/UI/test_console_store_continuity.py` run together gave **1 failed, 4
+passed**; each file alone was green. Every hypothesis on the obvious list was
+about something *surviving* the test boundary — an undisposed app-owned
+`ConsoleRuntime`, a pending delivery, a leaked DB handle, a module singleton,
+a daemon thread. All of them were wrong. Four *identical* wake rounds in one
+process were green, and the two poisoners followed by a plain no-wake nav probe
+were green: nothing accumulated. What actually happened was that the THIRD
+app killed itself — a `console-sync` worker whose screen had been closed raised
+`NoMatches`, Textual's default `exit_on_error=True` handed it to
+`App._handle_exception`, and from then on every `post_message` was silently
+dropped, so the next `NavigateToScreen` produced 15 seconds of total silence
+and "stuck on LibraryScreen". The prior tests contributed timing pressure, not
+state.
+
+**What to do.** Before hunting for the leaked object, ask whether the victim
+app is still ALIVE: dump `app.is_running` / `app._closing` / `app._closed` /
+`app._exception` at the point of the symptom. A dead Textual app is
+indistinguishable from a hung one from the outside — the message queue is
+empty, the workers list is empty, the loop is running, and nothing logs. Two
+corollaries that generalise: (1) `is_mounted` stays **True** for a screen
+Textual has already closed (the removed surface reported `is_mounted=True`
+with `is_running=False` and no children), so a mount check is not a liveness
+check — `_closing`/`_closed` are; (2) a per-file green gate structurally
+cannot see this class, because the damage needs several app lifetimes in one
+process. Running the whole directory in one invocation is what surfaces it.
+
+## A coroutine that re-arms itself from `finally` escapes the framework's teardown sweep (task-15860, 2026-08-16)
+
+Textual cancels a node's workers in `Widget._on_unmount`
+(`workers.cancel_node(self)`). `ChatScreen._sync_native_console_chat_ui`
+re-armed itself with `self.run_worker(...)` inside its own `finally` — which
+runs *after* that sweep — so the worker it created was never in the cancelled
+set, ran a full DOM sync against a screen with no children, and killed the app.
+The instrumentation that named it in one pass: wrap `DOMNode.run_worker`
+filtered to the suspect group and log `traceback.format_stack()` at creation;
+the creating frame was the `finally` itself. Generalises to any self-scheduling
+loop (timers re-arming timers, callbacks re-posting themselves): the framework's
+"cancel everything this node owns" happens once, and anything scheduled after
+it is invisible to it. Guard the re-arm on the owner still being alive, not
+just the body.
+
+## A `MagicMock(spec=Cls)` answers every METHOD truthily — a new guard predicate must not be one (task-15860, 2026-08-16)
+
+A teardown guard was added as `ChatScreen._console_screen_torn_down()`, reading
+`_closing`/`_closed`. Three `Tests/UI/test_ui_responsiveness.py` tests that
+drive `ChatScreen._sync_native_console_chat_ui(mock)` against a
+`MagicMock(spec=ChatScreen)` went red: the spec'd mock auto-provides every
+method in `dir(Cls)`, and the auto-returned `MagicMock` is TRUTHY, so the new
+guard reported "this screen is torn down" for every mocked screen and the code
+under test returned before doing anything. Measured three ways: 15 passed at
+the pre-fix baseline, 3 failed with the method form, 15 passed with the
+identical logic moved to a module-level `_console_screen_is_torn_down(screen)`.
+The reason the module form is immune is the same mechanism read the other way —
+`_closing`/`_closed` are set in `__init__`, so they are NOT in `dir(Cls)`, a
+spec'd mock raises `AttributeError` for them, and `getattr(screen, "_closing",
+False)` correctly reads a mocked (or never-mounted) screen as LIVE.
+
+**What to do.** When adding a *predicate* that new early-returns depend on, ask
+what a spec'd mock of the host class will return for it before choosing where
+it lives. A module function reading raw attributes is the mock-safe shape; a
+method is not. The failure is nasty because it is silent — the guard fires, the
+body is skipped, and the assertion that fails is about something else entirely.
+Trap-detection note: neutralising the method's BODY does not restore the tests
+(the mock never calls it), so the usual "mutate the fix off and compare" check
+reports "identical failure sets, not mine" — the only honest discriminator is a
+real pre-fix baseline worktree.
+## A parity test that passes against the pre-fix tree proves nothing (TASK-16811, 2026-08-16)
+
+The first version of `test_focus_token_parity.py` asserted a selected
+NavigationButton's resolved background equals the transcript's selected-row
+colour — and passed both post-fix AND against the unfixed tree. Two masks
+stacked: `run_test()` auto-focuses the first focusable widget, and the app
+bundle's generic `Button:focus { background: $ds-focus-bg }` rule (app tier
+beats any DEFAULT_CSS rule) painted the canonical colour over the shadowed
+`.active` rule the test meant to probe. The divergence only exists on the
+UNFOCUSED active state. The test became meaningful only after blurring
+(`app.set_focus(None)`, plus asserting `focus` absent from the pseudo-class
+set) — verified by running the corrected test in a throwaway worktree at the
+pre-fix commit, where it finally failed. Rules: (1) a regression test for a
+visual fix is only evidence once it has been RUN against the pre-fix tree
+and observed red there; (2) any style probe on a widget mounted first in a
+test App is probing the focused state whether you meant it or not.
+## A bare scroll_to(max) walk is not a user gesture — it self-terminates the moment the boundary stops moving
+
+**TASK-16851, 2026-08-16.** The head-pinned-selection fix (refuse tailward
+hydration while over the high mark with a blocked prune) passed its stall pin
+but "failed" its Esc-recovery pin: after Esc unblocked the prune, an 80-round
+`scroll_to(y=max_scroll_y)` walk never advanced a single chunk. Probe: reader
+parked at exactly `scroll_y == max_scroll_y`, so every subsequent `scroll_to`
+produced NO scroll_y change — `watch_scroll_y` never fired, nothing scheduled
+hydration, and the loop measured the harness gesture, not the product. Every
+REAL input path (wheel-down, PageDown, End) has its own boundary hook and
+recovered immediately. The pre-existing two-sided walks had only ever worked
+because hydration kept GROWING max_scroll_y under them, re-arming the watcher
+each round — a walk test that relies on that is green only while the feature
+under test keeps moving the goalposts for it.
+
+**What to do.** Drive boundary-walk tests with the product's real gestures
+(`action_page_down()`, wheel events, `scroll_end`) — or at minimum pair the
+positioning `scroll_to` with one. Before concluding a recovery path is broken,
+check whether the loop's gesture can still produce a state change at all.
+
+Same task, implementation twin worth remembering: a decision that walks
+`self.children` (the hydration refusal reusing `_compute_prunable_prefix`)
+must run under the widget's reconcile lock — read mid-reconcile, the transient
+child order faked a "blocked prune" and stalled a selection-free End drain
+(218 messages stranded in the born-red End-race pin).
+
+## A guard added by a later ADR can hollow out an older test without turning it red (task-15860, 2026-08-16)
+
+`Tests/Chat/test_console_runtime_lifetime.py`'s two AC#2 approval pins —
+"leaving Console denies a parked approval round" and "a round from the
+previous visit is not resurrected" — build the controller with
+`app is None`. That was fine when they were written. Then ADR-067 added a
+no-`app` guard to `request_mcp_approvals` that denies every name on the spot,
+and from that moment the rounds never reached the poll loop at all: both tests
+passed on the guard's verdict, not on the cancellation signal they claim to
+pin. Measured while mutation-testing a change to that exact signal: with
+`_is_session_cancelled`'s visit check deleted outright — fail-open for every
+session-scoped round — the whole file was still **14/14 green in 0.98s**.
+
+**The tell was the clock.** A file whose tests are supposed to poll on a 1.0s
+granularity cannot finish in less than one poll interval. After wiring a
+`call_from_thread` app the same file takes 2.81s and the same deletion fails
+both pins.
+
+**What to do.** When you change a signal, mutation-test the OTHER files that
+claim to pin it, not only your own — a green neighbour is not evidence.
+And when a suite that exercises timed waits runs impossibly fast, that is a
+finding, not good luck.
+
+## pytest silently drops a directory argument when a file inside it is also listed (task-15860, 2026-08-16)
+
+A gate invocation passed `Tests/Agents/` *and*
+`Tests/Agents/test_agent_runs_wake_ledger.py` (the second arrived from a
+separate "wake suites" list). pytest collected **283** tests instead of
+**1,733** — the directory arg was collapsed against the more specific
+file — and reported a perfectly healthy `282 passed, 1 skipped`, exit 0.
+Nothing in the output says a thing was skipped; the only evidence is the
+count, and 282 looks like a normal number.
+
+**What to do.** Never pass a directory and a path inside it in the same
+invocation. And "READ every count" means read it against what you MEANT to
+run: `--collect-only -q | tail -2` on the exact argument list first, then
+compare. A count you have not predicted cannot be checked.
+
+## Textual's `run_test` disables notifications, so a toast assertion can never see a toast (task-15860, 2026-08-16)
+
+`App.run_test()` defaults `notifications=False`, which sets
+`_disable_notifications` and makes `Screen._extend_compose` skip the
+`ToastRack` entirely. A test asserting on rendered toast widgets fails
+forever under the default; a test asserting on `app._notifications` passes
+without proving anything reached a screen. Pass `notifications=True` and
+assert on the widget.
+
+Second trap in the same assertion: `Toast` is a `Static` that never calls
+`update()`, so its `renderable` is empty — a helper reading `renderable`
+reports "no toast" for a toast that is on screen. Read `Toast.render()`.
+
+## Do not commit to a file the running suite imports — `inspect`/`linecache` read source off disk lazily (task-15860, 2026-08-16)
+
+A 59-minute single-process Console population (3,404 tests) came back with
+**4 failures unique to the branch**, all in
+`test_console_prompts_controller.py::test_screen_keeps_a_real_delegation_for_
+every_outside_caller[...]` — a test that does
+`inspect.getsource(getattr(ChatScreen, name))`. Its message showed it had read
+a *different method's* body entirely.
+
+The cause was a comment-only commit to `chat_screen.py` (net +7 lines at line
+14903) made **while the run was in flight**. Each method's `co_firstlineno` is
+fixed at import; `inspect.findsource` calls `linecache.checkcache`, re-reads
+the now-changed file, and every method defined below the edit reports source
+shifted by the delta. The tell was not the assertion text but the SPLIT: the
+two parametrisations that passed are defined at lines 5330 and 6264, the four
+that failed at 16684, 16790, 16794 and 17198 — a clean line-number boundary at
+the edit point. Re-run on a stable tree: 37 passed.
+
+**What to do.** While a long run is in flight, stage edits somewhere the run
+does not import, or wait. This bites any assertion built on `inspect.getsource`
+/ `inspect.getsourcelines` / traceback rendering — and those are exactly the
+architecture-contract tests that a big single-process gate is there to run.
+## A born-red run that dies on ImportError is not born-red evidence (TASK-16838, 2026-08-16)
+
+The in-flight-guard test file imported the new `_IN_FLIGHT_URL_CHECKS`
+registry at module top. Run against the pre-fix tree (worktree at
+`1af8c0414`) it "failed" — but on collection, with `ImportError: cannot
+import name '_IN_FLIGHT_URL_CHECKS'`. That red proves only that the test
+mentions a symbol the fix adds — the same red a typo would produce — and it
+says nothing about whether the bug (the 15764 double-check interleave) is
+reproduced or the assertions could catch it. Rewritten with a lazy
+`getattr(svc, "_IN_FLIGHT_URL_CHECKS", set())` lookup so the file COLLECTS
+on both trees, the pre-fix run reddened on the behaviour itself: the manual
+entrant's gated fetch fired while the scheduled fetch was still in flight
+("went to the network too"), the exact double-report the review had
+demonstrated. Rule: when new-code symbols would make a born-red file
+unimportable at base, reference them lazily (or split the white-box asserts
+out) so the base-tree run fails on the assertion that carries the evidence,
+not on `import`.
+
+## A guard sitting behind an earlier early-return is unreachable, so no fixture can own it (task-15860, 2026-08-16)
+
+Third mutation-survivor in this arc, and a different shape from the two
+above (which were two guards in SERIES at one read site). The launch-wake
+loop skips a marked conversation that owes nothing —
+`if not wake.has_pending(cid): continue` — and mutating that line to
+`if False:` left the whole suite **green**. Investigating rather than
+patching around it: every test that exercised an unowed mark used exactly
+ONE mark, and with one unowed mark the function returns earlier, at
+`if not wake.seed_from_marks(): return 0`, before the loop runs at all.
+The guard was not weakly tested, it was *unreachable* for every fixture in
+the file, so no assertion anywhere could have distinguished "we checked
+each conversation" from "we never got that far". The repair is a fixture
+change, not an assertion change: a test with TWO marks, one owed and one
+not, gets past the earlier return and then asserts the unowed conversation
+was never hydrated. Under the same mutation it now dies alone (1 failed,
+8 passed). Rule: when a mutation survives, before touching assertions ask
+whether the mutated line *executes* under any fixture you have — an
+earlier `return` upstream of it is the commonest reason it does not, and
+it is invisible in the diff you are mutating.
+
+## A "constructs nothing" pin needs an observer the production code cannot lie to (task-15860, 2026-08-16)
+
+The owner's ruling on wake-at-launch required that an install with no
+background work pay one indexed read and build NOTHING, so startup stays
+byte-identical. "Nothing was constructed" is exactly the claim a weak test
+states and never checks, so the pin took four independent observations:
+the marks service's call list, the four `ConsoleRuntime` slots being
+`None`, no `deferred_launch_wake` task ever created — and **the absence of
+the `agent_runs.db` FILE on disk**, because constructing the agent bridge
+opens (and creates) it. The filesystem one is the observation that cannot
+be satisfied by a mock, a stub or a lazily-`None` attribute. It earned its
+place under mutation: removing both empty-marks guards was caught by the
+call-count and by a sibling test's runtime assertion, and removing only
+the outer guard was caught *solely* by the task-name observation — the
+`None` slots stayed `None` because the inner function had its own guard.
+Two guards in depth meant no single observation covered both mutations;
+the four together did. Corollary: a no-work pin also needs a control that
+runs the same probes WITH work present and watches every one flip,
+otherwise a hook that never runs at all satisfies it perfectly.

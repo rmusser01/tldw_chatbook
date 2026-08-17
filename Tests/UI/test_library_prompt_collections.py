@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -43,6 +42,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
+    _wait_for_widget_state,
 )
 
 
@@ -732,15 +732,20 @@ class _StyledManagerHost(_ManagerHost):
 
 
 class _MutationManagerHost(ConsolidatedCSSApp):
-    def __init__(self, *, failure: Exception | None = None) -> None:
+    def __init__(
+        self, *, failure: BaseException | None = None, action: str = "create"
+    ) -> None:
         super().__init__()
         self.failure = failure
+        self.action = action
         self.started = asyncio.Event()
+        self.finished = asyncio.Event()
         self.release = asyncio.Event()
         self.create_calls = 0
+        self.results: list[object] = []
 
     def on_mount(self) -> None:
-        self.push_screen(self._modal())
+        self.push_screen(self._modal(), callback=self.results.append)
 
     def _modal(self):
         from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
@@ -760,10 +765,150 @@ class _MutationManagerHost(ConsolidatedCSSApp):
         async def create(_name: str):
             self.create_calls += 1
             self.started.set()
-            if self.failure is not None:
-                raise self.failure
+            try:
+                if self.failure is not None:
+                    raise self.failure
+                await self.release.wait()
+                return await load(query="", offset=0)
+            finally:
+                self.finished.set()
+
+        async def rename(_collection_id: int, _name: str):
+            self.started.set()
+            try:
+                if self.failure is not None:
+                    raise self.failure
+                await self.release.wait()
+                return await load(query="", offset=0)
+            finally:
+                self.finished.set()
+
+        return PromptCollectionManagerModal(
+            mode="browse",
+            selected_collection_id=1 if self.action == "rename" else None,
+            staged_collection_ids=(),
+            load_catalog=load,
+            create_collection=create,
+            rename_collection=rename,
+        )
+
+
+class _GuardedMutationManagerHost(ConsolidatedCSSApp):
+    def __init__(self, *, action: str) -> None:
+        super().__init__()
+        self.action = action
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.results: list[object] = []
+        self.create_calls = 0
+        self.rename_calls = 0
+
+    def on_mount(self) -> None:
+        self.push_screen(self._modal(), callback=self.results.append)
+
+    @staticmethod
+    def _catalog():
+        current = prompts_state_module.begin_prompt_collection_catalog(
+            query="", request_token=1
+        )
+        return prompts_state_module.apply_prompt_collection_catalog_page(
+            current,
+            _catalog_page(offset=0, total=207),
+            request_token=1,
+        )
+
+    def _modal(self):
+        from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+            PromptCollectionManagerModal,
+        )
+
+        async def load(*, query: str, offset: int):
+            assert query == "" and offset == 0
+            return self._catalog()
+
+        async def create(_name: str):
+            self.create_calls += 1
+            if self.action == "retry" and self.create_calls == 1:
+                raise RuntimeError("force mutation retry")
+            self.started.set()
             await self.release.wait()
-            return await load(query="", offset=0)
+            return self._catalog()
+
+        async def rename(_collection_id: int, _name: str):
+            self.rename_calls += 1
+            self.started.set()
+            await self.release.wait()
+            return self._catalog()
+
+        return PromptCollectionManagerModal(
+            mode="browse",
+            selected_collection_id=1,
+            staged_collection_ids=(),
+            load_catalog=load,
+            create_collection=create,
+            rename_collection=rename,
+        )
+
+
+class _RemountMutationManagerHost(ConsolidatedCSSApp):
+    def __init__(self, *, stale_result: str) -> None:
+        super().__init__()
+        self.stale_result = stale_result
+        self.stale_started = asyncio.Event()
+        self.stale_cancelled = asyncio.Event()
+        self.stale_release = asyncio.Event()
+        self.stale_finished = asyncio.Event()
+        self.current_started = asyncio.Event()
+        self.current_release = asyncio.Event()
+        self.create_calls = 0
+        self.results: list[object] = []
+        self.modal = self._modal()
+
+    def on_mount(self) -> None:
+        self.push_screen(self.modal, callback=self.results.append)
+
+    @staticmethod
+    def _catalog():
+        current = prompts_state_module.begin_prompt_collection_catalog(
+            query="", request_token=1
+        )
+        return prompts_state_module.apply_prompt_collection_catalog_page(
+            current,
+            _catalog_page(offset=0, total=2),
+            request_token=1,
+        )
+
+    def _modal(self):
+        from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
+            PromptCollectionManagerModal,
+        )
+
+        async def load(*, query: str, offset: int):
+            assert query == "" and offset == 0
+            return self._catalog()
+
+        async def create(_name: str):
+            self.create_calls += 1
+            if self.create_calls == 1:
+                self.stale_started.set()
+                try:
+                    await self.stale_release.wait()
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if task is not None:
+                        task.uncancel()
+                    self.stale_cancelled.set()
+                    await self.stale_release.wait()
+                self.stale_finished.set()
+                if self.stale_result == "failure":
+                    raise RuntimeError("stale mutation failure")
+                if self.stale_result == "cancelled":
+                    raise asyncio.CancelledError
+                return self._catalog()
+
+            self.current_started.set()
+            await self.current_release.wait()
+            return self._catalog()
 
         async def rename(_collection_id: int, _name: str):
             raise AssertionError("rename was not requested")
@@ -1427,44 +1572,269 @@ async def test_successful_mutation_with_refresh_failure_retries_catalog_only():
         assert _modal_outcome(modal) == ""
 
 
+async def _start_guarded_collection_mutation(
+    app: _GuardedMutationManagerHost, pilot
+) -> None:
+    modal = app.screen
+    if app.action == "rename":
+        await pilot.click("#prompt-collection-manager-row-1")
+        assert modal._selected_id == 1
+    modal.query_one("#prompt-collection-manager-new-name", Input).value = "One"
+    if app.action == "rename":
+        modal.query_one("#prompt-collection-manager-rename", Button).press()
+    else:
+        modal.query_one("#prompt-collection-manager-create", Button).press()
+    if app.action == "retry":
+        retry = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-retry",
+            lambda widget: widget.display,
+            what="failed create did not expose mutation retry",
+        )
+        retry.press()
+    await asyncio.wait_for(app.started.wait(), timeout=1.0)
+    await pilot.pause()
+
+
+async def _dispatch_collection_close(
+    pilot, source: str, release: asyncio.Event
+) -> None:
+    if source == "escape":
+        dispatch = pilot.press("escape")
+    elif source == "backdrop":
+        dispatch = pilot.click(offset=(0, 0))
+    else:
+        dispatch = pilot.click("#prompt-collection-manager-cancel")
+    dispatch_task = asyncio.create_task(dispatch)
+    done, _pending = await asyncio.wait({dispatch_task}, timeout=1.0)
+    if not done:
+        release.set()
+        pytest.fail("close input was queued behind the collection mutation")
+    await dispatch_task
+
+
 @pytest.mark.asyncio
-async def test_manager_create_is_single_flight_under_rapid_double_submit():
-    app = _MutationManagerHost()
-    async with app.run_test(size=(80, 24)) as pilot:
+@pytest.mark.parametrize("action", ["create", "rename", "retry"])
+@pytest.mark.parametrize(
+    "close_sources",
+    [
+        ("escape", "backdrop", "visible"),
+        ("backdrop", "visible", "escape"),
+        ("visible", "escape", "backdrop"),
+    ],
+)
+async def test_collection_mutation_close_requests_dispatch_without_queuing(
+    action: str,
+    close_sources: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _GuardedMutationManagerHost(action=action)
+    async with app.run_test(size=(120, 48)) as pilot:
         await pilot.pause()
         modal = app.screen
-        modal.query_one("#prompt-collection-manager-new-name", Input).value = "One"
-        first = asyncio.create_task(modal._run_mutation("create", None, "One"))
-        await wait_for_background_signal(
-            app.started, first, what="the first create mutation"
+        load_more = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-load-more",
+            lambda widget: widget.display and not widget.disabled,
+            what="Load more was not enabled before the collection mutation",
         )
-        second = asyncio.create_task(modal._run_mutation("create", None, "One"))
-        await pilot.pause()
+        assert modal._catalog.has_more
+        assert load_more.display and not load_more.disabled
+        await _start_guarded_collection_mutation(app, pilot)
+        content = modal.query_one("#prompt-collection-manager")
+        assert not content.region.contains(0, 0)
 
-        assert app.create_calls == 1
-        assert modal.query_one("#prompt-collection-manager-create", Button).disabled
-        assert modal.query_one("#prompt-collection-manager-rename", Button).disabled
-        assert modal.query_one("#prompt-collection-manager-cancel", Button).disabled
-        modal.action_cancel()
-        await pilot.pause()
-        assert app.screen is modal
-
-        app.release.set()
-        await asyncio.gather(first, second)
-        await pilot.pause()
-        assert app.create_calls == 1
-        assert not modal.query_one("#prompt-collection-manager-create", Button).disabled
+        disabled_selectors = (
+            "#prompt-collection-manager-search",
+            "#prompt-collection-manager-load-more",
+            "#prompt-collection-manager-all",
+            "#prompt-collection-manager-row-1",
+            "#prompt-collection-manager-new-name",
+            "#prompt-collection-manager-create",
+            "#prompt-collection-manager-rename",
+            "#prompt-collection-manager-retry",
+            "#prompt-collection-manager-done",
+        )
+        assert all(
+            modal.query_one(selector).disabled for selector in disabled_selectors
+        )
         assert not modal.query_one("#prompt-collection-manager-cancel", Button).disabled
+        outcome = modal.query_one("#prompt-collection-manager-outcome", Static)
+        original_update = outcome.update
+        status_updates: list[object] = []
+
+        def record_status_update(content: object = "") -> None:
+            status_updates.append(content)
+            original_update(content)
+
+        monkeypatch.setattr(outcome, "update", record_status_update)
+
+        try:
+            for source in close_sources:
+                await _dispatch_collection_close(pilot, source, app.release)
+                await pilot.pause()
+                assert app.screen is modal
+                assert app.results == []
+                assert (
+                    _modal_outcome(modal)
+                    == "Finish the current collection change before closing."
+                )
+            assert status_updates == [
+                "Finish the current collection change before closing."
+            ]
+        finally:
+            app.release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: not modal._mutation_in_flight,
+            message="collection mutation did not settle",
+        )
+        assert app.screen is modal
+        assert app.results == []
+        assert _modal_outcome(modal) in {
+            "Collection created.",
+            "Collection renamed.",
+        }
+        assert app.create_calls == (2 if action == "retry" else int(action == "create"))
+        assert app.rename_calls == int(action == "rename")
+        restored_load_more = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-load-more",
+            lambda widget: widget.display and not widget.disabled,
+            what="Load more was not restored after the collection mutation",
+        )
+        assert modal._catalog.has_more
+        assert restored_load_more.display and not restored_load_more.disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "expected_outcome", "expected_retry"),
+    [
+        ("create", "Couldn't create collection. Retry.", ("create", None, "Cancelled")),
+        ("rename", "Couldn't rename collection. Retry.", ("rename", 1, "Cancelled")),
+    ],
+)
+async def test_collection_mutation_cancelled_callback_restores_current_modal_controls(
+    action: str,
+    expected_outcome: str,
+    expected_retry: tuple[str, int | None, str],
+):
+    app = _MutationManagerHost(failure=asyncio.CancelledError(), action=action)
+    async with app.run_test(size=(120, 48)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Cancelled"
+        modal.query_one(f"#prompt-collection-manager-{action}", Button).press()
+        await asyncio.wait_for(app.started.wait(), timeout=1.0)
+        await asyncio.wait_for(app.finished.wait(), timeout=1.0)
+        retry = await _wait_for_widget_state(
+            modal,
+            pilot,
+            "#prompt-collection-manager-retry",
+            lambda widget: widget.display and not widget.disabled and widget.has_focus,
+            what=f"cancelled {action} did not expose focused Retry",
+            attempts=50,
+        )
+
+        assert app.screen is modal
+        assert app.results == []
+        assert not modal._mutation_in_flight
+        assert _modal_outcome(modal) == expected_outcome
+        assert modal._retry_action == expected_retry
+        assert retry.display and not retry.disabled and retry.has_focus
+        for selector in (
+            "#prompt-collection-manager-search",
+            "#prompt-collection-manager-new-name",
+            "#prompt-collection-manager-create",
+            "#prompt-collection-manager-done",
+            "#prompt-collection-manager-cancel",
+        ):
+            assert not modal.query_one(selector).disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_result", ["success", "failure", "cancelled"])
+async def test_collection_mutation_remount_rejects_cancellation_resistant_completion(
+    stale_result: str,
+) -> None:
+    app = _RemountMutationManagerHost(stale_result=stale_result)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        modal = app.modal
+        try:
+            modal.query_one(
+                "#prompt-collection-manager-new-name", Input
+            ).value = "Stale"
+            modal.query_one("#prompt-collection-manager-create", Button).press()
+            await asyncio.wait_for(app.stale_started.wait(), timeout=1.0)
+            stale_generation = modal._safe_mount_generation
+
+            modal.dismiss(None)
+            await asyncio.wait_for(app.stale_cancelled.wait(), timeout=1.0)
+            await pilot.pause()
+            await app.push_screen(modal, callback=app.results.append)
+            await pilot.pause()
+            await pilot.pause()
+            assert modal._safe_mount_generation > stale_generation
+
+            modal.query_one(
+                "#prompt-collection-manager-new-name", Input
+            ).value = "Current"
+            modal.query_one("#prompt-collection-manager-create", Button).press()
+            await asyncio.wait_for(app.current_started.wait(), timeout=1.0)
+            await pilot.pause()
+            cancel = modal.query_one("#prompt-collection-manager-cancel", Button)
+            cancel.focus()
+            await pilot.pause()
+            assert modal._mutation_in_flight
+            assert _modal_outcome(modal) == "Creating collection…"
+
+            app.stale_release.set()
+            await asyncio.wait_for(app.stale_finished.wait(), timeout=1.0)
+            await pilot.pause()
+            assert app.screen is modal
+            assert app.results == [None]
+            assert modal._mutation_in_flight
+            assert _modal_outcome(modal) == "Creating collection…"
+            assert modal.focused is cancel
+
+            app.current_release.set()
+            await _wait_for_condition(
+                pilot,
+                lambda: _modal_outcome(modal) == "Collection created.",
+                message="current remounted mutation did not settle",
+            )
+            assert app.create_calls == 2
+            assert app.screen is modal
+            assert app.results == [None]
+        finally:
+            app.stale_release.set()
+            app.current_release.set()
 
 
 @pytest.mark.asyncio
 async def test_older_catalog_load_cannot_overwrite_completed_mutation():
     app = _CatalogMutationRaceHost()
     async with app.run_test(size=(80, 24)) as pilot:
-        await wait_for_signal(app.load_started, what="the modal's on-mount catalog load")
+        await wait_for_signal(
+            app.load_started, what="the modal's on-mount catalog load"
+        )
         modal = app.screen
-        await modal._run_mutation("create", None, "Created authoritative")
-        await pilot.pause()
+        modal.query_one(
+            "#prompt-collection-manager-new-name", Input
+        ).value = "Created authoritative"
+        await pilot.click("#prompt-collection-manager-create")
+        await _wait_for_condition(
+            pilot,
+            lambda: _modal_outcome(modal) == "Collection created.",
+            message="authoritative create did not settle",
+        )
         assert app.create_calls == 1
         assert len(modal.query("#prompt-collection-manager-row-99")) == 1
 

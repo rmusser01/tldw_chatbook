@@ -821,7 +821,7 @@ class MainNavigationBar(Container):
         mid-word, e.g. "Watchlists" -> "Watc").
 
         This is purely cosmetic (`.nav-button-clip-ghost`, defined in
-        `DEFAULT_CSS`, colors every surface to match the bar's own
+        `BUNDLED_CSS`, colors every surface to match the bar's own
         background) -- it does NOT touch `display`, so the button keeps
         its normal layout box. That distinction is what makes this safe
         to call from every settle path (mount, resize, activating a

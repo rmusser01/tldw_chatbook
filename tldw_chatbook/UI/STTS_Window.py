@@ -331,10 +331,10 @@ class AudioBookGenerationWidget(Widget):
                     yield Label("Import From:", classes="form-label")
                     yield Select(
                         options=[
-                            ("file", "Text File"),
-                            ("notes", "Notes"),
-                            ("conversation", "Conversation"),
-                            ("paste", "Paste Text"),
+                            ("Text File", "file"),
+                            ("Notes", "notes"),
+                            ("Conversation", "conversation"),
+                            ("Paste Text", "paste"),
                         ],
                         id="import-source-select",
                     )
@@ -396,10 +396,10 @@ class AudioBookGenerationWidget(Widget):
                     yield Label("Provider:", classes="form-label")
                     yield Select(
                         options=[
-                            ("openai", "OpenAI"),
-                            ("elevenlabs", "ElevenLabs"),
-                            ("kokoro", "Kokoro (Local)"),
-                            ("chatterbox", "Chatterbox (Local)"),
+                            ("OpenAI", "openai"),
+                            ("ElevenLabs", "elevenlabs"),
+                            ("Kokoro (Local)", "kokoro"),
+                            ("Chatterbox (Local)", "chatterbox"),
                         ],
                         id="audiobook-provider-select",
                     )
@@ -408,11 +408,11 @@ class AudioBookGenerationWidget(Widget):
                     yield Label("Audio Format:", classes="form-label")
                     yield Select(
                         options=[
-                            ("mp3", "MP3"),
-                            ("m4b", "M4B (AudioBook)"),
-                            ("opus", "Opus"),
-                            ("aac", "AAC"),
-                            ("wav", "WAV"),
+                            ("MP3", "mp3"),
+                            ("M4B (AudioBook)", "m4b"),
+                            ("Opus", "opus"),
+                            ("AAC", "aac"),
+                            ("WAV", "wav"),
                         ],
                         id="audiobook-format-select",
                     )

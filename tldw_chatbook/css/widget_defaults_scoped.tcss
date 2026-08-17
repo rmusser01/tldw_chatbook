@@ -253,7 +253,7 @@
     Select-width lesson (`#mcp-tools-filter-server-slot Select`,
     mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
     `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own DEFAULT_CSS
+    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
     once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
     regardless of selector specificity) -- so styling
     `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
@@ -331,7 +331,7 @@
     `max-height: 70%` below resolves against a definite height, same
     percentage-inside-a-definite-not-auto-parent discipline the Select
     slot comment above documents for the filter bar. */
-
+    MCPAuditMode #mcp-audit-executions-view,
     MCPAuditMode #mcp-audit-findings-view {
         width: 1fr;
         height: 1fr;
@@ -471,7 +471,7 @@
         border: none;
         /* A3: Button defaults BOTH text-align and content-align to center
         (see Textual's own Button.DEFAULT_CSS -- the same lesson already
-        documented on Button.mcp-rail-row in MCPRail.DEFAULT_CSS and
+        documented on Button.mcp-rail-row in MCPRail.BUNDLED_CSS and
         Button.mcp-callout in _agentic_terminal.tcss) -- without this, the
         action stack (and the lone Cancel button during an in-flight
         lifecycle op) renders each label centered in its full-width row
@@ -725,7 +725,7 @@
         padding: 0 1 1 1;
         background: $surface;
     }
-
+    MCPToolsMode #mcp-tools-local-config-title-row,
     MCPToolsMode #mcp-tools-workspace-row {
         height: auto;
         min-height: 0;
@@ -743,7 +743,7 @@
         content-align: right middle;
         text-style: bold;
     }
-
+    MCPToolsMode #mcp-tools-local-config-help,
     MCPToolsMode #mcp-tools-local-config-status {
         height: auto;
         color: $text-muted;
@@ -768,7 +768,7 @@
     MCPToolsMode #mcp-tools-filter-server-slot Select {
         width: 28;
     }
-    /* T7 (P3 UX batch): same fix as MCPServersMode.DEFAULT_CSS's
+    /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
@@ -977,7 +977,11 @@
        button could never be measured again, i.e. never un-ghosted. Left
        out rather than reworking every geometry read onto a different
        property. */
-
+    MainNavigationBar .nav-button.nav-button-clip-ghost,
+    MainNavigationBar .nav-button.nav-button-clip-ghost:hover,
+    MainNavigationBar .nav-button.nav-button-clip-ghost:focus,
+    MainNavigationBar .nav-button.nav-button-clip-ghost.is-active,
+    MainNavigationBar .nav-button.nav-button-clip-ghost.is-active:focus,
     MainNavigationBar .nav-button.nav-button-clip-ghost:disabled {
         background: $background !important;
         color: $background !important;
@@ -1167,14 +1171,23 @@
 
     /* Presentation-only row wrappers keep the established wide stacked
        workbench. Compact rules below switch only these wrappers to rows. */
-
+    LibraryScreen #library-notes-filter-row,
+    LibraryScreen #library-notes-status-row,
+    LibraryScreen #library-note-heading,
+    LibraryScreen #library-note-title-row,
+    LibraryScreen #library-note-context-keywords-row,
+    LibraryScreen #library-notes-create-heading,
+    LibraryScreen #library-notes-sync-heading,
+    LibraryScreen #library-notes-sync-folder-row,
+    LibraryScreen #library-notes-sync-direction-row,
+    LibraryScreen #library-notes-sync-conflict-row,
     LibraryScreen #library-notes-sync-actions {
         layout: vertical;
         height: auto;
         min-height: 0;
     }
 
-
+    LibraryScreen #library-notes-create-viewport,
     LibraryScreen #library-notes-sync-viewport {
         height: 1fr;
         min-height: 0;
@@ -1196,7 +1209,7 @@
         border: solid $surface-lighten-1;
     }
 
-
+    LibraryScreen #library-note-preview-region:focus,
     LibraryScreen #library-note-context-region:focus {
         border: solid $accent;
         background: $boost;
@@ -1277,7 +1290,12 @@
         border: none;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-browse-actions,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sort-choices,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-transfer-actions,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-selection-actions,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-primary-actions,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-conflict-actions,
     LibraryScreen #library-canvas.library-notes-compact #library-note-delete-actions {
         height: 1;
         min-height: 1;
@@ -1355,7 +1373,11 @@
         overflow-x: hidden;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-note-editor-title,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-preview-title,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-context-title,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-loading-title,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-create-header,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-header {
         width: 1fr;
         height: 1;
@@ -1383,14 +1405,15 @@
         margin: 0;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-note-title-label,
     LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords-label {
         width: 10;
         height: 1;
         padding: 0 1;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-note-title,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-context-keywords,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder {
         width: 1fr;
         height: 1;
@@ -1454,7 +1477,8 @@
         overflow-x: hidden;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-note-context-region .destination-section,
+    LibraryScreen #library-canvas.library-notes-compact #library-note-context-meta,
     LibraryScreen #library-canvas.library-notes-compact #library-note-context-region > .library-canvas-action {
         height: 1;
         min-height: 1;
@@ -1486,7 +1510,7 @@
         text-overflow: clip;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-note-transfer-status,
     LibraryScreen #library-canvas.library-notes-compact #library-note-context-transfer-status {
         display: none;
         height: 0;
@@ -1594,7 +1618,11 @@
         overflow-x: hidden;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-purpose,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-row,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-row,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-actions,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-status {
         height: 1;
         min-height: 1;
@@ -1610,12 +1638,15 @@
         overflow-x: hidden;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-row,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-row,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-actions {
         layout: horizontal;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-folder-label,
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-label,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-label {
         width: 11;
         height: 1;
@@ -1623,7 +1654,7 @@
         padding: 0 1;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-direction-choices,
     LibraryScreen #library-canvas.library-notes-compact #library-notes-sync-conflict-choices {
         width: 1fr;
         height: 1;
@@ -1643,7 +1674,8 @@
         min-height: 0;
     }
 
-
+    LibraryScreen #library-media-list,
+    LibraryScreen #library-media-preview,
     LibraryScreen #library-media-detail-empty {
         width: 1fr;
         min-width: 0;
@@ -1653,7 +1685,7 @@
         overflow-x: hidden;
     }
 
-
+    LibraryScreen #library-media-preview,
     LibraryScreen #library-media-detail-empty {
         margin: 0 0 0 1;
         padding: 0 1;
@@ -1672,7 +1704,7 @@
         height: auto;
     }
 
-
+    LibraryScreen #library-canvas.library-notes-compact #library-media-list,
     LibraryScreen #library-canvas.library-notes-compact #library-media-preview {
         width: 100%;
         height: auto;
@@ -1716,7 +1748,7 @@
     under a harness App that never sets CSS_PATH. `$ds-focus-bg` and
     `$ds-focus-fg` currently alias to exactly `$surface` and `$text` (see
     css/core/_variables.tcss), so this is not a visual compromise. */
-
+    MCPScreen .mcp-mode-chip:focus,
     MCPScreen .mcp-mode-chip:hover:focus {
         background: $surface;
         color: $text;
@@ -1726,7 +1758,7 @@
     /* Active AND focused: still reads as "active" (bold underline, same
     background as non-focused .is-active) rather than picking up the
     reverse-video focus treatment above. */
-
+    MCPScreen .mcp-mode-chip.is-active:focus,
     MCPScreen .mcp-mode-chip.is-active:hover:focus {
         background: $surface;
         color: $text-muted;
@@ -1883,7 +1915,7 @@
        card entirely at 100x30, and left a dead void between the panels at
        170x50. Each section is now a one-line collapsed header by default,
        so no explicit max-height cap is needed here (the panels' own
-       DEFAULT_CSS keeps every part height: auto, which the old cap existed
+       BUNDLED_CSS keeps every part height: auto, which the old cap existed
        to force). */
     PersonasScreen #personas-character-attachments {
         height: auto;
@@ -1920,12 +1952,12 @@
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 
- SyncStatusWidget #scheduling-owner-server {
+    SyncStatusWidget #scheduling-owner-local, SyncStatusWidget #scheduling-owner-server {
         width: auto;
     }
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
- SyncStatusWidget #scheduling-last-push {
+    SyncStatusWidget #scheduling-last-pull, SyncStatusWidget #scheduling-last-push {
         width: auto;
         margin-left: 2;
     }
@@ -1976,7 +2008,7 @@
 
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
 
     
@@ -2088,8 +2120,12 @@
 
 
 
+
+
+
+
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
 
     

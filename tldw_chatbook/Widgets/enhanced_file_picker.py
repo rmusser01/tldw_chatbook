@@ -29,7 +29,6 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import DirectoryE
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir, is_file
 from ..Utils.path_validation import validate_path_simple
-from .modal_dismissal import SafeModalDismissMixin
 from ..config import (
     get_cli_setting,
     save_setting_to_cli_config,
@@ -263,9 +262,6 @@ class PathBreadcrumbs(Horizontal):
     """
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     PathBreadcrumbs {
         height: 3;
@@ -291,11 +287,8 @@ class PathBreadcrumbs(Horizontal):
         text-style: underline;
     }
 
-    PathBreadcrumbs .breadcrumb-button:focus {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
+    /* .breadcrumb-button:focus styling lives in css/components/_widgets.tcss
+       (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
     PathBreadcrumbs .breadcrumb-separator {
         margin: 0;
@@ -947,7 +940,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
 SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 
 
-class EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog):
+class EnhancedFileDialog(BaseFileDialog):
     """Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search"""
 
     DEFAULT_CSS = BaseFileDialog.DEFAULT_CSS + """
@@ -1715,10 +1708,10 @@ class EnhancedFileDialog(SafeModalDismissMixin, BaseFileDialog):
         self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#cancel")
-    def _cancel_safe(self, event: Button.Pressed) -> None:
+    async def _cancel_safe(self, event: Button.Pressed) -> None:
         """Route the visible Cancel button through terminal safe dismissal."""
         event.stop()
-        self.dismiss_safe_once(None)
+        await self.request_safe_cancel(source="visible")
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.
@@ -2473,3 +2466,158 @@ class EnhancedFileSave(EnhancedFileDialog):
                 value=0,
                 id="file-filter"
             )
+
+
+class EnhancedSelectDirectory(EnhancedFileDialog):
+    """Enhanced directory selection dialog.
+
+    Mirrors the vendored ``SelectDirectory`` contract -- a directory-only
+    listing whose select button returns the directory currently viewed --
+    on the ``EnhancedFileDialog`` chrome (breadcrumbs, search, bookmarks,
+    hints, per-context remembered start directory), so screens that use the
+    enhanced family everywhere keep a single picker look (TASK-16477).
+    """
+
+    # The file-flow select button would query the (absent) filename input;
+    # this dialog replaces it with the viewed-directory confirm below.
+    _SUPPRESSED_BASE_HANDLERS = {
+        *EnhancedFileDialog._SUPPRESSED_BASE_HANDLERS,
+        EnhancedFileDialog._on_select_button,
+    }
+
+    def __init__(
+        self,
+        location: Union[str, Path] = ".",
+        title: str = "Select directory",
+        *,
+        select_button: str = "Select",
+        cancel_button: str = "Cancel",
+        context: str = "directory_select",
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+        name: Optional[str] = None,
+    ):
+        """Initialise the directory selection dialog.
+
+        Args:
+            location: Optional starting location; ``"."`` resolves through
+                the per-context remembered start directory.
+            title: Dialog title.
+            select_button: Label for the confirm button.
+            cancel_button: Label for the cancel button.
+            context: Persistence context key (last-dir / recents).
+            id: Optional Textual widget id.
+            classes: Optional Textual widget classes.
+            name: Optional Textual widget name.
+
+        Notes:
+            Directory picking never takes file filters or multi-select;
+            both are fixed off by this constructor.
+        """
+        super().__init__(
+            location=location,
+            title=title,
+            select_button=select_button,
+            cancel_button=cancel_button,
+            filters=None,
+            context=context,
+            multi_select=False,
+            id=id,
+            classes=classes,
+            name=name,
+        )
+
+    def on_mount(self) -> None:
+        """Restrict the listing to directories once the DOM is ready.
+
+        The MRO walk still invokes ``EnhancedFileDialog.on_mount`` and
+        ``FileSystemPickerScreen.on_mount`` (breadcrumb init) for this Mount
+        event; see ``EnhancedFileDialog.on_mount``'s docstring.
+        """
+        nav = self.query_one(SearchableDirectoryNavigation)
+        nav.show_files = False
+        self._sync_dir_path_input(nav.location)
+
+    def _input_bar(self) -> ComposeResult:
+        """Provide the path input for direct navigation."""
+        from textual.widgets import Input
+
+        yield Input(id="dir-path-input", placeholder="Type path or select below")
+
+    def _dir_nav(self) -> SearchableDirectoryNavigation:
+        return self.query_one(SearchableDirectoryNavigation)
+
+    def _sync_dir_path_input(self, location: Path) -> None:
+        try:
+            self.query_one("#dir-path-input", Input).value = str(location)
+        except Exception:
+            pass
+
+    def _shortcut_hint_text(self) -> str:
+        """Directory-mode hints: Enter descends, the select button confirms."""
+        select_hint = self._label(self._select_button, "Select")
+        hints = [
+            "Ctrl+B Bookmarks",
+            "Ctrl+R Recent",
+            "Ctrl+F Search",
+            "Ctrl+L Path",
+            "1-9 Jump",
+            "Enter Open",
+            f"{select_hint} use this folder",
+            "Esc Cancel",
+            "? Hide",
+        ]
+        return "  ".join(hints)
+
+    @on(DirectoryNavigation.Changed)
+    def _sync_dir_path_on_nav_change(self, event: DirectoryNavigation.Changed) -> None:
+        """Keep the path input in step with breadcrumb navigation."""
+        self._sync_dir_path_input(event.control.location)
+
+    @on(Input.Submitted, "#dir-path-input")
+    def _on_dir_path_submit(self, event: Input.Submitted) -> None:
+        """Navigate to the typed path, mirroring the vendored dialog.
+
+        Validation mirrors ``_on_path_input_submit`` (the Ctrl+L bar):
+        a local file picker navigates the user's own filesystem, so
+        ``validate_path_simple`` is deliberately NOT applied here -- it
+        rejects legitimate ``~/``, ``../``, and shell-metacharacter path
+        segments and would break navigation. The one input that is never
+        a valid path (a NUL byte) is rejected explicitly before any
+        ``Path`` construction, which would otherwise raise a bare
+        ``ValueError`` out of this handler (Qodo review, TASK-16478).
+        """
+        event.stop()
+        value = event.value.strip()
+        if not value:
+            return
+        if "\x00" in value:
+            self._set_error("Path cannot contain null characters.")
+            self.query_one("#dir-path-input", Input).focus()
+            return
+        try:
+            target = MakePath.of(value).expanduser()
+            if not target.is_absolute():
+                target = self._dir_nav().location / target
+            target = target.resolve()
+        except (RuntimeError, OSError, ValueError) as error:
+            self._set_error(str(error))
+            self.query_one("#dir-path-input", Input).focus()
+            return
+        if target.is_dir():
+            self._dir_nav().location = target
+            return
+        if target.exists():
+            # A real path that is not a directory is a different mistake
+            # than a nonexistent one; the vendored SelectDirectory
+            # distinguishes them too.
+            self._set_error(f"Not a directory: {target.name}")
+        else:
+            self._set_error(f"Path not found: {value}")
+        self.query_one("#dir-path-input", Input).focus()
+
+    @on(Button.Pressed, "#select")
+    def _select_viewed_directory(self, event: Button.Pressed) -> None:
+        """Return the directory currently being viewed."""
+        event.stop()
+        self.dismiss(result=self._dir_nav().location)

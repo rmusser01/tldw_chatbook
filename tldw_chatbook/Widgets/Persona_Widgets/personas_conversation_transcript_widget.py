@@ -18,7 +18,7 @@ class PersonasConversationTranscriptWidget(Container):
     """Flat, read-only transcript of a saved conversation."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
     # height: 1fr (not 100%): the detail stack is a VerticalScroll (task-2231)
     # and this view is always shown WITH the 3-line conversation-actions row;
     # 100% would overflow the viewport by exactly that row, making the stack

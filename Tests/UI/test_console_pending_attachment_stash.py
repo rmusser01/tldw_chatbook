@@ -1207,9 +1207,20 @@ def test_two_fresh_screens_reconcile_real_persisted_h3_success_at_every_boundary
                 old_store, completion, clear_visible_composer=False
             )
 
-        fresh_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        # task-15860 Task 3: the second screen does NOT get a fresh store.
+        # Console history is owned by the app-owned `ConsoleRuntime` and
+        # survives the screen, so `_restore_native_console_state` restores
+        # view state only -- a second screen on the same app reads the same
+        # `ConsoleChatStore` the first one left behind. Building a fresh
+        # store here would test a mechanism production no longer has (and
+        # did: the restore left it empty). The H3 boundaries below are
+        # unchanged -- they are about reconciling a completed edit exactly
+        # once, at each timing.
         fresh = ChatScreen(app)
-        fresh._console_chat_store = fresh_store
+        fresh_store = fresh._ensure_console_chat_store()
+        assert fresh_store is old_store, (
+            "the app-owned runtime must hand the second screen the surviving store"
+        )
         fresh._restore_native_console_state(payload)
 
         restored_session = next(

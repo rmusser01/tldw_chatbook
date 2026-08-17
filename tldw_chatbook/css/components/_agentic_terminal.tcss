@@ -2710,6 +2710,30 @@ with stray left-edge border fragments), and padding 0 1 so the full
     color: $ds-text-muted;
 }
 
+/* task-15774: while a search is ACTIVE, the whole search-controls block
+   (box + match count + Prev/Next) docks to the top of the scrolling viewer
+   -- the find-bar convention, and the same pinned-edge chrome idiom as
+   #library-ingest-commit-bar's dock: bottom. In flow, the stack above the
+   controls (Back, title, metadata, section header) exceeds an 80x24
+   viewport, so the match count and Prev/Next sat below the fold exactly
+   while the user was operating them. Dock-on-active keeps them painted at
+   every size and scroll position; an inactive search keeps the in-flow
+   layout, so no space is stolen when nobody is searching. The raised
+   background + bottom rule stop scrolled content bleeding through the
+   pinned bar; the collapsed child margins keep the bar to 6 rows of a
+   24-row terminal instead of 8. */
+#library-media-content-search-controls.-library-media-search-active {
+    dock: top;
+    width: 100%;
+    background: $ds-surface-raised;
+    border-bottom: solid $ds-grid-line;
+}
+
+#library-media-content-search-controls.-library-media-search-active #library-media-content-search,
+#library-media-content-search-controls.-library-media-search-active #library-media-content-search-status {
+    margin: 0;
+}
+
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
@@ -3586,6 +3610,36 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0 1 1 1;
 }
 
+/* TASK-15110 (owner ruling: cap sections, scroll inside). With every
+   section expanded the left rail's virtual height ran ~3x its viewport and
+   Conversations started ~20 rows below the fold with no cue. Each section
+   body now takes a fixed share of the rail viewport and scrolls its own
+   overflow -- every section HEADER stays on-screen at any rail height, and
+   the internal scrollbar is the cue the outer scroll never had. 20% x 4
+   sections + 4 header rows fits the ~29-row body at 160x48; taller
+   terminals scale the share. Scoped to the LEFT rail: the Inspector and
+   Library rails share this class but not the overflow problem. Gutter kept
+   stable for the same width-stability contract as the rail body's own
+   scrollbar (TASK-1191). */
+#console-left-rail-body .console-rail-section-body {
+    max-height: 20%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* The reserved gutter REPLACES the body's right padding rather than
+       adding to it -- the session rows' width contract (12-col label +
+       10-col value + chrome) spends the rail's full 30 columns, and an
+       extra reserved column re-clipped the Workspace value (caught by
+       test_session_rows_fit_inside_the_rail). The gutter column doubles
+       as the right margin; the scrollbar draws in it only on overflow. */
+    padding-right: 0;
+    scrollbar-gutter: stable;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 .console-model-section-line {
     height: auto;
     min-height: 1;
@@ -4432,6 +4486,18 @@ Button.console-message-speech-action:focus {
     text-style: bold underline;
 }
 
+/* Turn file card selection parity with the message rows above. These rules
+   live HERE, not in the widget's DEFAULT_CSS: they need the real
+   $ds-focus-* tokens, and a widget-local `$var:` "fallback" would shadow
+   the bundle's values for that whole CSS source (TASK-16811). */
+ConsoleTurnFileCard.console-turn-file-card-selected {
+    background: $ds-focus-bg;
+}
+ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 /* TASK-1846: this is the record of what an agent did to the user's machine
    -- what it read, what it wrote, what left the box. It rendered `dim italic`
    in muted grey, making the audit trail the LEAST legible text in the
@@ -5183,8 +5249,9 @@ ConsoleCitationSourcesModal {
 }
 
 /* RAG UX v2 PR-4 (task-1): the staged-evidence strip -- the MAIN-surface
-   reader of the pending live-work launch, mounted between the status chips
-   and the composer. Hidden entirely (`display` toggled from the widget)
+   reader of the pending live-work launch, mounted directly above the
+   composer (the status chips sit below the composer). Hidden entirely
+   (`display` toggled from the widget)
    when nothing is staged, so it costs zero rows on the common path.
    M3 (final review): `min-height: 1` overrides the shared `.ds-panel`
    `min-height: 3` -- with 1-2 rows of real content (a header row plus N

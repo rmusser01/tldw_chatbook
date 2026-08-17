@@ -1877,8 +1877,13 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 card_data_json.get("character_version")
             ),
             "extensions": {},  # Initialize extensions
+            # task-15769: `image_base64` is the app's own backup-export /
+            # load_characters compatibility key -- treat it as an image
+            # source, not an unknown field (which would dump the whole
+            # base64 payload into extensions and lose the avatar).
             "image_base64": card_data_json.get("char_image")
-            or card_data_json.get("image"),
+            or card_data_json.get("image")
+            or card_data_json.get("image_base64"),
         }
 
         # Collect any non-standard V1 fields into 'extensions'
@@ -1898,6 +1903,7 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "character_version",
             "char_image",
             "image",
+            "image_base64",
         }
 
         extra_extensions = {}

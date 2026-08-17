@@ -28,6 +28,53 @@ TEMPLATE_NAMES = {
     "xml",
 }
 
+SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
+SAMIRA_REACTION_LABELS = (
+    "admiration",
+    "amusement",
+    "anger",
+    "annoyance",
+    "approval",
+    "caring",
+    "confusion",
+    "curiosity",
+    "desire",
+    "disappointment",
+    "disapproval",
+    "disgust",
+    "embarrassment",
+    "excitement",
+    "fear",
+    "gratitude",
+    "grief",
+    "joy",
+    "love",
+    "nervousness",
+    "neutral",
+    "optimism",
+    "pride",
+    "realization",
+    "relief",
+    "remorse",
+    "sadness",
+    "surprise",
+    "thinking",
+    "speaking",
+    "error",
+)
+SAMIRA_RESOURCE_PATHS = {
+    f"{SAMIRA_RESOURCE_ROOT}/{name}"
+    for name in (
+        "ASSET_LICENSE.md",
+        "Samira.character.json",
+        "Sammy.png",
+        "visual_identity_pack.json",
+    )
+} | {
+    f"{SAMIRA_RESOURCE_ROOT}/expressions/{label}.webp"
+    for label in SAMIRA_REACTION_LABELS
+}
+
 REQUIRED_SDIST_PATHS = {
     "LICENSE",
     "README.md",
@@ -48,10 +95,12 @@ REQUIRED_SDIST_PATHS = {
     "tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql",
     "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql",
     "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql",
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-}
+} | SAMIRA_RESOURCE_PATHS
 
 REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/__init__.py",
@@ -65,10 +114,12 @@ REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql",
     "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql",
     "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql",
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-}
+} | SAMIRA_RESOURCE_PATHS
 
 REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/css/*.tcss",
@@ -166,10 +217,22 @@ def _validate_content(
 
     if label == "wheel":
         for name in sorted(members):
-            if name.endswith(".md") and not name.startswith(
-                "tldw_chatbook/Config_Files/"
+            if (
+                name.endswith(".md")
+                and not name.startswith("tldw_chatbook/Config_Files/")
+                and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
             ):
                 errors.append(f"{label}: forbidden development Markdown: {name}")
+
+    samira_members = {
+        name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")
+    }
+    if samira_members != SAMIRA_RESOURCE_PATHS:
+        errors.append(
+            f"{label}: Samira resources differ; "
+            f"missing={sorted(SAMIRA_RESOURCE_PATHS - samira_members)}, "
+            f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
+        )
 
     template_names = {
         PurePosixPath(name).stem

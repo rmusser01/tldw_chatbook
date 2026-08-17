@@ -173,7 +173,7 @@ class NoteSelectionDialog(ModalScreen[Optional[List[int]]]):
     def load_notes(self, notes: List[Dict[str, Any]]) -> None:
         """Load notes into the list"""
         notes_list = self.query_one("#notes-list", Vertical)
-        notes_list.clear()
+        notes_list.remove_children()
         self.note_items.clear()
 
         for note in notes:

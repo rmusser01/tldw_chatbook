@@ -97,7 +97,7 @@ class WizardStep(Container):
     is_valid = reactive(True)
 
     # Validation
-    validation_errors: reactive[List[str]] = reactive([])
+    validation_errors: reactive[List[str]] = reactive(list)
 
     def __init__(
         self,
@@ -260,10 +260,6 @@ class WizardProgress(Horizontal):
     """Visual progress indicator for wizard steps."""
 
     DEFAULT_CSS = """
-    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
-    $ds-focus-accent: $primary;
-    $ds-focus-bg: $surface;
-    $ds-focus-fg: $text;
 
     WizardProgress {
         layout: horizontal;
@@ -287,12 +283,8 @@ class WizardProgress(Horizontal):
         border: solid $primary;
     }
     
-    WizardProgress .step-number.active {
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
-        border: round $ds-focus-accent;
-        text-style: bold underline;
-    }
+    /* .active step styling lives in css/features/_wizards.tcss (needs
+       the bundle's $ds-focus-* tokens; TASK-16811). */
     
     WizardProgress .step-number.complete {
         background: $success;
@@ -303,10 +295,6 @@ class WizardProgress(Horizontal):
         margin: 0 1;
     }
     
-    WizardProgress .step-title.active {
-        color: $ds-focus-fg;
-        text-style: bold underline;
-    }
     
     WizardProgress .step-connector {
         width: 4;
@@ -321,7 +309,7 @@ class WizardProgress(Horizontal):
 
     current_step = reactive(1)
     total_steps = reactive(1)
-    step_titles: reactive[List[str]] = reactive([])
+    step_titles: reactive[List[str]] = reactive(list)
 
     def compose(self) -> ComposeResult:
         """Compose progress indicators."""

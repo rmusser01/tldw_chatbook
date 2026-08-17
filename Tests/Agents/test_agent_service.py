@@ -1973,3 +1973,90 @@ def test_no_definitions_spawn_unchanged(db):
         api_endpoint="llama_cpp",
     )
     assert '"agent"' not in json.dumps(chat.calls[0], default=str)
+
+
+# -- ADR-067: pausable per-call deadline ---------------------------------
+#
+# A blocking human prompt (approval card / skill confirm) can wait inside
+# the callable handed to _call_with_timeout. The pre-ADR invariant
+# (approval timeout 120s < max_tool_call_seconds 300s) bounded the
+# abandoned-thread double-execution hazard by keeping the approval wait
+# strictly under the wrapper's ceiling. Indefinite human waits replace
+# that with a pausable clock: while a decision is pending for the run,
+# the deadline re-arms each poll slice, so wall-clock counts only actual
+# tool execution.
+
+
+def test_call_with_timeout_pauses_deadline_while_predicate_holds():
+    """While ``pauses_deadline`` polls True the deadline re-arms, so time
+    spent waiting on a human decision inside ``fn`` does not consume the
+    tool's execution budget. The 0.3s ceiling would abandon this 1.0s
+    call without the pause."""
+    def fn():
+        time.sleep(1.0)
+        return ToolResult(ok=True, content="worth the wait")
+
+    pause_until = time.monotonic() + 1.2
+    out = _call_with_timeout(
+        fn,
+        0.3,
+        "paused_tool",
+        pauses_deadline=lambda: time.monotonic() < pause_until,
+    )
+    assert out.ok is True and out.content == "worth the wait"
+
+
+def test_call_with_timeout_deadline_resumes_after_pause_ends():
+    """The pause re-arms the deadline, it does not remove it: once the
+    predicate goes False the armed deadline applies again, so a call that
+    keeps hanging AFTER its human decision still trips the ceiling
+    promptly instead of riding a frozen clock forever."""
+    def fn():
+        time.sleep(3.0)
+        return ToolResult(ok=True, content="too late")
+
+    pause_until = time.monotonic() + 0.7
+    t0 = time.monotonic()
+    out = _call_with_timeout(
+        fn,
+        0.3,
+        "resumed_tool",
+        pauses_deadline=lambda: time.monotonic() < pause_until,
+    )
+    elapsed = time.monotonic() - t0
+    assert out.ok is False and "timed out" in out.error
+    assert elapsed < 2.0
+
+
+def test_make_invoke_tool_pauses_deadline_during_human_input_wait(db, monkeypatch):
+    """The ADR-067 production wiring: ``_make_invoke_tool`` feeds
+    ``human_input_wait_active(run_id)`` into the wrapper, so a registry
+    tool blocked on a human decision (marked from ANY thread via
+    ``use_human_input_wait``) outlives max_tool_call_seconds."""
+    def chat(**kwargs):  # pragma: no cover - unused by this test
+        return {"choices": [{"message": {"content": "unused"}}]}
+
+    service = _service_with_chat(db, chat)
+
+    def slow_invoke_by_name(name, args):
+        time.sleep(1.0)
+        return ToolResult(ok=True, content="approved then ran")
+
+    monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(max_tool_call_seconds=0.3),
+    )
+    invoke_tool = service._make_invoke_tool(
+        cfg, disclosed_names={"calculator"}, run_id="run-pause-1"
+    )
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+
+    with use_human_input_wait("run-pause-1"):
+        result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+
+    assert result.ok is True
+    assert result.content == "approved then ran"

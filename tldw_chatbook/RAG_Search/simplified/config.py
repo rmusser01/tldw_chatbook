@@ -6,7 +6,7 @@ integrating with the existing tldw_cli configuration system while providing
 sensible defaults and easy overrides.
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
 import os
@@ -555,11 +555,22 @@ class SearchConfig:
     # `and_then_prefix` by owner ruling).
     fts_match_construction: str = "and_then_prefix"
 
-    # Parent document inclusion settings (RAG pipeline feature)
-    include_parent_docs: bool = False
-    parent_size_threshold: int = 5000  # Maximum parent doc size in characters
-    parent_inclusion_strategy: str = "size_based"  # "always", "size_based", "never"
-    max_context_size: int = 16000  # Maximum total context size in characters
+    # Maximum total context size in characters. LIVE: the Settings > Library >
+    # RAG defaults screen reads and writes it (settings_library_rag_defaults.py).
+    #
+    # RETIRED HERE (TASK-16174, Phase K): `include_parent_docs`,
+    # `parent_size_threshold` and `parent_inclusion_strategy` used to sit on this
+    # block. They were shipped, user-switchable, switched ON by three profiles --
+    # and read by NOTHING (grep-verified: 1 definition + 3 profile writes, 0
+    # reads). The decision rule was pre-registered in the arc's spec: wire them
+    # only if the capability lands engine-side. It did not -- expansion ships as a
+    # pull-based agent tool that runs AFTER retrieval, so wiring them would have
+    # changed what retrieval returns, which this arc's gate forbids. See
+    # Docs/superpowers/specs/2026-08-15-rag-agentic-expansion-design.md.
+    #
+    # Saved configs that still carry the retired keys keep loading: `from_dict`
+    # drops unknown search keys with a logged notice instead of raising TypeError.
+    max_context_size: int = 16000
 
 
 @dataclass
@@ -703,11 +714,35 @@ class RAGConfig:
                 pipeline_data["pipeline_config_file"]
             )
 
+        # `search_data` comes straight from a user-editable TOML/profile JSON, so
+        # an unknown key here is a hostile-dict problem, not a programming error:
+        # a plain `SearchConfig(**search_data)` raises TypeError and takes the
+        # whole config load down. That is exactly what a config saved BEFORE
+        # TASK-16174 retired `include_parent_docs` / `parent_size_threshold` /
+        # `parent_inclusion_strategy` would do. Drop unknown keys with a notice
+        # naming each one, so a retired or mistyped key degrades to "ignored and
+        # reported". (Same defensive posture as `rag_service.py`'s
+        # `_resolve_fts_match_construction`, for the same reason: this dict is
+        # user input.) Scope is deliberately the SEARCH section only -- the other
+        # sections have no retired fields and are out of this arc's scope.
+        known_search_fields = {f.name for f in fields(SearchConfig)}
+        known_search_data = {
+            key: value
+            for key, value in search_data.items()
+            if key in known_search_fields
+        }
+        for dropped in search_data:
+            if dropped not in known_search_fields:
+                logger.warning(
+                    f"Ignoring unknown RAG search config key '{dropped}' "
+                    "(retired or misspelled); it has no effect."
+                )
+
         return cls(
             embedding=EmbeddingConfig(**embedding_data),
             vector_store=VectorStoreConfig(**vector_store_data),
             chunking=ChunkingConfig(**chunking_data),
-            search=SearchConfig(**search_data),
+            search=SearchConfig(**known_search_data),
             query_expansion=QueryExpansionConfig(**query_expansion_data),
             pipeline=PipelineConfig(**pipeline_data),
         )

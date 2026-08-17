@@ -2,7 +2,7 @@
 
 Screen-owned overlay: the owning screen feeds it suggestions, routes
 Up/Down/Enter/Tab/Escape to it while open, and it never takes focus. It
-positions itself (``position: absolute`` + ``styles.offset``) so its bottom
+positions itself (``overlay: screen`` + ``styles.offset``) so its bottom
 edge sits just above the composer — the same anchored-overlay technique as
 ``Widgets/tooltip.py``.
 """
@@ -47,9 +47,25 @@ class ConsoleCommandPopup(Widget):
         super().__init__(**kwargs)
         self._suggestions: list[CommandSuggestion] = []
         self._desired_height = 0
+        # Last offset.y applied to the placement; region == flow_base + this,
+        # so the two together always re-derive the flow base (see reposition).
+        self._anchor_offset_y = 0
         # Hidden by default in code (not just TCSS) so the widget is correct
         # even where the bundled stylesheet is not loaded (bare test apps).
         self.display = False
+        # Why not the stylesheet's `position: absolute`: Textual 8.x's
+        # vertical layout resolves EVERY child's height against the
+        # container's fr pool before the placement loop skips absolute
+        # widgets, so an absolute popup still costs the workspace grid its
+        # full popup-height in rows whenever autocomplete opens -- the
+        # transcript visibly jumps up, a dead band opens under the status
+        # row, and on short terminals the anchor clamps to the shell top.
+        # `overlay: screen` is offset-positionable AND exempt from that
+        # height deduction; the inline `position: relative` neutralizes the
+        # stylesheet's `position: absolute` (which would keep the deduction
+        # alive alongside the overlay rule).
+        self.styles.position = "relative"
+        self.styles.overlay = "screen"
 
     def compose(self) -> ComposeResult:
         option_list = OptionList(id="console-command-popup-options")
@@ -123,9 +139,10 @@ class ConsoleCommandPopup(Widget):
     def reposition(self) -> None:
         """Anchor the popup's bottom edge just above the composer.
 
-        ``composer.region`` is Screen-relative and ``content_region`` is
-        absolute, so the offset math works regardless of which container the
-        popup is mounted in.
+        ``composer.region`` is Screen-relative and the flow base is derived
+        from this widget's own placement (see the comment at the offset
+        math), so the anchor holds regardless of which container the popup
+        is mounted in.
         """
         if self.parent is None:
             return
@@ -142,20 +159,42 @@ class ConsoleCommandPopup(Widget):
             )
             return
         anchor = composer.region
-        # DS-09 (TASK-2154.15): anchor the bottom edge above the status chip
-        # strip rather than the composer when the strip is visible, so the
-        # open popup covers transcript rows (the conventional autocomplete
-        # trade-off) instead of wiping the chips mid-composition.
+        # DS-09 (TASK-2154.15): anchor the bottom edge above the topmost
+        # visible strip in the composer's cluster (staged evidence, then the
+        # prompt-queue shelf) rather than the composer itself, so the open
+        # popup covers transcript rows (the conventional autocomplete
+        # trade-off) instead of wiping mid-composition state. The status
+        # chips now sit below the composer, out of the popup's reach -- the
+        # anchor must never chase them down over the input row.
         bottom_y = anchor.y
-        try:
-            chips = self.screen.query_one("#console-status-chips")
-        except NoMatches:
-            pass
-        else:
-            if chips.display and chips.region.height > 0:
-                bottom_y = chips.region.y
+        for strip_id in ("#console-staged-evidence-strip", "#console-prompt-queue"):
+            try:
+                strip = self.screen.query_one(strip_id)
+            except NoMatches:
+                continue
+            if strip.display and strip.region.height > 0:
+                bottom_y = min(bottom_y, strip.region.y)
         origin = self.parent.content_region
         x = anchor.x - origin.x
-        y = bottom_y - origin.y - self._desired_height
-        self.styles.offset = (max(x, 0), max(y, 0))
+        y = max(bottom_y - self._desired_height, 0)
+        # `overlay: screen` paints at (flow slot + offset), and the flow
+        # slot sits wherever the parent's in-flow stack ends -- NOT the
+        # parent's content origin the way `position: absolute` did. The
+        # slot position is not directly readable (a fixed-height parent's
+        # content_size reports its box, not its children's extent), so
+        # re-derive it from the current placement: region.y is always
+        # flow_base + the last offset.y this method applied. That also
+        # tracks any reflow that moved the slot between keystrokes.
+        if self.region.height > 0:
+            flow_base_y = self.region.y - self._anchor_offset_y
+            # May be negative: the popup paints ABOVE its flow slot at the
+            # bottom of the shell. `y` already carries the screen-top clamp.
+            offset_y = y - flow_base_y
+        else:
+            # Not laid out yet (first-ever show, display just flipping on):
+            # anchor at the origin for this frame; the after-refresh
+            # re-anchor in show_suggestions lands with a valid region.
+            offset_y = max(y, 0)
+        self._anchor_offset_y = offset_y
+        self.styles.offset = (max(x, 0), offset_y)
         self.styles.width = max(anchor.width, MIN_WIDTH)

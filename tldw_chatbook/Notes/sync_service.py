@@ -27,63 +27,6 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB
 # Classes:
 
 
-class SyncProfile:
-    """Represents a saved sync configuration."""
-
-    def __init__(
-        self,
-        name: str,
-        root_folder: Path,
-        direction: SyncDirection,
-        conflict_resolution: ConflictResolution,
-        extensions: List[str] = None,
-        auto_sync: bool = False,
-        sync_interval: int = 300,
-    ):
-        self.name = name
-        self.root_folder = root_folder
-        self.direction = direction
-        self.conflict_resolution = conflict_resolution
-        self.extensions = extensions or [".md", ".txt"]
-        self.auto_sync = auto_sync
-        self.sync_interval = sync_interval  # seconds
-        self.last_sync: Optional[datetime] = None
-        self.last_session_id: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert profile to dictionary for serialization."""
-        return {
-            "name": self.name,
-            "root_folder": str(self.root_folder),
-            "direction": self.direction.value,
-            "conflict_resolution": self.conflict_resolution.value,
-            "extensions": self.extensions,
-            "auto_sync": self.auto_sync,
-            "sync_interval": self.sync_interval,
-            "last_sync": self.last_sync.isoformat() if self.last_sync else None,
-            "last_session_id": self.last_session_id,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SyncProfile":
-        """Create profile from dictionary."""
-        profile = cls(
-            name=data["name"],
-            root_folder=Path(data["root_folder"]),
-            direction=SyncDirection(data["direction"]),
-            conflict_resolution=ConflictResolution(data["conflict_resolution"]),
-            extensions=data.get("extensions", [".md", ".txt"]),
-            auto_sync=data.get("auto_sync", False),
-            sync_interval=data.get("sync_interval", 300),
-        )
-
-        if data.get("last_sync"):
-            profile.last_sync = datetime.fromisoformat(data["last_sync"])
-        profile.last_session_id = data.get("last_session_id")
-
-        return profile
-
-
 class NotesSyncService:
     """High-level service for note synchronization."""
 
@@ -91,7 +34,6 @@ class NotesSyncService:
         self,
         notes_service: NotesInteropService,
         db: CharactersRAGDB,
-        config_path: Optional[Path] = None,
     ):
         """
         Initialize sync service.
@@ -99,90 +41,10 @@ class NotesSyncService:
         Args:
             notes_service: Notes service for database operations
             db: Database instance
-            config_path: Path to store sync profiles and configuration
         """
-        from ..config import _get_effective_config_path
-
         self.notes_service = notes_service
         self.db = db
-        self.config_path = config_path or (
-            _get_effective_config_path().parent / "sync_profiles.json"
-        )
         self.sync_engine = NotesSyncEngine(notes_service, db)
-        self.profiles: Dict[str, SyncProfile] = {}
-        self._load_profiles()
-
-    def _load_profiles(self):
-        """Load sync profiles from configuration file."""
-        if self.config_path.exists():
-            try:
-                with open(self.config_path, "r") as f:
-                    data = json.load(f)
-                    for profile_data in data.get("profiles", []):
-                        profile = SyncProfile.from_dict(profile_data)
-                        self.profiles[profile.name] = profile
-                logger.info(f"Loaded {len(self.profiles)} sync profiles")
-            except Exception as e:
-                logger.error(f"Error loading sync profiles: {e}")
-
-    def _save_profiles(self):
-        """Save sync profiles to configuration file."""
-        try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            profiles_data = [profile.to_dict() for profile in self.profiles.values()]
-
-            with open(self.config_path, "w") as f:
-                json.dump({"profiles": profiles_data}, f, indent=2)
-
-            logger.info(f"Saved {len(self.profiles)} sync profiles")
-        except Exception as e:
-            logger.error(f"Error saving sync profiles: {e}")
-
-    def delete_profile(self, name: str) -> bool:
-        """Delete a sync profile."""
-        if name in self.profiles:
-            del self.profiles[name]
-            self._save_profiles()
-            return True
-        return False
-
-    def get_profile(self, name: str) -> Optional[SyncProfile]:
-        """Get a sync profile by name."""
-        return self.profiles.get(name)
-
-    def list_profiles(self) -> List[SyncProfile]:
-        """List all sync profiles."""
-        return list(self.profiles.values())
-
-    async def sync_with_profile(
-        self,
-        profile_name: str,
-        user_id: str,
-        progress_callback: Optional[Callable[[SyncProgress], None]] = None,
-    ) -> Tuple[str, SyncProgress]:
-        """Execute sync using a saved profile."""
-        profile = self.profiles.get(profile_name)
-        if not profile:
-            raise ValueError(f"Profile '{profile_name}' not found")
-
-        # Update sync engine with progress callback
-        self.sync_engine.progress_callback = progress_callback
-
-        # Execute sync
-        session_id, progress = await self.sync_engine.sync(
-            root_path=profile.root_folder,
-            user_id=user_id,
-            direction=profile.direction,
-            conflict_resolution=profile.conflict_resolution,
-            extensions=profile.extensions,
-        )
-
-        # Update profile
-        profile.last_sync = datetime.now()
-        profile.last_session_id = session_id
-        self._save_profiles()
-
-        return session_id, progress
 
     async def sync_folder(
         self,

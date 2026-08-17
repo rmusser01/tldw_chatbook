@@ -20,11 +20,14 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib
 import os
+import re
 from pathlib import Path
 
 import pytest
 from textual.app import App
+from textual.css.errors import UnresolvedVariableError
 from textual.css.parse import parse
 from textual.css.stylesheet import Stylesheet, StylesheetParseError
 from textual.css.tokenize import tokenize_values
@@ -34,6 +37,16 @@ from tldw_chatbook.css import build_css, widget_css
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "tldw_chatbook"
 _CSS_ROOT = _PACKAGE_ROOT / "css"
+
+#: TASK-15997: the other two trees the class-level-CSS parse guard covers.
+#: Neither is a "vendored/standalone" case the way ``widget_css.EXCLUDED_DIRS``
+#: means it (that exclusion is about code with its own App that never loads
+#: *this* app's bundle) -- a harness ``App`` under ``Tests/`` or a runnable
+#: script under ``Helper_Scripts/`` both parse their own CSS at their own
+#: runtime, so an invalid property there is worth catching on exactly the same
+#: grounds, and the walk below applies no directory exclusions to either.
+_TESTS_ROOT = _REPO_ROOT / "Tests"
+_HELPER_SCRIPTS_ROOT = _REPO_ROOT / "Helper_Scripts"
 
 #: Textual's parse cache size (``textual/css/stylesheet.py``). The whole point of
 #: the consolidation is to keep the live source count comfortably below it.
@@ -52,18 +65,35 @@ def _css_variables() -> dict:
     return tokenize_values(App().get_css_variables())
 
 
-def _class_css_blocks() -> list[tuple[str, str, str]]:
-    """Every class-level CSS string literal in the package.
+def _class_css_blocks(
+    root: Path | None = None,
+    *,
+    excluded_dirs: tuple[str, ...] = widget_css.EXCLUDED_DIRS,
+) -> list[tuple[str, str, str]]:
+    """Every class-level CSS string literal under ``root``.
+
+    The one block-extraction helper every parse-guard test shares (TASK-15997):
+    called with no arguments it walks the ``tldw_chatbook`` package exactly as
+    it always did; passing a different ``root`` (and, typically, no exclusions)
+    reuses the identical AST scan for ``Tests/`` or ``Helper_Scripts/`` instead
+    of forking a copy of it.
+
+    Args:
+        root: Directory to walk. Defaults to the ``tldw_chatbook`` package.
+        excluded_dirs: Path components that exclude a file from the walk.
+            Defaults to ``widget_css.EXCLUDED_DIRS`` (vendored/standalone code
+            under the package); pass ``()`` for trees with no such carve-out.
 
     Returns:
         ``(module, class_name, css)`` triples, covering the consolidated
         attributes and any ``DEFAULT_CSS``/``CSS`` that has not moved.
     """
+    root = _PACKAGE_ROOT if root is None else root
     wanted = {"DEFAULT_CSS", "CSS", widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR}
     blocks: list[tuple[str, str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
-        relative = path.relative_to(_PACKAGE_ROOT)
-        if any(part in widget_css.EXCLUDED_DIRS for part in relative.parts):
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if any(part in excluded_dirs for part in relative.parts):
             continue
         source = path.read_text(encoding="utf-8")
         if not any(name in source for name in wanted):
@@ -160,9 +190,12 @@ def test_scope_rewrite_reproduces_textuals_comma_quirk():
 
     ``parse_rule_set`` flushes each earlier group when it meets the comma and
     scopes only the group left over, so ``A, .b {…}`` in scoped ``DEFAULT_CSS``
-    leaves ``A`` matching app-wide. Widget CSS depends on that today, so the
-    rewrite keeps it; ``scope_every_selector`` opts out, and the screen sheets
-    use it because they are live from boot rather than from a modal's first open.
+    leaves ``A`` matching app-wide. ``split_scoped_css``'s default keeps that
+    quirk so ``test_scope_rewrite_matches_textuals_own_scoping`` can pin the
+    transform against Textual's own parser; ``scope_every_selector`` opts out,
+    and BOTH build-time streams now use it -- the screen sheets from TASK-15450
+    and the widget-defaults sheets since TASK-15998 -- because consolidation
+    made every generated sheet live from boot rather than from a first mount.
     """
     css = ".leaked, .scoped { color: red; }\n"
     own, scoped = widget_css.split_scoped_css(css, "MyWidget")
@@ -201,6 +234,186 @@ def test_top_level_variable_declarations_stay_out_of_selectors():
     assert "MyWidget .thing" in scoped
 
 
+def test_isolate_local_variables_inlines_and_drops_the_declaration():
+    """A block-local ``$var`` is substituted into its own rule, then removed.
+
+    Mirrors ``EmojiPickerScreen``'s real shape (a local fallback aliasing a
+    real app/theme variable): the app variable reference itself must survive
+    untouched, only the local name disappears.
+    """
+    css = "$fallback: $surface;\n.thing { background: $fallback; }\n"
+    isolated = widget_css.isolate_local_variables(css)
+    assert "$fallback" not in isolated
+    assert "background: $surface;" in isolated
+    assert ".thing" in isolated
+
+
+def test_isolate_local_variables_resolves_chained_local_references():
+    """A local variable's value may itself reference an earlier local variable."""
+    css = "$a: red;\n$b: $a;\nFoo { color: $b; }\n"
+    isolated = widget_css.isolate_local_variables(css)
+    assert "$a" not in isolated and "$b" not in isolated
+    assert "color: red;" in isolated
+
+
+def test_isolate_local_variables_leaves_unbalanced_css_an_error():
+    """Malformed CSS fails loud here too, matching ``split_scoped_css``."""
+    with pytest.raises(ValueError):
+        widget_css.isolate_local_variables("$x: 1; Foo { color: red;")
+
+
+def test_isolate_local_variables_rejects_a_forward_reference():
+    """TASK-15993 review gap 2b: a forward reference must fail loudly, not
+    silently accept a shape Textual itself rejects.
+
+    Textual, parsing ``$a: $b;\\n$b: blue;\\nFoo { color: $a; }\\n`` standalone,
+    raises ``UnresolvedVariableError`` immediately -- its single left-to-right
+    scan hits ``$b`` inside ``$a``'s own value before ``$b: blue;`` has been
+    seen. The resolver must reject the same shape rather than silently
+    resolving to a dangling ``$b`` (which either defers the failure to
+    sheet-parse time, or -- if an unrelated global happens to share the name
+    -- resolves to the WRONG value with no error anywhere; born-red evidence
+    below).
+    """
+    css = "$a: $b;\n$b: blue;\nFoo { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$b"):
+        widget_css.isolate_local_variables(css, scope="Foo")
+
+    # Born-red for the *silent-wrong-value* half of the gap: a global variable
+    # happens to share the forward-referenced name. Before the fix this
+    # produced `Alpha { color: #800080; }` (purple) instead of "blue", with no
+    # error anywhere -- exactly the silent-misresolution class this task
+    # exists to eliminate, relocated into the new resolver. The fix must
+    # reject it at build time rather than let it reach that state.
+    shared_name_css = "$a: $fwd-shared;\n$fwd-shared: blue;\nAlpha { color: $a; }\n"
+    with pytest.raises(ValueError, match=r"\$a.*\$fwd-shared"):
+        widget_css.isolate_local_variables(shared_name_css, scope="Alpha")
+
+
+def test_isolate_local_variables_leaves_quoted_content_untouched():
+    """TASK-15993 review gap 2c-i: a ``$name``-shaped sequence inside a quoted
+    string must not be rewritten -- Textual's tokenizer emits a quoted string
+    as a single opaque ``string`` token, never re-scanned for a
+    ``variable_ref`` (confirmed against ``textual.css.tokenize``).
+    """
+    css = '$a: red;\nFoo { note: "price is $a dollars"; color: $a; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert 'note: "price is $a dollars";' in isolated, (
+        "the quoted string's contents must survive verbatim, $a and all"
+    )
+    assert "color: red;" in isolated
+
+
+def test_isolate_local_variables_handles_semicolon_inside_a_quoted_value():
+    """TASK-15993 review gap 2c-ii: a ``;`` inside a quoted variable *value*
+    must not end the declaration early and corrupt the rest of the block.
+    """
+    css = '$sep: "a;b";\nFoo { color: red; }\n'
+    isolated = widget_css.isolate_local_variables(css, scope="Foo")
+    assert "$sep" not in isolated
+    assert "Foo { color: red; }" in isolated
+    assert 'b";' not in isolated, "the string's tail must not leak as raw text"
+
+
+def test_local_variable_definitions_do_not_leak_across_blocks():
+    """TASK-15993: a block-local ``$var`` cannot silently apply to a later
+    block's rules once both land in the same generated sheet.
+
+    Textual resolves ``$variable`` references with a single left-to-right
+    scan over whatever ONE STRING is handed to its parser, and a generated
+    sheet concatenates every block's CSS into one such string -- so a local
+    fallback meant only for parsing its own block in isolation used to stay
+    "defined" for every block rendered after it (verified: this fixture
+    parses *silently* -- no error -- against ``split_scoped_css`` output with
+    no ``isolate_local_variables`` pre-pass, exactly reproducing the bug this
+    guard pins).
+
+    ``render_stylesheets`` (which now runs ``isolate_local_variables`` per
+    block before splitting/scoping) must instead leave Bravo's reference
+    genuinely unresolved: Alpha's local definition is inlined into Alpha's
+    own rule and dropped, so it never appears in the emitted text for
+    Bravo to inherit. Parsing with Textual's own real parser -- and real
+    theme variables, so a coincidental app-var name would not mask the
+    leak -- must therefore raise for the undefined name.
+    """
+    alpha = widget_css.BundledBlock(
+        module="a.py",
+        class_name="Alpha",
+        lineno=1,
+        css="$leak-var: red;\nAlpha { color: $leak-var; }\n",
+    )
+    bravo = widget_css.BundledBlock(
+        module="b.py",
+        class_name="Bravo",
+        lineno=1,
+        css="Bravo { color: $leak-var; }\n",
+    )
+    variables = App().get_css_variables()
+    assert "leak-var" not in variables, (
+        "fixture sanity: 'leak-var' must not coincide with a real theme "
+        "variable, or a genuine leak could hide behind it resolving anyway"
+    )
+
+    own, scoped = widget_css.render_stylesheets([alpha, bravo], "fixture")
+    # Neither block's own selector needed scoping (each already names its own
+    # class), so with the default `scope_every_selector=False` everything
+    # lands in the "self" stream and "scoped" is just its (non-blank) header
+    # -- checking `sheet.strip()` alone would not catch that, so require an
+    # actual WIDGET banner before exercising a stream.
+    exercised = 0
+    for stream_name, sheet in (("self", own), ("scoped", scoped)):
+        if "===== WIDGET:" not in sheet:
+            continue
+        exercised += 1
+        stylesheet = Stylesheet(variables=variables)
+        stylesheet.add_source(sheet, read_from=(f"fixture-{stream_name}", ""))
+        with pytest.raises(UnresolvedVariableError):
+            stylesheet.parse()
+    assert exercised, (
+        "neither stream carried the fixture blocks -- the guard is vacuous"
+    )
+
+
+_BANNER_RE = re.compile(r"/\* ===== WIDGET: (\S+) \(\S+\) ===== \*/")
+
+
+@pytest.mark.parametrize("filename", _GENERATED_SHEETS)
+def test_generated_sheets_scope_every_selector(filename: str):
+    """Every top-level selector in every generated sheet names its class first.
+
+    TASK-15998. Textual's scoped-DEFAULT_CSS parser prefixes only the LAST
+    selector of a comma list, so ``A, .b {…}`` leaves ``A`` matching app-wide.
+    Per-class registration confined that leak to first-mount time; the
+    consolidated sheets are live from boot, so the builder now writes the scope
+    onto EVERY selector in both tiers (``scope_every_selector=True`` in
+    ``build_css.py`` -- see the decision comment there for the parity evidence).
+    Born red against the quirked widget-defaults build: the self sheet carried
+    56 leaked selectors across 6 classes (LibraryScreen, MCPAuditMode,
+    MCPToolsMode, MCPScreen, MainNavigationBar, SyncStatusWidget), and this
+    guard is what keeps that set from silently growing back.
+    """
+    text = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+    parts = _BANNER_RE.split(text)
+    blocks = list(zip(parts[1::2], parts[2::2]))  # (class_name, block css)
+    assert blocks, f"{filename}: no WIDGET banners found -- the split is broken"
+
+    variables = _css_variables()
+    leaks = []
+    checked = 0
+    for class_name, css in blocks:
+        for chain, _specificity, _declarations in _selector_entries(css, "", variables):
+            checked += 1
+            first_name, first_type, _combinator, _pseudo = chain[0]
+            if not (first_type == "TYPE" and first_name == class_name):
+                leaks.append(f"{filename}::{class_name}: {chain}")
+    assert checked, f"{filename}: no selectors parsed -- the guard is vacuous"
+    assert not leaks, (
+        f"{len(leaks)} selector(s) not scoped to their declaring class -- these "
+        "match app-wide from boot (Textual's comma-list quirk has crept back "
+        "into the build; see build_css.build_widget_defaults):\n" + "\n".join(leaks)
+    )
+
+
 @pytest.mark.parametrize("filename", _GENERATED_SHEETS)
 def test_generated_stylesheet_parses(filename: str):
     """Each generated sheet parses -- an invalid property fails the whole sheet.
@@ -220,41 +433,199 @@ def test_generated_stylesheet_parses(filename: str):
     stylesheet.parse()
 
 
+def _stream_order(path: Path) -> dict[str, int]:
+    """Banner index of each class's block within ONE generated sheet.
+
+    ``render_stylesheets`` writes one ``/* ===== WIDGET: ... */`` banner per
+    class, in the order its block was rendered into this stream. That text
+    order is what decides an exact-specificity tie *within this stream*: see
+    ``test_base_class_blocks_precede_their_subclasses`` for why.
+    """
+    order: dict[str, int] = {}
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
+        if line.startswith("/* ===== WIDGET: "):
+            order.setdefault(line.split()[3], index)
+    return order
+
+
+def _module_name(module: str) -> str:
+    """``iter_blocks``' package-relative POSIX path -> a dotted module name."""
+    return "tldw_chatbook." + module[:-3].replace("/", ".")
+
+
+def _transitive_base_pairs(
+    blocks: list[widget_css.BundledBlock],
+) -> list[tuple[str, str]]:
+    """``(class_name, ancestor_name)`` for every real ancestor relationship
+    between two consolidated widget classes.
+
+    Imports each class and walks its actual ``__mro__`` rather than its
+    syntactic bases, so a grandparent inversion is not invisible just because
+    an intermediate class in the chain declares no ``BUNDLED_CSS`` of its own
+    -- a syntactic-direct-bases-only scan only ever fires from a class that
+    itself has CSS to check, so it can never reach past such a class.
+    """
+    consolidated = {block.class_name for block in blocks}
+    pairs: list[tuple[str, str]] = []
+    for block in blocks:
+        module = importlib.import_module(_module_name(block.module))
+        cls = getattr(module, block.class_name)
+        for ancestor in cls.__mro__[1:]:
+            if (
+                ancestor.__name__ in consolidated
+                and ancestor.__name__ != block.class_name
+            ):
+                pairs.append((block.class_name, ancestor.__name__))
+    return pairs
+
+
+def _ordering_problems(
+    pairs: list[tuple[str, str]], streams: list[tuple[str, dict[str, int]]]
+) -> list[str]:
+    """Flag ``(class, base)`` pairs where ``base`` is emitted after ``class``
+    *within the same stream*.
+
+    Comparing across streams pins nothing: the self stream's tie-breaker (0)
+    and the scoped stream's (``SCOPED_DEFAULTS_TIE_BREAKER``, -1,000,000)
+    already decide any cross-stream tie outright, regardless of either
+    block's text position, so only a same-stream comparison is load-bearing.
+    """
+    problems: list[str] = []
+    for class_name, base_name in pairs:
+        for stream_name, order in streams:
+            if base_name not in order or class_name not in order:
+                continue
+            if order[base_name] > order[class_name]:
+                problems.append(
+                    f"[{stream_name}] {base_name} is a base of {class_name} but "
+                    "is emitted after it, inverting the tie-breaker Textual "
+                    "gave them"
+                )
+    return problems
+
+
 def test_base_class_blocks_precede_their_subclasses():
     """Base-class CSS must be emitted before a subclass's, as Textual ordered it.
 
     Textual gave each class's own ``DEFAULT_CSS`` tie-breaker 0 and its bases
-    ``-(depth)``, so a subclass won ties against its base. In one generated sheet
-    that ordering has to come from source order instead.
-    """
-    sheets = "".join(
-        (_CSS_ROOT / name).read_text(encoding="utf-8")
-        for name in (
-            build_css.WIDGET_DEFAULTS_SELF_FILENAME,
-            build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
-        )
-    )
-    order: dict[str, int] = {}
-    for index, line in enumerate(sheets.splitlines()):
-        if line.startswith("/* ===== WIDGET: "):
-            order.setdefault(line.split()[3], index)
+    ``-(depth)``: a subclass won a specificity tie against its base outright,
+    by that numeric comparison, regardless of source order
+    (``Styles.extract_rules``/``Stylesheet._check_and_refresh``).
 
-    problems = []
-    for module, class_name, _css in _class_css_blocks():
-        if class_name not in order:
-            continue
-        source = (_PACKAGE_ROOT / module).read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.ClassDef) or node.name != class_name:
-                continue
-            for base in node.bases:
-                base_name = ast.unparse(base).split("[")[0].split(".")[-1]
-                if base_name in order and order[base_name] > order[class_name]:
-                    problems.append(
-                        f"{base_name} is a base of {class_name} but is emitted "
-                        "after it, inverting the tie-breaker Textual gave them"
-                    )
+    The consolidated scheme collapses every class's self-stream rules onto
+    ONE shared tie-breaker (0, ``build_css.widget_defaults_sources``) and
+    every scoped-stream rule onto another shared one
+    (``SCOPED_DEFAULTS_TIE_BREAKER``). Two same-stream rules that still tie on
+    specificity therefore fall through to Textual's *next* tie-break: on an
+    exact tie, the LAST rule in source order wins (the stylesheet scans rules
+    in reverse and ``max()`` keeps the first-seen maximum). So within one
+    stream, a base's block must sit *before* its subclass's -- and only a
+    same-stream comparison means anything: a pair that straddles streams is
+    already decided outright by the differing tie-breakers, so comparing
+    their raw text positions (as this test used to, via a naive concatenation
+    of both streams) pins nothing. See TASK-15994.
+    """
+    blocks = widget_css.iter_blocks(_PACKAGE_ROOT, widget_css.WIDGET_ATTR)
+    self_order = _stream_order(_CSS_ROOT / build_css.WIDGET_DEFAULTS_SELF_FILENAME)
+    scoped_order = _stream_order(_CSS_ROOT / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME)
+    pairs = _transitive_base_pairs(blocks)
+    problems = _ordering_problems(
+        pairs, [("self", self_order), ("scoped", scoped_order)]
+    )
     assert not problems, "\n".join(problems)
+
+
+def test_ordering_check_catches_a_cross_stream_conflation_the_old_index_missed():
+    """TASK-15994 AC3, defect 1 (born-red): the retired algorithm merged both
+    streams into ONE index by scanning their concatenation and keeping only
+    each class's FIRST occurrence (``order.setdefault``). Since the self
+    stream was concatenated whole before the scoped stream, any class with a
+    self-stream block had its scoped-stream position silently discarded.
+
+    Seed exactly that: ``BaseWidget``/``SubWidget`` are correctly ordered in
+    the self stream, but ``SubWidget``'s scoped block sits BEFORE
+    ``BaseWidget``'s -- a real inversion the old algorithm could never see.
+    """
+    self_order = {"BaseWidget": 1, "SubWidget": 5}
+    scoped_order = {"SubWidget": 8, "BaseWidget": 20}
+    pairs = [("SubWidget", "BaseWidget")]
+
+    # Reconstruct the retired algorithm's merged index: every self-stream
+    # line preceded every scoped-stream one in the concatenation, so a class
+    # present in the self stream permanently shadowed its own scoped-stream
+    # position via `order.setdefault(class_name, index)`.
+    old_order: dict[str, int] = {}
+    for name, index in self_order.items():
+        old_order.setdefault(name, index)
+    for name, index in scoped_order.items():
+        old_order.setdefault(name, index)
+    old_problems = [
+        (base, cls)
+        for cls, base in pairs
+        if base in old_order and cls in old_order and old_order[base] > old_order[cls]
+    ]
+    assert old_problems == [], (
+        "setup invalid -- the retired merged-index algorithm should pass this "
+        f"over silently, but flagged {old_problems}"
+    )
+
+    new_problems = _ordering_problems(
+        pairs, [("self", self_order), ("scoped", scoped_order)]
+    )
+    assert new_problems, (
+        "the per-stream check must catch the scoped-stream inversion the "
+        "retired merged-index check missed"
+    )
+
+
+def test_ordering_check_catches_a_transitive_base_inversion_the_old_scan_missed():
+    """TASK-15994 AC3, defect 2 (born-red): the retired algorithm only
+    inspected a class's own SYNTACTIC (direct) bases, so a base that is only
+    a base-of-a-base was invisible whenever the intermediate class declared
+    no CSS of its own -- there was never a ``class_name`` entry for it to
+    check its own direct bases from. Seed exactly that with a real
+    inheritance chain.
+    """
+
+    class Grandparent:
+        pass
+
+    class Middle(Grandparent):
+        """Declares no BUNDLED_CSS of its own -- invisible to a scan that only
+        ever inspects the direct bases of a class that DOES have CSS."""
+
+    class Grandchild(Middle):
+        pass
+
+    consolidated = {"Grandparent", "Grandchild"}  # Middle is not consolidated
+
+    # The retired algorithm's check, reconstructed: for the one class in
+    # `consolidated` that even has an ancestor in the chain (Grandchild),
+    # look only at its syntactic __bases__ -- equivalent to what `ast` would
+    # see, since these classes are declared with ordinary Python syntax.
+    old_flagged_bases = {
+        base.__name__ for base in Grandchild.__bases__ if base.__name__ in consolidated
+    }
+    assert old_flagged_bases == set(), (
+        "setup invalid -- Grandparent must not be a direct base of Grandchild"
+    )
+
+    # The new transitive walk finds Grandparent regardless.
+    new_pairs = [
+        (Grandchild.__name__, ancestor.__name__)
+        for ancestor in Grandchild.__mro__[1:]
+        if ancestor.__name__ in consolidated
+    ]
+    assert ("Grandchild", "Grandparent") in new_pairs, (
+        "the transitive MRO walk must still find Grandparent as an ancestor "
+        "of Grandchild even though it is not a direct base"
+    )
+
+    # Base emitted AFTER its (transitive) subclass -- a real inversion within
+    # one stream -- is exactly what the strengthened pairs must let us catch.
+    order = {"Grandparent": 10, "Grandchild": 2}
+    problems = _ordering_problems(new_pairs, [("self", order)])
+    assert problems, "must flag Grandparent emitted after its descendant Grandchild"
 
 
 def test_consolidated_classes_declare_no_textual_css_attribute():
@@ -340,10 +711,54 @@ def test_every_class_level_css_block_parses_as_a_stylesheet():
     ``test_scope_rewrite_matches_textuals_own_scoping`` would not catch this:
     it calls ``textual.css.parse.parse`` directly, which collects errors onto
     ``rule.errors`` instead of raising. Only ``Stylesheet.parse`` raises.
+
+    TASK-15997 swept ``Tests/`` and ``Helper_Scripts/`` for the same defect
+    class -- see ``test_class_level_css_blocks_outside_the_package_parse``,
+    which shares ``_assert_class_css_blocks_parse`` with this test rather than
+    forking the check.
+    """
+    _assert_class_css_blocks_parse(_class_css_blocks(), allowlist={})
+
+
+#: TASK-15997: deliberate invalid-CSS fixtures that exist to negative-test the
+#: CSS machinery itself (e.g. a harness asserting Textual raises
+#: ``StylesheetParseError`` when the fixture is pushed). This is an EXPLICIT
+#: per-``(module, class_name)`` allowlist, not a directory or filename skip --
+#: a fixture that needs to stay invalid must be named here, with a reason, or
+#: the sweep below fails on it. Empty today: no such fixture exists yet under
+#: ``Tests/`` or ``Helper_Scripts/``; ``test_css_parse_guard_catches_seeded_
+#: invalid_blocks_in_newly_covered_trees`` proves the mechanism itself works
+#: without needing a real one committed.
+_KNOWN_INVALID_CSS_FIXTURES: dict[tuple[str, str], str] = {}
+
+
+def _assert_class_css_blocks_parse(
+    blocks: list[tuple[str, str, str]],
+    *,
+    allowlist: dict[tuple[str, str], str],
+) -> None:
+    """Run every ``(module, class_name, css)`` block through ``Stylesheet.parse()``.
+
+    Shared by every tree the guard covers (the package, ``Tests/``,
+    ``Helper_Scripts/``) so a fix to the check itself applies everywhere at
+    once, rather than three copies drifting apart.
+
+    Args:
+        blocks: ``(module, class_name, css)`` triples from ``_class_css_blocks``.
+        allowlist: ``(module, class_name) -> reason`` for fixtures that are
+            *deliberately* invalid CSS (negative tests of the CSS machinery
+            itself). An allowlisted block is excluded from the failure list,
+            but must actually still fail to parse today -- a block that starts
+            parsing cleanly again (fixed, or the fixture rewritten) makes its
+            entry stale, which is also asserted here rather than left to rot.
     """
     variables = App().get_css_variables()
-    failures = []
-    for module, class_name, css in _class_css_blocks():
+    failures: list[str] = []
+    stale_allowlist_entries: list[str] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for module, class_name, css in blocks:
+        key = (module, class_name)
+        seen_keys.add(key)
         stylesheet = Stylesheet(variables=variables)
         stylesheet.add_source(
             css, read_from=(module, class_name), is_default_css=True, scope=class_name
@@ -351,11 +766,90 @@ def test_every_class_level_css_block_parses_as_a_stylesheet():
         try:
             stylesheet.parse()
         except Exception as exc:  # noqa: BLE001 - report every offender at once
-            failures.append(f"{module}::{class_name}: {type(exc).__name__}")
+            if key not in allowlist:
+                failures.append(f"{module}::{class_name}: {type(exc).__name__}")
+        else:
+            if key in allowlist:
+                stale_allowlist_entries.append(f"{module}::{class_name}")
     assert not failures, (
         "class-level CSS that Textual cannot parse -- this fails the whole "
         "stylesheet at runtime, not just the offending rule:\n" + "\n".join(failures)
     )
+    assert not stale_allowlist_entries, (
+        "allowlisted invalid-CSS fixture now parses cleanly -- remove its "
+        "entry from _KNOWN_INVALID_CSS_FIXTURES:\n" + "\n".join(stale_allowlist_entries)
+    )
+    unused_allowlist_entries = [
+        f"{module}::{class_name}: {reason}"
+        for (module, class_name), reason in allowlist.items()
+        if (module, class_name) not in seen_keys
+    ]
+    assert not unused_allowlist_entries, (
+        "allowlist entry does not match any scanned block -- the fixture was "
+        "renamed, moved, or removed; update or delete the entry:\n"
+        + "\n".join(unused_allowlist_entries)
+    )
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        pytest.param(_TESTS_ROOT, id="Tests"),
+        pytest.param(_HELPER_SCRIPTS_ROOT, id="Helper_Scripts"),
+    ],
+)
+def test_class_level_css_blocks_outside_the_package_parse(root: Path):
+    """TASK-15997: the same parse guard, swept over ``Tests/`` and ``Helper_Scripts/``.
+
+    ``test_every_class_level_css_block_parses_as_a_stylesheet`` only ever
+    walked the ``tldw_chatbook`` package -- nothing checked a test harness's
+    own ``App.CSS`` or a ``Helper_Scripts/`` example for the identical defect
+    class (an invalid property poisons the *whole* stylesheet, not just its
+    own declaration). Swept once while adding this test: 28 class-level CSS
+    blocks under ``Tests/`` (test-harness ``App``/``Screen`` subclasses'
+    ``CSS`` -- none declare ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS``, since the
+    consolidation only applies inside the package), 0 under
+    ``Helper_Scripts/`` (its custom-splash-card examples are ``.toml`` data,
+    not Python classes, and the one ``.py`` helper there declares no
+    class-level CSS attribute at all). All 28 parsed cleanly -- no crashers
+    found in either tree.
+    """
+    blocks = _class_css_blocks(root, excluded_dirs=())
+    _assert_class_css_blocks_parse(blocks, allowlist=_KNOWN_INVALID_CSS_FIXTURES)
+
+
+def test_css_parse_guard_catches_seeded_invalid_blocks_in_newly_covered_trees(
+    tmp_path,
+):
+    """Born-red proof: the Tests/Helper_Scripts sweep is not a no-op.
+
+    Both real trees currently come back clean (see
+    ``test_class_level_css_blocks_outside_the_package_parse``), which on its
+    own does not distinguish "nothing is broken" from "the check never ran".
+    Seed one throwaway module per newly-covered tree with the exact defect
+    class TASK-15450 found in the package (``font-size:`` is not a Textual
+    property) and assert the shared check -- the same
+    ``_assert_class_css_blocks_parse`` the real sweep uses -- raises for both.
+    """
+    invalid_css_module = (
+        "from textual.app import App\n\n\n"
+        "class _SeededInvalidCssHarness(App):\n"
+        '    CSS = """\n'
+        "    Widget { font-size: 10; }\n"
+        '    """\n'
+    )
+    for tree_name in ("Tests", "Helper_Scripts"):
+        tree_root = tmp_path / tree_name
+        tree_root.mkdir()
+        (tree_root / "seeded_invalid_css.py").write_text(invalid_css_module)
+
+        blocks = _class_css_blocks(tree_root, excluded_dirs=())
+        assert [b[:2] for b in blocks] == [
+            ("seeded_invalid_css.py", "_SeededInvalidCssHarness")
+        ], f"extractor did not find the seeded block under {tree_name}/"
+
+        with pytest.raises(AssertionError, match="StylesheetParseError"):
+            _assert_class_css_blocks_parse(blocks, allowlist={})
 
 
 @pytest.mark.asyncio
@@ -383,12 +877,13 @@ async def test_selection_dialog_opens_without_a_stylesheet_error(
     cannot reparse for the rest of the session, so every later screen with CSS
     raises too. Mounted, not static: it is the push that used to blow up.
 
-    Both dialogs also carry an *unrelated* pre-existing bug -- their ``on_mount``
-    calls ``Vertical.clear()``, which does not exist -- so the push still ends in
-    an ``AttributeError`` from the dialog's own code. That is out of scope here
-    and is deliberately not papered over: the assertions below name the CSS
-    failure mode specifically, and check the stylesheet is still usable
-    afterwards, which is the symptom that actually poisoned the session.
+    Both dialogs also used to carry an *unrelated* pre-existing bug -- their
+    ``on_mount`` called ``Vertical.clear()``, which does not exist -- so the
+    push still ended in an ``AttributeError`` from the dialog's own code.
+    TASK-15992 fixed that, so this now asserts a fully clean open: the
+    StylesheetParseError assertion names the CSS failure mode specifically
+    (the symptom that actually poisoned the session), and any other exception
+    is re-raised unconditionally.
     """
     from importlib import import_module
 
@@ -414,7 +909,7 @@ async def test_selection_dialog_opens_without_a_stylesheet_error(
         "is invalid again, which fails the whole stylesheet and stops the app "
         "reparsing for the rest of the session"
     )
-    if raised is not None and "clear" not in str(raised):
+    if raised is not None:
         raise raised
 
 

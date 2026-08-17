@@ -3117,9 +3117,19 @@ class SubscriptionsDB(BaseDB):
         """How many unread items fall at/after `since` -- the Today badge.
 
         TASK-3791. The floor compares the EFFECTIVE date (``published_date``,
-        falling back to ``created_at``), the same COALESCE `get_new_items`
+        falling back to ``created_at``), the same expression `get_new_items`
         orders by and its `since` predicate filters on, so the badge and the
         node's page answer the same question.
+
+        The predicate reads the ``effective_date`` generated column
+        (TASK-15770), not the inline
+        ``COALESCE(datetime(published_date), datetime(created_at))`` it used
+        to spell out: the column IS that expression (task-15464's
+        ``_ensure_watchlists_schema`` block), so the count is unchanged, but
+        the column name lets ``idx_subscription_items_effective_date`` serve
+        the floor as an index range instead of a full-table scan -- SQLite
+        (probe-verified on 3.49.1) does NOT rewrite the byte-identical
+        inline expression to the generated column on its own.
 
         Args:
             since: Inclusive ISO floor (the screen passes local midnight).
@@ -3130,7 +3140,7 @@ class SubscriptionsDB(BaseDB):
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM subscription_items "
-                "WHERE status = 'new' AND COALESCE(datetime(published_date), datetime(created_at)) >= datetime(?)",
+                "WHERE status = 'new' AND effective_date >= datetime(?)",
                 (since,),
             ).fetchone()
         return int(row[0]) if row else 0

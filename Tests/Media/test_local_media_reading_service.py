@@ -832,20 +832,18 @@ def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_f
     The Library viewer (``LibraryScreen._add_library_media_highlight`` /
     ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
     calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
-    ``delete_highlight`` with ``mode="local"`` -- NOT the ``reading_``-prefixed
-    ``create_reading_highlight``/``list_reading_highlights``/
-    ``delete_reading_highlight`` methods, which ``MediaReadingScopeService``
-    only ever forwards to ``ServerMediaReadingService`` (see
-    ``Tests/Media/test_media_reading_scope_service.py``'s
-    ``test_scope_service_routes_reading_highlights_and_enforces_actions``,
-    which only exercises ``mode="server"``); calling those against a local
-    service raises ``AttributeError`` because ``LocalMediaReadingService``
-    only implements the non-prefixed names. This test drives the actual
-    working seam through ``MediaReadingScopeService`` against a real
-    ``LocalMediaReadingService`` backed by a real in-memory ``MediaDatabase``,
-    proving the UI's create/list/delete round-trip persists for real (a fake
-    scope service could hide a signature/field-name mismatch that this test
-    would catch).
+    ``delete_highlight`` with ``mode="local"`` -- the unprefixed scope
+    methods, distinct from the ``reading_``-prefixed scope methods the Media
+    hub uses (those historically dispatched leaf names only
+    ``ServerMediaReadingService`` had and AttributeError'd against a local
+    service; task-15768 fixed their dispatch to the unprefixed leaf contract,
+    covered by ``Tests/Media/test_media_reading_scope_service.py``'s
+    ``test_scope_service_reading_highlight_crud_reaches_real_local_service``).
+    This test drives the Library seam through ``MediaReadingScopeService``
+    against a real ``LocalMediaReadingService`` backed by a real in-memory
+    ``MediaDatabase``, proving the UI's create/list/delete round-trip
+    persists for real (a fake scope service could hide a signature/field-name
+    mismatch that this test would catch).
     """
     db = memory_db_factory()
     media_id, _, _ = db.add_media_with_keywords(

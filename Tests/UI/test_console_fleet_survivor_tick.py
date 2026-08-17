@@ -204,8 +204,7 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         await pilot.pause(2.5)
 
         assert console._console_fleet_survivor_timer is None, (
-            "15664 AC#2: the survivor tick must stop itself when nothing "
-            "is live"
+            "15664 AC#2: the survivor tick must stop itself when nothing is live"
         )
         after = _fleet_row_text(console)
         assert "✓" in after, (
@@ -350,7 +349,7 @@ async def test_unseen_mark_reaches_the_sidebar_browser_rows(tmp_path):
         marks.set_mark(second.id, ConversationLocalMarksService.FLEET_UNSEEN)
         bump_fleet_unseen_revision(app)
 
-        rows = console._native_console_browser_rows()
+        rows = console._workspace._native_console_browser_rows()
         by_session = {row.native_session_id: row for row in rows}
         assert by_session[second.id].run_marker == "◈", (
             f"the marked row must carry the unseen glyph: {rows}"
@@ -404,6 +403,6 @@ async def test_mount_claim_switches_to_the_settled_conversations_session():
         assert not app.pending_handoffs.has_pending(
             HandoffChannel.CONSOLE_FLEET_COMPLETION
         ), "an unmatchable target must be acknowledged, not retried forever"
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONSOLE_FLEET_COMPLETION
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONSOLE_FLEET_COMPLETION) is None
+        )

@@ -2980,6 +2980,9 @@ local_mlx_lm = ["None"]
 [model_catalog]
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
+# The startup check is confirm-first: nothing is contacted online until the
+# user answers the one-time consent dialog (which sets this to true).
+refresh_consent_recorded = false
 stale_after_hours = 24 # 0 = refetch every launch
 auto_refresh_disabled = [] # exact [providers] keys to opt out, e.g. ["ZAI"]
 write_to_config = [] # exact [providers] keys whose new models append to this file
@@ -3421,7 +3424,13 @@ prune_low_watermark = 12000
 # more. Both values are FLOORS in terminal rows -- the effective budget is the
 # larger of the floor and the mounted viewport (6x for the initial window, 4x
 # per scrollback step). Set transcript_window_lines <= 0 to mount the whole
-# history at load, as before.
+# history at load, as before. With windowing on and sane watermarks the
+# window is two-sided (TASK-15777): sustained scroll-back keeps loading older
+# history while trimming the newest end back out of the view (never a
+# selected message, which pauses the sliding while pinned at that end), so
+# the session stays reachable by scrolling at a bounded mounted size, and a
+# jump to a far-away message mounts a fresh window around it instead of
+# everything between it and the tail.
 transcript_window_lines = 144
 transcript_scrollback_lines = 96
 
@@ -4195,6 +4204,7 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
+# approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 
@@ -6429,6 +6439,26 @@ prompts_db: Optional[PromptsDatabase] = None
 media_db: Optional[MediaDatabase] = None
 
 
+def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
+    """Seed restart-safe bundled profile content after database initialization.
+
+    Args:
+        db: Initialized profile-local character database.
+
+    Returns:
+        The same database instance after best-effort built-in seeding.
+    """
+    try:
+        from tldw_chatbook.Character_Chat.visual_identity import ensure_builtin_samira
+
+        ensure_builtin_samira(db)
+    except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
+        logger.warning(
+            "builtin_profile_seed_failed category={}", type(exc).__name__
+        )
+    return db
+
+
 # --- Database Initialization Function (remains largely the same) ---
 def initialize_all_databases():
     global chachanotes_db, prompts_db, media_db
@@ -6441,6 +6471,7 @@ def initialize_all_databases():
         chachanotes_db = CharactersRAGDB(
             db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
         )
+        seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
         logger.opt(exception=True).error(
@@ -6491,6 +6522,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
             )
+            seed_builtin_content(chachanotes_db)
             logger.success(
                 f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
             )

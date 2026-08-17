@@ -146,6 +146,17 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "writing": ScreenRoute(
         "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
     ),
+    # task-16322 (ADR-068) re-registers the research screen: the local
+    # research execution engine now drives launched local runs, so
+    # ResearchWindow (the run/event observation surface) is reachable from
+    # navigation again under the legacy "research" route id (still a
+    # command-palette direct command via TAB_RESEARCH and valid in saved
+    # startup configs). This reverses task-255's temporary library alias;
+    # the Workbench migration owner stays "library"
+    # (UI/Workbench/route_inventory.py).
+    "research": ScreenRoute(
+        "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+    ),
     "chatbooks": ScreenRoute(
         "chatbooks",
         "chatbooks",
@@ -187,16 +198,8 @@ _SCREEN_ALIASES = {
     # mirrors the "notes"/"prompts"/"skills" aliases above, and matches the
     # route inventory, which already declared ingest -> library.
     "ingest": "library",
-    # The orphan "research" screen registration is removed (Task 255, from
-    # the 2026-07-12 RAG module audit): no shell destination or navigation
-    # call ever targeted it, and the Workbench route inventory already maps
-    # research -> library. TAB_RESEARCH remains in ALL_TABS (command palette
-    # direct command) and startup configs may still say "research", so the
-    # route id resolves to Library instead of dead-ending -- mirrors the
-    # "notes"/"prompts"/"skills" aliases above. ``Research_Window.py`` /
-    # ``Research_Modules/`` are intentionally NOT deleted here; that is a
-    # separate, larger decision.
-    "research": "library",
+    # "research" is a REAL screen route again (task-16322, ADR-068) -- see
+    # its ScreenRoute registration above. It is deliberately NOT an alias.
     # The standalone Search screen is retired (RAG UX v2 PR-1, critique
     # 2026-08-02T21-11-50Z): search/RAG now lives entirely inside Library's
     # Search / RAG canvas (rail row "browse-search"), with Console staging

@@ -71,8 +71,14 @@ The delivery contract (every piece is load-bearing):
   same gate a manual send passes: per-session run state, queue
   ownership, ``max_parallel_runs`` -- allows it); otherwise the pending
   entry waits and is retried on every terminal run-state transition and
-  at queue-chain end. With no controller (Console unmounted) the durable
-  mark IS the staged wake: the next Console mount calls
+  at queue-chain end. **task-15860: Console being unmounted is no longer
+  one of the reasons to wait.** The runtime (controller + store + bridge)
+  is owned by the app and outlives every ``ChatScreen``, so a survivor
+  settling with nothing mounted delivers a full wake turn headlessly;
+  ``_attempt`` refuses only for a DISPOSED controller (app exit). The
+  durable mark remains the staged wake for what a headless delivery
+  genuinely cannot reach -- a conversation with no open session, and
+  anything owed across a process restart: the next Console mount calls
   ``seed_from_marks`` BEFORE the first tab sync can view-clear the
   active conversation's mark, reconstructing the undelivered set from
   the ledger (``AgentRunsDB.undelivered_wake_runs``). Deliveries are
@@ -281,8 +287,11 @@ class ConsoleFleetWakeCoordinator:
     runs on the CHILD's thread (registry write + a thread-safe hop);
     everything that touches the controller runs on the loop captured at
     registration -- the app loop in production, which outlives the
-    screen. Post-teardown drains find ``_shutdown_requested`` set and
-    stage via the durable mark instead.
+    screen. task-15860: a drain arriving with NO Console mounted now
+    DELIVERS -- the runtime, its store and the fan-out all outlive the
+    view, so the only teardown ``_attempt`` refuses for is a DISPOSED
+    controller (app exit), where the durable mark stays the staged wake
+    for the next process.
     """
 
     #: Fan-out registration name (also the replace key).
@@ -300,6 +309,13 @@ class ConsoleFleetWakeCoordinator:
         #: deliveries app-wide (one wake at a time) and anchors
         #: ``authorizes``.
         self._delivering: str | None = None
+        #: The SESSION the in-flight delivery is running in, or None.
+        #: Written and cleared in lockstep with ``_delivering`` (a
+        #: conversation id is not a session id -- ``_resolve_session_id``
+        #: maps between them). task-15860 Task 4 needs the session id after
+        #: the fact: a Console attaching mid-delivery has to re-arm
+        #: ``delivery_ui_hook``, which takes the session.
+        self._delivering_session: str | None = None
         self._delivery_tasks: set[asyncio.Task] = set()
         #: task-15862: screen-wired hook fired on the loop thread the
         #: moment a delivery is scheduled (``_delivering`` already set).
@@ -381,6 +397,20 @@ class ConsoleFleetWakeCoordinator:
         """
         return self._delivering
 
+    def delivering_session_id(self) -> str | None:
+        """The session a wake turn is delivering into right now.
+
+        task-15860 Task 4: ``ConsoleRuntime.attach_view`` reads this to
+        re-arm ``delivery_ui_hook`` for a Console that opened DURING a
+        delivery -- the hook fires once, at delivery start, and a runtime
+        that outlives the screen makes "delivery start" and "view attach"
+        independent events.
+
+        Returns:
+            The session id being delivered into, or ``None``.
+        """
+        return self._delivering_session
+
     # -- the drain half (child thread) ---------------------------------------
 
     def on_fleet_drained(self, event: Any) -> None:
@@ -451,17 +481,43 @@ class ConsoleFleetWakeCoordinator:
 
         Every deferral leaves pending + mark untouched -- refusal is
         never loss. The gates, in order: kill switch, controller alive,
-        one-delivery-at-a-time, an open session for the conversation,
-        the manual-send gate (``send_refusal_copy``: own run state, queue
-        ownership, ``max_parallel_runs``), then user-wins-ties.
+        controller not DISPOSED, one-delivery-at-a-time, an open session
+        for the conversation, the manual-send gate (``send_refusal_copy``:
+        own run state, queue ownership, ``max_parallel_runs``), then
+        user-wins-ties.
+
+        **task-15860 (the wake-fires-headless slice): this reads
+        ``_disposed``, not ``_shutdown_requested``.** The two used to be
+        one signal. ``ConsoleChatController.shutdown()`` was called both
+        at app exit AND from ``ChatScreen.on_unmount`` -- i.e. on every
+        ordinary navigation away from Console -- so "the cancellation
+        Event is set" meant either "the process is going away" or "the
+        user switched tabs", and this gate could not tell them apart. It
+        therefore refused every wake with no Console mounted, which is
+        the limit this task exists to remove (the User Guide's "if
+        Console isn't open, no wake fires").
+
+        The lifetime landing separated them: ``leave_console()`` ends ONE
+        visit (sets THAT visit's Event, which stays set between visits by
+        design so every round armed during it stays denied), while
+        ``begin_shutdown()`` latches ``_disposed`` for the real,
+        permanent teardown. A visit that merely ended must not stop a
+        wake -- the runtime, the store, the bridge fan-out and the app
+        loop all outlive it (Task 0's P2 executed that they do). A
+        DISPOSED controller must: its provider gateway is closed, every
+        session's stream task has been cancelled and awaited, and nothing
+        it produced could reach a user.
+
+        A controller double with neither attribute is unchanged: it was
+        allowed before (no ``_shutdown_requested``) and is allowed now
+        (``_disposed`` defaults False).
         """
         if not autowake_enabled():
             return
         controller = self._controller
         if controller is None:
             return
-        shutdown = getattr(controller, "_shutdown_requested", None)
-        if shutdown is not None and shutdown.is_set():
+        if getattr(controller, "_disposed", False):
             return
         if self._delivering is not None:
             return
@@ -500,6 +556,7 @@ class ConsoleFleetWakeCoordinator:
         if loop is None or loop.is_closed():
             return
         self._delivering = conversation_id
+        self._delivering_session = session_id
         authorization = AgentWakeAuthorization(
             self, session_id, _key=_WAKE_AUTHORIZATION_KEY
         )
@@ -569,6 +626,7 @@ class ConsoleFleetWakeCoordinator:
             )
         finally:
             self._delivering = None
+            self._delivering_session = None
         if accepted:
             runs_db = self._runs_db()
             stamp = getattr(runs_db, "mark_wake_delivered", None)
@@ -617,6 +675,16 @@ class ConsoleFleetWakeCoordinator:
         conversation self-heals on the next displayed sync tick, while a
         cleared mark on an unviewed delivery is the live silent-delivery
         failure this exists to prevent.
+
+        task-15860 Task 4: a controller owned by a ``ConsoleRuntime`` is
+        never in the "unwired" case above -- attach binds the view's probe
+        and detach restores ``viewless_conversation_in_view``, which
+        reports NOT in view. The unwired branch survives only for
+        controllers built outside the runtime (doubles, the pre-screen
+        rig); if it is ever made to mean "unwatched" globally, the test
+        that pins the historical clear
+        (``test_an_unwired_view_probe_keeps_the_historical_clear``) is the
+        one to rewrite alongside it.
 
         Args:
             conversation_id: The delivered conversation.

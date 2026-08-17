@@ -125,6 +125,9 @@ from ...Chat.console_chat_models import (
     MessageAttachment,
 )
 from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_conversation_hydration import (
+    console_messages_from_conversation_tree,
+)
 from ...Chat.console_command_grammar import (
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
@@ -230,10 +233,10 @@ class ConsoleMessageController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 36 method bodies below (29 of the pre-move
-        `*message*`-named cluster, plus 7 exclusively-owned helpers whose
+        Every one of the 35 method bodies below (29 of the pre-move
+        `*message*`-named cluster, plus 6 exclusively-owned helpers whose
         names don't match that pattern -- `_apply_console_message_
-        attachments`, `_batch_fetch_console_resume_attachments`,
+        attachments`,
         `_serialize_console_variants`, `_restore_console_variants`,
         `_console_save_as_destinations`, `_console_save_source_title`,
         `_clear_console_original_attempt_preview`) is a byte-for-byte copy
@@ -551,6 +554,12 @@ class ConsoleMessageController:
     ) -> list[ConsoleChatMessage]:
         """Build native Console messages from a persisted conversation tree.
 
+        task-15860 Task 6: the walk itself moved to
+        `Chat/console_conversation_hydration.py` so the launch wake -- which
+        has to hydrate a conversation with no screen at all -- shares this
+        policy instead of copying it. This method keeps its name and
+        signature: eight test files call it directly.
+
         Task 8: flattens the ENTIRE tree (every node, all branches -- not just
         the ``children[-1]`` latest branch), each message carrying its
         ``persisted_message_id`` and persisted ``parent_message_id`` so the
@@ -565,129 +574,9 @@ class ConsoleMessageController:
         transparent to parenthood -- its children re-parent to the nearest kept
         ancestor -- so a skipped row never orphans a branch.
         """
-        messages: list[ConsoleChatMessage] = []
-
-        def _walk(node: Any, parent_persisted_id: str | None) -> None:
-            if not isinstance(node, dict):
-                return
-            content = str(node.get("content") or "")
-            raw_image = node.get("image_data")
-            image_data = (
-                bytes(raw_image) if isinstance(raw_image, (bytes, bytearray)) else None
-            )
-            raw_mime = node.get("image_mime_type")
-            image_mime_type = str(raw_mime) if raw_mime else None
-            usage = ProviderUsage.from_json(node.get("usage_json"))
-            raw_metadata_json = node.get("metadata_json")
-            # task-3401.4: a video generation row's metadata_json carries the
-            # namespaced video payload instead of turn provenance -- hydrate
-            # it into video_metadata and leave ``metadata`` None (the two
-            # shapes never co-write one row; persistence prefers the video
-            # payload so a later edit cannot clobber it).
-            video_metadata = VideoGenerationMetadata.from_json(raw_metadata_json)
-            metadata = (
-                None
-                if video_metadata is not None
-                else MessageMetadata.from_json(raw_metadata_json)
-            )
-            raw_id = node.get("id")
-            node_persisted_id = str(raw_id) if raw_id is not None else None
-            kept = bool(content) or image_data is not None
-            if kept:
-                # The tree only carries the legacy position-0 columns; positions
-                # >= 1 (multi-attachment table rows) are batch-fetched below,
-                # once for the whole resumed list.
-                attachments: tuple[MessageAttachment, ...] = (
-                    (
-                        MessageAttachment(
-                            data=image_data,
-                            mime_type=image_mime_type or "",
-                            display_name="",
-                            position=0,
-                        ),
-                    )
-                    if image_data is not None
-                    else ()
-                )
-                messages.append(
-                    ConsoleChatMessage(
-                        role=self._console_message_role_from_persisted(node),
-                        content=content,
-                        status="complete",
-                        persisted_message_id=node_persisted_id,
-                        parent_message_id=parent_persisted_id,
-                        image_data=image_data,
-                        image_mime_type=image_mime_type,
-                        attachments=attachments,
-                        usage=usage,
-                        metadata=metadata,
-                        video_metadata=video_metadata,
-                    )
-                )
-            # Children re-parent to this node when kept, else pass the nearest
-            # kept ancestor straight through (a dropped empty row is invisible
-            # to the tree linkage).
-            child_parent_id = node_persisted_id if kept else parent_persisted_id
-            children = node.get("children")
-            if isinstance(children, list):
-                for child in children:
-                    _walk(child, child_parent_id)
-
-        root_threads = tree.get("root_threads")
-        if isinstance(root_threads, list):
-            for root in root_threads:
-                _walk(root, None)
-        self._batch_fetch_console_resume_attachments(messages)
-        return messages
-
-    def _batch_fetch_console_resume_attachments(
-        self, messages: list[ConsoleChatMessage]
-    ) -> None:
-        """Fill positions >= 1 for resumed multi-attachment messages, once.
-
-        ``get_conversation_tree`` only returns the legacy image columns
-        (position 0); the ``message_attachments`` table (positions >= 1) is
-        fetched here in a SINGLE batched call covering every message this
-        resume produced, then folded into each message's attachments tuple
-        via ``_apply_console_message_attachments`` (see that helper for the
-        store mirror invariant it replicates by hand).
-        """
-        ids = [m.persisted_message_id for m in messages if m.persisted_message_id]
-        if not ids:
-            return
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        getter = getattr(db, "get_attachments_for_messages", None)
-        if not callable(getter):
-            return
-        try:
-            rows_by_id = getter(ids)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Console resume attachment batch fetch failed."
-            )
-            return
-        if not isinstance(rows_by_id, dict):
-            return
-        for message in messages:
-            extra_rows = (
-                rows_by_id.get(message.persisted_message_id)
-                if message.persisted_message_id
-                else None
-            )
-            if not extra_rows:
-                continue
-            extras = [
-                MessageAttachment(
-                    data=row.get("data"),
-                    mime_type=row.get("mime_type") or "",
-                    display_name=row.get("display_name") or "",
-                    position=int(row.get("position", 0)),
-                )
-                for row in extra_rows
-            ]
-            _apply_console_message_attachments(
-                message, list(message.attachments) + extras
-            )
+        return console_messages_from_conversation_tree(
+            tree, db=getattr(self.app_instance, "chachanotes_db", None)
+        )
 
     @staticmethod
     def _serialize_console_variants(

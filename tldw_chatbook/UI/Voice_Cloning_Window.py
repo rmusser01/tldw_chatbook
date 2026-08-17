@@ -369,7 +369,7 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
             )
 
             # Add to test selector
-            test_options.append((profile["name"], profile["display_name"]))
+            test_options.append((profile["display_name"], profile["name"]))
 
         # Update test selector
         test_select.set_options(test_options)

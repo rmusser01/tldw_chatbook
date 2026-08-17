@@ -95,6 +95,14 @@ class WatchlistsWorkbench(Horizontal):
             replacement must still be a brand new widget.
     """
 
+    # task-16843: a shared *instance* default (`reactive(RegionLayout())`
+    # installs the SAME `RegionLayout` object on every workbench instance
+    # until `__init__`'s `set_reactive` calls below overwrite it) -- but
+    # harmless: `RegionLayout` is `frozen=True` and every field is itself
+    # immutable (`frozenset`, `Region | None`), so there is no mutable
+    # container underneath to mutate in place. Allowlisted in
+    # `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST` rather than rewritten into a factory.
     region_layout: reactive[RegionLayout] = reactive(RegionLayout())
 
     def __init__(
@@ -383,18 +391,39 @@ class WatchlistsWorkbench(Horizontal):
         # moved, so the two changes would be applied in the wrong order and
         # the layout half would be done twice.
         self.set_reactive(WatchlistsWorkbench.region_layout, layout)
-        await self._sync_regions(previous_layout)
-        for region in rebuild_regions:
-            if region in self._hidden:
-                continue
-            # A region the sync above just swapped is already built from the
-            # current factory; rebuilding it again would be the second of the
-            # two rebuilds this task exists to remove.
-            if self._region_form_changed(previous_layout, previous_hidden, region):
-                continue
-            await self.refresh_region_content(region)
-        if rebuild_header:
-            await self.refresh_header_content()
+        # One layout/paint pass for the whole section move (task-15778),
+        # as an explicit contract rather than a scheduling accident. The
+        # region sync, the section pane rebuild and the header rebuild
+        # below are each an awaited remove/mount cycle, and every await
+        # between them is in principle a window for the screen's update
+        # timer to paint a half-moved workbench. Measured at HEAD it never
+        # actually does -- the whole sequence runs inside the screen's one
+        # `_drain_surface_refresh` `call_next` callback (task-15461's own
+        # move off `run_worker`), so the pump never goes idle mid-swap and
+        # the paused update timer never resumes: 0 in-swap layout passes
+        # and 0 compositor refreshes with and without this batch, on a
+        # cold Read switch. `batch_update` makes that one-pass property
+        # structural: it survives a future factory that awaits, or the
+        # drain moving off a single callback, instead of depending on
+        # them never happening. It defers repaints only -- it does not
+        # reorder or coalesce the DOM work itself, so the raising-factory
+        # guarantees inside `refresh_region_content`/`_swap_region_widget`
+        # are unchanged.
+        with self.app.batch_update():
+            await self._sync_regions(previous_layout)
+            for region in rebuild_regions:
+                if region in self._hidden:
+                    continue
+                # A region the sync above just swapped is already built from
+                # the current factory; rebuilding it again would be the
+                # second of the two rebuilds this task exists to remove.
+                if self._region_form_changed(
+                    previous_layout, previous_hidden, region
+                ):
+                    continue
+                await self.refresh_region_content(region)
+            if rebuild_header:
+                await self.refresh_header_content()
 
     def _region_form_changed(
         self,

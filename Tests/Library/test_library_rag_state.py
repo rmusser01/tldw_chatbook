@@ -2462,3 +2462,95 @@ def test_clamp_divergence_is_pinned_as_a_pair(monkeypatch) -> None:
         query="summarize the policy", provider_name="openai"
     )
     assert window.top_k == LIBRARY_RAG_TOP_K_MAX == 50
+
+
+class TestLibraryRagRerankingNotice:
+    """(TASK-3502 note-(a)) The reranker's `reranking_skipped` /
+    `reranking_degraded` disclosure tags had ZERO UI consumers: a Hybrid
+    Full user whose reranking credential was dead saw normal-looking,
+    silently unreranked results. The tags ride the first result's
+    provenance all the way to the panel (traced in
+    `Tests/Library/test_library_local_rag_search_service.py`), so the
+    Evidence region's existing one quiet note channel discloses them.
+    """
+
+    @staticmethod
+    def _row(**provenance) -> LibraryRagResultRow:
+        return LibraryRagResultRow.from_result(
+            {"title": "A", "score": 0.6, "provenance": provenance}
+        )
+
+    def test_untagged_rows_say_nothing(self):
+        rows = (self._row(source_type="note"), self._row(source_type="media"))
+        assert library_rag_coverage_note({}, rows) == ""
+
+    def test_skipped_tag_names_the_stage_and_the_detail(self):
+        rows = (
+            self._row(
+                source_type="note",
+                reranking_skipped="No API key found for provider: openai",
+            ),
+        )
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was skipped (No API key found for provider: openai) "
+            "— these results are in their original retrieval order."
+        )
+
+    def test_degraded_tag_names_the_stage_and_the_detail(self):
+        rows = (self._row(source_type="note", reranking_degraded="3/5 scorings failed"),)
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was degraded (3/5 scorings failed) — these results "
+            "are in their original retrieval order."
+        )
+
+    def test_the_tag_is_found_wherever_the_tagged_row_landed(self):
+        """The engine tags its FIRST result, but scope post-filtering and
+        the panel's own count-intersected filter can move or drop rows --
+        the disclosure keys off the tag being present at all, not off
+        position 0."""
+        rows = (self._row(source_type="media"), self._row(reranking_degraded="1/2"))
+        assert "Reranking was degraded (1/2)" in library_rag_coverage_note({}, rows)
+
+    def test_it_joins_the_existing_note_channel_rather_than_competing(self):
+        weak = LibraryRagResultRow.from_result(
+            {
+                "title": "A",
+                "score": 0.09,
+                "provenance": {"reranking_degraded": "2/2 scorings failed"},
+            }
+        )
+        note = library_rag_coverage_note(
+            {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}},
+            (weak,),
+        )
+        assert note == (
+            "No strong semantic matches — results below are weak. "
+            "Semantic search found nothing from: Notes. "
+            "Reranking was degraded (2/2 scorings failed) — these results "
+            "are in their original retrieval order."
+        )
+
+    def test_a_hostile_detail_string_is_escaped_and_clamped(self):
+        """The detail is `str(exc)` from a provider call -- unsanitized text
+        reaching a `Static`, exactly what every other service-supplied
+        string in this module is escaped for."""
+        rows = (self._row(reranking_skipped="[bold]boom[/] " + "x" * 400),)
+        note = library_rag_coverage_note({}, rows)
+        assert "\\[bold]" in note
+        assert "…" in note
+        assert len(note) < 300
+
+    def test_skipped_wins_when_a_row_somehow_carries_both(self):
+        """The service's two tag sites are mutually exclusive branches, but
+        nothing enforces that here -- one sentence, deterministically."""
+        rows = (self._row(reranking_skipped="dead credential", reranking_degraded="1/2"),)
+        note = library_rag_coverage_note({}, rows)
+        assert note.startswith("Reranking was skipped (dead credential)")
+        assert "degraded" not in note
+
+    def test_a_blank_detail_still_discloses_the_stage(self):
+        rows = (self._row(reranking_skipped=""),)
+        assert library_rag_coverage_note({}, rows) == (
+            "Reranking was skipped — these results are in their original "
+            "retrieval order."
+        )

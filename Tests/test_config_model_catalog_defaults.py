@@ -63,6 +63,8 @@ def test_model_catalog_defaults_exist():
     parsed = tomllib.loads(CONFIG_TOML_CONTENT)
     section = parsed["model_catalog"]
     assert section["auto_refresh_enabled"] is True
+    # Confirm-first (ADR-020 amendment): no online check before consent.
+    assert section["refresh_consent_recorded"] is False
     assert section["stale_after_hours"] == 24
     assert section["auto_refresh_disabled"] == []
     assert section["write_to_config"] == []

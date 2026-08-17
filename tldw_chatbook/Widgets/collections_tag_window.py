@@ -131,7 +131,7 @@ class CollectionsTagWindow(Container):
     Provides functionality for viewing, editing, merging, and deleting keywords.
     """
 
-    selected_keywords: reactive[List[Dict[str, Any]]] = reactive([])
+    selected_keywords: reactive[List[Dict[str, Any]]] = reactive(list)
     keyword_search: reactive[str] = reactive("")
 
     def __init__(self, app_instance: "TldwCli", **kwargs):

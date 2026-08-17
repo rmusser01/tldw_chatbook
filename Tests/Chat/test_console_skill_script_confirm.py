@@ -84,7 +84,14 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     inspect what was actually marshaled to the UI (e.g. that it carries
     ``timeout_seconds``/``request_id``) read that list instead of the
     payloads being silently discarded.
+
+    Teardown fails every controller's armed rounds closed: ADR-067 made
+    the confirm timeout default to no-deadline, so a test that ends (or
+    FAILS mid-assert) with a round armed would leave its non-daemon worker
+    thread waiting forever and hang interpreter shutdown. Flipping
+    ``_shutdown_requested`` resolves each such round at its next 1s poll.
     """
+    made: list[ConsoleChatController] = []
 
     def _make() -> ConsoleChatController:
         store = ConsoleChatStore()
@@ -94,9 +101,13 @@ def make_controller() -> Callable[[], ConsoleChatController]:
         controller.set_pending_skill_script = (
             controller.pending_skill_script_payloads.append
         )
+        made.append(controller)
         return controller
 
-    return _make
+    yield _make
+
+    for controller in made:
+        controller._shutdown_requested.set()
 
 
 # -- bridge closure fixtures ------------------------------------------------
@@ -591,8 +602,14 @@ def test_confirm_payload_carries_timeout_and_request_id(make_controller):
     """The payload actually marshaled to the UI sink must carry both the
     timeout and a per-round request id (not just the caller's own keys) --
     a card built from an under-described payload is a security defect,
-    since that payload is exactly what the human approves on."""
+    since that payload is exactly what the human approves on.
+
+    ADR-067: the timeout is exercised through a POSITIVE seam value -- the
+    shipped default is now 0 (= no deadline), and the payload must carry
+    whatever was resolved, but this test's subject is the round trip of a
+    real deadline onto the card."""
     controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 45.0
     result = {}
 
     def worker():
@@ -607,8 +624,7 @@ def test_confirm_payload_carries_timeout_and_request_id(make_controller):
     assert shown is not None
     assert shown["skill_name"] == "demo"
     assert shown["script_path"] == "scripts/hello.py"
-    assert isinstance(shown["timeout_seconds"], float)
-    assert shown["timeout_seconds"] > 0
+    assert shown["timeout_seconds"] == 45.0
     assert shown["request_id"] == controller.pending_skill_script_ids()[0]
     assert shown["request_id"]  # non-empty
     controller.resolve_pending_skill_script(True, False, request_id=shown["request_id"])
@@ -1149,3 +1165,29 @@ def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch
     result = outcome["result"]
     assert result.ok is False
     assert "declined" in result.error
+
+
+def test_confirm_zero_timeout_keeps_round_armed_for_late_decision(make_controller):
+    """ADR-067: timeout 0 = no deadline -- mirrors the install-confirm
+    sibling; the round survives the first 1s poll that the pre-ADR
+    `deadline = now + 0` tripped, and resolves on the decision."""
+    controller = make_controller()
+    controller.skill_script_confirm_timeout_seconds = lambda: 0.0
+
+    def _allow_late() -> None:
+        time.sleep(1.6)
+        payload = controller.pending_skill_script_payloads[0]
+        controller.resolve_pending_skill_script(
+            True, False, request_id=payload["request_id"]
+        )
+
+    decider = threading.Thread(target=_allow_late)
+    decider.start()
+    started = time.monotonic()
+    decision = controller.request_skill_script_confirm({"skill_name": "demo"})
+    elapsed = time.monotonic() - started
+    decider.join()
+
+    assert decision == {"allow": True, "remember": False}
+    assert elapsed >= 1.5
+    assert controller.pending_skill_script_payloads[0]["timeout_seconds"] == 0.0

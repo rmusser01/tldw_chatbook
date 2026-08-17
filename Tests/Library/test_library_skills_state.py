@@ -220,41 +220,50 @@ def test_shadow_name_set_stays_in_sync_with_real_sources():
     """Drift guard: _SHADOWED_BUILTIN_NAMES must cover all real builtin/command names.
 
     This test fails when a new builtin tool/command isn't added to the shadow set
-    — update _SHADOWED_BUILTIN_NAMES in library_skills_state.py when it fires.
+    -- update _SHADOWED_BUILTIN_NAMES in library_skills_state.py when it fires.
+
+    TASK-13214 AC#3: the four sources are collected FIRST and asserted ONCE,
+    so one source's gap can no longer mask another's -- the original
+    three-assert version short-circuited in order, and the fleet-tools gap
+    hid the video-command gap which hid the /research gap, serially, across
+    three sightings.
+
+    TASK-13214/F6: the builtin source is the GATE TABLE
+    (`gateable_builtin_tools()`), not the live catalog -- `list_catalog()`
+    omits gated-OFF tools, which is exactly how `expand_document` stayed
+    invisible to this guard while every gate defaults OFF.
     """
     from tldw_chatbook.Agents.agent_models import RUNTIME_TOOL_NAMES
-    from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+    from tldw_chatbook.Agents.tool_catalog import (
+        BuiltinToolProvider,
+        gateable_builtin_tools,
+    )
     from tldw_chatbook.Chat.console_command_grammar import default_console_registry
     from tldw_chatbook.Library.library_skills_state import _SHADOWED_BUILTIN_NAMES
 
-    # Assert RUNTIME_TOOL_NAMES (spawn_subagent, find_tools, load_tools) is a subset
-    assert RUNTIME_TOOL_NAMES <= _SHADOWED_BUILTIN_NAMES, (
-        "RUNTIME_TOOL_NAMES not covered: "
-        f"{RUNTIME_TOOL_NAMES - _SHADOWED_BUILTIN_NAMES}. "
+    sources = {
+        "RUNTIME_TOOL_NAMES": set(RUNTIME_TOOL_NAMES),
+        "BuiltinToolProvider catalog": {
+            e.name for e in BuiltinToolProvider().list_catalog()
+        },
+        "gateable builtins (gate table, incl. gated-off)": {
+            gate.tool_name for gate in gateable_builtin_tools()
+        },
+        "ConsoleCommandRegistry": set(default_console_registry().available_names()),
+    }
+    uncovered = {
+        source: names - _SHADOWED_BUILTIN_NAMES
+        for source, names in sources.items()
+        if names - _SHADOWED_BUILTIN_NAMES
+    }
+    assert not uncovered, (
+        "Shadow-guard drift -- ALL gaps across ALL sources (nothing masked): "
+        f"{ {source: sorted(names) for source, names in uncovered.items()} }. "
         "Add them to _SHADOWED_BUILTIN_NAMES in "
         "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
         "as a baseline failure (task-580)."
     )
 
-    # Assert builtin tool names (calculator, get_current_datetime) are a subset
-    builtin_names = {e.name for e in BuiltinToolProvider().list_catalog()}
-    assert builtin_names <= _SHADOWED_BUILTIN_NAMES, (
-        "BuiltinToolProvider names not covered: "
-        f"{builtin_names - _SHADOWED_BUILTIN_NAMES}. "
-        "Add them to _SHADOWED_BUILTIN_NAMES in "
-        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
-        "as a baseline failure (task-580)."
-    )
-
-    # Assert console command names (prompt, system) are a subset
-    command_names = set(default_console_registry().available_names())
-    assert command_names <= _SHADOWED_BUILTIN_NAMES, (
-        "ConsoleCommandRegistry names not covered: "
-        f"{command_names - _SHADOWED_BUILTIN_NAMES}. "
-        "Add them to _SHADOWED_BUILTIN_NAMES in "
-        "tldw_chatbook/Library/library_skills_state.py -- do not accept this "
-        "as a baseline failure (task-580)."
-    )
 
 
 def test_build_editor_state_marks_derived_description_and_keeps_field_empty():

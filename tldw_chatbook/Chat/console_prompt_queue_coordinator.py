@@ -679,6 +679,33 @@ class ConsolePromptQueueCoordinator:
         for session_id in session_ids:
             self._changed(session_id)
 
+    def reopen(self) -> None:
+        """Re-open admission after a per-visit tombstone (task-15860).
+
+        ``shutdown()`` is a permanent latch: every admission, mutation and
+        drain path returns early on ``_shutting_down`` and nothing ever
+        clears it. That was correct while a Console screen owned the
+        controller and every navigation away built a new one -- the latched
+        coordinator died with the screen. With the runtime app-owned, the
+        SAME coordinator serves every visit, so leaving Console once would
+        have left the prompt queue permanently dead for the rest of the
+        app's life.
+
+        This resets the latch only. The chains, the queue snapshots and the
+        registry's queued prompts stay cleared by the tombstone, which is
+        the pre-existing (and AC#2-required) leaving-Console semantics --
+        this call re-opens the door, it does not restore what was behind
+        it. Called by ``ConsoleChatController.begin_visit()``, never by a
+        disposed controller.
+        """
+
+        if not self._shutting_down:
+            return
+        self._shutting_down = False
+        reopen = getattr(self.registry, "reopen", None)
+        if callable(reopen):
+            reopen()
+
     def publish_registry_change(self, session_id: str) -> None:
         """Publish a UI-owned registry mutation through the activity cache."""
 

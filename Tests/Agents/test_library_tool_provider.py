@@ -266,7 +266,13 @@ def test_rag_invoke_success_projects_bounded_rows():
         "Evidence 2",
     ]
     for row in payload["results"]:
-        # Raw backing identities and provenance never leave the adapter.
+        # Raw backing identities and the provenance mapping never leave the
+        # adapter FOR A ROW WITH NOTHING TO EXPAND -- which is what this
+        # fixture's rows are (no provenance at all). TASK-16174/3b made the
+        # identity conditional, not absent: see `_project_row` and
+        # `test_row_with_nothing_to_expand_carries_no_identity` for the
+        # precondition, and the identity tests below for the other side of
+        # it. The provenance MAPPING itself never leaves on any branch.
         assert set(row) <= {"result_id", "title", "snippet", "score", "runtime_backend"}
     assert service.calls == [
         ("quarterly plan", SUPPORTED_RAG_SOURCE_TYPES, "rag", {"top_k": 2, "include_citations": True})
@@ -389,3 +395,544 @@ def test_rag_invoke_rejects_overlong_query():
     decoded = _error_payload(provider.invoke(f"library:{RAG_TOOL_NAME}", arguments))
 
     assert decoded["code"] == "invalid_argument"
+
+
+# --------------------------------------------------------------------------
+# LibraryRagToolProvider: per-row expansion hints (TASK-16174, Phase P)
+# --------------------------------------------------------------------------
+
+
+def _label_row(source_type: str, index: int) -> dict:
+    """A label-only row exactly as the local search service builds one."""
+    snippet = (
+        "Matched media · pdf"
+        if source_type == "media"
+        else "Matched conversation · 7 messages"
+    )
+    return {
+        "title": f"Label {index}",
+        "snippet": snippet,
+        "score": 0.5,
+        "source_id": f"{index}",
+        "chunk_id": "",
+        "provenance": {"source_type": source_type},
+    }
+
+
+def _text_row(index: int, *, chars: int = 300) -> dict:
+    return {
+        "title": f"Note {index}",
+        "snippet": f"note-{index}: " + ("the plan says a great deal. " * 200)[:chars],
+        "score": 0.4,
+        "source_id": f"note-{index}",
+        "chunk_id": "",
+        "provenance": {"source_type": "note"},
+    }
+
+
+def test_provider_rows_carry_expand_hint():
+    """The policy reaches the agent through the payload it actually reads."""
+    rows = [_label_row("media", 1), _label_row("conversation", 2), _text_row(3)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 3})
+
+    assert result.ok is True
+    projected = json.loads(result.content)["results"]
+    assert [row["expand_hint"] for row in projected] == [
+        {"expandable": True, "reason": "label_only"},
+        {"expandable": True, "reason": "label_only"},
+        {"expandable": False, "reason": "text_bearing"},
+    ]
+    for row in projected:
+        # Identity rides along ONLY as the two keys `expand_document` takes
+        # (Task 3b); citations and the provenance mapping still never leave.
+        assert set(row) <= {
+            "result_id",
+            "title",
+            "snippet",
+            "score",
+            "runtime_backend",
+            "expand_hint",
+            "source_type",
+            "source_id",
+            "chunk_id",
+            "chunk_start",
+        }
+        assert "provenance" not in row
+        assert "citations" not in row
+
+
+def test_provider_row_without_expandable_identity_omits_the_hint():
+    row = _text_row(9)
+    row["provenance"] = {}
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert "expand_hint" not in json.loads(result.content)["results"][0]
+
+
+def test_provider_hint_reads_the_untruncated_snippet_length():
+    """The hint is computed against the provider's own projection cap, so a
+    snippet the payload cuts is reported as truncated, not text-bearing."""
+    row = _text_row(4, chars=4000)
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert projected["expand_hint"] == {
+        "expandable": True,
+        "reason": "truncated_snippet",
+    }
+    assert len(projected["snippet"]) < 4000  # the payload really did cut it
+
+
+def test_sealed_payload_survives_hints():
+    """A normal ten-row payload keeps every row AND every hint under the
+    32 KiB ceiling: the added per-row key must not push the sealing loop
+    into dropping rows."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_text_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    assert serialized_size(json.loads(result.content)) <= MAX_RESULT_BYTES
+    payload = json.loads(result.content)
+    assert payload["returned"] == 10
+    assert all("expand_hint" in row for row in payload["results"])
+    assert [row["expand_hint"]["reason"] for row in payload["results"]] == (
+        ["label_only"] * 5 + ["text_bearing"] * 5
+    )
+
+
+@pytest.mark.timeout(2)
+def test_sealing_loop_terminates_when_a_hinted_row_is_hostile():
+    """The shrink loop only knows four fields; a hinted row must still make
+    progress and stay bounded (the hint itself is never the last thing left
+    holding a row over the ceiling)."""
+    huge = "界" * 40_000
+    row = LibraryRagResultRow(
+        result_id=huge,
+        title=huge,
+        snippet="Matched media · pdf",
+        score=0.5,
+        source_id="12",
+        chunk_id="",
+        citations=(),
+        provenance=MappingProxyType({"source_type": "media"}),
+        runtime_backend=huge,
+    )
+    provider = LibraryRagToolProvider(
+        FakeRagService(result=LibraryRagSearchOutcome(status="ready", results=(row,)))
+    )
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    for projected in payload["results"]:
+        assert projected["expand_hint"] == {"expandable": True, "reason": "label_only"}
+
+
+# --------------------------------------------------------------------------
+# LibraryRagToolProvider: actionable expansion identity (TASK-16174, Task 3b)
+# --------------------------------------------------------------------------
+
+
+def _chunked_row(index: int, *, chars: int = 300) -> dict:
+    """A semantic row as `_semantic_row` builds one: a real, non-empty chunk id."""
+    return {
+        "title": f"Doc {index}",
+        "snippet": (f"doc-{index}: " + "the plan says a great deal. " * 40)[:chars],
+        "score": 0.7,
+        "source_id": f"note_{index}",
+        "chunk_id": f"note_{index}_chunk_3",
+        "provenance": {"source_type": "note", "chunk_start": 1200},
+    }
+
+
+def test_provider_rows_carry_the_identity_expand_document_requires():
+    """`expand_document` needs source_type + source_id; the payload declares
+    both instead of leaving the agent to infer them from label prose."""
+    rows = [
+        _label_row("media", 1),
+        _label_row("conversation", 2),
+        _text_row(3),
+        _chunked_row(4),
+    ]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 4})
+
+    assert result.ok is True
+    projected = json.loads(result.content)["results"]
+    assert [row["source_type"] for row in projected] == [
+        row["provenance"]["source_type"] for row in rows
+    ]
+    assert [row["source_id"] for row in projected] == [
+        row["source_id"] for row in rows
+    ]
+
+
+def test_chunked_row_carries_its_chunk_id_and_a_label_row_does_not():
+    """A non-empty chunk_id is the window anchor's companion; an empty one is
+    noise, so a label-only row omits the key entirely."""
+    rows = [_chunked_row(4), _label_row("media", 1)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    chunked, label = json.loads(result.content)["results"]
+    assert chunked["chunk_id"] == "note_4_chunk_3"
+    assert "chunk_id" not in label
+
+
+def test_label_only_identity_matches_the_result_id_the_row_already_exposed():
+    """The coincidence T3 flagged (`result_id` == `source_id` for label rows)
+    is now a declared contract, and a chunked row's pair is decomposed."""
+    rows = [_label_row("media", 12), _chunked_row(4)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    label, chunked = json.loads(result.content)["results"]
+    assert label["source_id"] == label["result_id"] == "12"
+    assert chunked["result_id"] == f"{chunked['source_id']}:{chunked['chunk_id']}"
+
+
+def test_row_with_nothing_to_expand_carries_no_identity():
+    """Identity is emitted on exactly the rows the tool can act on: a row with
+    no expandable seam keeps task-1337's no-raw-identity projection."""
+    row = _text_row(9)
+    row["provenance"] = {}
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "expand_hint" not in projected
+    assert "source_type" not in projected
+    assert "source_id" not in projected
+
+
+def test_sealed_payload_survives_identity_keys():
+    """A normal ten-row payload keeps every row, every hint AND every identity
+    under the 32 KiB ceiling."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_chunked_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    assert payload["returned"] == 10
+    assert all(
+        row["source_type"] and row["source_id"] and "expand_hint" in row
+        for row in payload["results"]
+    )
+    assert [row.get("chunk_id", "") for row in payload["results"]] == (
+        [""] * 5 + [f"note_{index}_chunk_3" for index in range(5, 10)]
+    )
+
+
+def test_chunked_row_carries_the_chunk_start_window_anchor():
+    """`chunk_start` is the ONLY thing that moves `expand_document`'s window.
+
+    `chunk_id` is an INDEX (`f"{doc_id}_chunk_{i}"`) and, since the fix wave,
+    is not even a tool parameter. `_semantic_row` copies `chunk_start` out of
+    the chunk metadata into `provenance`; without it in the payload a chunked
+    hit expands from the document HEAD while reporting `status: "ok"` -- a
+    wrong window that looks like a right one.
+    """
+    rows = [_chunked_row(4), _label_row("media", 1)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    chunked, label = json.loads(result.content)["results"]
+    assert chunked["chunk_start"] == 1200
+    assert "chunk_start" not in label, "a label-only row has no matched chunk"
+
+
+@pytest.mark.parametrize(
+    "provenance_anchor",
+    [None, 0, -1, "", "not-a-number", True],
+    ids=["absent", "head", "negative", "empty", "garbage", "bool"],
+)
+def test_chunk_start_is_omitted_when_it_would_move_nothing(provenance_anchor):
+    """Only an anchor the tool acts on is worth its bytes.
+
+    `_window_bounds` centres the window only for `anchor > 0`, so a head
+    anchor, a garbage value or an absent key must produce no key at all --
+    otherwise the payload grows to carry a field that changes nothing, which
+    is the inert surface this arc exists to remove.
+    """
+    row = _chunked_row(4)
+    if provenance_anchor is None:
+        row["provenance"].pop("chunk_start")
+    else:
+        row["provenance"]["chunk_start"] = provenance_anchor
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "chunk_start" not in projected
+    assert projected["source_id"] == "note_4", "the rest of the identity is intact"
+
+
+def test_sealed_payload_survives_the_chunk_start_anchor():
+    """The ceiling re-check every payload ADDITION on this seam owes: ten
+    rows, five of them anchored, all kept under 32 KiB with the anchor."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_chunked_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    assert payload["returned"] == 10
+    assert [row.get("chunk_start") for row in payload["results"]] == (
+        [None] * 5 + [1200] * 5
+    )
+
+
+@pytest.mark.timeout(2)
+def test_sealing_loop_terminates_when_the_identity_itself_is_hostile():
+    """Identity is the one projected field the shrink loop must not touch --
+    a halved id is a WRONG id, not a smaller one -- so the loop shrinks the
+    four text fields around it and the identity survives verbatim."""
+    huge = "界" * 40_000
+    # TWO REGIMES (Qodo PR-1729 finding 3 refined the 16174 pin): below the
+    # projection bound an id survives VERBATIM -- the shrink loop never
+    # touches it, because a halved id is a WRONG id. AT the bound it is
+    # truncated at projection instead, because the alternative demonstrated
+    # by the finding is worse: an unbounded id is unshrinkable ballast that
+    # forces the sealing loop to drop the ENTIRE row (id, snippet and all),
+    # and an id past _MAX_RESULT_ID_CHARS names nothing fetchable anyway.
+    verbatim_id = "x" * 1_500
+    row = LibraryRagResultRow(
+        result_id=huge,
+        title=huge,
+        snippet="Matched media · pdf",
+        score=0.5,
+        source_id=verbatim_id,
+        chunk_id="",
+        citations=(),
+        provenance=MappingProxyType({"source_type": "media"}),
+        runtime_backend=huge,
+    )
+    provider = LibraryRagToolProvider(
+        FakeRagService(result=LibraryRagSearchOutcome(status="ready", results=(row,)))
+    )
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert serialized_size(payload) <= MAX_RESULT_BYTES
+    assert payload["returned"] == len(payload["results"]) == 1
+    assert payload["results"][0]["source_id"] == verbatim_id
+
+
+# --------------------------------------------------------------------------
+# LibraryRagToolProvider: provenance identity fallbacks (TASK-16588)
+# --------------------------------------------------------------------------
+
+
+def _point_id_row(index: int, *, chars: int = 300) -> dict:
+    """A NON-CANONICAL semantic row, as `_semantic_row` builds one when the
+    indexed entry carried no `source_id`/`document_id` metadata: `source_id`
+    fell through to the vector store's POINT id, and the real document
+    identity survives only in the provenance extras.
+
+    BYTE-COST CAVEAT: the ids below (`n1`, `note_n1`) are deliberately SHORT,
+    so the cost `test_sealed_payload_survives_fallbacks` reports (15.0 B per
+    carrying row) is a fixture artefact and is NOT the production figure.
+    Real ids are UUIDs: re-measured by the same strip-and-reserialize method
+    on 34 real route payloads, the fallbacks cost **45.94 B/row on a
+    canonical index (a redundant `doc_id`) and 102.0 B/row non-canonical
+    (`note_id` + `doc_id`)** -- 3-7x this fixture. See
+    `Docs/superpowers/qa/2026-08-16-rag-semantic-identity/report.md`
+    (§ "Byte cost, on the real route payloads").
+    """
+    return {
+        "title": f"Doc {index}",
+        "snippet": (f"doc-{index}: " + "the plan says a great deal. " * 40)[:chars],
+        "score": 0.7,
+        "source_id": f"a1b2c3d4-e5f6-{index}",
+        "chunk_id": f"note_{index}_chunk_3",
+        "provenance": {
+            "source_type": "note",
+            "chunk_start": 1200,
+            "note_id": f"n{index}",
+            "doc_id": f"note_n{index}",
+        },
+    }
+
+
+def test_rows_carry_note_id_and_doc_id_fallbacks():
+    """A point-id row's `source_id` names nothing `expand_document` can fetch;
+    the identity that CAN be fetched is in provenance, so the payload carries
+    it verbatim rather than withholding it behind an `expandable` verdict."""
+    provider = LibraryRagToolProvider(
+        FakeRagService(result={"results": [_point_id_row(1)]})
+    )
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    assert result.ok is True
+    projected = json.loads(result.content)["results"][0]
+    assert projected["note_id"] == "n1"
+    assert projected["doc_id"] == "note_n1"
+    # The point id still ships as `source_id` -- the fallbacks are ADDITIONS,
+    # and the tool tries `source_id` first by design.
+    assert projected["source_id"] == "a1b2c3d4-e5f6-1"
+    assert "provenance" not in projected
+    assert "citations" not in projected
+
+
+def test_fallbacks_absent_when_provenance_lacks_them():
+    """A canonically-indexed row resolves through `source_id` alone, so it
+    pays no bytes for keys it does not have: absent, never `None` or `""`."""
+    rows = [_chunked_row(4), _point_id_row(5)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 2})
+
+    canonical, point_id = json.loads(result.content)["results"]
+    assert "note_id" not in canonical
+    assert "doc_id" not in canonical
+    assert canonical["source_id"] == "note_4", "the rest of the identity is intact"
+    # The same payload proves the absence is discrimination, not inertness.
+    assert point_id["note_id"] == "n5"
+    assert point_id["doc_id"] == "note_n5"
+
+
+def test_fallbacks_ride_the_hint_precondition():
+    """The fallbacks are identity, and identity is emitted on exactly the rows
+    the tool can act on. A canonicalization VARIANT source type (`media_chunk`)
+    gets no hint, so it gets no identity -- and no fallbacks either."""
+    row = _point_id_row(6)
+    row["provenance"]["source_type"] = "media_chunk"
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "expand_hint" not in projected
+    assert "source_type" not in projected
+    assert "source_id" not in projected
+    assert "note_id" not in projected
+    assert "doc_id" not in projected
+
+
+@pytest.mark.parametrize(
+    "empty_value", ["", "   ", None], ids=["empty", "whitespace", "none"]
+)
+def test_empty_string_fallbacks_are_dropped(empty_value):
+    """An empty fallback resolves nothing; emitting it would spend bytes in a
+    sealed payload to hand the tool a candidate it must discard."""
+    row = _point_id_row(7)
+    row["provenance"]["note_id"] = empty_value
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "note_id" not in projected
+    assert projected["doc_id"] == "note_n7", "the usable fallback still ships"
+
+
+def test_media_id_is_never_projected():
+    """`media_id` is accepted by the tool but written by NO indexing builder
+    (spec verification item 2), so the payload never emits it: a key that
+    cannot occur in real provenance is inert surface, not a fallback."""
+    row = _point_id_row(8)
+    row["provenance"]["media_id"] = "7"
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+
+    projected = json.loads(result.content)["results"][0]
+    assert "media_id" not in projected
+    assert projected["note_id"] == "n8", "the fallbacks that DO occur still ship"
+
+
+def test_oversized_identity_values_are_bounded_at_projection():
+    """Qodo PR-1729 finding 3: identity keys are excluded from the sealing
+    loop's shrink order, so an untrusted 50k-char provenance id could force
+    row drops. Identity strings are bounded at projection instead, by the
+    same _MAX_RESULT_ID_CHARS precedent result_id already uses -- an id past
+    that length names nothing fetchable (production ids are <= 1000 chars),
+    while unbounded it is payload ballast."""
+    row = _point_id_row(9)
+    row["source_id"] = "s" * 50_000
+    row["chunk_id"] = "c" * 50_000
+    row["provenance"]["note_id"] = "n" * 50_000
+    row["provenance"]["doc_id"] = "d" * 50_000
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": [row]}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    assert payload["returned"] == 1
+    projected = payload["results"][0]
+    # source_id/chunk_id pass through from_result's display sanitizer (1000)
+    # on this dict-row path; the provenance fallbacks bypass it, so the
+    # projection bound (2000) is their ONLY defence.
+    for key in ("source_id", "chunk_id"):
+        assert len(projected[key]) == 1000, (key, len(projected[key]))
+    for key in ("note_id", "doc_id"):
+        assert len(projected[key]) == 2000, (key, len(projected[key]))
+
+
+def test_sealed_payload_survives_fallbacks():
+    """The ceiling re-check every payload ADDITION on this seam owes: ten rows,
+    five carrying both fallbacks, all kept under 32 KiB -- with the cost of the
+    added keys measured by strip-and-reserialize and stated."""
+    rows = [_label_row("media", index) for index in range(5)]
+    rows += [_point_id_row(index) for index in range(5, 10)]
+    provider = LibraryRagToolProvider(FakeRagService(result={"results": rows}))
+
+    result = provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q", "top_k": 10})
+
+    assert result.ok is True
+    payload = json.loads(result.content)
+    stripped = json.loads(result.content)
+    carriers = 0
+    for row in stripped["results"]:
+        if row.pop("note_id", None) is not None or row.pop("doc_id", None) is not None:
+            carriers += 1
+    size = serialized_size(payload)
+    cost = size - serialized_size(stripped)
+    # The per-row figure below is scaled by THIS fixture's short ids (`n1`);
+    # on real UUID ids the same method reads 45.94 B/row canonical and
+    # 102.0 B/row non-canonical (TASK-16588 QA report, § "Byte cost").
+    # NOTE: an f-string in an assert message is rendered only when the assert
+    # FAILS -- a green run prints nothing. To read the numbers, run this test
+    # under `-s` with the assert forced, or use the QA report's figures.
+    assert size <= MAX_RESULT_BYTES, (
+        f"fallbacks cost {cost} B over ten rows ({carriers} carrying both keys, "
+        f"{cost / max(carriers, 1):.1f} B per carrying row, {cost / 10:.1f} B per row) "
+        f"-- fixture-short ids; real UUID ids cost 46-102 B/carrying row; "
+        f"payload {size} B of the {MAX_RESULT_BYTES} B ceiling, headroom "
+        f"{MAX_RESULT_BYTES - size} B"
+    )
+    assert payload["returned"] == len(payload["results"]) == 10
+    assert [row.get("note_id") for row in payload["results"]] == (
+        [None] * 5 + [f"n{index}" for index in range(5, 10)]
+    )
+    assert [row.get("doc_id") for row in payload["results"]] == (
+        [None] * 5 + [f"note_n{index}" for index in range(5, 10)]
+    )

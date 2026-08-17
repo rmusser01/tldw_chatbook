@@ -268,6 +268,31 @@ corroboration commit on top of the existing tip (PR #1640) instead of a competin
 fix. Independent evidence is worth keeping; a second fix for the same defect is
 not.
 
+**TASK-15764, 2026-08-15 — fourth instance, and this time the duplicate was
+already MERGED before the second session even started.** A Codex session
+implemented the task on `codex/task-15764-urlmonitor-offloop` (commits
+`8f638f815` + `8fbd1426d`, eleven minutes from first commit to PR #1650
+merging at 2026-08-14 17:38) and marked the task file Done on dev. The second
+session, launched by a burn-down controller with a base pinned to `bb91fef73`
+(cut 2026-08-13 20:14 -0700 — ~21 hours BEFORE the incumbent merged, and a
+further ~21 hours before the second session implemented on 2026-08-15), read
+the task file AT ITS BASE — where it still said `To Do` — and re-implemented
+the whole task:
+three hops, born-red tests, latency probes, an independent review with verdict
+MERGE. Nobody ran the two cheap commands above against the REMOTES, and a
+pinned base makes the board check worse than useless: it faithfully shows the
+world as of the pin, so `git fetch && git log origin/dev --grep=<id>` (plus
+`git branch -a | grep -i <id>` — the Codex branch name carried the id) is the
+check that would have caught it in seconds, before implementation rather than
+at reconciliation. Two mitigations with teeth: (1) a pinned-base session must
+run its staleness check against `origin/dev`, not its own checkout; (2) the
+recovery was again contribution, not competition — the incumbent stood
+(byte-identical semantics, verified across 11 full-cycle cases), and the
+second implementation's delta ported on top: the url_list-through-
+`launch_run`/`execute_run` coverage the incumbent's ticked AC#3 never had a
+test for, plus the review-corrected latency lesson (the 16.2 s headline
+figure did not survive the reviewer re-running it).
+
 ---
 
 ## Check for an in-flight PR before designing — claiming the task does not reserve it
@@ -500,6 +525,29 @@ of what gets deleted. Working state that must outlive the branch (audit
 tables, decision logs, incident reports) goes either into the repository
 as a commit or into a location above every worktree. Choose at
 ledger-creation time; by cleanup time it is too late.
+
+---
+
+## A checkout-based baseline round silently discards uncommitted work on that file
+
+**TASK-15777, 2026-08-15.** To attribute test failures, the standard baseline
+round is: `git checkout <base> -- <file>` → run the failing tests → `git
+checkout HEAD -- <file>`. During the two-sided-windowing work this round was
+run twice; between the two runs an uncommitted improvement (the reveal-segment
+recenter criterion) had been made to that same file on top of the last WIP
+commit. The second round's `git checkout HEAD -- <file>` restored the WIP
+commit and silently discarded the improvement — no error, no prompt, working
+tree "clean". It was only caught because `git status --porcelain` in the same
+command's output listed fewer modified files than expected; the edit had to be
+re-applied from the conversation's diff and every suite re-run on the
+re-committed state.
+
+**What to do.** `git checkout ... -- <file>` is a mutation of the working
+tree, exactly like the `git checkout HEAD --` restore trap in
+`lessons-testing-evidence.md`. Before ANY checkout-based baseline round,
+commit the current state first — the round's restore step is then provably a
+no-op. If the file was touched after the last commit, the restore step
+destroys that delta unconditionally.
 
 ---
 

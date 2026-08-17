@@ -38,6 +38,15 @@ WIDGET_DEFAULTS_SCOPED_FILENAME = "widget_defaults_scoped.tcss"
 #: the bundle those fallbacks redefine the real design tokens for every rule
 #: after them -- measured: ``$ds-focus-bg`` went from ``#51677E`` to ``$surface``
 #: across the app.  As separate sources they stay local, exactly as today.
+#:
+#: TASK-15993: that same "per-source" scope means every block CONSOLIDATED
+#: INTO one of these two files also shares it with every other block in the
+#: same file -- a block-local ``$ds-*`` fallback used to stay defined for
+#: every block emitted after it here too, just narrowed from app-wide to
+#: sheet-wide rather than eliminated. ``widget_css.render_stylesheets`` now
+#: runs ``isolate_local_variables`` per block before emission, which inlines
+#: and drops each block's own declarations so they cannot reach a later
+#: block's text at all.
 SCREEN_CSS_SCOPED_FILENAME = "screen_css_scoped.tcss"
 SCREEN_CSS_SELF_FILENAME = "screen_css_self.tcss"
 
@@ -222,6 +231,28 @@ def build_widget_defaults(css_dir: Path, self_file: Path, scoped_file: Path) -> 
     own, scoped = widget_css.render_stylesheets(
         blocks,
         "Widget DEFAULT_CSS (widget-defaults tier), lifted from Python sources",
+        # TASK-15998: scope EVERY selector of a comma list, exactly as the
+        # screen sheets below already do. Textual's scoped-DEFAULT_CSS parser
+        # prefixes only the LAST selector of a comma list, so `A, .b {…}`
+        # leaves `A` matching app-wide; while each class registered its own
+        # source that leak went live only at the class's first mount, but
+        # consolidation made these sheets live from boot. At the time of this
+        # change the quirk was leaking 56 selectors across 6 classes (24 at
+        # the TASK-15450 review -- the set had already grown silently). The
+        # de-quirk was proven cascade-neutral before shipping, not assumed:
+        # a computed-style diff between the quirked and de-quirked builds over
+        # a 22-stop destination tour -- 9,449 node-states, including forced
+        # :hover/:focus/:disabled sweeps and the Library notes/media/compact,
+        # note-editor/sync/select/sort and nav-clip-ghost states that mount
+        # the leaked selectors' targets -- found ZERO differences, and every
+        # leaked selector's anchor id/class composes only inside its declaring
+        # widget's subtree, so the added scope prefix cannot un-style anything.
+        # The +1 specificity each rewritten selector gains is absorbed by the
+        # scoped stream's tie-breaker exactly as for the screen sheets (see
+        # `widget_defaults_sources`). Pinned at zero leaks by
+        # Tests/UI/test_widget_css_consolidation.py::
+        # test_generated_sheets_scope_every_selector.
+        scope_every_selector=True,
     )
     self_file.write_text(own, encoding="utf-8")
     scoped_file.write_text(scoped, encoding="utf-8")

@@ -153,3 +153,39 @@ new production lines add no diagnostic.
 ADR required: no. This used existing controller, worker-policy, and
 `PruneSafeSelect` boundaries. No new lesson was added because the Textual prune
 mechanism and its tested remedy were already documented in the repository.
+
+## Implementation Notes (batch 2 -- close-out)
+
+Re-verified every remaining cluster on current dev (2026-08-15); the
+inventory resolved three ways:
+
+**Resolved by dev's own motion** (verified green, no change): the seven
+singletons (tab_scope, chip_actions, citation_sources, composer_collapse,
+live_work_handoffs, rail_sections, fleet_discoverability), personas x5
+(module 9/9), destination parity + workbench snapshots (132/132 -- the
+"needs a human eye" re-record never became necessary), 3 of the 4
+send-integration tests, and the whole TASK-16220 geometry family (fixed by
+another session's PR #1654; shell_regions + rail_width green).
+
+**Fixed here**: (1) the last send-integration red -- a stale `_Bridge`
+double predating the batched `subagent_counts` browser poll (perf finding
+A); (2) a REAL regression from TODAY's browser consolidation (520b1ec12,
+PR #1661): `_current_console_browser_rows` gained a `run_worker` spawn
+inside a state DERIVATION, which raises NoActiveAppError on the suite's
+established bare-screen builder convention -- three internals tests
+deterministic-red within hours of merge. The best-effort refresh is now
+gated on `self._screen.is_running` (the mounted path always is; the guard
+also stops minting a never-awaited coroutine). Browser tests 26/26 confirm
+the mounted refresh still schedules.
+
+**Trap recorded**: the first guard used `self.is_running` -- but `self` is
+the plain ConsoleWorkspaceController, not the screen, so every MOUNTED call
+raised AttributeError and the module collapsed 140 -> 20 passing. Running
+the module WHOLE immediately after the one-line fix is what caught it.
+
+**Attributed, no action**: the chunk-12 settings provider-Test teardown
+pair was frozen-tree residue of #1596 (settings modules 174/174 with the
+maturity modules); the maturity-phase1 "condition not met within 10s"
+timeouts were contention from four concurrent suites, green alone.
+
+Console internals module: 140/140.

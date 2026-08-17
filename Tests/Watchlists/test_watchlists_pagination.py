@@ -760,7 +760,9 @@ async def test_content_only_backend_match_survives_authoritative_search_load():
         assert [str(item["id"]) for item in pane.displayed_items()] == ["77"]
         article_rows = list(pane.query(".article-row"))
         assert len(article_rows) == 1
-        assert article_rows[0].parent.display is True
+        # task-15776: `.article-row` is the ListItem itself now, so the
+        # display check reads the row directly, not a wrapper parent.
+        assert article_rows[0].display is True
 
 
 @pytest.mark.asyncio

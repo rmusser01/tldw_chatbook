@@ -106,7 +106,7 @@ class DictationPerformanceWidget(Widget):
     """
 
     # Reactive data
-    metrics_data = reactive({})
+    metrics_data = reactive(dict)
 
     def compose(self) -> ComposeResult:
         """Compose performance dashboard."""

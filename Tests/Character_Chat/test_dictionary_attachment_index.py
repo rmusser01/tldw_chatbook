@@ -17,7 +17,6 @@ conversation references.
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 from typing import Any
 
@@ -31,6 +30,7 @@ from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
     ChatDictionaryScopeService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 
 @pytest.fixture
@@ -702,40 +702,46 @@ class TestHistoryStoreConcurrency:
 
 class TestMigrationBackfill:
     def test_v34_database_backfills_existing_attachments(self, tmp_path):
-        """Rewind a live DB to V34 (drop the derived tables/triggers, reset the
-        version), then reopen it: the real V34->V35 runner must rebuild the
-        index from metadata that was written while no trigger existed."""
-        db_path = tmp_path / "rewind.db"
-        db = CharactersRAGDB(db_path, "test-client")
-        service = LocalChatDictionaryService(db)
-        created = service.create_dictionary({"name": "Meds"})
-        attached = db.add_conversation({"title": "attached"})
-        service.attach_to_conversation(created["id"], attached)
-        loose = db.add_conversation({"title": "loose"})
-        record = db.get_conversation_by_id(loose)
-        db.update_conversation(
-            loose,
-            {"metadata": '{"active_dictionaries": ["7"]}'},
-            expected_version=record["version"],
-        )
-        db.close_connection()
+        """Build a genuinely V34-shaped DB (the production chain stops there
+        under a patched _CURRENT_SCHEMA_VERSION, task-16840), seed attachment
+        metadata while the derived tables and triggers truly do not exist yet,
+        then reopen it: the real V34->V35 runner must rebuild the index from
+        metadata that was written while no trigger existed."""
+        db_path = tmp_path / "v34.db"
+        with chachanotes_db_at_version(db_path, 34, client_id="test-client") as db:
+            # Genuine-shape preconditions: no derived index machinery exists
+            # at V34, so every seed below goes through the historical
+            # metadata-only write path (the registry-era fixture seeded at
+            # the CURRENT version — triggers populated the index and the
+            # rollback then had to drop it again).
+            conn = db.get_connection()
+            objects = {
+                (row["type"], row["name"])
+                for row in conn.execute(
+                    "SELECT type, name FROM sqlite_master "
+                    "WHERE name LIKE 'conversation_dictionary_%'"
+                ).fetchall()
+            }
+            assert objects == set()
+            assert (
+                conn.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    ("rag_char_chat_schema",),
+                ).fetchone()["version"]
+                == 34
+            )
 
-        raw = sqlite3.connect(db_path)
-        raw.executescript(
-            """
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_ai;
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_au;
-            DROP TRIGGER IF EXISTS conversation_dictionary_index_ad;
-            DROP TABLE IF EXISTS conversation_dictionary_attachments;
-            DROP TABLE IF EXISTS conversation_dictionary_unresolved;
-            DROP TABLE IF EXISTS note_folder_memberships;
-            DROP TABLE IF EXISTS note_folders;
-            UPDATE db_schema_version SET version = 34
-             WHERE schema_name = 'rag_char_chat_schema';
-            """
-        )
-        raw.commit()
-        raw.close()
+            service = LocalChatDictionaryService(db)
+            created = service.create_dictionary({"name": "Meds"})
+            attached = db.add_conversation({"title": "attached"})
+            service.attach_to_conversation(created["id"], attached)
+            loose = db.add_conversation({"title": "loose"})
+            record = db.get_conversation_by_id(loose)
+            db.update_conversation(
+                loose,
+                {"metadata": '{"active_dictionaries": ["7"]}'},
+                expected_version=record["version"],
+            )
 
         migrated = CharactersRAGDB(db_path, "test-client")
         try:

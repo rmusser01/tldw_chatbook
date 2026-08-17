@@ -1578,6 +1578,12 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     session_b = store.create_session(title="B").id
+    # ADR-067: an app-less controller now fails closed before arming (see
+    # `request_mcp_approvals`' no-app guard), so wire the usual fake
+    # bridge -- this test's subject is cross-session cancel isolation, not
+    # the no-app path.
+    controller.app = _FakeApp()
+    controller.set_pending_approval = lambda payload: None
     # A short deadline: if A's cancel event wrongly denied this round, the
     # cancellation branch would fire first (`_record_cancelled_approval_
     # decisions` aside) -- observing "timeout" instead of "deny" proves the
@@ -3115,3 +3121,127 @@ def test_shutdown_still_denies_a_survivors_round():
 
     assert not worker.is_alive(), "teardown left a survivor's round parked"
     assert results[RUN_SURVIVOR] == {"mcp__srv__write": "deny"}
+
+
+# -- ADR-067: no-deadline approval rounds --------------------------------
+#
+# The shipped default is now 0 = "no auto-deny": a round stays armed until
+# the user answers or the run is stopped. A positive timeout still denies
+# undecided calls (the existing expiry tests above, via seam values like
+# 0.05, pin that). The pre-ADR code computed `deadline = now + 0` for a
+# zero timeout and stamped "timeout" at the first 1s poll -- every test
+# below asserts the round survives past that point.
+
+
+def test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision():
+    """Timeout 0 means NO deadline: the round survives the first 1s poll
+    and resolves only on the user's decision."""
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 0.0
+
+    def _decide_late() -> None:
+        time.sleep(1.6)  # beyond the first poll where the old code bailed
+        assert received and received[0] is not None
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "approve_once"}, round_id=received[0]["round_id"]
+        )
+
+    decider = threading.Thread(target=_decide_late)
+    decider.start()
+    started = time.monotonic()
+    decisions = controller.request_mcp_approvals([_pending()])
+    elapsed = time.monotonic() - started
+    decider.join()
+
+    assert decisions == {"mcp__srv__tool": "approve_once"}
+    # The round was still armed past the old first-poll bail point.
+    assert elapsed >= 1.5
+    # The card was told no deadline exists (countdown copy hidden).
+    assert received[0]["timeout_seconds"] == 0.0
+    assert received[-1] is None
+
+
+def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
+    """While a round waits, its OWNING run is marked in the human-input
+    wait registry so `_call_with_timeout` pauses the per-call clock --
+    keyed by the round's `use_run_id` binding, cleared when it resolves."""
+    from tldw_chatbook.Agents.human_input_wait import human_input_wait_active
+
+    controller, _ = _build_controller()
+    received: list[dict | None] = []
+    controller.app = _FakeApp()
+    controller.set_pending_approval = received.append
+    controller.mcp_approval_timeout_seconds = lambda: 30.0
+
+    result: dict[str, object] = {}
+
+    def _run_round() -> None:
+        with use_run_id("run-approval-wait"):
+            result["decisions"] = controller.request_mcp_approvals([_pending()])
+
+    def _sample_then_decide() -> None:
+        # Wait for the round to arm, sample the mark from THIS thread (the
+        # wrapper's vantage point -- the mark must be process state, not
+        # worker-thread-local), then resolve the round.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not received:
+            time.sleep(0.01)
+        assert received, "round never armed"
+        result["marked_while_armed"] = human_input_wait_active("run-approval-wait")
+        controller.resolve_pending_approval(
+            {"mcp__srv__tool": "deny"}, round_id=received[0]["round_id"]
+        )
+
+    worker = threading.Thread(target=_run_round)
+    decider = threading.Thread(target=_sample_then_decide)
+    worker.start()
+    decider.start()
+    worker.join(timeout=10.0)
+    decider.join(timeout=10.0)
+
+    assert result["decisions"] == {"mcp__srv__tool": "deny"}
+    assert result["marked_while_armed"] is True
+    assert human_input_wait_active("run-approval-wait") is False
+
+
+def test_request_mcp_approvals_without_ui_fails_closed_immediately():
+    """With no UI bridge wired nothing can EVER resolve the round, and the
+    no-deadline default means the poll loop would never end -- so the
+    bridge must fail closed on the spot, mirroring the skill confirms'
+    own no-app guards."""
+    controller, _ = _build_controller()
+    assert controller.app is None
+    controller.mcp_approval_timeout_seconds = lambda: 0.05
+
+    started = time.monotonic()
+    decisions = controller.request_mcp_approvals([_pending()])
+    elapsed = time.monotonic() - started
+
+    assert decisions == {"mcp__srv__tool": "deny"}
+    assert elapsed < 2.5
+
+
+def test_mcp_approval_timeout_default_is_no_deadline(monkeypatch):
+    """ADR-067: the shipped default flips 120 -> 0 (armed until answered);
+    auto-deny is opt-in via [mcp] approval_timeout_seconds."""
+    import tldw_chatbook.Chat.console_chat_controller as cc_module
+
+    controller, _ = _build_controller()
+    assert controller.mcp_approval_timeout_seconds is None  # no seam wired
+    monkeypatch.setattr(
+        cc_module, "get_cli_setting", lambda section, key, default: default
+    )
+    assert controller._resolve_mcp_approval_timeout_seconds() == 0.0
+
+
+def test_human_prompt_defaults_pin_no_deadline():
+    """ADR-067 contract pin: every blocking human prompt defaults to 0
+    (wait indefinitely). Flip any of these and this test must fail."""
+    import tldw_chatbook.Chat.console_chat_controller as cc_module
+
+    assert cc_module._DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS == 0.0
+    assert cc_module._DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS == 0.0
+    assert cc_module._DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS == 0.0

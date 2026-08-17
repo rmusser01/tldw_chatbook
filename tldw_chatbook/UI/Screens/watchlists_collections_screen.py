@@ -525,15 +525,34 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # (see `_update_item_status`'s `refresh=False` path, which exists solely
     # to dodge it). `watch_overview_data` pushes the payload into the three
     # live surfaces that read it instead.
-    overview_data = reactive({})
+    overview_data = reactive(dict)
     # Through Phase C, CONTENT held only a placeholder stub and started
     # collapsed to avoid spending screen space on it. Phase D wires a real
     # reader (`ContentPane`) into CONTENT, so it now starts expanded like
-    # every other region. `on_mount` overlays whatever is actually persisted
-    # (see `region_layout_store.load_region_layout`) on top of this default —
-    # including a one-time migration that drops any CONTENT collapse a user
-    # saved before this change, since that could only be a leftover of the
-    # old stub-era default, never a deliberate choice about the real reader.
+    # every other region.
+    #
+    # This class-level value is a Textual-required placeholder, not what a
+    # real screen actually starts with (TASK-15775): `__init__` immediately
+    # overwrites it via `set_reactive` with whatever
+    # `region_layout_store.load_region_layout()` returns — the persisted
+    # layout, or `_FIRST_RUN_DEFAULT` (RIGHT_RAIL collapsed) on a genuinely
+    # fresh install, including that function's one-time migration that drops
+    # any CONTENT collapse a user saved before Phase D, since that could
+    # only be a leftover of the old stub-era default, never a deliberate
+    # choice about the real reader. Seeding happens before `compose_content`
+    # ever runs, so the workbench is built with the SAME layout `on_mount`
+    # used to apply a moment later — see `__init__`'s own comment for why
+    # this class-level default used to disagree with that call's result,
+    # and the ordering guarantee against `_last_persisted_collapsed`.
+    #
+    # task-16843: this is a shared *instance* default (`reactive(RegionLayout())`
+    # installs the SAME `RegionLayout` object on every screen instance until
+    # `set_reactive` overwrites it above) -- but it is harmless: `RegionLayout`
+    # is `frozen=True` and every field is itself immutable (`frozenset`,
+    # `Region | None`), so there is no mutable container underneath to mutate
+    # in place. Allowlisted in
+    # `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST` rather than rewritten into a factory.
     region_layout = reactive(RegionLayout())
     focused_region = reactive(Region.ITEMS)
     # Two scopes, deliberately: they answer different questions and they
@@ -569,6 +588,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     # changed", but a toggled region is still rebuilt). Pane-local state does
     # not survive that (see `selected_run` and the create-form draft above
     # for the same reasoning already applied elsewhere on this screen).
+    #
+    # task-16843: both are shared *instance* defaults, same shape as
+    # `region_layout` above (each reactive's own `TreeScope("all")` object is
+    # shared across every screen instance that has not reassigned it -- the
+    # two reactives get their own separate default instances, not each
+    # other's) -- and equally harmless: `TreeScope` is `frozen=True` with
+    # only immutable field types (`Literal` str, `int | None`). Allowlisted
+    # in `Tests/Architecture/test_reactive_mutable_default_inventory.py`'s
+    # `IMMUTABLE_INSTANCE_ALLOWLIST`.
     selected_scope = reactive(TreeScope(kind="all"))
     tree_scope = reactive(TreeScope(kind="all"))
 
@@ -912,7 +940,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # toggle, would otherwise trigger `save_setting_to_cli_config`'s
         # synchronous whole-file read-modify-write on the UI thread. See
         # `_schedule_layout_persist`/`_persist_layout_worker` below.
-        self._last_persisted_collapsed: frozenset[Region] | None = None
+        #
+        # TASK-15775: `region_layout`'s class-level reactive default
+        # (`RegionLayout()`, nothing collapsed) disagreed with what a cold
+        # open actually renders (`_FIRST_RUN_DEFAULT`, RIGHT_RAIL collapsed
+        # — `region_layout_store.py`). `compose_content` reads
+        # `self.region_layout` to build the initial `WatchlistsWorkbench`,
+        # and compose always runs before `on_mount`, so every cold open
+        # used to compose the full 13-widget Inspector pane and then, the
+        # instant `on_mount` fired `_apply_layout(load_region_layout())`,
+        # tear it straight back down for the one-line collapsed header a
+        # fresh config actually wants (task-15462's profiling: ~5-10ms,
+        # 1-2% of a ~450ms push, plus a `_swap_region_widget` call that
+        # regression tests now pin at zero for a normal visit).
+        #
+        # Seeding `region_layout` here, at construction, instead closes
+        # that gap: `_create_navigation_screen` builds a screen only to
+        # push/switch to it immediately after (never cached, never left
+        # un-mounted — see that method's own docstring), so there is no
+        # meaningful ordering difference from doing this at the top of
+        # `on_mount` as before. `set_reactive` (not assignment) matches
+        # `WatchlistsWorkbench.__init__`'s own seeding: it stores the value
+        # without running a watcher that has nothing mounted yet to act on.
+        #
+        # `_last_persisted_collapsed` is primed from this SAME call's
+        # result, on the very next line — closing the ordering risk
+        # task-15462 flagged when it chose not to make this exact move
+        # inside a profiling task: moving `load_region_layout()` earlier is
+        # only safe if this priming moves in lockstep with it. A
+        # construction-time load whose priming still happened later (e.g.
+        # still in `on_mount`, reading a SECOND call's result) would leave
+        # a window where `_schedule_layout_persist` could read
+        # `_last_persisted_collapsed` as stale against an already-applied
+        # layout, misfiring its `!=` no-op guard and scheduling a redundant
+        # persist worker for a value already on disk — or, worse, running
+        # `load_region_layout()`'s one-time migration branch a second time.
+        # There is exactly one call to `load_region_layout()` per screen
+        # lifecycle now; `on_mount` reuses `self.region_layout` rather than
+        # calling it again (see `on_mount`).
+        loaded_layout = load_region_layout()
+        self.set_reactive(WatchlistsCollectionsScreen.region_layout, loaded_layout)
+        self._last_persisted_collapsed: frozenset[Region] | None = (
+            loaded_layout.collapsed_for_persistence()
+        )
         self._pending_persist_layout: RegionLayout | None = None
         self._layout_persist_lock = threading.Lock()
         # Desired-status coalescing for the four item-status write paths
@@ -1014,20 +1084,29 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
-        # Push the persisted layout into the already-mounted workbench, not just
-        # this screen's own reactive: `compose_content` already ran by the time
+        # Push the layout into the already-mounted workbench, not just this
+        # screen's own reactive: `compose_content` already ran by the time
         # `on_mount` fires (compose always precedes the Mount event), so the
-        # WatchlistsWorkbench child was built with whatever `region_layout` held
-        # at THAT moment. Without also reaching into the mounted workbench via
-        # `_apply_layout`, a persisted collapse would silently not render until
-        # some unrelated later recompose happened to pick it up.
-        loaded_layout = load_region_layout()
-        # Prime the "last persisted" marker with what we just read (PR #926
-        # review, Bug 2) BEFORE calling `_apply_layout`: this value is by
-        # definition already on disk, so pushing it back into the workbench
-        # here must not itself trigger a redundant write.
-        self._last_persisted_collapsed = loaded_layout.collapsed_for_persistence()
-        self._apply_layout(loaded_layout)
+        # WatchlistsWorkbench child was built with whatever `region_layout`
+        # held at THAT moment. Without also reaching into the mounted
+        # workbench via `_apply_layout`, a persisted collapse would silently
+        # not render until some unrelated later recompose happened to pick
+        # it up.
+        #
+        # TASK-15775: `region_layout` (and `_last_persisted_collapsed`) were
+        # already seeded from `load_region_layout()` in `__init__` — reused
+        # here rather than calling it a second time, both to keep the
+        # one-time-migration read/write genuinely one-time per screen and to
+        # keep this call a true no-op: `self.region_layout` already equals
+        # what `_apply_layout` sets it to, and Textual's reactive skips
+        # `watch_region_layout` on an unchanged value, so this produces zero
+        # `_swap_region_widget` calls on a normal visit. Kept, rather than
+        # dropped outright, so a screen mounted a second way (a test that
+        # changes `region_layout` between construction and mount, or a
+        # future caller) still gets the reconciliation pass `_apply_layout`
+        # performs — `_sync_reader_expanded_state`, and the persistence
+        # no-op check for anything that genuinely did change.
+        self._apply_layout(self.region_layout)
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
         self._load_active_section_data()
@@ -2024,6 +2103,22 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
 
         Called fresh on every region rebuild — see the factory note on
         `WatchlistsWorkbench.__init__`.
+
+        Seeding discipline (task-15778): every `recompose=True` reactive is
+        seeded with `set_reactive`, never plain assignment. A plain
+        assignment on the freshly constructed, not-yet-mounted pane runs
+        `refresh(recompose=True)` the instant the seeded value differs from
+        the class default (`[] != [row]`), which queues a `_check_recompose`
+        that fires just after the pane mounts — one full extra pane rebuild
+        per region build, measured on every data-carrying section switch
+        (task-15461's residual 4). `compose()` reads the same reactives, so
+        `set_reactive` renders identically without the queued rebuild. The
+        panes' pre-mount watchers were audited per-branch before this
+        change: every watcher on a converted reactive is an
+        `is_mounted`-gated no-op pre-mount, so nothing is lost by skipping
+        it. NON-recompose reactives deliberately stay plain assignments —
+        `RunsPane.selected_run`'s watcher side effects are load-bearing
+        (see that branch).
         """
         detail_title = self._SECTION_DETAIL_TITLE.get(self.active_section, "Detail")
         children: list[Widget] = [
@@ -2035,11 +2130,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         ]
         if self.active_section == "overview":
             overview = OverviewPane(id="watchlists-overview-pane")
-            overview.data = self.overview_data
+            overview.set_reactive(OverviewPane.data, self.overview_data)
             # TASK-998: lets the first-run panel distinguish "no watchlists at
             # all" from "a watchlist with no sources in it" -- `overview_data`
             # counts sources, items and runs, never watchlists.
-            overview.watchlist_count = len(self._tree_watchlists)
+            overview.set_reactive(
+                OverviewPane.watchlist_count, len(self._tree_watchlists)
+            )
             children.append(overview)
         elif self.active_section == "sources":
             sources_pane = SourcesPane(id="watchlists-sources-pane")
@@ -2050,7 +2147,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
             # the table back to every source while the header still names one
             # watchlist.
-            sources_pane.sources = self.scoped_loaded_sources()
+            sources_pane.set_reactive(
+                SourcesPane.sources, self.scoped_loaded_sources()
+            )
             sources_pane.selected_source = self.selected_source
             # TASK-2309: re-seed from screen state for the identical
             # rebuild-survival reason as `selected_source` on the line
@@ -2072,12 +2171,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 else sources_pane.default_destination
             )
             if self._source_create_draft_type is not None:
-                sources_pane.create_draft_source_type = self._source_create_draft_type
+                sources_pane.set_reactive(
+                    SourcesPane.create_draft_source_type,
+                    self._source_create_draft_type,
+                )
             # Seed the create-form draft so it survives this pane being
             # reconstructed (see the note on `_source_create_draft` in
             # __init__ and CreateFormDraftChanged/CreateFormVisibilityChanged
-            # in sources_pane.py).
-            sources_pane.show_create_form = self._source_create_form_open
+            # in sources_pane.py). `set_reactive` (task-15778):
+            # `watch_show_create_form` is entirely `is_mounted`-gated, so the
+            # plain assignment bought nothing pre-mount but the extra
+            # recompose.
+            sources_pane.set_reactive(
+                SourcesPane.show_create_form, self._source_create_form_open
+            )
             sources_pane.create_draft_name = self._source_create_draft["name"]
             sources_pane.create_draft_url = self._source_create_draft["url"]
             sources_pane.create_draft_tags = self._source_create_draft["tags"]
@@ -2088,7 +2195,16 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             children.append(sources_pane)
         elif self.active_section == "runs":
             runs_pane = RunsPane(id="watchlists-runs-pane")
-            runs_pane.runs = self._loaded_runs
+            # `runs` is the pane's only `recompose=True` reactive, so it is
+            # the only one converted to `set_reactive` (task-15778). The
+            # four below stay PLAIN assignments on purpose:
+            # `watch_selected_run` is load-bearing even pre-mount -- it
+            # starts the status poll when the seeded run is still running
+            # (without it, a region rebuild mid-run would freeze the run's
+            # status until a manual refresh) -- and none of the four is
+            # `recompose=True`, so none of them costs the extra rebuild this
+            # task removes.
+            runs_pane.set_reactive(RunsPane.runs, self._loaded_runs)
             runs_pane.selected_run = self.selected_run
             # After `selected_run`, never before: setting the selection clears
             # the pane's detail (a run's items must never outlive the run they
@@ -2100,6 +2216,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         elif self.active_section == "items":
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
+            # Audited for task-15778 and deliberately left as plain
+            # assignments: `ArticleListPane` has NO `recompose=True`
+            # reactives at all (its watchers patch the mounted list in
+            # place), so this branch never paid the pre-mount seeding
+            # recompose and there is nothing to convert.
             items_pane = ArticleListPane(id="watchlists-items-pane")
             items_pane.items = self._loaded_items
             # Seed the filter, the search box and the selection too
@@ -2128,51 +2249,82 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Seed the last-loaded rows (Finding 2, fix round 2) — see the
             # note on `sources_pane.sources` above; same rebuild, same gap.
             rules_pane = RulesPane(id="watchlists-rules-pane")
-            rules_pane.rules = self._loaded_rules
+            rules_pane.set_reactive(RulesPane.rules, self._loaded_rules)
             # Seed the edit-form state so an in-progress rule edit survives
             # this pane being reconstructed (Finding 4, fix round 2) — the
             # same treatment the Sources create-form draft already gets
             # above; see `_rule_form_open`/`_rule_form_editing` in __init__
-            # and RuleFormVisibilityChanged in rules_pane.py.
+            # and RuleFormVisibilityChanged in rules_pane.py. `edit_rule`
+            # itself takes the `set_reactive` route on an unmounted pane
+            # (task-15778) — see its own comment.
             if self._rule_form_open:
                 if self._rule_form_editing is not None:
                     rules_pane.edit_rule(self._rule_form_editing)
                 else:
-                    rules_pane.show_rule_form = True
+                    rules_pane.set_reactive(RulesPane.show_rule_form, True)
             children.append(rules_pane)
         elif self.active_section == "notifications":
             notifications_pane = NotificationsPane(id="watchlists-notifications-pane")
-            notifications_pane.notifications = self._loaded_notifications
-            notifications_pane.selected_notification = self.selected_notification
+            notifications_pane.set_reactive(
+                NotificationsPane.notifications, self._loaded_notifications
+            )
+            notifications_pane.set_reactive(
+                NotificationsPane.selected_notification,
+                self.selected_notification,
+            )
             children.append(notifications_pane)
         elif self.active_section == "artifacts":
             # Seeded from screen state for the same reason every sibling
             # above is -- this is a factory the workbench calls on every
             # region rebuild, so a fresh pane's reactives start at their
-            # class defaults.
+            # class defaults. Every reactive goes through `set_reactive`
+            # (task-15778): most are `recompose=True`, and the six
+            # selection-derived ones task-15779 flipped to plain reactives
+            # carry watchers with mounted-only side effects (a
+            # `BriefingSelected`/`ScriptSelected` post, an in-place table
+            # patch, a detail-region refresh) that a seeding assignment
+            # must not fire -- `watch_selected_briefing` even guards
+            # specifically against wiping this very seeding.
             artifacts_pane = ArtifactsPane(id="watchlists-artifacts-pane")
-            artifacts_pane.briefings = self._loaded_briefings
-            artifacts_pane.selected_briefing = self._selected_briefing
-            artifacts_pane.scope_label = self._briefing_scope_label()
-            artifacts_pane.can_generate = self._can_generate_briefing()
-            artifacts_pane.default_provider_display = self._briefing_provider_display()
-            artifacts_pane.selection_mode = self._briefing_selection_mode
-            artifacts_pane.presets = self._loaded_briefing_presets
-            artifacts_pane.default_preset_id = self._briefing_default_preset_id
-            artifacts_pane.briefing_cadence_seconds = self._briefing_cadence_seconds
-            artifacts_pane.briefing_schedules_enabled = (
-                self._briefing_schedules_enabled()
+            seed = artifacts_pane.set_reactive
+            seed(ArtifactsPane.briefings, self._loaded_briefings)
+            seed(ArtifactsPane.selected_briefing, self._selected_briefing)
+            seed(ArtifactsPane.scope_label, self._briefing_scope_label())
+            seed(ArtifactsPane.can_generate, self._can_generate_briefing())
+            seed(
+                ArtifactsPane.default_provider_display,
+                self._briefing_provider_display(),
             )
-            artifacts_pane.scripts = self._loaded_scripts
-            artifacts_pane.selected_script = self._selected_script
-            artifacts_pane.script_audio = self._loaded_script_audio
-            artifacts_pane.scripts_with_audio = self._scripts_with_audio
-            artifacts_pane.citations = self._loaded_citations
-            artifacts_pane.has_audio_episodes = self._watchlist_has_audio_episodes
-            artifacts_pane.chachanotes_available = self._chachanotes_db() is not None
-            artifacts_pane.can_serve_feed = self._last_feed_export_directory is not None
-            artifacts_pane.feed_server_running = self._feed_server.is_running
-            artifacts_pane.feed_server_url = self._feed_server.url
+            seed(ArtifactsPane.selection_mode, self._briefing_selection_mode)
+            seed(ArtifactsPane.presets, self._loaded_briefing_presets)
+            seed(ArtifactsPane.default_preset_id, self._briefing_default_preset_id)
+            seed(
+                ArtifactsPane.briefing_cadence_seconds,
+                self._briefing_cadence_seconds,
+            )
+            seed(
+                ArtifactsPane.briefing_schedules_enabled,
+                self._briefing_schedules_enabled(),
+            )
+            seed(ArtifactsPane.scripts, self._loaded_scripts)
+            seed(ArtifactsPane.selected_script, self._selected_script)
+            seed(ArtifactsPane.script_audio, self._loaded_script_audio)
+            seed(ArtifactsPane.scripts_with_audio, self._scripts_with_audio)
+            seed(ArtifactsPane.citations, self._loaded_citations)
+            seed(
+                ArtifactsPane.has_audio_episodes,
+                self._watchlist_has_audio_episodes,
+            )
+            seed(
+                ArtifactsPane.chachanotes_available,
+                self._chachanotes_db() is not None,
+            )
+            seed(
+                ArtifactsPane.can_serve_feed,
+                self._last_feed_export_directory is not None,
+            )
+            seed(ArtifactsPane.feed_server_running, self._feed_server.is_running)
+            seed(ArtifactsPane.feed_server_url, self._feed_server.url)
             children.append(artifacts_pane)
         return Vertical(
             *children,
@@ -2238,7 +2390,14 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         would go stale the instant the layout that produced it changes.
         """
         pane = ContentPane(id="watchlists-content-pane")
-        pane.item = self._selected_content_item
+        # `set_reactive`: `item` is the pane's one `recompose=True` reactive
+        # and has no watcher, so a plain assignment here bought nothing but
+        # the queued extra recompose whenever an item was selected — a full
+        # second render of the article, inside the very swap task-15778
+        # batches. `expanded`/`position` below are non-recompose reactives
+        # whose watchers patch in place and stay plain, same audit as
+        # `_build_detail_pane`'s.
+        pane.set_reactive(ContentPane.item, self._selected_content_item)
         pane.expanded = self.region_layout.solo_region == Region.CONTENT
         # TASK-3072 plan task 9: re-seed the footer the same way `item` is
         # re-seeded just above, so a region rebuild re-renders the same
@@ -4958,6 +5117,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     @on(RerunRunRequested)
     def handle_rerun_run_requested(self, event: RerunRunRequested) -> None:
         event.stop()
+        # A coroutine worker, never thread=True — this launches a check, so
+        # the in-flight guard's single-loop invariant applies (see
+        # `handle_check_now_requested`'s launch site).
         self.run_worker(self._rerun_run(event.source_id), exclusive=True)
 
     async def _rerun_run(self, source_id: Any) -> None:
@@ -5098,6 +5260,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._notify_watchlists(
             f"Checking {name}...", severity="information", markup=False
         )
+        # A COROUTINE worker, never thread=True: the watchlists in-flight
+        # guard (`local_watchlists_service._IN_FLIGHT_URL_CHECKS`) is a
+        # lock-free set whose safety rests on every check entrant running on
+        # the app's one event loop. Moving this off-loop needs a lock there.
         self.run_worker(
             self._check_now_source(entity, source_key, name), group="wc_check_now"
         )
@@ -5132,6 +5298,49 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if not error_msg and isinstance(stats, Mapping):
             error_msg = stats.get("error_msg")
         return str(error_msg or "the source reported a failed run")
+
+    @staticmethod
+    def _check_was_entirely_skipped(result: Any) -> bool:
+        """Whether a completed check checked NOTHING because another was running.
+
+        task-16838. The per-(subscription, url) in-flight guard
+        (`LocalWatchlistsService._check_url_guarded`) makes a Check Now that
+        lands while a scheduled check of the same source is mid-flight skip
+        rather than double-check -- the run completes with a `skipped`
+        disposition count and nothing else. Without this, that run's toast
+        read "Check complete: X — 0 found, 0 new.", which tells the user
+        their page was checked and unchanged when it was not checked at all.
+
+        Only an ENTIRELY skipped run qualifies: a `url_list` run that checked
+        most URLs and skipped one did real work, and its ordinary completion
+        toast stays honest for it (the Runs pane detail carries the per-URL
+        skip count).
+
+        Args:
+            result: Whatever `check_now` returned.
+
+        Returns:
+            True when the run's dispositions show at least one skip and
+            zero of everything else.
+        """
+        if not isinstance(result, Mapping):
+            return False
+        stats = result.get("stats")
+        if not isinstance(stats, Mapping):
+            return False
+        dispositions = stats.get("dispositions")
+        if not isinstance(dispositions, Mapping):
+            return False
+        try:
+            skipped = int(dispositions.get("skipped", 0) or 0)
+            others = sum(
+                int(value or 0)
+                for counter, value in dispositions.items()
+                if counter != "skipped"
+            )
+        except (TypeError, ValueError):
+            return False
+        return skipped > 0 and others == 0
 
     async def _check_now_source(
         self,
@@ -5233,7 +5442,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     status = str((result or {}).get("status") or "").lower()
                     reached_terminal = status in self._TERMINAL_RUN_STATUSES
                     if callable(notify):
-                        if reached_terminal:
+                        if reached_terminal and self._check_was_entirely_skipped(
+                            result
+                        ):
+                            # task-16838: the in-flight guard skipped every
+                            # URL -- say so rather than "0 found, 0 new",
+                            # which would claim the page was checked and
+                            # unchanged when it was not checked at all.
+                            notify(
+                                f"Check skipped: {name} — a check of this "
+                                f"source is already running.",
+                                severity="warning",
+                                markup=False,
+                            )
+                        elif reached_terminal:
                             # The run's own counters (TASK-2309), when the
                             # result actually carries them -- the local
                             # backend's `execute_run` always returns a
@@ -6529,9 +6751,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # task-15461: the PANE's own copies are cleared by
         # `ArtifactsPane._clear_selection_derived_state`, inside the same
         # synchronous instant the selection moves, so the clearing rides the
-        # recompose that selection already queued instead of adding a second
-        # one. The screen-side mirrors above still have to be cleared here --
-        # they are what `handle_citation_activated` and a later rebuild read.
+        # one rebuild that selection already scheduled instead of adding a
+        # second (since task-15779 that is the pane's `BriefingDetailRegion`
+        # refresh -- the briefings table itself is no longer rebuilt by a
+        # selection at all). The screen-side mirrors above still have to be
+        # cleared here -- they are what `handle_citation_activated` and a
+        # later rebuild read.
         self.run_worker(
             self._load_briefings(), exclusive=True, group="wl-briefings-load"
         )

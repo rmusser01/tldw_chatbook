@@ -171,7 +171,7 @@
     Select-width lesson (`#mcp-tools-filter-server-slot Select`,
     mcp_tools_mode.py / _agentic_terminal.tcss) applies here too --
     `_conversations.tcss`'s bare `Select { width: 100%; }` rule always wins
-    over ANY rule targeting a `Select` in this widget's own DEFAULT_CSS
+    over ANY rule targeting a `Select` in this widget's own BUNDLED_CSS
     once the real app bundle is loaded (CSS_PATH always beats DEFAULT_CSS,
     regardless of selector specificity) -- so styling
     `#mcp-audit-filter-decision`/`#mcp-audit-filter-initiator` directly
@@ -229,11 +229,7 @@
     `max-height: 70%` below resolves against a definite height, same
     percentage-inside-a-definite-not-auto-parent discipline the Select
     slot comment above documents for the filter bar. */
-    #mcp-audit-executions-view{
-        width: 1fr;
-        height: 1fr;
-        min-height: 0;
-    }
+
 
 
     
@@ -479,24 +475,18 @@
     }
 
 
-    #mcp-tools-local-config-title-row{
-        height: auto;
-        min-height: 0;
-    }
-
-
-
-    #mcp-tools-local-config-help{
-        height: auto;
-        color: $text-muted;
-    }
 
 
 
 
 
 
-    /* T7 (P3 UX batch): same fix as MCPServersMode.DEFAULT_CSS's
+
+
+
+
+
+    /* T7 (P3 UX batch): same fix as MCPServersMode.BUNDLED_CSS's
     #mcp-servers-table -- height: auto + max-height: 70% instead of height:
     1fr, so the table hugs its own row count instead of ballooning to fill
     the canvas. */
@@ -645,17 +635,7 @@
        button could never be measured again, i.e. never un-ghosted. Left
        out rather than reworking every geometry read onto a different
        property. */
-    .nav-button.nav-button-clip-ghost,
-    .nav-button.nav-button-clip-ghost:hover,
-    .nav-button.nav-button-clip-ghost:focus,
-    .nav-button.nav-button-clip-ghost.is-active,
-    .nav-button.nav-button-clip-ghost.is-active:focus{
-        background: $background !important;
-        color: $background !important;
-        text-style: none;
-        opacity: 100% !important;
-        text-opacity: 100% !important;
-    }
+
 
 
 
@@ -758,36 +738,15 @@
 
     /* Presentation-only row wrappers keep the established wide stacked
        workbench. Compact rules below switch only these wrappers to rows. */
-    #library-notes-filter-row,
-    #library-notes-status-row,
-    #library-note-heading,
-    #library-note-title-row,
-    #library-note-context-keywords-row,
-    #library-notes-create-heading,
-    #library-notes-sync-heading,
-    #library-notes-sync-folder-row,
-    #library-notes-sync-direction-row,
-    #library-notes-sync-conflict-row{
-        layout: vertical;
-        height: auto;
-        min-height: 0;
-    }
-
-    #library-notes-create-viewport{
-        height: 1fr;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
 
 
 
 
 
-    #library-note-preview-region:focus{
-        border: solid $accent;
-        background: $boost;
-    }
+
+
+
+
 
 
 
@@ -809,18 +768,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-notes-browse-actions,
-    #library-canvas.library-notes-compact #library-notes-sort-choices,
-    #library-canvas.library-notes-compact #library-notes-transfer-actions,
-    #library-canvas.library-notes-compact #library-notes-selection-actions,
-    #library-canvas.library-notes-compact #library-note-primary-actions,
-    #library-canvas.library-notes-compact #library-note-conflict-actions{
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
 
 
 
@@ -838,40 +785,12 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-editor-title,
-    #library-canvas.library-notes-compact #library-note-preview-title,
-    #library-canvas.library-notes-compact #library-note-context-title,
-    #library-canvas.library-notes-compact #library-note-loading-title,
-    #library-canvas.library-notes-compact #library-notes-create-header{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        padding: 0 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
 
 
 
 
 
-    #library-canvas.library-notes-compact #library-note-title-label{
-        width: 10;
-        height: 1;
-        padding: 0 1;
-    }
 
-    #library-canvas.library-notes-compact #library-note-title,
-    #library-canvas.library-notes-compact #library-note-context-keywords{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        padding: 0 1;
-        border: none;
-    }
 
 
 
@@ -885,12 +804,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-context-region .destination-section,
-    #library-canvas.library-notes-compact #library-note-context-meta{
-        height: 1;
-        min-height: 1;
-        margin: 0;
-    }
 
 
 
@@ -898,12 +811,6 @@
 
 
 
-    #library-canvas.library-notes-compact #library-note-transfer-status{
-        display: none;
-        height: 0;
-        min-height: 0;
-        margin: 0;
-    }
 
 
 
@@ -929,41 +836,21 @@
 
 
 
-    #library-canvas.library-notes-compact #library-notes-sync-purpose,
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row,
-    #library-canvas.library-notes-compact #library-notes-sync-actions{
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
 
 
 
-    #library-canvas.library-notes-compact #library-notes-sync-folder-row,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-row,
-    #library-canvas.library-notes-compact #library-notes-sync-conflict-row{
-        layout: horizontal;
-    }
 
-    #library-canvas.library-notes-compact #library-notes-sync-folder-label,
-    #library-canvas.library-notes-compact #library-notes-sync-direction-label{
-        width: 11;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
 
-    #library-canvas.library-notes-compact #library-notes-sync-direction-choices{
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        margin: 0;
-        overflow-x: hidden;
-    }
+
+
+
+
+
+
+
+
+
+
 
     /* task-14900: Media list|preview side by side above the measured
        compact breakpoint; the host's library-notes-compact class flips it
@@ -972,20 +859,6 @@
        wins when loaded. */
 
 
-    #library-media-list,
-    #library-media-preview{
-        width: 1fr;
-        min-width: 0;
-        height: 100%;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-
-    #library-media-preview{
-        margin: 0 0 0 1;
-        padding: 0 1;
-    }
 
 
 
@@ -993,13 +866,10 @@
 
 
 
-    #library-canvas.library-notes-compact #library-media-list{
-        width: 100%;
-        height: auto;
-        margin: 0;
-        padding: 0;
-        overflow-y: hidden;
-    }
+
+
+
+
 
 
     
@@ -1021,21 +891,11 @@
     under a harness App that never sets CSS_PATH. `$ds-focus-bg` and
     `$ds-focus-fg` currently alias to exactly `$surface` and `$text` (see
     css/core/_variables.tcss), so this is not a visual compromise. */
-    .mcp-mode-chip:focus{
-        background: $surface;
-        color: $text;
-        text-style: bold;
-        outline: none;
-    }
+
     /* Active AND focused: still reads as "active" (bold underline, same
     background as non-focused .is-active) rather than picking up the
     reverse-video focus treatment above. */
-    .mcp-mode-chip.is-active:focus{
-        background: $surface;
-        color: $text-muted;
-        text-style: bold underline;
-        outline: none;
-    }
+
     
 
 /* ===== WIDGET: CuratedView (UI/Screens/model_curated_view.py) ===== */
@@ -1274,7 +1134,7 @@
        card entirely at 100x30, and left a dead void between the panels at
        170x50. Each section is now a one-line collapsed header by default,
        so no explicit max-height cap is needed here (the panels' own
-       DEFAULT_CSS keeps every part height: auto, which the old cap existed
+       BUNDLED_CSS keeps every part height: auto, which the old cap existed
        to force). */
 
     
@@ -1297,15 +1157,10 @@
         height: auto;
         padding: 1;
     }
-    #scheduling-owner-local{
-        width: auto;
-    }
+
     /* task-2723: without margins these Statics render flush against each
        other — "Last pull: —Last push: —<error text>" read as one run. */
-    #scheduling-last-pull{
-        width: auto;
-        margin-left: 2;
-    }
+
 
 
     
@@ -1454,7 +1309,7 @@
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonaProfileEditorWidget .is-invalid {
         border: round red;
@@ -1758,6 +1613,16 @@
         max-height: 10;
     }
 
+    PersonasCharacterEditorWidget #personas-char-editor-legacy-expressions,
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        min-height: 16;
+    }
+
     PersonasCharacterEditorWidget .ds-toolbar {
         height: 1;
         min-height: 1;
@@ -1774,7 +1639,7 @@
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonasCharacterEditorWidget .is-invalid {
         border: round red;
@@ -2221,3 +2086,82 @@
         margin-right: 1;
     }
     
+
+/* ===== WIDGET: PersonasVisualIdentityPackWidget (Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py) ===== */
+
+    PersonasVisualIdentityPackWidget {
+        width: 100%;
+        height: 1fr;
+        min-height: 16;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-title,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-label,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+        color: $text-muted;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 5;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-results {
+        width: 2fr;
+        height: 100%;
+        min-width: 0;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-preview {
+        width: 1fr;
+        height: 100%;
+        min-width: 0;
+        margin-left: 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-preview-image {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions {
+        width: 100%;
+        height: 3;
+        overflow-x: auto;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button {
+        width: 1fr;
+        height: 3;
+        min-width: 0;
+        border: none;
+        margin-right: 1;
+    }
+
+    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus {
+        outline: heavy $accent;
+    }
+
+    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
+        display: none;
+    }

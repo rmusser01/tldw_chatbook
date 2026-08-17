@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping, Optional
+from pathlib import PurePath
+from typing import Any, Mapping, Optional, Sequence
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
@@ -33,9 +34,9 @@ CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON = "No tool calls are ready for review."
 CONSOLE_INSPECTOR_NO_CHATBOOK_ARTIFACT_REASON = "No Chatbook artifact is available."
 
 #: How many staged references the composer-level evidence strip lists before
-#: it collapses the rest into a "+N more" line. The strip sits between the
-#: status chips and the composer, so it must stay short enough never to push
-#: the composer off a small terminal.
+#: it collapses the rest into a "+N more" line. The strip sits directly above
+#: the composer (the status chips are below it now), so it must stay short
+#: enough never to push the composer off a small terminal.
 CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS = 3
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_ID = "console-unstage-evidence"
 CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL = "Un-stage"
@@ -1084,3 +1085,80 @@ class ConsoleInspectorState:
 
     def to_plain_text(self) -> str:
         return "\n".join(row.text for row in self.rows)
+
+
+@dataclass(frozen=True)
+class TurnFileEntry:
+    """One changed file on a turn's transcript card (task: turn file card).
+
+    ``label`` is what the row prints: the bare relpath for a single-root
+    turn, ``<root-name>/<relpath>`` when the turn touched several roots.
+    ``path``/``root`` stay separate because the diff loader needs the
+    exact (row, path) pair the provider expects.
+    """
+
+    label: str
+    path: str
+    root: str
+    status: str
+    adds: int
+    dels: int
+
+
+def turn_file_entries(
+    row_files: "Sequence[tuple[Mapping[str, Any], Sequence[Any]]]",
+) -> "list[tuple[TurnFileEntry, Mapping[str, Any]]]":
+    """Assemble a turn card's file rows from its snapshot rows.
+
+    Pairs each entry with the EXACT row it came from, by position -- never
+    keyed by root. A run's ``change_snapshots`` can hold rows from TWO
+    windows on the SAME root (a turn's own window and its surviving
+    sub-agents' post-turn window, PR3a-1 Task 6c; both markers carry the
+    same ``change_review_run_id``), and a root-keyed dict silently drops
+    one window's files and mispairs the rest. Building entries per row
+    instead means each entry's diff is always read against the row that
+    actually produced it, regardless of how many rows share a root.
+
+    Semantics ruling (deliberate, mirrors the `v` Review screen): a card
+    shows the UNION of ALL of its run's clean rows. When a turn and its
+    post-turn window share a root, both of that run's markers therefore
+    render the same union rather than each showing only its own slice --
+    exactly like ``AgentRunsChangeReviewProvider.turns()`` groups every
+    row for a ``run_id`` into one ``ReviewTurn`` regardless of window.
+
+    Args:
+        row_files: ``(row, changed_files)`` pairs in row order -- one pair
+            per row of the run's ``change_snapshots``. ``changed_files`` is
+            whatever ``AgentRunsChangeReviewProvider.changed_files(row)``
+            returned for that exact row. Tracking-error rows contribute
+            nothing -- the card degrades to the marker text for those (and
+            may be passed in unfiltered; they are dropped below).
+
+    Returns:
+        ``(entry, row)`` pairs in row order then file order, labels
+        root-prefixed only when more than one clean ROOT (not window)
+        contributed.
+    """
+    clean = [
+        (row, files) for row, files in row_files if not row.get("tracking_error")
+    ]
+    multi_root = len({str(row["root"]) for row, _ in clean}) > 1
+    paired: list[tuple[TurnFileEntry, Mapping[str, Any]]] = []
+    for row, files in clean:
+        root = str(row["root"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in files:  # ChangedFile
+            paired.append(
+                (
+                    TurnFileEntry(
+                        label=f"{prefix}{changed.path}",
+                        path=changed.path,
+                        root=root,
+                        status=str(changed.status),
+                        adds=int(changed.adds),
+                        dels=int(changed.dels),
+                    ),
+                    row,
+                )
+            )
+    return paired

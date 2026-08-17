@@ -897,7 +897,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
 
 # --- task-10: "Scope" chip --------------------------------------------
 #
-# The chip lives in the Console status-pill strip above the composer
+# The chip lives in the Console status-pill strip below the composer
 # (``#console-scope-chip``, a sibling of "Sources: 0" / "Library search: off")
 # and renders from the exact same ``ConsoleRetrievalScopeState`` snapshot as
 # the Inspector row above -- see ``ChatScreen._sync_console_retrieval_scope_row``

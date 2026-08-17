@@ -1783,6 +1783,79 @@ def _route_note_sentence(note: str) -> str:
     return text if text[-1] in ".!?" else f"{text}."
 
 
+# (TASK-3502 note-(a)) The reranker's two disclosure tags, paired with the
+# word the note uses for each. `enhanced_rag_service_v2.search()` stamps
+# exactly one of them onto the FIRST result's metadata when a reranking
+# attempt did not do what enabling it implies: `reranking_skipped` when the
+# call raised at all (a dead credential, a provider outage), and
+# `reranking_degraded` when it returned normally having silently failed to
+# score some or all rows. Ordered: `skipped` is checked first so a row
+# somehow carrying both (the service's two sites are mutually exclusive
+# branches, but nothing here enforces that) produces ONE deterministic
+# sentence.
+LIBRARY_RAG_RERANKING_TAG_LABELS: tuple[tuple[str, str], ...] = (
+    ("reranking_skipped", "skipped"),
+    ("reranking_degraded", "degraded"),
+)
+#: What the failure actually means for what is on screen -- the reason this
+#: is worth a line at all. A silently unreranked result list is
+#: indistinguishable from a reranked one without it.
+LIBRARY_RAG_RERANKING_CONSEQUENCE = (
+    "these results are in their original retrieval order"
+)
+#: The tag detail is `str(exc)` off a provider call or a "N/M scorings
+#: failed" counter -- unbounded, service-supplied text sharing one line with
+#: the coverage/routing sentences.
+LIBRARY_RAG_RERANKING_DETAIL_MAX_CHARS = 120
+
+
+def library_rag_reranking_notice(rows: Sequence[LibraryRagResultRow]) -> str:
+    """Return the reranking-disclosure sentence for `rows`, or `""`.
+
+    TASK-3502 note-(a): the first UI consumer of the reranker's disclosure
+    tags. They reach here on a row's `provenance` -- the engine writes them
+    into the first `SearchResult`'s `metadata`
+    (`enhanced_rag_service_v2._tag_first_result`), the Library service
+    copies that metadata block into the row's provenance
+    (`library_local_rag_search_service._semantic_row`), and
+    `LibraryRagResultRow.from_result` copies the provenance mapping
+    wholesale.
+
+    Args:
+        rows: The panel's current, already-normalized evidence rows. EVERY
+            row is checked, not just the first: the engine tags position 0
+            of ITS list, but scope post-filtering and the panel's own
+            count-intersected filter both run afterwards, so the tagged row
+            can land anywhere (or be dropped, in which case there is
+            nothing to disclose and nothing claiming otherwise).
+
+    Returns:
+        One sentence naming which disclosure fired, its detail, and what
+        that means for the order on screen -- or `""` when no row carries
+        either tag (the overwhelmingly common case: reranking off, or on
+        and working). The detail is collapsed, clamped and
+        `escape_markup`-escaped, like every other service-supplied string
+        this module renders.
+    """
+    for key, label in LIBRARY_RAG_RERANKING_TAG_LABELS:
+        for row in rows:
+            provenance = row.provenance
+            if not isinstance(provenance, Mapping) or key not in provenance:
+                continue
+            detail = escape_markup(
+                _clamp_display_text(
+                    " ".join(str(provenance[key]).split()),
+                    LIBRARY_RAG_RERANKING_DETAIL_MAX_CHARS,
+                )
+            )
+            qualifier = f" ({detail})" if detail else ""
+            return (
+                f"Reranking was {label}{qualifier} — "
+                f"{LIBRARY_RAG_RERANKING_CONSEQUENCE}."
+            )
+    return ""
+
+
 def _coverage_labels(source_types: Sequence[str]) -> str:
     """Render coverage source types as one display-vocabulary, escaped list.
 
@@ -1845,6 +1918,13 @@ def library_rag_coverage_note(
         `LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX` prepended (space-joined) when
         `library_rag_all_matches_weak(rows)` is True -- or just the
         weak-prefix alone when nothing is uncovered.
+
+        A row carrying one of the reranker's disclosure tags appends
+        `library_rag_reranking_notice`'s sentence LAST (TASK-3502
+        note-(a)): those tags previously had no UI consumer at all, so a
+        reranking-enabled profile with a dead credential returned
+        normal-looking results in silently unreranked order. It joins this
+        one note channel rather than opening a second, competing one.
 
         A hybrid profile can also report `"keyword_only"` types (TASK-14752):
         sources whose rows on screen came entirely from the engine's FTS leg
@@ -1909,6 +1989,9 @@ def library_rag_coverage_note(
             message,
             keyword_only_message,
             *(_route_note_sentence(note) for note in route_notes),
+            # Last: routing describes how retrieval RAN, this describes what
+            # a post-retrieval stage failed to do to the order below.
+            library_rag_reranking_notice(rows),
         )
         if part
     ]

@@ -19,11 +19,13 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 
 from ...Character_Chat.character_generation import GENERATABLE_FIELDS
 from textual.timer import Timer
+from textual.widget import Widget
 from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from .personas_character_tts_widget import PersonasCharacterTTSWidget
+from .personas_visual_identity_pack_widget import PersonasVisualIdentityPackWidget
 from .personas_pane_messages import (
     CharacterAvatarGenerateRequested,
     CharacterEditorCancelled,
@@ -38,6 +40,7 @@ from .personas_pane_messages import (
     CharacterImageUploadRequested,
     CharacterSaveRequested,
     EditorContentChanged,
+    VisualIdentityPackMetadata,
 )
 
 
@@ -77,7 +80,7 @@ class PersonasCharacterEditorWidget(Container):
     """ds-field-row character form with an Advanced section and avatar status."""
 
     # Structure only: colors come from the app stylesheet ($ds-* tokens do not
-    # resolve in bare-App harnesses, so DEFAULT_CSS must not reference them).
+    # resolve in bare-App harnesses, so BUNDLED_CSS must not reference them).
     BUNDLED_CSS = """
     PersonasCharacterEditorWidget {
         width: 100%;
@@ -310,6 +313,16 @@ class PersonasCharacterEditorWidget(Container):
         max-height: 10;
     }
 
+    PersonasCharacterEditorWidget #personas-char-editor-legacy-expressions,
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        width: 100%;
+        height: auto;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+        min-height: 16;
+    }
+
     PersonasCharacterEditorWidget .ds-toolbar {
         height: 1;
         min-height: 1;
@@ -326,7 +339,7 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
-       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
     PersonasCharacterEditorWidget .is-invalid {
         border: round red;
@@ -377,6 +390,7 @@ class PersonasCharacterEditorWidget(Container):
         #: Which field the visible preview belongs to, or None when idle.
         self._pending_generation_field: str | None = None
         self._generation_context_mode: str = "whole_character"
+        self._visual_identity_session_token: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -598,74 +612,76 @@ class PersonasCharacterEditorWidget(Container):
                     classes="console-action-subdued",
                 )
             yield Container(id="personas-char-editor-avatar-thumb")
-            with Horizontal(classes="personas-char-editor-expr-set-row"):
-                yield Static(
-                    "Expressions",
-                    id="personas-char-editor-expr-header",
-                    classes="destination-section",
-                )
-                yield Static(
-                    "Style: Custom",
-                    id="personas-char-editor-style-readout",
-                )
-                yield Button(
-                    "Style…",
-                    id="personas-char-editor-style-pick",
-                    classes="console-action-subdued",
-                )
-                yield Button(
-                    "✨ Generate all",
-                    id="personas-char-editor-expr-generate-all",
-                    classes="console-action-subdued",
-                    disabled=True,
-                )
-                yield Button(
-                    "Import set…",
-                    id="personas-char-editor-expr-import",
-                    classes="console-action-subdued",
-                )
-                yield Button(
-                    "Export set…",
-                    id="personas-char-editor-expr-export",
-                    classes="console-action-subdued",
-                )
-            for state in EXPRESSION_IMAGE_STATES:
-                with Vertical(
-                    id=f"char-expression-slot-{state}",
-                    classes="personas-char-editor-expression-slot",
-                ):
-                    with Horizontal(classes="personas-char-editor-expr-row"):
-                        yield Static(
-                            f"{state.capitalize()}:",
-                            classes="personas-char-editor-expr-label",
-                        )
-                        yield Static(
-                            "Save the character to add expressions.",
-                            id=f"personas-char-editor-expr-{state}-hint",
-                            classes="personas-char-editor-expr-hint",
-                        )
-                        yield Button(
-                            "Upload",
-                            id=f"personas-char-editor-expr-{state}-upload",
-                            classes="console-action-subdued personas-char-editor-expr-upload",
-                            disabled=True,
-                        )
-                        yield Button(
-                            "✨ Generate",
-                            id=f"personas-char-editor-expr-{state}-generate",
-                            classes="console-action-subdued personas-char-editor-expr-generate",
-                            disabled=True,
-                        )
-                        yield Button(
-                            "Clear",
-                            id=f"personas-char-editor-expr-{state}-clear",
-                            classes="console-action-subdued personas-char-editor-expr-clear",
-                            disabled=True,
-                        )
-                    yield Container(
-                        id=f"personas-char-editor-expr-{state}-thumb",
-                        classes="personas-char-editor-expr-thumb",
+            with Vertical(id="personas-char-editor-legacy-expressions"):
+                with Horizontal(classes="personas-char-editor-expr-set-row"):
+                    yield Static(
+                        "Expressions",
+                        id="personas-char-editor-expr-header",
+                        classes="destination-section",
                     )
+                    yield Static(
+                        "Style: Custom",
+                        id="personas-char-editor-style-readout",
+                    )
+                    yield Button(
+                        "Style…",
+                        id="personas-char-editor-style-pick",
+                        classes="console-action-subdued",
+                    )
+                    yield Button(
+                        "✨ Generate all",
+                        id="personas-char-editor-expr-generate-all",
+                        classes="console-action-subdued",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Import set…",
+                        id="personas-char-editor-expr-import",
+                        classes="console-action-subdued",
+                    )
+                    yield Button(
+                        "Export set…",
+                        id="personas-char-editor-expr-export",
+                        classes="console-action-subdued",
+                    )
+                for state in EXPRESSION_IMAGE_STATES:
+                    with Vertical(
+                        id=f"char-expression-slot-{state}",
+                        classes="personas-char-editor-expression-slot",
+                    ):
+                        with Horizontal(classes="personas-char-editor-expr-row"):
+                            yield Static(
+                                f"{state.capitalize()}:",
+                                classes="personas-char-editor-expr-label",
+                            )
+                            yield Static(
+                                "Save the character to add expressions.",
+                                id=f"personas-char-editor-expr-{state}-hint",
+                                classes="personas-char-editor-expr-hint",
+                            )
+                            yield Button(
+                                "Upload",
+                                id=f"personas-char-editor-expr-{state}-upload",
+                                classes="console-action-subdued personas-char-editor-expr-upload",
+                                disabled=True,
+                            )
+                            yield Button(
+                                "✨ Generate",
+                                id=f"personas-char-editor-expr-{state}-generate",
+                                classes="console-action-subdued personas-char-editor-expr-generate",
+                                disabled=True,
+                            )
+                            yield Button(
+                                "Clear",
+                                id=f"personas-char-editor-expr-{state}-clear",
+                                classes="console-action-subdued personas-char-editor-expr-clear",
+                                disabled=True,
+                            )
+                        yield Container(
+                            id=f"personas-char-editor-expr-{state}-thumb",
+                            classes="personas-char-editor-expr-thumb",
+                        )
+            yield Container(id="personas-char-editor-visual-identity-host")
         yield Static("", id="personas-char-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -685,9 +701,9 @@ class PersonasCharacterEditorWidget(Container):
         generation hide-step once wiped out the greetings column registration
         and left every alternate-greeting row failing to insert.
         """
-        self.query_one(
-            "#personas-char-editor-greetings-table", DataTable
-        ).add_column("Greeting", key="g")
+        self.query_one("#personas-char-editor-greetings-table", DataTable).add_column(
+            "Greeting", key="g"
+        )
         for node_id in (
             "#personas-char-editor-generate-preview",
             "#personas-char-editor-concept-row",
@@ -707,13 +723,20 @@ class PersonasCharacterEditorWidget(Container):
 
     # ===== Public API =====
 
-    def load_character(self, data: Dict[str, Any]) -> None:
+    def load_character(
+        self, data: Dict[str, Any], *, visual_identity_pending: bool = False
+    ) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
+        self._visual_identity_session_token += 1
         self._loading = True
         try:
             self._populate_form(data)
         finally:
             self._loading = False
+        if visual_identity_pending:
+            self._reset_visual_identity_browser()
+        else:
+            self._show_legacy_visual_identity()
         # Re-arm dirty tracking for the new session. The Changed events fired
         # by the programmatic sets above are delivered after this method
         # returns, so the handler compares against this snapshot (taken from
@@ -791,6 +814,89 @@ class PersonasCharacterEditorWidget(Container):
     def new_character(self) -> None:
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
         self.load_character({})
+
+    @property
+    def visual_identity_session_token(self) -> int:
+        """Return the editor-load generation used to fence lazy previews."""
+
+        return self._visual_identity_session_token
+
+    def _reset_visual_identity_browser(self) -> None:
+        """Gate all expression authoring while a new binding loads."""
+
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-char-editor-legacy-expressions").display = False
+        self._set_legacy_expression_authoring_enabled(False)
+        host = self.query_one("#personas-char-editor-visual-identity-host")
+        host.display = True
+        host.remove_children()
+        host.mount(Static("Loading visual identity…"))
+
+    def _show_legacy_visual_identity(self) -> None:
+        """Clear pack content and restore authoritative legacy controls."""
+
+        if not self.is_mounted:
+            return
+        self.query_one("#personas-char-editor-legacy-expressions").display = True
+        host = self.query_one("#personas-char-editor-visual-identity-host")
+        host.display = False
+        host.remove_children()
+        self._sync_expression_slots_enabled()
+
+    def _set_legacy_expression_authoring_enabled(self, enabled: bool) -> None:
+        """Enable or disable every legacy expression mutation control."""
+
+        for action in ("import", "export", "generate-all"):
+            self.query_one(
+                f"#personas-char-editor-expr-{action}", Button
+            ).disabled = not enabled
+        for state in EXPRESSION_IMAGE_STATES:
+            for action in ("upload", "generate", "clear"):
+                self.query_one(
+                    f"#personas-char-editor-expr-{state}-{action}", Button
+                ).disabled = not enabled
+
+    async def show_visual_identity_pack(
+        self, pack: VisualIdentityPackMetadata | None
+    ) -> PersonasVisualIdentityPackWidget | None:
+        """Mount a bound metadata browser, or preserve the legacy controls."""
+
+        legacy = self.query_one("#personas-char-editor-legacy-expressions")
+        host = self.query_one("#personas-char-editor-visual-identity-host", Container)
+        await host.remove_children()
+        legacy.display = pack is None
+        host.display = pack is not None
+        if pack is None:
+            self._sync_expression_slots_enabled()
+            return None
+        browser = PersonasVisualIdentityPackWidget(pack)
+        await host.mount(browser)
+        return browser
+
+    async def show_visual_identity_unavailable(self) -> Static:
+        """Show a non-authoring state when binding metadata cannot be read."""
+
+        self.query_one("#personas-char-editor-legacy-expressions").display = False
+        self._set_legacy_expression_authoring_enabled(False)
+        host = self.query_one("#personas-char-editor-visual-identity-host", Container)
+        host.display = True
+        await host.remove_children()
+        status = Static("Unavailable")
+        await host.mount(status)
+        return status
+
+    async def discard_visual_identity_pack(self, content: Widget | None) -> None:
+        """Remove one stale mount without disturbing a newer editor session."""
+
+        if content is None:
+            return
+        host = self.query_one("#personas-char-editor-visual-identity-host", Container)
+        if content.parent is not host:
+            return
+        await content.remove()
+        if not host.children:
+            self._reset_visual_identity_browser()
 
     def set_avatar_image(self, image_data: bytes) -> None:
         """Stage avatar image bytes for persistence on the next Save.
@@ -911,12 +1017,12 @@ class PersonasCharacterEditorWidget(Container):
             return
         self._pending_generation_field = field
         label = GENERATABLE_FIELDS.get(field, field)
-        self.query_one(
-            "#personas-char-editor-generate-preview-title", Static
-        ).update(f"Generated {label} - review before applying")
-        self.query_one(
-            "#personas-char-editor-generate-preview-text", Static
-        ).update(text)
+        self.query_one("#personas-char-editor-generate-preview-title", Static).update(
+            f"Generated {label} - review before applying"
+        )
+        self.query_one("#personas-char-editor-generate-preview-text", Static).update(
+            text
+        )
         self.query_one("#personas-char-editor-generate-preview").display = True
 
     def update_generation_preview(self, field: str, text: str) -> None:
@@ -1110,8 +1216,12 @@ class PersonasCharacterEditorWidget(Container):
         """
         enabled = self.expression_character_id() is not None
         hint_text = "" if enabled else "Save the character to add expressions."
-        self.query_one("#personas-char-editor-expr-import", Button).disabled = not enabled
-        self.query_one("#personas-char-editor-expr-export", Button).disabled = not enabled
+        self.query_one(
+            "#personas-char-editor-expr-import", Button
+        ).disabled = not enabled
+        self.query_one(
+            "#personas-char-editor-expr-export", Button
+        ).disabled = not enabled
         self.query_one(
             "#personas-char-editor-expr-generate-all", Button
         ).disabled = not enabled
@@ -1125,9 +1235,9 @@ class PersonasCharacterEditorWidget(Container):
             self.query_one(
                 f"#personas-char-editor-expr-{state}-clear", Button
             ).disabled = not enabled
-            self.query_one(
-                f"#personas-char-editor-expr-{state}-hint", Static
-            ).update(hint_text)
+            self.query_one(f"#personas-char-editor-expr-{state}-hint", Static).update(
+                hint_text
+            )
 
     def set_expression_thumbnail(self, state: str, renderable: object | None) -> None:
         """Mount a prepared expression-slot renderable, or clear it.
@@ -1398,7 +1508,9 @@ class PersonasCharacterEditorWidget(Container):
         Generate-all sweep would overwrite an existing avatar and needs to
         confirm first.
         """
-        return bool(self._character_data.get("image") or self._character_data.get("avatar"))
+        return bool(
+            self._character_data.get("image") or self._character_data.get("avatar")
+        )
 
     def _set_avatar_status_from_record(self) -> None:
         avatar = "embedded" if self.has_avatar_image() else "none"
@@ -1679,7 +1791,9 @@ class PersonasCharacterEditorWidget(Container):
         self.post_message(CharacterAvatarGenerateRequested())
 
     @staticmethod
-    def _expression_state_from_button_id(button_id: str | None, *, suffix: str) -> str | None:
+    def _expression_state_from_button_id(
+        button_id: str | None, *, suffix: str
+    ) -> str | None:
         """Recover the ``state`` a per-slot upload/clear button id encodes.
 
         Ids follow ``personas-char-editor-expr-{state}-{suffix}``; used by
@@ -1687,7 +1801,11 @@ class PersonasCharacterEditorWidget(Container):
         per-state handlers.
         """
         prefix = "personas-char-editor-expr-"
-        if not button_id or not button_id.startswith(prefix) or not button_id.endswith(suffix):
+        if (
+            not button_id
+            or not button_id.startswith(prefix)
+            or not button_id.endswith(suffix)
+        ):
             return None
         state = button_id[len(prefix) : -len(suffix)]
         return state if state in EXPRESSION_IMAGE_STATES else None
@@ -1702,7 +1820,9 @@ class PersonasCharacterEditorWidget(Container):
     @on(Button.Pressed, ".personas-char-editor-expr-generate")
     def _expression_generate_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        state = self._expression_state_from_button_id(event.button.id, suffix="-generate")
+        state = self._expression_state_from_button_id(
+            event.button.id, suffix="-generate"
+        )
         if state is not None:
             self.post_message(CharacterExpressionGenerateRequested(state))
 

@@ -174,7 +174,10 @@ def test_v36_to_v37_preserves_messages_schema_objects_and_fts(
     db_path = tmp_path / "chachanotes.db"
     before = _seed_v36_database(db_path, monkeypatch)
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    # Pin the target so only the V36 -> V37 step runs (schema has moved on).
+    with monkeypatch.context() as v37_patch:
+        v37_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 37)
+        db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
 
     assert _version(connection) == 37
@@ -213,7 +216,11 @@ def test_v36_to_v37_preserves_messages_schema_objects_and_fts(
         for name, sql in before_triggers.items()
         if name not in MESSAGE_SYNC_TRIGGERS
     }
-    assert _schema_objects(connection, "index") == before["indexes"]
+    assert {
+        name: sql
+        for name, sql in _schema_objects(connection, "index").items()
+        if not name.startswith("idx_visual_identity_")
+    } == before["indexes"]
     assert [
         row[0]
         for row in connection.execute(
@@ -239,7 +246,10 @@ def test_v37_message_sync_triggers_include_continuation_only_where_required(
 ) -> None:
     db_path = tmp_path / "chachanotes.db"
     seeded = _seed_v36_database(db_path, monkeypatch)
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    # Pin the target so only the V36 -> V37 step runs (schema has moved on).
+    with monkeypatch.context() as v37_patch:
+        v37_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 37)
+        db = CharactersRAGDB(db_path, client_id="migration-test")
     connection = db.get_connection()
 
     trigger_sql = _schema_objects(connection, "trigger")
@@ -288,7 +298,10 @@ def test_v36_to_v37_requires_exact_precondition_and_handles_preadded_column(
         connection.commit()
         db.close_connection()
 
-    db = CharactersRAGDB(db_path, client_id="migration-test")
+    # Pin the target so only the V36 -> V37 step runs (schema has moved on).
+    with monkeypatch.context() as v37_patch:
+        v37_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 37)
+        db = CharactersRAGDB(db_path, client_id="migration-test")
     assert _version(db.get_connection()) == 37
     with pytest.raises(SchemaError, match="requires schema version 36"):
         db._migrate_from_v36_to_v37(db.get_connection())

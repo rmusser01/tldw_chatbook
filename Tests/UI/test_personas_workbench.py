@@ -4320,30 +4320,27 @@ class TestConsoleActions:
 
         assert observed_enabled == [True]
 
-    async def test_character_save_pushes_console_gate_before_reload(
+    async def test_character_save_updates_console_gate_without_detached_reload(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        """Save completion should expose valid Console actions before reload awaits."""
+        """Save completion owns presentation without an unfenced reload worker."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
 
-            observed_enabled: list[bool] = []
-
-            async def observe_load(_character_id):
-                observed_enabled.append(
-                    not screen.query_one("#personas-attach-to-console", Button).disabled
-                )
-
+            load_character = AsyncMock()
             monkeypatch.setattr(
-                screen.character_handler, "load_character", observe_load
+                screen.character_handler, "load_character", load_character
             )
 
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
-        assert observed_enabled == [True]
+            assert not screen.query_one(
+                "#personas-attach-to-console", Button
+            ).disabled
+            load_character.assert_not_awaited()
 
     async def test_profile_save_pushes_console_gate_before_row_render(
         self,
@@ -8472,6 +8469,37 @@ class TestBulkLibraryActions:
             message.startswith("Exported 2 items") and severity == "information"
             for message, severity in notifications
         )
+
+    async def test_bulk_export_marked_pushes_enhanced_directory_picker(
+        self, mock_app_instance, stub_characters, stub_conversations, tmp_path
+    ):
+        """The marked-rows JSON export must use the enhanced picker family
+        (TASK-16477): same chrome as every other Roleplay dialog, and it
+        remembers its start directory per context."""
+        from tldw_chatbook.Widgets.enhanced_file_picker import (
+            EnhancedSelectDirectory,
+        )
+
+        pushed: list[object] = []
+
+        async def _fake_push_screen_wait(picker):
+            pushed.append(picker)
+            return tmp_path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._mount_with_marks(pilot, (0, 1))
+            pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
+            screen.query_one("#personas-export-json", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert len(pushed) == 1
+        picker = pushed[0]
+        assert isinstance(picker, EnhancedSelectDirectory)
+        assert picker._title == "Export 2 items as JSON"
+        assert picker.context == "character_export_dir"
 
     async def test_footer_discloses_sort_key_in_sortable_modes(
         self, mock_app_instance, stub_characters, stub_scope_service

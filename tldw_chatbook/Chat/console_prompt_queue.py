@@ -1255,6 +1255,22 @@ class ConsolePromptQueueRegistry:
             removed_prompts=removed_prompts,
         )
 
+    def reopen(self) -> None:
+        """Clear the shutdown latch so a NEXT Console visit can admit again.
+
+        task-15860 (the teardown split). ``shutdown()`` remains the
+        per-visit tombstone -- it still clears every state and bumps the
+        revision -- but its ``_shutting_down`` latch is now per-visit too,
+        because one app-owned registry serves every visit. Deliberately
+        does NOT restore anything the tombstone removed.
+        """
+
+        self._assert_owner_thread()
+        if not self._shutting_down:
+            return
+        self._shutting_down = False
+        self._registry_revision += 1
+
 
 __all__ = [
     "MAX_CONSOLE_QUEUE_ENTRIES",

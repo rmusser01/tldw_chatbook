@@ -70,6 +70,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
 from .fleet_coordinator import FleetCoordinator, FleetHandle
+from .human_input_wait import human_input_wait_active
 from .native_tools import (
     ensure_tool_call_ids,
     parse_native_tool_calls,
@@ -503,8 +504,9 @@ def _call_with_timeout(
     seconds: float,
     tool_name: str,
     should_cancel: Callable[[], bool] = lambda: False,
+    pauses_deadline: Callable[[], bool] = lambda: False,
 ) -> ToolResult:
-    """Run ``fn`` on a daemon thread, bounded by ``seconds`` wall-clock.
+    """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
     Always returns a ToolResult: ``fn``'s value on success, ``ok=False`` with
     the message on a raised exception, or an ``ok=False`` timeout/cancelled
@@ -532,6 +534,20 @@ def _call_with_timeout(
     abandoned worker left to finish/die on its own), just with a "cancelled"
     message instead of "timed out" -- the abandon-on-timeout semantics and
     the overall ``seconds`` ceiling are both preserved unchanged.
+
+    ADR-067: while ``pauses_deadline`` polls True the deadline RE-ARMS each
+    slice, so elapsed human-deliberation time does not consume the budget --
+    the ceiling counts actual tool execution, not wall-clock spent waiting
+    on a person. This is what lets a blocking human prompt (approval card,
+    skill confirm -- marked via ``Agents.human_input_wait`` keyed by the
+    run id) wait indefinitely without reopening the pre-ADR hazard that the
+    old ``approval_timeout < max_tool_call_seconds`` invariant existed to
+    bound: the wrapper firing under a still-live approval wait, reporting
+    failure, and a late approval then executing the tool for real on the
+    abandoned thread. The pause is not a removal: once the predicate goes
+    False the re-armed deadline applies again, so a tool that keeps hanging
+    after its human decision still trips the ceiling promptly, and
+    cancellation is checked every slice regardless.
     """
     box: dict = {}
 
@@ -548,6 +564,8 @@ def _call_with_timeout(
         worker.join(min(_CANCEL_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
         if worker.is_alive() and should_cancel():
             return ToolResult(ok=False, error=f"tool call cancelled: {tool_name}")
+        if worker.is_alive() and pauses_deadline():
+            deadline = time.monotonic() + seconds
     if worker.is_alive():
         return ToolResult(
             ok=False, error=f"tool call timed out after {seconds:g}s: {tool_name}"
@@ -1038,6 +1056,10 @@ class AgentService:
                     timeout,
                     call.name,
                     should_cancel,
+                    # ADR-067: pause the per-call clock while a human
+                    # decision is pending for THIS run, so an approval/
+                    # confirm wait inside the invoke outlives the ceiling.
+                    pauses_deadline=lambda: human_input_wait_active(run_id),
                 )
             return _invoke()
 
@@ -1478,6 +1500,15 @@ class AgentService:
         # disallowed tool must never even be disclosed to the model.
         active = [schema for schema in active if schema.name in config.allowed_tools]
         disclosed_names = {schema.name for schema in active}
+        # TASK-16788: this filter is the WHOLE reach of `allowed_tools` on
+        # the offered set -- it governs the CATALOG only. Every
+        # `runtime_schemas.append` below is deliberately outside it, each
+        # gated by its own condition instead, and `run_agent_loop`
+        # dispatches those names in dedicated branches before
+        # `invoke_tool`'s allow-list check can see them. That contract is
+        # documented in full on `AgentConfig.allowed_tools`; do not add an
+        # allow-list filter here without reading it (a caller narrowing
+        # `allowed_tools` is NOT narrowing the runtime layer, by design).
         runtime_schemas = []
         # PR2a Task 6: this run's fleet, or None when there is none. A
         # sub-agent NEVER gets one -- depth-1 is structural (a child's

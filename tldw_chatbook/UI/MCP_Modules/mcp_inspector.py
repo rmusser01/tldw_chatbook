@@ -326,7 +326,7 @@ def _cascade_rungs(
     colored by its resolved verdict (`tool_state_kind()`, the T1 kind->class
     helper, via the existing `.mcp-status-{ready|warning|error}` classes);
     the other two rungs are dimmed (`.mcp-status-muted`, defined in this
-    widget's own `DEFAULT_CSS` below -- no such class existed in the shared
+    widget's own `BUNDLED_CSS` below -- no such class existed in the shared
     bundle yet). `global_default` is never `None` (a permission store always
     resolves SOME global default), so a winner always exists.
 
@@ -845,7 +845,7 @@ class MCPInspector(Vertical):
         border: none;
         /* A3: Button defaults BOTH text-align and content-align to center
         (see Textual's own Button.DEFAULT_CSS -- the same lesson already
-        documented on Button.mcp-rail-row in MCPRail.DEFAULT_CSS and
+        documented on Button.mcp-rail-row in MCPRail.BUNDLED_CSS and
         Button.mcp-callout in _agentic_terminal.tcss) -- without this, the
         action stack (and the lone Cancel button during an in-flight
         lifecycle op) renders each label centered in its full-width row
@@ -1121,20 +1121,20 @@ class MCPInspector(Vertical):
         yield Static("", id="mcp-inspector-message", classes="ds-field-row", markup=False)
         yield Vertical(id="mcp-inspector-actions")
         # T6: tool-detail container, populated by show_tool() -- hidden
-        # (display: none, see DEFAULT_CSS) until a Tools-mode row is
+        # (display: none, see BUNDLED_CSS) until a Tools-mode row is
         # selected.
         yield Vertical(id="mcp-inspector-tool")
         # T7: permission-explanation container, populated by
         # `_render_permission_container()` (via `show_tool()`'s `effective`
         # keyword or the standalone `show_permission()`) -- hidden (display:
-        # none, see DEFAULT_CSS) until a permission context is supplied.
+        # none, see BUNDLED_CSS) until a permission context is supplied.
         yield Vertical(id="mcp-inspector-permission")
         # T7 (MCP Hub Phase 5): audit-entry detail container, populated by
-        # `show_audit_entry()` -- hidden (display: none, see DEFAULT_CSS)
+        # `show_audit_entry()` -- hidden (display: none, see BUNDLED_CSS)
         # until an Audit-mode row is selected.
         yield Vertical(id="mcp-inspector-audit")
         # T8 (MCP Hub Phase 5): finding-detail container, populated by
-        # `show_finding()` -- hidden (display: none, see DEFAULT_CSS) until
+        # `show_finding()` -- hidden (display: none, see BUNDLED_CSS) until
         # an Audit-mode Findings-table row is selected.
         yield Vertical(id="mcp-inspector-finding")
         # Task 5 (MCP Hub Phase 6): the Advanced (legacy control plane)

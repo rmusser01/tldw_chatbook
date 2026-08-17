@@ -722,8 +722,6 @@ async def test_s_toggles_star_on_the_open_item():
     """`s` stars, then unstars, the open item through the service; the row's
     star repaints in place and the Starred badge catches up through the
     debounced counts path."""
-    from textual.widgets import Static
-
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import STARRED_BUCKET
 
     app = _build_test_app()
@@ -752,7 +750,7 @@ async def test_s_toggles_star_on_the_open_item():
         assert _flagged_value(db, item_id) == 1, "`s` must star the open item"
 
         row_widget = pane._find_row(str(pane.items[0]["id"]))
-        assert pane._STAR_GLYPH in str(row_widget.query_one(Static).renderable), (
+        assert pane._STAR_GLYPH in str(row_widget.render()), (
             "the row's star repaints in place -- no recompose"
         )
 
@@ -1145,7 +1143,7 @@ async def test_a_hostile_item_stars_queues_and_still_renders_inert():
 
         # The row renders the attacks as literal characters, control-stripped.
         row_widget = pane._find_row(str(pane.items[0]["id"]))
-        row_text = str(row_widget.query_one(Static).renderable)
+        row_text = str(row_widget.render())
         assert "[bold red]x[/]" in row_text, "markup-shaped text stays literal"
         assert "\x1b" not in row_text, "no escape sequence survives into a row"
 
@@ -3125,10 +3123,9 @@ async def test_a_hostile_search_query_renders_inert_and_never_raises():
             if len(screen._loaded_items) == 1:
                 break
         await pilot.pause(0.5)  # let the restore recompose land
-        from textual.widgets import Static
 
         row_widget = pane._find_row(str(pane.items[0]["id"]))
-        row_text = str(row_widget.query_one(Static).renderable)
+        row_text = str(row_widget.render())
         assert "[bold red]Evil Feed[/]" in row_text
         assert "[script]" in row_text
 

@@ -18,6 +18,13 @@ DEFAULT_SEARCH_MODE = "semantic"
 DEFAULT_CITATION_STYLE = "inline"
 DEFAULT_CHUNKING_METHOD = "words"
 DEFAULT_DISTANCE_METRIC = "cosine"
+#: ``RerankingConfig().model_provider`` (RAG_Search/reranker.py) -- the
+#: provider a bare reranker config bills its per-candidate calls to.
+#: Hardcoded rather than imported for the same reason ``reranker_top_k``'s
+#: default is (reranker.py drags Chat_Functions/Internal_Prompts in behind
+#: it); kept honest by
+#: ``test_reranker_provider_default_constant_matches_rerankingconfig_default``.
+DEFAULT_RERANKER_PROVIDER = "openai"
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0
@@ -55,8 +62,13 @@ class SettingsLibraryRagDefaults:
     distance_metric: str = DEFAULT_DISTANCE_METRIC
     # Reranking -- `enable_reranking` controls the PRESENCE of the active
     # profile's `reranking_config` (see settings_rag_profile_adapter.py); a
-    # blank `reranker_model` means "use the reranker's own default".
+    # blank `reranker_model`/`reranker_provider` means "use the reranker's
+    # own default" (TASK-3502 AC#1: the provider the per-candidate calls are
+    # BILLED to used to be unreachable from Settings entirely -- enabling
+    # reranking created a bare `RerankingConfig()` and whatever provider it
+    # defaulted to was the one that got charged).
     enable_reranking: bool = False
+    reranker_provider: str = ""
     reranker_model: str = ""
     # 20 == RerankingConfig().top_k_to_rerank (RAG_Search/reranker.py) --
     # NOT SearchConfig.reranker_top_k (5), a functionally-dead field the RAG
@@ -243,6 +255,84 @@ def normalise_library_rag_distance_metric(value: Any) -> str:
     """
     text = str(value).strip()
     return text if text in DISTANCE_METRICS else DEFAULT_DISTANCE_METRIC
+
+
+def library_rag_reranker_providers() -> tuple[str, ...]:
+    """Return the chat provider names this build registers.
+
+    Enumerated from ``Chat_Functions.API_CALL_HANDLERS`` -- the exact
+    dispatch table ``chat_api_call`` looks the reranker's
+    ``model_provider`` up in (``RAG_Search/reranker.py``'s
+    ``_call_llm_impl``) -- rather than hand-listed, so a newly registered
+    chat provider cannot silently be missing here, and a name that would
+    dispatch nowhere cannot be offered. Imported lazily: this module is
+    deliberately light (see ``load_direct_library_tools``), and
+    ``Chat_Functions`` is not.
+
+    This enumerates what ``chat_api_call`` can ROUTE, which is not the same
+    as what the reranker can currently CALL: its credential lookup
+    (``_call_llm_impl``) covers far fewer providers than the table has
+    rows, so most picks fail at run time -- disclosed on the results screen
+    ("Reranking was skipped (No API key found for provider: X)") rather
+    than silently. TASK-17065 owns closing that gap, and until it does the
+    honest reading of this list is "offered", not "guaranteed callable".
+
+    Returns:
+        Every registered chat provider name, ``DEFAULT_RERANKER_PROVIDER``
+        first and the rest sorted, so the default reads as the head of the
+        list rather than an arbitrary row inside it.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+
+    rest = sorted(
+        name for name in API_CALL_HANDLERS if name != DEFAULT_RERANKER_PROVIDER
+    )
+    return (DEFAULT_RERANKER_PROVIDER, *rest)
+
+
+def library_rag_reranker_provider_options() -> list[tuple[str, str]]:
+    """Return ``(label, value)`` pairs for the reranker-provider Select.
+
+    The default provider's row is labelled explicitly -- "openai (default)"
+    -- and carries that provider's own NAME as its value, not a blank
+    sentinel (spec AC#1: "the default made visible rather than implicit").
+    Blank stays a legal *field* value meaning "leave the reranker's own
+    default alone" (``apply_defaults_to_profile``, the rule
+    ``reranker_model`` follows), but the Select never emits it: a user
+    switching a profile back from anthropic to openai must actually write
+    openai, and staging blank there would silently leave anthropic in place.
+
+    Returns:
+        One option per dispatchable provider, default row first.
+    """
+    default, *rest = library_rag_reranker_providers()
+    return [(f"{default} (default)", default)] + [(name, name) for name in rest]
+
+
+def normalise_library_rag_reranker_provider(value: Any) -> str:
+    """Return a safe reranker provider value for the Select widget.
+
+    Args:
+        value: Raw profile or draft value.
+
+    Returns:
+        The provider name when it is one this build can dispatch, else
+        ``DEFAULT_RERANKER_PROVIDER`` -- what a blank field actually
+        resolves to at run time (``RerankingConfig``'s own default), so for
+        a blank value the control shows the provider that would really be
+        billed. A name this build does not register (a hand-edited profile
+        file, a provider from a newer build) resolves there too rather than
+        raising ``InvalidSelectValueError`` out of ``compose()`` -- and in
+        THAT branch the control is showing the default while the profile
+        still carries the unrecognised name, which the picker cannot
+        currently repair (TASK-17065 owns display + repair for it).
+    """
+    text = str(value).strip()
+    if not text:
+        return DEFAULT_RERANKER_PROVIDER
+    return (
+        text if text in library_rag_reranker_providers() else DEFAULT_RERANKER_PROVIDER
+    )
 
 
 def validate_library_rag_defaults(

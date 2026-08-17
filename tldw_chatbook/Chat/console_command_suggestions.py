@@ -36,6 +36,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "generate-video": "Generate a video (optionally via a chosen backend)",
     "stream-video": "Stream a video from a URL into the transcript",
     "rewind": "Rewind the session to an earlier user prompt",
+    "research": "Run deep research in the background; the report is delivered into this conversation",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --

@@ -1,6 +1,6 @@
 # ADR-020: Automatic model catalog refresh for cloud providers
 
-Status: Accepted
+Status: Accepted (amended 2026-08-14: consent-gated startup)
 Date: 2026-07-17
 Related Tasks:
 - [backlog/tasks/task-301 - Auto-refresh-model-catalogs-for-cloud-providers.md](../tasks/task-301%20-%20Auto-refresh-model-catalogs-for-cloud-providers.md)
@@ -50,6 +50,21 @@ as an opt-in. OpenRouter's catalog is public (no key required).
 - Append-only persistence is durable configuration history, not permanent selector authority. For auto-refreshed cloud providers, a cached endpoint snapshot filters new choices while the current session value remains preserved.
 - `model_catalog_cache.json` under the user data dir stores model IDs + timestamps only (no credentials).
 - Manual Discover/Save/Clear flows from ADR-002 remain unchanged.
+
+## Amendment (2026-08-14): confirm-first startup consent
+
+The startup refresh is no longer silent-by-default. A new persisted setting,
+`[model_catalog] refresh_consent_recorded` (default `false`), gates the refresh:
+until the user answers a one-time dialog ("Check model lists online?"), no
+provider endpoints are contacted. Allowing records consent (`true`) and runs the
+refresh that session and thereafter; declining persists
+`auto_refresh_enabled = false` alongside the recorded consent so the question is
+never asked twice. Only an explicit boolean `true` counts as consent — garbage
+values fall back to not-consented (privacy-safe). `_refresh_model_catalogs`
+itself re-checks consent, so no code path can refresh unconsented. Recording
+consent via the Settings toggle was considered and rejected: the toggle is saved
+on unrelated edits in the same category (e.g. stale-hours keystrokes), so it is
+not an unambiguous confirmation.
 
 ## Links
 

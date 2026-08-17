@@ -473,6 +473,36 @@ class AgentRunsDB(BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def change_snapshots_for_run_review(self, run_id: str) -> list[dict]:
+        """Return one run's change-snapshot rows in the review row shape.
+
+        Identical joined shape to :meth:`change_snapshots_for_conversation`
+        (``run_created_at``/``run_status`` included) so the change-review
+        provider can build a single run's ``ReviewTurn`` without scanning
+        the whole conversation's history (Qodo, PR #1728) — and without
+        the two paths ever diverging on row shape. Distinct from
+        :meth:`change_snapshots_for_run`, whose bare-row shape existing
+        revert/tracking callers depend on.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            The run's rows joined with their run, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cs.*, ar.created_at AS run_created_at, ar.status AS run_status
+                FROM change_snapshots cs
+                JOIN agent_runs ar ON ar.id = cs.run_id
+                WHERE cs.run_id = ?
+                ORDER BY cs.id
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def change_snapshots_for_conversation(self, conversation_id: str) -> list[dict]:
         """Return a conversation's change-snapshot rows for turn history.
 

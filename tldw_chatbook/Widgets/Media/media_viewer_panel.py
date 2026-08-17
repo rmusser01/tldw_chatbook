@@ -572,14 +572,14 @@ class MediaViewerPanel(Container):
     media_data: reactive[Optional[Dict[str, Any]]] = reactive(None)
     edit_mode: reactive[bool] = reactive(False)
     format_for_reading: reactive[bool] = reactive(False)
-    search_matches: reactive[List[Tuple[int, int]]] = reactive([])
+    search_matches: reactive[List[Tuple[int, int]]] = reactive(list)
     current_match: reactive[int] = reactive(-1)
     current_analysis: reactive[Optional[str]] = reactive(None)
     has_existing_analysis: reactive[bool] = reactive(False)
     analysis_edit_mode: reactive[bool] = reactive(False)
 
     # Multiple analyses support
-    all_analyses: reactive[List[Dict[str, Any]]] = reactive([])
+    all_analyses: reactive[List[Dict[str, Any]]] = reactive(list)
     current_analysis_index: reactive[int] = reactive(0)
 
     def __init__(self, app_instance: "TldwCli", **kwargs):

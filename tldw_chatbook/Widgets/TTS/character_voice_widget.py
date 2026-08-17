@@ -140,9 +140,9 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
     # Confirmed live: with `recompose=True` restored, a fresh
     # `#character-table` query after settling reports `row_count == 0` even
     # though `self.characters` holds the added item.
-    characters = reactive([])
+    characters = reactive(list)
     selected_character_index = reactive(-1)
-    voice_assignments = reactive({})
+    voice_assignments = reactive(dict)
     provider = reactive("openai")
 
     def __init__(self, provider: str = "openai", **kwargs):
@@ -238,12 +238,12 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
                             yield Label("Style:", classes="form-label")
                             yield Select(
                                 options=[
-                                    ("neutral", "Neutral"),
-                                    ("happy", "Happy"),
-                                    ("sad", "Sad"),
-                                    ("angry", "Angry"),
-                                    ("excited", "Excited"),
-                                    ("calm", "Calm"),
+                                    ("Neutral", "neutral"),
+                                    ("Happy", "happy"),
+                                    ("Sad", "sad"),
+                                    ("Angry", "angry"),
+                                    ("Excited", "excited"),
+                                    ("Calm", "calm"),
                                 ],
                                 id="voice-style-select",
                             )
@@ -318,44 +318,44 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
 
         if self.provider == "openai":
             self.voice_options = [
-                ("alloy", "Alloy"),
-                ("ash", "Ash"),
-                ("ballad", "Ballad"),
-                ("coral", "Coral"),
-                ("echo", "Echo"),
-                ("fable", "Fable"),
-                ("onyx", "Onyx"),
-                ("nova", "Nova"),
-                ("sage", "Sage"),
-                ("shimmer", "Shimmer"),
-                ("verse", "Verse"),
+                ("Alloy", "alloy"),
+                ("Ash", "ash"),
+                ("Ballad", "ballad"),
+                ("Coral", "coral"),
+                ("Echo", "echo"),
+                ("Fable", "fable"),
+                ("Onyx", "onyx"),
+                ("Nova", "nova"),
+                ("Sage", "sage"),
+                ("Shimmer", "shimmer"),
+                ("Verse", "verse"),
             ]
         elif self.provider == "elevenlabs":
             self.voice_options = [
-                ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-                ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-                ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-                ("ErXwobaYiN019PkySvjV", "Antoni"),
-                ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
-                ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
-                ("VR6AewLTigWG4xSOukaG", "Arnold"),
-                ("pNInz6obpgDQGcFmaJgB", "Adam"),
-                ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+                ("Rachel", "21m00Tcm4TlvDq8ikWAM"),
+                ("Domi", "AZnzlk1XvdvUeBnXmlld"),
+                ("Bella", "EXAVITQu4vr4xnSDxMaL"),
+                ("Antoni", "ErXwobaYiN019PkySvjV"),
+                ("Elli", "MF3mGyEYCl7XYWbV9V6O"),
+                ("Josh", "TxGEqnHWrfWFTfGW9XjX"),
+                ("Arnold", "VR6AewLTigWG4xSOukaG"),
+                ("Adam", "pNInz6obpgDQGcFmaJgB"),
+                ("Sam", "yoZ06aMxZJJ28mfd3POQ"),
             ]
         elif self.provider == "kokoro":
             self.voice_options = [
-                ("af_bella", "Bella (US Female)"),
-                ("af_nicole", "Nicole (US Female)"),
-                ("am_adam", "Adam (US Male)"),
-                ("am_michael", "Michael (US Male)"),
-                ("bf_emma", "Emma (UK Female)"),
-                ("bm_george", "George (UK Male)"),
+                ("Bella (US Female)", "af_bella"),
+                ("Nicole (US Female)", "af_nicole"),
+                ("Adam (US Male)", "am_adam"),
+                ("Michael (US Male)", "am_michael"),
+                ("Emma (UK Female)", "bf_emma"),
+                ("George (UK Male)", "bm_george"),
             ]
         else:
-            self.voice_options = [("default", "Default Voice")]
+            self.voice_options = [("Default Voice", "default")]
 
         # Add narrator option
-        self.voice_options.insert(0, ("narrator", "Use Narrator Voice"))
+        self.voice_options.insert(0, ("Use Narrator Voice", "narrator"))
 
         voice_select.set_options(self.voice_options)
         bulk_select.set_options(self.voice_options)
@@ -384,7 +384,7 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
         if voice_id == "narrator":
             return "📖 Narrator"
 
-        for vid, label in self.voice_options:
+        for label, vid in self.voice_options:
             if vid == voice_id:
                 return label
 
@@ -673,7 +673,7 @@ class CharacterVoiceWidget(RecomposeCaptureGuard, Widget):
             voice_count = len(self.voice_options) - 1  # Exclude narrator
             for i, character in enumerate(characters):
                 if i < voice_count:
-                    voice_id, _ = self.voice_options[i + 1]  # Skip narrator
+                    _, voice_id = self.voice_options[i + 1]  # Skip narrator
                     character.voice = voice_id
                     self.voice_assignments[character.name] = voice_id
 

@@ -246,10 +246,17 @@ async def test_native_console_owns_rails_sessions_and_snapshot_without_root_mirr
             snapshot = chat.save_state()
             assert "native_console_state" in snapshot
             assert "chat_state" not in snapshot
-            assert snapshot["native_console_state"]["active_session_id"] == (
-                initial_session_id
-            )
-            assert len(snapshot["native_console_state"]["sessions"]) == 2
+            # task-15860 Task 3: the snapshot carries VIEW state only. Session
+            # and message state are owned by the app-owned `ConsoleRuntime`
+            # store, which outlives the screen -- carrying copies here made
+            # the snapshot a second source of truth that won at the next
+            # mount, and a turn that ran while Console was unmounted was
+            # silently overwritten by it.
+            native_state = snapshot["native_console_state"]
+            assert "sessions" not in native_state
+            assert "messages_by_session" not in native_state
+            assert "active_session_id" not in native_state
+            assert "image_view_modes" in native_state
             assert not set(REMOVED_CHAT_ROOT_NAMES).intersection(
                 _snapshot_keys(snapshot)
             )

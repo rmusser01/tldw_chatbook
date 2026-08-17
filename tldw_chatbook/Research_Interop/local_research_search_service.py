@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import inspect
-import json
-import math
-import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
 from typing import Any, Callable
 
 from ..runtime_policy.types import PolicyDeniedError
+from .research_source_catalog import catalog_entries
 
 
 LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
@@ -26,7 +22,9 @@ LOCAL_SUPPORTED_WEBSEARCH_ENGINES = {
     "tavily",
     "yandex",
 }
-LOCAL_SUPPORTED_PAPER_PROVIDERS = ("arxiv", "semantic_scholar")
+# task-16792: the paper-provider listing IS the catalog (one source of
+# truth -- a hardcoded tuple here drifted from the runnable lanes).
+LOCAL_SUPPORTED_PAPER_PROVIDERS = tuple(e.source_id for e in catalog_entries())
 
 
 class LocalResearchSearchService:
@@ -79,99 +77,17 @@ class LocalResearchSearchService:
         page: int = 1,
         results_per_page: int = 10,
     ) -> dict[str, Any]:
-        search_parts: list[str] = []
-        if query:
-            search_parts.append(f"all:{query}")
-        if author:
-            search_parts.append(f"au:{author}")
-        if year:
-            search_parts.append(f"submittedDate:{year}01010000 TO {year}12312359")
-        search_query = " AND ".join(search_parts) if search_parts else "all:*"
-        start = max(page - 1, 0) * results_per_page
-        params = urllib.parse.urlencode(
-            {
-                "search_query": search_query,
-                "start": start,
-                "max_results": results_per_page,
-            }
-        )
-        url = f"https://export.arxiv.org/api/query?{params}"
-        with urllib.request.urlopen(url, timeout=30) as response:
-            payload = response.read()
+        # task-16326: httpx + retry/backoff + DOI normalization live in
+        # academic_providers; this seam stays so tests can inject runners.
+        from .academic_providers import search_arxiv
 
-        namespaces = {
-            "atom": "http://www.w3.org/2005/Atom",
-            "opensearch": "http://a9.com/-/spec/opensearch/1.1/",
-        }
-        root = ET.fromstring(payload)
-        total_results = int(
-            root.findtext("opensearch:totalResults", default="0", namespaces=namespaces)
-            or 0
+        return search_arxiv(
+            query=query,
+            author=author,
+            year=year,
+            page=page,
+            results_per_page=results_per_page,
         )
-        items: list[dict[str, Any]] = []
-        for entry in root.findall("atom:entry", namespaces):
-            pdf_url = None
-            for link in entry.findall("atom:link", namespaces):
-                if (
-                    link.attrib.get("title") == "pdf"
-                    or link.attrib.get("type") == "application/pdf"
-                ):
-                    pdf_url = link.attrib.get("href")
-                    break
-            authors = [
-                str(name).strip()
-                for name in (
-                    author_node.findtext("atom:name", default="", namespaces=namespaces)
-                    for author_node in entry.findall("atom:author", namespaces)
-                )
-                if str(name).strip()
-            ]
-            entry_id = (
-                entry.findtext("atom:id", default="", namespaces=namespaces) or ""
-            ).strip()
-            title = " ".join(
-                (
-                    entry.findtext("atom:title", default="", namespaces=namespaces)
-                    or ""
-                ).split()
-            )
-            published = (
-                entry.findtext("atom:published", default="", namespaces=namespaces)
-                or ""
-            ).strip()
-            abstract = " ".join(
-                (
-                    entry.findtext("atom:summary", default="", namespaces=namespaces)
-                    or ""
-                ).split()
-            )
-            items.append(
-                {
-                    "id": entry_id or None,
-                    "title": title or None,
-                    "authors": ", ".join(authors) or None,
-                    "published_date": published or None,
-                    "abstract": abstract or None,
-                    "pdf_url": pdf_url,
-                }
-            )
-
-        return {
-            "query_echo": {
-                "query": query,
-                "author": author,
-                "year": year,
-                "page": page,
-                "results_per_page": results_per_page,
-            },
-            "items": items,
-            "total_results": total_results,
-            "page": page,
-            "results_per_page": results_per_page,
-            "total_pages": math.ceil(total_results / results_per_page)
-            if results_per_page
-            else 0,
-        }
 
     @staticmethod
     def _coerce_csv(value: list[str] | str | None) -> str | None:
@@ -194,53 +110,25 @@ class LocalResearchSearchService:
         page: int = 1,
         results_per_page: int = 10,
     ) -> dict[str, Any]:
-        offset = max(page - 1, 0) * results_per_page
-        params: dict[str, Any] = {
-            "query": query,
-            "offset": offset,
-            "limit": results_per_page,
-            "fields": (
-                "paperId,title,abstract,year,citationCount,authors,venue,openAccessPdf,url,"
-                "publicationTypes,publicationDate,externalIds"
-            ),
-        }
-        optional_params = {
-            "fieldsOfStudy": cls._coerce_csv(fields_of_study),
-            "publicationTypes": cls._coerce_csv(publication_types),
-            "year": year_range,
-            "venue": cls._coerce_csv(venue),
-            "minCitationCount": min_citations,
-        }
-        params.update(
-            {key: value for key, value in optional_params.items() if value is not None}
+        # task-16326: httpx + retry/backoff + config-resolved API key live
+        # in academic_providers; this seam stays for runner injection.
+        from .academic_providers import (
+            resolve_semantic_scholar_api_key,
+            search_semantic_scholar,
         )
-        url = f"https://api.semanticscholar.org/graph/v1/paper/search?{urllib.parse.urlencode(params)}"
-        with urllib.request.urlopen(url, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
 
-        items = list(payload.get("data") or [])
-        total_results = int(payload.get("total") or len(items))
-        return {
-            "query_echo": {
-                "query": query,
-                "fields_of_study": fields_of_study,
-                "publication_types": publication_types,
-                "year_range": year_range,
-                "venue": venue,
-                "min_citations": min_citations,
-                "page": page,
-                "results_per_page": results_per_page,
-            },
-            "items": items,
-            "total_results": total_results,
-            "offset": offset,
-            "limit": results_per_page,
-            "next_offset": payload.get("next"),
-            "page": page,
-            "total_pages": math.ceil(total_results / results_per_page)
-            if results_per_page
-            else 0,
-        }
+        return search_semantic_scholar(
+            query=query,
+            fields_of_study=fields_of_study,
+            publication_types=publication_types,
+            year_range=year_range,
+            venue=venue,
+            min_citations=min_citations,
+            page=page,
+            results_per_page=results_per_page,
+            api_key=resolve_semantic_scholar_api_key(),
+        )
+
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:

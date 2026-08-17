@@ -58,6 +58,15 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # The /research Console command (task-16481) -- the drift guard's
+        # third sighting (TASK-13214): it was MASKED behind the video-command
+        # gap until the guard learned to report all sources at once.
+        "research",
+        # The expand_document gated builtin (TASK-16174). Gated-OFF tools are
+        # invisible to the live catalog, so the guard now reads the gate
+        # TABLE (TASK-13214/F6) -- and every gateable tool is listed here
+        # regardless of gate state.
+        "expand_document",
         # The agent run-log search runtime tool must not be shadowed by an
         # installed skill with the same invocation name.
         "search_run_log",
