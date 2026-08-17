@@ -1362,3 +1362,30 @@ async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
     for prompt in prompts:
         assert "repository record" not in prompt
         assert "metadata record" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
+    captured = []
+
+    def fake_chat(**kwargs):
+        captured.append(kwargs["messages_payload"][0]["content"])
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    plain_result = _std_result("T", "https://e.example/", "c")
+    paper = _std_result("P", "https://arxiv.org/abs/1", "c")
+    paper["metadata"] = {"source": "academic", "provider": "arxiv"}
+
+    await WebSearch_APIs.search_result_relevance(
+        [plain_result, paper], "q", [], "openai"
+    )
+
+    # The eval INPUT (everything before the "\n\nSearch Results" payload)
+    # must be byte-identical for unclassified and paper-classified results
+    # -- only the embedded result content differs.
+    prefix = "Evaluate the relevance of the search result."
+    assert len(captured) == 2
+    for prompt in captured:
+        input_line = prompt.split("\n\n", 1)[0]
+        assert input_line == prefix  # no note, no extra text

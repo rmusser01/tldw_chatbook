@@ -220,8 +220,17 @@ def source_kind_for_provider(provider: str | None) -> str:
     return _SOURCE_KIND_BY_CATEGORY.get(entry.category, "paper")
 
 
+_ENTRIES_BY_ID: dict[str, ResearchSourceCatalogEntry] | None = None
+
+
 def _entries_by_id() -> dict[str, ResearchSourceCatalogEntry]:
-    return {entry.source_id: entry for entry in catalog_entries()}
+    """Memoized source_id -> entry index (the classifier runs once per
+    search result; rebuilding the catalog mapping per call was avoidable
+    work in the relevance loop)."""
+    global _ENTRIES_BY_ID
+    if _ENTRIES_BY_ID is None:
+        _ENTRIES_BY_ID = {entry.source_id: entry for entry in catalog_entries()}
+    return _ENTRIES_BY_ID
 
 
 def expand_source_selection(tokens: list[str]) -> list[str]:

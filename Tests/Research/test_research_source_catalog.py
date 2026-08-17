@@ -100,3 +100,11 @@ def test_source_kind_unknown_and_missing_default_to_paper():
     assert source_kind_for_provider("not_a_provider") == "paper"
     assert source_kind_for_provider("") == "paper"
     assert source_kind_for_provider(None) == "paper"
+
+
+def test_source_kind_classifier_is_cached():
+    from tldw_chatbook.Research_Interop import research_source_catalog as rsc
+
+    first = rsc._entries_by_id()
+    second = rsc._entries_by_id()
+    assert first is second  # memoized, not rebuilt per call

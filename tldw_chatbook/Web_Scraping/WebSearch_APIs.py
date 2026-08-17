@@ -1108,34 +1108,38 @@ async def search_result_relevance(
         # records (datasets/software/figures) and scholarly metadata records
         # fail the "answers the question" bar even when topically on-point
         # (measured: repositories gate_pass 0.29 vs 0.72 for papers).
-        from tldw_chatbook.Research_Interop.research_source_catalog import (
-            source_kind_for_provider,
-        )
-
-        _provider = None
-        _metadata = result.get("metadata")
-        if isinstance(_metadata, dict):
-            _provider = _metadata.get("provider")
-        _source_kind = source_kind_for_provider(_provider)
-        _source_notes = {
-            "repository": (
-                "Note: this result is a repository record (dataset, software, "
-                "or figure) rather than a paper. It is relevant if it is "
-                "topically related to the question and could serve as "
-                "supporting evidence (data, methods, or artifacts); it does "
-                "NOT need to directly answer the question."
-            ),
-            "metadata": (
-                "Note: this result is a scholarly metadata record rather "
-                "than full text. It is relevant if it describes a work "
-                "topically related to the question; it does NOT need to "
-                "directly answer the question."
-            ),
-        }
         input_data = "Evaluate the relevance of the search result."
-        _source_note = _source_notes.get(_source_kind)
-        if _source_note:
-            input_data = f"{input_data} {_source_note}"
+        try:
+            from tldw_chatbook.Research_Interop.research_source_catalog import (
+                source_kind_for_provider,
+            )
+
+            _provider = None
+            _metadata = result.get("metadata")
+            if isinstance(_metadata, dict):
+                _provider = _metadata.get("provider")
+            _source_kind = source_kind_for_provider(_provider)
+            _source_notes = {
+                "repository": (
+                    "Note: this result is a repository record (dataset, "
+                    "software, or figure) rather than a paper. It is relevant "
+                    "if it is topically related to the question and could "
+                    "serve as supporting evidence (data, methods, or "
+                    "artifacts); it does NOT need to directly answer the "
+                    "question."
+                ),
+                "metadata": (
+                    "Note: this result is a scholarly metadata record rather "
+                    "than full text. It is relevant if it describes a work "
+                    "topically related to the question; it does NOT need to "
+                    "directly answer the question."
+                ),
+            }
+            _source_note = _source_notes.get(_source_kind)
+            if _source_note:
+                input_data = f"{input_data} {_source_note}"
+        except Exception:  # noqa: BLE001 - note computation fails OPEN to the strict paper prompt
+            logger.debug("source-kind note skipped", exc_info=True)
 
         try:
             # Add delay to avoid rate limiting
