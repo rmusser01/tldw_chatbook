@@ -30,6 +30,7 @@ from .agent_models import (
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RunBudget,
     SEARCH_RUN_LOG_TOOL_NAME,
+    SEND_TO_AGENT_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
@@ -147,6 +148,49 @@ CHECK_AGENTS_SCHEMA = ToolSchema(
         "never waits -- use wait_agents to actually collect results."
     ),
     parameters={"type": "object", "properties": {}, "required": []},
+)
+
+# Fleet steering (PR3b Task 2, spec SS6). Pinned and wired under the SAME
+# `fleet_active` predicate as the two schemas above: without a live fleet
+# there is no mailbox to post into, and a sub-agent never sees it (depth-1:
+# children cannot steer each other). The description is the supervisor's
+# whole curriculum -- both id vocabularies, the honest delivery latency,
+# and spec SS3 invariant 4 (steering never cancels) -- because nothing else
+# teaches the model any of it.
+SEND_TO_AGENT_SCHEMA = ToolSchema(
+    id="runtime:send_to_agent",
+    name=SEND_TO_AGENT_TOOL_NAME,
+    description=(
+        "Send a steering message to a sub-agent that is still running. "
+        "'id' accepts either vocabulary: the handle id spawn_subagent "
+        "returned (also shown by check_agents), or the run id a "
+        "completion notice named. The message is queued and handed to the "
+        "sub-agent as a labeled user-role message at its next model turn "
+        "-- a sub-agent inside a long tool call sees it late, only after "
+        "that call returns. Steering never cancels or restarts the "
+        "sub-agent: it keeps its task and its progress, and simply reads "
+        "your message as extra direction."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": (
+                    "Which sub-agent: a handle id (from spawn_subagent or "
+                    "check_agents) or a run id (from a completion notice)."
+                ),
+            },
+            "message": {
+                "type": "string",
+                "description": (
+                    "The steering text to deliver. Plain text; must be "
+                    "non-empty."
+                ),
+            },
+        },
+        "required": ["id", "message"],
+    },
 )
 
 
