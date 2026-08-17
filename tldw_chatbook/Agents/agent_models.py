@@ -94,6 +94,12 @@ RUN_LOG_SLICE_TOOL_NAME = "run_log_slice"
 # supposed to be bounded by the parent's own wall-clock instead.
 WAIT_AGENTS_TOOL_NAME = "wait_agents"
 CHECK_AGENTS_TOOL_NAME = "check_agents"
+# Fleet steering (PR3b Task 2, spec SS6): the supervisor's producer for the
+# per-child mailbox Task 1 added. Primary-only and fleet-gated like the two
+# tools above, dispatched IN-LOOP like them (posting to a locked in-memory
+# mailbox is instant, but the id-resolution copy lives in the service
+# closure, not behind invoke_tool's daemon-thread timeout wrapper).
+SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -107,6 +113,7 @@ RUNTIME_TOOL_NAMES = frozenset(
         RUN_LOG_SLICE_TOOL_NAME,
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
+        SEND_TO_AGENT_TOOL_NAME,
     }
 )
 
@@ -453,7 +460,8 @@ class AgentConfig:
 
             *What it does NOT govern.* The runtime tools --
             ``RUNTIME_TOOL_NAMES`` above: ``spawn_subagent``,
-            ``wait_agents``/``check_agents``, ``find_tools``/
+            ``wait_agents``/``check_agents``/``send_to_agent``,
+            ``find_tools``/
             ``load_tools``, ``skill_file``, ``install_skill``,
             ``run_skill_script``, and ``search_run_log``/
             ``run_log_stats``/``run_log_slice``. These are not catalog
