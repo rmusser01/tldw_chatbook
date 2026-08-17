@@ -776,6 +776,50 @@ async def test_a_ticking_elapsed_alone_repaints_the_transcript():
 
 
 @pytest.mark.asyncio
+async def test_a_real_console_screen_carries_the_line_to_its_mounted_row():
+    """The stubs above meet reality: a REAL screen, a REAL mounted transcript.
+
+    Closes the gap the `MagicMock` pins leave open -- that `self._agent`
+    exists on a live `ChatScreen`, that `console_turn_activity()` resolves
+    through the controller's real property chain (returning "" on an idle
+    screen), and that the real `_sync_native_console_transcript` carries a
+    line all the way onto the real row widget.
+    """
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        # An idle screen derives nothing -- and the read itself must work.
+        assert console._agent.console_turn_activity() == ""
+
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id or store.ensure_session().id
+        store.append_message(
+            session_id, role=ConsoleMessageRole.USER, content="run a tool"
+        )
+        pending = store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        console._agent.console_turn_activity = lambda: "⚙ read_file · 4s"
+
+        console._last_native_transcript_refresh_key = None
+        await console._sync_native_console_transcript()
+        await pilot.pause()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        text = _rendered_row_text(transcript, pending.id)
+        assert "⚙ read_file · 4s" in text, text
+        assert CONSOLE_GENERATING_PLACEHOLDER not in text, text
+
+
+@pytest.mark.asyncio
 async def test_an_ineffective_activity_never_repaints_an_idle_transcript():
     """task-15664 AC#2: no repaint on a timer when nothing is live.
 
