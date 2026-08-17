@@ -262,6 +262,32 @@ class AgentRunsDB(BaseDB):
                 -- soft-deleted row releases its name for re-creation.
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_definitions_name
                     ON agent_definitions(name) WHERE deleted = 0;
+
+                -- v8 (TASK-16800 annotate loop, spec §1): user-authored
+                -- feedback notes anchored to a specific hunk of a turn's
+                -- diff. DURABILITY NOTE (carries the v5 note forward):
+                -- this DB holds durable USER-AUTHORED CONTENT -- notes
+                -- extend that -- any "clear run history" tooling must not
+                -- treat this table as disposable. No denormalized
+                -- conversation_id: agent_runs already carries
+                -- conversation_id NOT NULL, so pending_notes_for_conversation
+                -- joins through change_notes.run_id = agent_runs.id --
+                -- one source of truth, and the card never needs to learn
+                -- the conversation id at insert time.
+                CREATE TABLE IF NOT EXISTS change_notes (
+                    id INTEGER PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    root TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    hunk_index INTEGER NOT NULL,
+                    hunk_header TEXT NOT NULL,
+                    hunk_excerpt TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    delivered_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_notes_pending
+                    ON change_notes(run_id) WHERE delivered_at IS NULL;
                 """
             )
             # v1->v2: this DB has no migration framework -- _initialize_schema
@@ -342,6 +368,9 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (8)"
             )
 
     def record_change_snapshot(
@@ -525,6 +554,146 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def add_change_note(
+        self,
+        *,
+        run_id: str,
+        root: str,
+        path: str,
+        hunk_index: int,
+        hunk_header: str,
+        hunk_excerpt: str,
+        note: str,
+    ) -> int:
+        """Record a user-authored note anchored to one hunk of a turn's diff.
+
+        TASK-16800 (spec §1). The anchor is ``(run_id, root, path,
+        hunk_index, hunk_header)``; ``hunk_excerpt`` is captured once, at
+        note-creation time, from the full diff text the card already has
+        -- it is the retention safety net that keeps display and delivery
+        self-contained even after shadow-repo snapshot pruning.
+
+        Args:
+            run_id: The agent run whose diff this note is anchored to.
+            root: Canonical root path of the changed file.
+            path: The changed file's path (root-relative).
+            hunk_index: 0-based index of the hunk over the FULL diff.
+            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim.
+            hunk_excerpt: The hunk body captured at note time (already
+                capped/elided by the caller).
+            note: The user's note text.
+
+        Returns:
+            The newly created note's row id.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO change_notes
+                    (run_id, root, path, hunk_index, hunk_header,
+                     hunk_excerpt, note, created_at, delivered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    run_id,
+                    root,
+                    path,
+                    hunk_index,
+                    hunk_header,
+                    hunk_excerpt,
+                    note,
+                    _now_iso(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def delete_change_note(self, note_id: int) -> bool:
+        """Delete a pending (undelivered) note.
+
+        Delivered notes are record -- once ``delivered_at`` is set a note
+        can no longer be deleted, matching the card's "delivered notes
+        lose the delete affordance" rule.
+
+        Args:
+            note_id: The note's row id.
+
+        Returns:
+            True if a pending note was deleted; False if the note does
+            not exist or has already been delivered.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM change_notes WHERE id = ? AND delivered_at IS NULL",
+                (note_id,),
+            )
+            return cursor.rowcount > 0
+
+    def notes_for_run(self, run_id: str) -> list[dict]:
+        """Return a run's change notes, oldest first.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            One dict per note row (all columns), oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM change_notes WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_notes_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's undelivered notes, oldest first.
+
+        Joins through ``change_notes.run_id = agent_runs.id`` rather than
+        a denormalized conversation id column (spec §1) -- ``agent_runs``
+        is the one source of truth for which conversation a run belongs
+        to, and notes span however many runs a conversation has had.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Pending (``delivered_at IS NULL``) note rows across every run
+            of the conversation, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cn.* FROM change_notes cn
+                JOIN agent_runs ar ON ar.id = cn.run_id
+                WHERE ar.conversation_id = ? AND cn.delivered_at IS NULL
+                ORDER BY cn.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_notes_delivered(self, note_ids: Sequence[int]) -> None:
+        """Stamp exactly the given notes as delivered.
+
+        Spec §4: the delivery seam captures the precise id list it
+        attached to the outbound message and stamps only that list at run
+        completion -- never "all pending for the conversation". A note
+        created after the list was captured (the mid-run race) is not in
+        ``note_ids`` and so stays pending, riding the next send.
+
+        Args:
+            note_ids: The note ids to stamp delivered.
+        """
+        ids = [int(note_id) for note_id in note_ids]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE change_notes SET delivered_at = ? "
+                f"WHERE id IN ({placeholders}) AND delivered_at IS NULL",
+                (_now_iso(), *ids),
+            )
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:
