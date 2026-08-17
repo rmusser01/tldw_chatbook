@@ -188,16 +188,26 @@ def summarize_with_llama(
             api_settings_llama = (
                 (loaded_config_data.get("api_settings") or {}).get("llama_cpp") or {}
             )
-        api_url = (
+        configured_url = (
             api_settings_llama.get("api_url")
             or api_settings_llama.get("api_ip")
             or llama_config.get("api_ip")
         )
-        if not api_url:
+        if not configured_url:
             raise ValueError(
                 "Llama.cpp Summarize: no API URL configured "
                 "(api_settings.llama_cpp.api_url or llama_cpp_api.api_ip)"
             )
+        # These keys legitimately hold any of a server root, a base ending in
+        # /v1, a full chat-completions endpoint, or a bare host:port. This
+        # function POSTs directly rather than going through the shared caller,
+        # so it must land on the endpoint exactly once itself: normalize to the
+        # origin with the same helper the chat handler uses, then append the
+        # path. Posting a base URL raw returned llama-server's 404 "File Not
+        # Found" (observed live during the task-17370 measurement).
+        from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
+
+        api_url = f"{normalize_llamacpp_base_url(configured_url)}/v1/chat/completions"
         logging.debug("Llama: API endpoint configured")
 
         # Load transcript

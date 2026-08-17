@@ -107,3 +107,33 @@ def test_summarize_with_llama_falls_back_to_the_legacy_ip(monkeypatch, captured_
     lib.summarize_with_llama(input_data="text", custom_prompt="Summarize.", api_key=None)
 
     assert captured_post["url"] == "http://127.0.0.1:8080/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    "configured,expected",
+    [
+        # A run priming a local endpoint stores a BASE url; posting it raw
+        # returned 404 "File Not Found" from llama-server (observed live).
+        ("http://127.0.0.1:9191/v1", "http://127.0.0.1:9191/v1/chat/completions"),
+        # A full endpoint must not gain a second copy of the path.
+        (
+            "http://127.0.0.1:9191/v1/chat/completions",
+            "http://127.0.0.1:9191/v1/chat/completions",
+        ),
+        # Bare host:port is a documented shape for these keys.
+        ("127.0.0.1:9191", "http://127.0.0.1:9191/v1/chat/completions"),
+        # Trailing slash must not double up.
+        ("http://127.0.0.1:9191/", "http://127.0.0.1:9191/v1/chat/completions"),
+    ],
+)
+def test_summarize_with_llama_normalizes_the_endpoint(
+    monkeypatch, captured_post, configured, expected
+):
+    """task-17382: the summarizer POSTs directly, so whatever shape the config
+    holds has to become the chat-completions endpoint exactly once -- the same
+    normalization the chat handler applies via normalize_llamacpp_base_url."""
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings(modern_url=configured))
+
+    lib.summarize_with_llama(input_data="text", custom_prompt="Summarize.", api_key=None)
+
+    assert captured_post["url"] == expected
