@@ -65,3 +65,27 @@ timing inspector, search, and live tail-follow. Verified substrate facts:
   local-only, and it restores reviewability of past tool activity.
 - Conversations predating v38 render with blank timing and timestamp-derived
   grouping; no backfill.
+
+## Addendum (2026-08-17, task-17169): adding a new `event_kind`
+
+`event_kind` is an unconstrained `TEXT NOT NULL`, so a new kind needs no
+migration. It does need two decisions made explicitly, both of which the
+first added kind (`user_feedback`, ADR-068 amendment 4) got wrong on the
+first pass and only caught in tests:
+
+1. **Is the kind the keyed message's OWN row, or an event ABOUT it?** The
+   projection buckets rows as `message_rows[message_id] = row` and treats
+   that entry as the message's sidecar row. A kind that is *about* a message
+   — keyed to it but not describing it — silently **displaces** that
+   message's real row and takes its timing, model/provider and turn
+   attribution with it. Such kinds belong in `_NESTED_KINDS` (with the tool
+   kinds), which renders them at depth 1 under the anchor in ledger-seq
+   order and lets several accumulate on one message. There is no error for
+   getting this wrong; the anchor just quietly loses its facts.
+2. **Does the inspector's payload branch fit?** `_inspector_text_for_record`
+   assumes a tool-shaped payload (`name` / `args` / `result`). Any other
+   payload shape falls through it and renders `tool —` plus nothing of its
+   own content, so a new kind with a different payload needs its own branch.
+   A timeline entry in `KIND_STYLES` is also worth adding — unknown kinds
+   fall back to plain white and become indistinguishable from unhandled
+   ones.

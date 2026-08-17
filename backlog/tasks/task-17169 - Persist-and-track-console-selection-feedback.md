@@ -56,7 +56,34 @@ Slice 2 -- annotations (Comment only):
 
 ## Implementation Notes
 
-Slice 1 (sidecar) complete; slice 2 (annotations) in progress.
+Both slices complete.
+
+**Slice 2 (annotations, Comment only).** Migration v39->v40 adds the
+local-only `transcript_annotations` table -- (conversation_id, row_key)
+anchor per the spike (the spec sketch's "session_id" is per-process and
+would orphan every annotation on reload; the durable identity is the
+persisted conversation). Spike result: plain/markdown rows of persisted
+messages key as `message:<persisted_message_id>`; TOOL markers and diff
+rows have no durable key today (marker invariant + session-only tool_diff)
+and are excluded exactly as the spec anticipated -- consistently, the
+sidecar write already skips them. Upsert is BY annotation id (repeated
+review accumulates); soft-delete per conventions.
+`ConsoleChatStore.record_feedback_annotation` mirrors the sidecar seam's
+skip/never-raise contract; the screen hook writes it (Comment with a
+non-empty note only) inside the same guard as the sidecar event.
+
+**Inline markers.** The citation-sources pattern reused verbatim: a
+screen-owned previews map keyed by NATIVE message id, pushed at the sync
+tick, derived into a "Review note(s)" sub-row with the notes riding the
+signature. Live Comment writes update the map immediately; a conversation
+switch reloads it off-thread (exit_on_error=False) and re-keys persisted
+message ids to current native ids, discarding stale in-flight results.
+
+**Ripple fixes carried by this task** (all pre-existing red): the v39
+landing's forgotten test pins (now tracking _CURRENT_SCHEMA_VERSION) and
+sql_validation allowlist; the citation-sources SimpleNamespace fake missing
+set_change_review_provider_factory -- the crashed session's un-named fourth
+UI failure.
 
 - `record_feedback_event` writes one `user_feedback` TrajectoryRowWrite per
   dispatched feedback; `seq=None` auto-assign keeps repeated feedback on one
