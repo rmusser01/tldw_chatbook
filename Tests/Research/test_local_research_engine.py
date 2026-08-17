@@ -1012,3 +1012,96 @@ def test_provider_overrides_reach_params_and_papers():
     assert state["last_params"]["engine"] == "duckduckgo"
     assert state["last_params"]["result_count"] == 3
     assert state["papers"] == [["pubmed"]]
+
+
+# --- pipeline params pre-flight (task-17371) --------------------------------
+# A run whose engine was constructed WITHOUT search_params used to reach the
+# real pipeline and die inside generate_and_search's own validation with
+# "Invalid search_params parameter" -- a message that names neither what is
+# missing nor where it comes from. Research_Window shipped exactly that
+# construction (no search_params at all), so every window-launched run failed
+# with it. The engine now refuses the unusable configuration up front, and
+# only when the REAL pipeline is the search function.
+
+
+def test_default_pipeline_without_search_params_fails_legibly():
+    """No search_params + the default (real) pipeline: the run must fail
+    naming the missing keys and where they come from, not with the
+    pipeline's opaque 'Invalid search_params parameter'."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)  # no search_params -- the window's bug
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    # fail_run records the reason in progress_message (service contract).
+    message = str(final.get("progress_message") or final.get("error_msg") or "")
+    # Names the missing keys...
+    assert "engine" in message and "result_count" in message
+    # ...and where they come from.
+    assert "SearchSettings" in message
+
+
+def test_injected_search_fn_skips_the_pipeline_preflight():
+    """The pre-flight is the REAL pipeline's requirement, not the engine's:
+    a caller injecting its own search_fn (every other test here, and any
+    future non-web lane) still runs with empty search_params."""
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn
+    )  # still no search_params
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+
+
+def test_preflight_refuses_params_without_usable_llms():
+    """Qodo (PR 1764): search keys alone let a run spend phase-1 searches and
+    only then fail for want of an LLM. The tool path refuses both cases before
+    phase 1; the engine matches it for every default-pipeline caller."""
+    service = _make_service()
+    engine = LocalResearchEngine(
+        service,
+        search_params={
+            "engine": "duckduckgo",
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 5,
+            # both LLM slots present but empty -- the shape a config with no
+            # [SearchSettings] LLMs actually produces
+            "relevance_analysis_llm": "",
+            "final_answer_llm": None,
+        },
+    )
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    message = str(final.get("progress_message") or "")
+    assert "relevance_analysis_llm" in message and "final_answer_llm" in message
+    assert "SearchSettings" in message
+
+
+def test_preflight_accepts_fully_configured_params():
+    """The complement: a complete assembly must pass the pre-flight, or the
+    check would refuse every real run."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+
+    engine._require_pipeline_params(
+        {
+            "engine": "duckduckgo",
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 5,
+            "relevance_analysis_llm": "llama_cpp",
+            "final_answer_llm": "llama_cpp",
+        }
+    )

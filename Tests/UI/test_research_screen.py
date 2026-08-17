@@ -789,3 +789,37 @@ def test_parse_provider_tokens_validates_and_dedupes():
     assert _parse_provider_tokens("  ARXIV ,, biorxiv ") == ["arxiv", "biorxiv"]
     # Dangerous input fails validation -> empty list (caller warns).
     assert _parse_provider_tokens("pubmed, <script>x") == []
+
+
+def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
+    """task-17371: the window's own launch path shipped with NO search_params,
+    so every window-launched run died in the pipeline's validation
+    ("Invalid search_params parameter") before a single search. The window
+    must hand the engine the same assembly the Console /research command and
+    the baseline recorder use (deep_search_pipeline_params, task-16484)."""
+    from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import (
+        GENERATE_AND_SEARCH_REQUIRED_PARAMS,
+    )
+
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, service, **kwargs):
+            captured["search_params"] = kwargs.get("search_params")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.local_research_engine.LocalResearchEngine",
+        FakeEngine,
+    )
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(),
+        local_research_service=LocalResearchService(":memory:"),
+    )
+
+    ResearchWindow(app_instance=app)._start_local_engine("run-1")
+
+    search_params = captured["search_params"]
+    assert search_params, "the window must assemble pipeline params, not pass none"
+    missing = [k for k in GENERATE_AND_SEARCH_REQUIRED_PARAMS if k not in search_params]
+    assert not missing, f"assembly is missing pipeline-required keys: {missing}"
