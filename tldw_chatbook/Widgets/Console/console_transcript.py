@@ -1503,8 +1503,16 @@ class ConsoleMarkdownMessage(Vertical):
                 # drag on this selectable row (markdown rows arm drags too,
                 # task G); it must not toggle message selection (console
                 # selection phase 1). Consume the finish flag so the
-                # suppression swallows exactly this one click.
+                # suppression swallows exactly this one click. Live spike
+                # 2026-08-16: BOTH tokens must die here and the event must
+                # STOP -- a short-circuited ``or`` left release_click_pending
+                # armed and the click bubbled to the transcript's on_click,
+                # whose _remove_selection_menu() wiped the row selection
+                # before the menu's action read it ("buttons don't work
+                # after the first one").
                 manager.consume_just_finished()
+                manager.consume_release_click()
+                event.stop()
                 return
             transcript.toggle_message_selection(self.message_id)
 
@@ -1692,8 +1700,14 @@ class ConsoleTranscriptMessage(Vertical):
                 # this branch: its empty drag finish consumed the flag on
                 # MouseUp, so what is left here is the drag-release Click
                 # (or a click landing mid-drag). Markdown rows carry the
-                # identical guard in their own ``on_click`` (task G).
+                # identical guard in their own ``on_click`` (task G). Live
+                # spike 2026-08-16: consume BOTH tokens and STOP the event
+                # -- a lingering release_click_pending let the artifact
+                # click reach the transcript's on_click, whose dismissal
+                # cleanup wiped the selection the menu needs.
                 manager.consume_just_finished()
+                manager.consume_release_click()
+                event.stop()
                 return
             transcript.toggle_message_selection(self.message_id)
 
@@ -4019,14 +4033,27 @@ class ConsoleTranscript(VerticalScroll):
         removed first: click-outside dismisses it with no other side effect,
         then the normal click handling continues.
 
-        A drag release (``just_finished``) is consumed here instead: it must
-        not clear message selection, and the next genuine click must work.
+        A drag release (``just_finished`` or the one-shot
+        ``release_click_pending`` token, which the row guard's short-circuit
+        can leave armed) is consumed here instead -- BEFORE any dismissal
+        cleanup, which would wipe the row selection the just-opened menu
+        exists to act on (live spike 2026-08-16: the release click reached
+        this handler with ``just_finished`` already consumed and
+        ``_remove_selection_menu()`` erased the quote before the action read
+        it).
 
         Clicks that land on controls with classes in ``PROTECTED_CLICK_CLASSES``
         (message action rows/buttons, rule separators, action-help text, the
         empty-state panel, or scrollbars) keep the current selection active. All
         other clicks that bubble up to the transcript itself clear the selection.
         """
+        if (
+            self.selection_manager.just_finished
+            or self.selection_manager.consume_release_click()
+        ):
+            event.stop()
+            self.selection_manager.consume_just_finished()
+            return
         self._remove_selection_menu()
         if self.selection_manager.just_finished:
             event.stop()

@@ -1011,3 +1011,105 @@ async def test_feedback_real_modal_escape_dispatches_nothing():
 
         assert queue.dispatched == []
         assert pilot.app.screen is screen  # modal popped; console back on top
+
+
+@pytest.mark.asyncio
+async def test_drag_release_click_never_wipes_selection_for_menu_actions():
+    """Live spike 2026-08-16 ("buttons don't work after the first one").
+
+    The drag's synthesized release Click reaches the transcript's
+    ``on_click`` with ``just_finished`` already consumed by the row guard
+    (whose ``or`` chain short-circuits past ``consume_release_click`` and
+    does not stop the event). The transcript then treated the artifact as
+    a click-outside: ``_remove_selection_menu()`` wiped the row selection
+    BEFORE the menu's action read it, so every selection-dependent action
+    saw an empty quote and silently no-oped -- the first menu of a session
+    usually won the queue race, later ones reliably lost it. The release
+    click must die at the row (both tokens consumed, event stopped), and
+    the transcript's own guard must run before any dismissal cleanup.
+    """
+    from textual.events import MouseDown, MouseMove, MouseUp
+
+    from tldw_chatbook.Widgets.Console.console_selection_menu import (
+        ConsoleSelectionMenu,
+    )
+    from tldw_chatbook.Widgets.Console.console_side_chat_modal import (
+        ConsoleSideChatModal,
+    )
+
+    def raw(event_cls, x, y, button=0):
+        return event_cls(
+            widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
+            shift=False, meta=False, ctrl=False,
+        )
+
+    async def drag_menu_and_click_ask(pilot) -> bool:
+        screen = pilot.app.screen
+        row = screen.query_one("#console-message-mm0")
+        md = row.query_one(".console-markdown-body")
+        br = md.region
+        pilot.app.post_message(raw(MouseDown, br.x + 2, br.y, button=1))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseMove, br.x + 10, br.y, button=0))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseUp, br.x + 10, br.y, button=1))
+        await pilot.pause()
+        await pilot.pause()
+        menus = screen.query(ConsoleSelectionMenu)
+        if not menus:
+            return False
+        menu = menus[0]
+        sel_at_click = row.get_selection_text()
+        btn = menu.query_one("#console-selection-ask-side-chat")
+        r = btn.region
+        cx, cy = r.x + r.width // 2, r.y
+        pilot.app.post_message(raw(MouseMove, cx, cy, button=0))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseDown, cx, cy, button=1))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseUp, cx, cy, button=1))
+        await pilot.pause()
+        await pilot.pause()
+        modals = [s for s in pilot.app.screen_stack if isinstance(s, ConsoleSideChatModal)]
+        return bool(modals) and bool(sel_at_click)
+
+    async with make_console_pilot(size=(80, 32)) as pilot:
+        screen = pilot.app.screen
+        transcript = screen.query_one(ConsoleTranscript)
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
+        )
+
+        transcript.set_messages([
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="first selection text",
+                id="mm0",
+            )
+        ])
+        await transcript.refresh_messages()
+        await pilot.pause(0.4)
+
+        first = await drag_menu_and_click_ask(pilot)
+        assert first, "first side chat should open with the quote intact"
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+
+        transcript.set_messages([
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="second selection text",
+                id="mm0",
+            )
+        ])
+        await transcript.refresh_messages()
+        await pilot.pause(0.4)
+        row = screen.query_one("#console-message-mm0")
+        assert row.get_selection_text() == ""  # clean slate for round two
+
+        second = await drag_menu_and_click_ask(pilot)
+        assert second, (
+            "second selection's menu action must still carry the quote "
+            "(drag-release click wiped it before the action read it)"
+        )
