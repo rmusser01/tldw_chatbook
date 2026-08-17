@@ -100,6 +100,23 @@ def _parse_config_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
 
 
+def _iteration_rounds_default() -> int:
+    """Rounds the window offers by default (task-17371).
+
+    Deliberately delegates to the engine's own resolver so the number a user
+    sees is the number a run would have used anyway -- a second default here
+    would drift from it. Lazy import keeps the window's module import cheap.
+    """
+    try:
+        from ..Research_Interop.local_research_engine import (
+            _configured_max_iterations,
+        )
+
+        return max(1, int(_configured_max_iterations()))
+    except Exception:  # noqa: BLE001 - a UI default must never fail to load
+        return 1
+
+
 def _academic_lane_default() -> bool:
     """Config default for the academic lane toggle: [SearchSettings]
     research_academic_lane (default False). Failures default OFF -- the
@@ -130,6 +147,10 @@ class ResearchWindow(Vertical):
         # task-16328: academic lane toggle (arXiv + Semantic Scholar papers
         # join the run's evidence pool when enabled).
         self.academic_enabled = _academic_lane_default()
+        # task-17371: rounds this window will launch with (multi-hop). Shown
+        # rather than buried in the limits box, and persisted like the lane
+        # toggle; a typed max_iterations still wins on create.
+        self.iteration_rounds = _iteration_rounds_default()
         # task-16334: budget limits text (parsed into limits_json on create)
         # and the rendered follow-up answer.
         self.limits_text = ""
@@ -169,6 +190,12 @@ class ResearchWindow(Vertical):
                 value=self.source_policy,
                 allow_blank=False,
                 id="research-policy-select",
+            )
+            yield Select(
+                [("1 round", 1), ("2 rounds", 2), ("3 rounds", 3), ("4 rounds", 4)],
+                value=self.iteration_rounds,
+                allow_blank=False,
+                id="research-rounds-select",
             )
             yield Input(
                 placeholder="Providers: arxiv, pubmed",
@@ -219,6 +246,7 @@ class ResearchWindow(Vertical):
             "limits": self.limits_text,
             "policy": self.source_policy,
             "providers": self.providers_text,
+            "rounds": self.iteration_rounds,
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
@@ -233,7 +261,16 @@ class ResearchWindow(Vertical):
             } else "balanced"
         )
         self.providers_text = str((state or {}).get("providers") or "")
+        try:
+            rounds = int((state or {}).get("rounds") or 0)
+        except (TypeError, ValueError):
+            rounds = 0
+        self.iteration_rounds = rounds if rounds >= 1 else _iteration_rounds_default()
         self._sync_academic_toggle()
+        try:
+            self.query_one("#research-rounds-select", Select).value = self.iteration_rounds
+        except Exception:
+            pass  # not mounted yet; compose()'s initial value covers it
         try:
             self.query_one("#research-limits-input", Input).value = self.limits_text
         except Exception:
@@ -331,6 +368,21 @@ class ResearchWindow(Vertical):
         self.source_policy = str(event.value or "balanced")
         self._set_status(f"Source policy: {self.source_policy}")
 
+    @on(Select.Changed, "#research-rounds-select")
+    def _on_rounds_changed(self, event: Select.Changed) -> None:
+        try:
+            self.iteration_rounds = max(1, int(event.value))
+        except (TypeError, ValueError):
+            return
+        if self.iteration_rounds == 1:
+            self._set_status("Rounds: 1 (single pass -- no gap-driven follow-up).")
+        else:
+            self._set_status(
+                f"Rounds: {self.iteration_rounds}. Each extra round researches the "
+                "gaps the previous answer left open -- more evidence, and "
+                "proportionally more searches and LLM calls."
+            )
+
     @on(Checkbox.Changed, "#research-academic-toggle")
     def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
         self.academic_enabled = bool(event.value)
@@ -378,6 +430,11 @@ class ResearchWindow(Vertical):
         limits, warnings = _parse_limits_text(self.limits_text)
         if warnings:
             self._set_status("Limits: " + "; ".join(warnings))
+        # task-17371: the rounds control contributes max_iterations unless the
+        # limits box already states one -- a typed value is the more specific
+        # statement of intent, and is what the engine treats as authoritative.
+        if "max_iterations" not in limits:
+            limits = {**limits, "max_iterations": max(1, int(self.iteration_rounds or 1))}
         if limits:
             payload = {**payload, "limits_json": limits}
         # task-16791: lane routing + provider selection ride the run record.

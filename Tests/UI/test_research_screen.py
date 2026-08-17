@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -372,14 +373,16 @@ def test_window_academic_toggle_defaults_off_and_persists_in_state():
     window = ResearchWindow(app_instance=app)
 
     assert window.academic_enabled is False
+    # "rounds" joined the persisted state in task-17371 -- the window now shows
+    # and remembers how many multi-hop rounds it will launch with.
     assert window.save_state() == {"source": "local", "academic": False,
                                    "limits": "", "policy": "balanced",
-                                   "providers": ""}
+                                   "providers": "", "rounds": 2}
 
     window.academic_enabled = True
     assert window.save_state() == {"source": "local", "academic": True,
                                    "limits": "", "policy": "balanced",
-                                   "providers": ""}
+                                   "providers": "", "rounds": 2}
 
 
 def test_window_academic_toggle_restores_from_state():
@@ -463,8 +466,10 @@ async def test_create_run_carries_parsed_limits(monkeypatch):
     await window.create_run({"query": "Budgeted question"})
 
     create_call = [c for c in service.calls if c[0] == "create_run"][0]
+    # max_iterations rides along from the rounds control (task-17371) whenever
+    # the limits text does not state one; the typed budget keys are untouched.
     assert create_call[2]["limits_json"] == {
-        "max_searches": 3, "max_fetched_docs": 10.0,
+        "max_searches": 3, "max_fetched_docs": 10.0, "max_iterations": 2,
     }
 
 
@@ -779,7 +784,7 @@ async def test_create_run_reads_limits_and_providers_from_inputs(monkeypatch):
     create_call = [c for c in service.calls if c[0] == "create_run"][0]
     payload = create_call[2]
     assert payload["provider_overrides"]["academic_providers"] == ["pubmed", "arxiv"]
-    assert payload["limits_json"] == {"max_searches": 3}
+    assert payload["limits_json"] == {"max_searches": 3, "max_iterations": 2}
 
 
 def test_parse_provider_tokens_validates_and_dedupes():
@@ -823,3 +828,114 @@ def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
     assert search_params, "the window must assemble pipeline params, not pass none"
     missing = [k for k in GENERATE_AND_SEARCH_REQUIRED_PARAMS if k not in search_params]
     assert not missing, f"assembly is missing pipeline-required keys: {missing}"
+
+
+# --- per-run multi-hop control (task-17371 AC #2) -----------------------------
+# The shipped default became 2 rounds, but a user could only override it by
+# typing "max_iterations=N" into the limits box -- i.e. the setting existed and
+# was invisible. The window now shows the rounds it will launch with, persists
+# the choice, and carries it into the run's limits.
+
+
+def test_rounds_control_defaults_to_the_engine_default(monkeypatch):
+    from tldw_chatbook.Research_Interop import local_research_engine as engine_module
+
+    monkeypatch.setattr(engine_module, "_configured_max_iterations", lambda: 2)
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
+
+    assert ResearchWindow(app_instance=app).iteration_rounds == 2
+
+
+def test_rounds_choice_survives_a_state_round_trip():
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
+    window = ResearchWindow(app_instance=app)
+    window.iteration_rounds = 3
+
+    restored = ResearchWindow(app_instance=app)
+    restored.restore_state(window.save_state())
+
+    assert restored.iteration_rounds == 3
+
+
+def test_rounds_choice_reaches_the_run_limits():
+    """The control is pointless unless the launched run carries it."""
+    captured = {}
+
+    class _Controller:
+        async def create_run(self, source, payload):
+            captured.update(payload)
+            return {"id": "run-1"}
+
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
+    window = ResearchWindow(app_instance=app)
+    window.controller = _Controller()
+    window.iteration_rounds = 3
+    window._start_local_engine = lambda run_id: None
+
+    asyncio.run(window.create_run({"query": "q"}))
+
+    assert captured["limits_json"]["max_iterations"] == 3
+
+
+def test_typed_limits_win_over_the_rounds_control():
+    """A typed max_iterations is the more specific statement of intent, and is
+    what the engine treats as authoritative -- the control must not silently
+    overwrite it."""
+    captured = {}
+
+    class _Controller:
+        async def create_run(self, source, payload):
+            captured.update(payload)
+            return {"id": "run-1"}
+
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
+    window = ResearchWindow(app_instance=app)
+    window.controller = _Controller()
+    window.iteration_rounds = 3
+    window.limits_text = "max_iterations=1"
+    window._start_local_engine = lambda run_id: None
+
+    asyncio.run(window.create_run({"query": "q"}))
+
+    assert captured["limits_json"]["max_iterations"] == 1
+
+
+def test_rounds_control_mounts_and_reports_its_choice():
+    """Compose-level check: an int-valued Select renders with the default
+    selected, and choosing a value updates both state and the status line."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Select
+
+    class _Harness(App):
+        def __init__(self):
+            super().__init__()
+            self.research_scope_service = FakeResearchScopeService()
+            self.local_research_service = None
+            self.window = None
+
+        def compose(self) -> ComposeResult:
+            self.window = ResearchWindow(app_instance=self)
+            yield self.window
+
+    async def _drive():
+        app = _Harness()
+        async with app.run_test() as pilot:
+            select = app.window.query_one("#research-rounds-select", Select)
+            assert select.value == 2, select.value
+
+            select.value = 1
+            await pilot.pause()
+            assert app.window.iteration_rounds == 1
+            assert "single pass" in app.window.status_message.lower(), (
+                app.window.status_message
+            )
+
+    asyncio.run(_drive())
