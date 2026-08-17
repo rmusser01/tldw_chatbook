@@ -1431,6 +1431,14 @@ class AgentService:
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
+        # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
+        # by spawn's fleet branch as a closure over THIS child's own
+        # coordinator mailbox (`fleet.drain_steering(handle_id)`) and
+        # threaded through `child_kwargs` exactly like `on_run_id` above.
+        # None -- the default every other caller keeps -- for primaries
+        # and inline children: a primary is steered by the user talking to
+        # it, and an inline child has no handle, so no mailbox exists.
+        drain_mailbox: Callable[[], list[tuple[str, str]]] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -1979,6 +1987,15 @@ class AgentService:
             # without cancelling the parent.
             child_cancel = threading.Event()
             child_kwargs["continuation_agent_kind"] = "fleet"
+            # PR3b Task 1: THIS child's steering drain -- a closure over
+            # its own mailbox on the conversation-lifetime coordinator,
+            # reachable from the UI thread and any turn's supervisor while
+            # the child runs on its own thread. handle_id is default-bound
+            # (the run_child style) so the closure can never pick up a
+            # later spawn's handle.
+            child_kwargs["drain_mailbox"] = (
+                lambda handle_id=handle.handle_id: fleet.drain_steering(handle_id)
+            )
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
 
@@ -2947,6 +2964,10 @@ class AgentService:
             # one it was not told about).
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
+            # PR3b Task 1: non-None ONLY for a threaded fleet child (see
+            # the parameter's own comment above); the pure loop drains it
+            # at its protocol-coherent pre-model-call point.
+            drain_mailbox=drain_mailbox,
             on_record=on_record,
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,

@@ -73,6 +73,13 @@ class FleetHandle:
     started_at: float = 0.0
     finished_at: float | None = None
     total_tokens: int = 0
+    # PR3b Task 1 (steering). How many posted steering entries are queued
+    # for this child, still awaiting its next drain boundary -- the
+    # panel's honest "queued (N)" figure (spec SS6 latency honesty).
+    # Stored state lives in the coordinator's mailbox dict, never here:
+    # this field is COMPUTED onto the copies ``get()``/``snapshot()``
+    # return, so a stale handle copy can never disagree with the mailbox.
+    queued_steering: int = 0
 
 
 class FleetCoordinator:
@@ -96,6 +103,11 @@ class FleetCoordinator:
         self._handles: dict[str, FleetHandle] = {}
         self._live_ids: set[str] = set()  # handle_ids with status != terminal
         self._events: list[FleetEvent] = []
+        # PR3b Task 1: per-child steering mailboxes, keyed by handle id.
+        # Guarded by the same lock as every other public method. A key
+        # exists only while entries are queued (drain pops the whole
+        # list), and dies with its handle in prune_terminal.
+        self._steering: dict[str, list[tuple[str, str]]] = {}
 
     def reserve(self, task: str, agent: str | None) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
@@ -157,6 +169,58 @@ class FleetCoordinator:
         with self._lock:
             if handle_id in self._handles and handle_id in self._live_ids:
                 self._handles[handle_id].run_id = run_id
+
+    def post_steering(self, handle_id: str, source: str, text: str) -> bool:
+        """Queue one steering entry for a LIVE child (PR3b Task 1, spec SS6).
+
+        Steering never cancels and never restarts (spec SS3 invariant 4):
+        this only appends to the child's mailbox; the child consumes it at
+        its own next protocol-coherent drain boundary
+        (``agent_runtime.run_agent_loop``'s pre-model-call drain).
+
+        Text validation (non-empty, ``MAX_STEERING_CHARS``) is the
+        PRODUCERS' job at their own boundaries -- ``send_to_agent`` (Task
+        2) and the panel input (Task 3) each need their own user-facing
+        refusal copy, which a silent bool here could not carry. The label
+        is likewise not this method's concern: the drain point renders it
+        via ``format_steering_message``, so raw ``(source, text)`` pairs
+        are what the mailbox holds.
+
+        Args:
+            handle_id: The target child's handle id.
+            source: ``STEERING_SOURCE_SUPERVISOR`` or
+                ``STEERING_SOURCE_USER``.
+            text: The steering message body (raw, unlabeled).
+
+        Returns:
+            True when queued. False for an unknown handle or a TERMINAL
+            one -- a finished child has no next model turn to deliver at,
+            and the caller must say so instead of queueing into a void
+            (Task 2's terminal branch upgrades that refusal into
+            finished-agent continuation).
+        """
+        with self._lock:
+            if handle_id not in self._handles or handle_id not in self._live_ids:
+                return False
+            self._steering.setdefault(handle_id, []).append((source, text))
+            return True
+
+    def drain_steering(self, handle_id: str) -> list[tuple[str, str]]:
+        """Return-and-clear this child's queued steering, atomically.
+
+        One locked pop: a concurrent ``post_steering`` either lands before
+        the pop (and is returned here) or after it (and waits for the next
+        drain) -- an entry is never lost or delivered twice.
+
+        Args:
+            handle_id: The child's handle id.
+
+        Returns:
+            The queued ``(source, text)`` entries in posting order; empty
+            for an unknown handle or an empty mailbox.
+        """
+        with self._lock:
+            return self._steering.pop(handle_id, [])
 
     def finish(
         self,
@@ -234,7 +298,7 @@ class FleetCoordinator:
         with self._lock:
             if handle_id not in self._handles:
                 return None
-            return dataclasses.replace(self._handles[handle_id])
+            return self._copy_with_queued(self._handles[handle_id])
 
     def snapshot(self) -> list[FleetHandle]:
         """Return a snapshot of all handles.
@@ -246,8 +310,21 @@ class FleetCoordinator:
         """
         with self._lock:
             return [
-                dataclasses.replace(h) for h in self._handles.values()
+                self._copy_with_queued(h) for h in self._handles.values()
             ]
+
+    def _copy_with_queued(self, handle: FleetHandle) -> FleetHandle:
+        """A point-in-time copy carrying the CURRENT mailbox depth.
+
+        Caller must hold ``self._lock``. ``queued_steering`` is computed
+        from the mailbox here rather than stored on the live handle, so
+        the copies ``get()``/``snapshot()`` return can never disagree with
+        what ``drain_steering`` would actually deliver.
+        """
+        return dataclasses.replace(
+            handle,
+            queued_steering=len(self._steering.get(handle.handle_id, ())),
+        )
 
     @property
     def max_live(self) -> int:
@@ -310,6 +387,11 @@ class FleetCoordinator:
             ]
             for handle_id in terminal:
                 del self._handles[handle_id]
+                # PR3b Task 1: the mailbox dies with its handle. An
+                # undelivered remnant is claimed BEFORE this point by Task
+                # 4's retention (retain_transcript runs at finish time,
+                # from run_child's finally); by prune time it is garbage.
+                self._steering.pop(handle_id, None)
             return len(terminal)
 
     def live_count(self) -> int:
