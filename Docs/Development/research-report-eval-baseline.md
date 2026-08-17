@@ -165,6 +165,47 @@ closing the gap would need either a per-kind relevance threshold or
 category-tuned question sets — recorded as the follow-up lever, with the
 fallback (top-3 flagged) still covering the remainder.
 
+## What every number above was measured with (task-17370)
+
+Both of the pipeline's decomposition mechanisms were OFF for every baseline
+recorded above — the synthetic one, the academic and biomedical lanes, the
+category lanes, and the 0.29 -> 0.42 gate re-measurement:
+
+| Mechanism | Where it lives | Why it was off |
+|---|---|---|
+| phase-1 sub-question fan-out | `WebSearch_APIs.generate_and_search` (`subquery_generation`) | the recorder hard-coded `subquery=False, max_queries=1` as a spend bound |
+| gap-driven replanning (multi-hop) | `local_research_engine._execute_phases` (task-16324) | the recorder launched runs with no `limits_json`, so `max_iterations` fell to the engine default of 1 |
+
+That matters for how the repositories residual is read. The relevance gate is
+prompted with the run's sub-questions, so a single-query run asks the gate to
+judge every result against one broad question with an EMPTY sub-question
+list — a repository record (a dataset, a figure) has no narrower facet it
+could be relevant to. The recorded reading that the residual is "partly
+genuine" was therefore not falsifiable from these runs: the mechanism whose
+whole purpose is to give the gate narrower facets had never run.
+
+Two things make the pending measurement a clean experiment on the
+repositories lane specifically:
+
+- Sub-questions DO reach the gate: the engine passes
+  `merged_sqd = {"sub_questions": all_sub_questions, ...}` to the analyze
+  phase, so generated facets change how ALL evidence is judged.
+- Fan-out does NOT change what the academic lane retrieves: the paper lane
+  loops over `round_queries`, which is `[question]` in round 1, so phase-1
+  sub-queries never reach Zenodo/Figshare/OSF (filed as task-17372). Only
+  multi-hop rounds >= 2 change retrieval.
+
+So a `--max-queries N --max-iterations 1` re-run judges the SAME repository
+evidence set with a non-empty sub-question list, isolating the gate effect
+from any change in retrieval.
+
+The recorder now takes `--max-queries`, `--max-iterations` and `--deadline-s`
+(task-17370), and every emitted aggregate states the decomposition settings
+it ran under, so no future baseline can silently be read as measuring
+something it did not. **The decomposition-on arm is not yet measured** — it
+needs the same judge model as the recorded arms (local Qwen3.8-27B) for the
+comparison to mean anything.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,
