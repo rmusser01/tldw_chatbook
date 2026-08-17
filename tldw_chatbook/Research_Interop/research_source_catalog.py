@@ -14,6 +14,7 @@ from typing import Tuple
 
 __all__ = [
     "CATEGORIES",
+    "source_kind_for_provider",
     "SOURCES_BY_CATEGORY",
     "ResearchSourceCatalogEntry",
     "catalog_entries",
@@ -191,6 +192,45 @@ def sources_by_category() -> dict[str, Tuple[str, ...]]:
 
 SOURCES_BY_CATEGORY = sources_by_category()
 CATEGORIES = tuple(SOURCES_BY_CATEGORY)
+
+
+_SOURCE_KIND_BY_CATEGORY = {
+    "repositories": "repository",
+    "open_research_graph": "metadata",
+}
+
+
+def source_kind_for_provider(provider: str | None) -> str:
+    """Classify a provider for gate calibration (task-17066).
+
+    Args:
+        provider: A result's ``metadata.provider`` (catalog source id).
+
+    Returns:
+        ``"repository"`` for repository records (datasets/software/
+        figures), ``"metadata"`` for scholarly-graph metadata records,
+        and ``"paper"`` for papers, preprints, and anything unknown --
+        the strict default the gate's prompt was calibrated for.
+    """
+    if not provider:
+        return "paper"
+    entry = _entries_by_id().get(str(provider).strip().lower())
+    if entry is None:
+        return "paper"
+    return _SOURCE_KIND_BY_CATEGORY.get(entry.category, "paper")
+
+
+_ENTRIES_BY_ID: dict[str, ResearchSourceCatalogEntry] | None = None
+
+
+def _entries_by_id() -> dict[str, ResearchSourceCatalogEntry]:
+    """Memoized source_id -> entry index (the classifier runs once per
+    search result; rebuilding the catalog mapping per call was avoidable
+    work in the relevance loop)."""
+    global _ENTRIES_BY_ID
+    if _ENTRIES_BY_ID is None:
+        _ENTRIES_BY_ID = {entry.source_id: entry for entry in catalog_entries()}
+    return _ENTRIES_BY_ID
 
 
 def expand_source_selection(tokens: list[str]) -> list[str]:

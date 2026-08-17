@@ -1304,3 +1304,90 @@ async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch)
         "q", [], "openai",
     )
     assert out["evidence"][0]["gate_unverified"] is True
+
+
+# --- source-type-aware gate prompt (task-17066) -------------------------------------
+
+@pytest.mark.asyncio
+async def test_relevance_gate_carries_source_note_for_repository_records(monkeypatch):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    result = _std_result("Folding dataset", "https://zenodo.org/records/1", "Simulations of folding")
+    result["metadata"] = {"source": "academic", "provider": "zenodo", "doi": "10.5281/x"}
+
+    await WebSearch_APIs.search_result_relevance([result], "how do proteins fold", [], "openai")
+
+    assert "repository record" in captured["prompt"]
+    assert "does NOT need to directly answer" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypatch):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["prompt"] = kwargs["messages_payload"][0]["content"]
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    result = _std_result("Registry record", "https://openalex.org/W1", "Citation metadata")
+    result["metadata"] = {"source": "academic", "provider": "openalex"}
+
+    await WebSearch_APIs.search_result_relevance([result], "any question", [], "openai")
+
+    assert "metadata record" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
+    prompts = []
+
+    def fake_chat(**kwargs):
+        prompts.append(kwargs["messages_payload"][0]["content"])
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    paper = _std_result("A paper", "https://arxiv.org/abs/1", "Full text")
+    paper["metadata"] = {"source": "academic", "provider": "arxiv"}
+    web = _std_result("A page", "https://example.com/", "content")
+
+    await WebSearch_APIs.search_result_relevance([paper, web], "q", [], "openai")
+
+    # Byte-identical eval INPUT for both kinds (prefix equality -- absence
+    # checks alone would miss any other drift in the input line).
+    assert len(prompts) == 2
+    prefix = "Evaluate the relevance of the search result."
+    for prompt in prompts:
+        assert prompt.split("\n\n", 1)[0] == prefix
+
+
+@pytest.mark.asyncio
+async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
+    captured = []
+
+    def fake_chat(**kwargs):
+        captured.append(kwargs["messages_payload"][0]["content"])
+        return "Selected Answer: False\nReasoning: no"
+
+    monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
+    plain_result = _std_result("T", "https://e.example/", "c")
+    paper = _std_result("P", "https://arxiv.org/abs/1", "c")
+    paper["metadata"] = {"source": "academic", "provider": "arxiv"}
+
+    await WebSearch_APIs.search_result_relevance(
+        [plain_result, paper], "q", [], "openai"
+    )
+
+    # The eval INPUT (everything before the "\n\nSearch Results" payload)
+    # must be byte-identical for unclassified and paper-classified results
+    # -- only the embedded result content differs.
+    prefix = "Evaluate the relevance of the search result."
+    assert len(captured) == 2
+    for prompt in captured:
+        input_line = prompt.split("\n\n", 1)[0]
+        assert input_line == prefix  # no note, no extra text
