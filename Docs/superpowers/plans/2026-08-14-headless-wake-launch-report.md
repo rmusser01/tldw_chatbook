@@ -498,12 +498,16 @@ Order dependence is therefore ruled out as well as timing flakiness.
   conversations too, so the shape is not new to this slice. The launch
   suite covers one owed + one unowed
   (`test_a_launch_hydrates_only_the_conversations_that_are_owed`).
-- **The launch-hydrated session becomes the store's ACTIVE session**,
-  because at launch there is no other. A user who opens Console after a
-  launch wake therefore lands in the woken conversation rather than a
-  fresh chat. That is arguably right — the ◈ points there and money was
-  just spent there — but it is a UX change nobody has ruled on, and it is
-  named here rather than buried.
+- **The launch-hydrated session becomes the store's ACTIVE session when
+  nothing else is open**, because at launch there is no other. A user who
+  opens Console after a headless launch wake therefore lands in the woken
+  conversation rather than a fresh chat. That is arguably right — the ◈
+  points there and money was just spent there — but it is a UX change
+  nobody has ruled on, and it is named here rather than buried. The
+  *other* direction is handled rather than left: when Console IS the
+  startup tab, `_restore_active_session` puts the user's tab back, pinned
+  by `test_a_launch_into_console_delivers_without_stealing_the_active_tab`
+  and killed by M13.
 
 ## 12. The User Guide sentence
 
@@ -529,6 +533,10 @@ It now says:
 > autowake_enabled` is off (there is no separate launch switch). If you
 > have never run a background sub-agent, launch does exactly what it did
 > before: one indexed check that finds nothing.
+>
+> If Console is your startup tab, the woken conversation opens as another
+> tab beside the one you landed on; it never switches you away from the tab
+> you started in.
 >
 > One case cannot be delivered and is cleaned up instead: sub-agent work
 > started in a **temporary (unsaved) chat** belongs to a session that does
