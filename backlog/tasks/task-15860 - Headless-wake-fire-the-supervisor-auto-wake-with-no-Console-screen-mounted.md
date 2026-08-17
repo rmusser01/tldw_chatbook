@@ -1,7 +1,7 @@
 ---
 id: TASK-15860
 title: 'Headless wake: fire the supervisor auto-wake with no Console screen mounted'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-13 13:47'
 labels:
@@ -75,8 +75,53 @@ on residency.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 A finished background sub-agent wakes its supervisor while no Console screen is mounted, under the same `autowake_enabled` gate, caps, and approval floor as the mounted case
-- [ ] #2 The ownership move does not regress documented screen-scoped semantics (leaving Console still cancels streaming turns and denies parked approvals; survivors keep running)
-- [ ] #3 Every wake invariant holds headless: no USER transcript row, exactly-once via the `wake_delivered_at` ledger, no phantom wake after restart
-- [ ] #4 The User Guide's honest-limits paragraph about the headless gap (Docs/User_Guide/console/agent-runs-and-tools.md) is removed or rewritten when the limit no longer holds
+- [x] #1 A finished background sub-agent wakes its supervisor while no Console screen is mounted, under the same `autowake_enabled` gate, caps, and approval floor as the mounted case
+- [x] #2 The ownership move does not regress documented screen-scoped semantics (leaving Console still cancels streaming turns and denies parked approvals; survivors keep running)
+- [x] #3 Every wake invariant holds headless: no USER transcript row, exactly-once via the `wake_delivered_at` ledger, no phantom wake after restart
+- [x] #4 The User Guide's honest-limits paragraph about the headless gap (Docs/User_Guide/console/agent-runs-and-tools.md) is removed or rewritten when the limit no longer holds
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Shipped across eight landings plus this close-out; each has its own report
+under `Docs/superpowers/plans/2026-08-14-headless-wake-*.md`, and the
+close-out is `…-closeout-report.md`.
+
+**The change, in one line:** the Console runtime (agent bridge +
+`ConsoleChatController` + the message store) is owned by the app, not by
+`ChatScreen`; a screen attaches as a VIEW and detaches at unmount, and
+`ConsoleFleetWakeCoordinator._attempt` refuses only a DISPOSED controller
+(app exit), never a merely-ended visit. Ownership (`f09bb991d`), lifetime,
+viewless hook defaults, store continuity, the gate itself, headless
+approval, and wake-at-launch landed as separate, separately revertable
+PRs, in that order, on the owner's staging condition.
+
+**Close-out (this task's last commits).** Plan Task 7's four invariants
+are proven together on current dev in
+`Tests/UI/test_console_headless_invariants_gate.py`, which closes the
+three gaps per-landing coverage left: the no-USER-row assertion on the
+kill-switch RELEASE path, "OFF loses nothing durable" asserted on the
+persisted ROWS, and app-wide serialization asserted where only
+`_delivering` can enforce it (a second conversation with an idle session).
+Both new gates are mutation-tested. Plan Task 8 rewrote the User Guide's
+wake sections, added the spec's superseding note, closed its follow-up
+row, and recorded two lessons.
+
+**Two honest residues, documented rather than hidden.**
+1. A process killed between a wake turn's acceptance and its ledger stamp
+   re-announces the completion exactly once at the next launch (never
+   loses it, never repeats beyond one). Measured in a test and then
+   reproduced live. The User Guide claimed the stronger thing; corrected.
+2. **task-17500** — a headless approval round's card mounts empty and
+   cannot be answered until the user clicks that session's tab, which
+   also stalls every other conversation's owed wake behind it. Found by
+   the live pass, not by tests; a mounted round renders fully, which is
+   the control making it headless-specific.
+
+**Live verification** (dev `524194c15`, real `claude-sonnet-5`, isolated
+scratch profile, tmux): wake in another session, wake while on Library,
+wake at launch with Console never opened, exactly-once on a second
+relaunch, and the kill switch off/on — all driven and checked against the
+app's own databases. Details and panes in the close-out report.
+<!-- SECTION:NOTES:END -->
