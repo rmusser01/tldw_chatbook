@@ -117,7 +117,20 @@ again here for the *hydration* file, which cannot collect at base because
 its subject does not exist, and is therefore reported separately rather
 than folded into a red count).
 
-**AFTER: 10 passed.**
+**AFTER: 11 passed** (the file grew to eleven tests across mutation
+testing and review; the baseline red was re-measured against each version
+rather than quoted from the first).
+
+**The harness is the production one, twice over.** Process one mounts a
+real `ChatScreen` and sends through `submit_draft`; process two loads its
+tree through the **real `ChatConversationService`**, not a double. Every
+resume test in this suite injects a `StaticConversationTreeService`
+because `_build_test_app` patches `get_chachanotes_db_lazy` to `None` and
+the app's own `_wire_chat_conversation_services()` therefore ran at
+`__init__` with no DB. Probe P4 executed that re-running that wiring after
+`_attach_real_dbs` gives the real service, and six of the eleven tests now
+use it — so "the payload carried real prior history" is not a claim about
+a fixture I wrote.
 
 The three that pass at the merge-base are named rather than hidden: the
 phantom-wake test and the nothing-owed test pass because at the baseline
@@ -163,11 +176,23 @@ Its control, `test_the_startup_cost_pin_is_not_vacuous`, runs the same
 four probes WITH a mark and watches every one flip. Without it, a launch
 hook that never ran at all would satisfy the pin perfectly.
 
-"Indexed" is verified, not asserted:
-`ChaChaNotes_DB.py`'s `idx_conversation_local_marks_type` is
-`(mark_type, updated_at DESC, conversation_id)`, which covers
-`list_marked_conversation_ids`' `WHERE mark_type = ? ORDER BY updated_at
-DESC, conversation_id ASC LIMIT ?` completely.
+**Constants re-measured rather than quoted** (the approval landing found
+the plan's own 120s figure had gone stale):
+
+- "Indexed" is verified: `ChaChaNotes_DB.py`'s
+  `idx_conversation_local_marks_type` is
+  `(mark_type, updated_at DESC, conversation_id)`, which covers
+  `list_marked_conversation_ids`' `WHERE mark_type = ? ORDER BY updated_at
+  DESC, conversation_id ASC LIMIT ?` completely.
+- `list_marked_conversation_ids`' `limit` still defaults to **100**, so a
+  launch considers at most 100 marked conversations. That is not a new
+  bound: `seed_from_marks` calls it exactly the same way, so the launch
+  claim and the Console mount claim see the same set. Named because it is
+  a silent ceiling in both.
+- `ChatConversationService.get_conversation_tree`'s `root_limit` and
+  `depth_cap` still default to **50** each, which is why the shared
+  loader's `10_000`/`10_000` are policy and were moved verbatim rather
+  than re-chosen.
 
 **Mutations against the pin:**
 
@@ -327,6 +352,23 @@ M10's kill list is the positive result worth reading: dropping
 because `seed_from_marks` reads the marks service off the wired app — so
 the stale-mark clearing depends on the same wiring the delivery does.
 
+### A vacuity guard that caught its own author
+
+`test_a_launch_built_controller_is_not_sticky_when_console_opens` pins the
+hazard this task introduces: `ensure_chat_controller` is idempotent and
+ignores its parameters after the first call, and a launch now MAKES that
+first call, with config defaults. The module docstring claimed "nothing
+here is sticky" from a reading of `_sync_console_chat_core_state`; the
+test executes it by CHANGING the model between the launch and the mount.
+
+Its first draft changed `[chat_defaults] model` — and `configured_model`
+is derived from `[api_settings.<provider>] model`, so both sides would
+have read `'local-model'` and the test would have passed while proving
+nothing. The assertion that caught it is the one line that says so:
+`assert expected.configured_model == "mounted-model", "the fixture never
+changed anything…"`. Recorded because a vacuity guard is cheap and this is
+the second time in this slice one has paid for itself.
+
 ---
 
 ## 8. The stale / ephemeral mark — verdict
@@ -409,13 +451,26 @@ summary line.**
 
 | Gate | Baseline @ merge-base `ed49499b8` | Branch | Delta |
 |---|---|---|---|
-| **The specified battery** — `test_console_headless_wake_fires` (1), `test_console_headless_approval` (14), `test_console_sync_outlives_screen` (5), `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_headless_wake_invariants` (13), the 16-file wake glob (109), probe (1) | **187 passed, 0 failed** (216.4s) | see §10.1 | — |
-| **The new suites** — `test_console_launch_wake` + `test_console_conversation_hydration` + probe | **6 failed, 3 passed** (launch file only; the hydration file cannot exist there — its subject does not) | **11 passed** | +6 |
+| **The specified battery** — `test_console_headless_wake_fires` (1), `test_console_headless_approval` (14), `test_console_sync_outlives_screen` (5), `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_headless_wake_invariants` (13), the 16-file wake glob (109), probe (1) | **187 passed, 0 failed** (216.4s) | **198 passed, 0 failed** (280.0s), same files **plus** the two new suites | **+11** = the 9 launch tests and 2 hydration tests that existed when it ran (the launch file later grew to 11) |
+| **The new suites** — `test_console_launch_wake` (11) + `test_console_conversation_hydration` (2) | **8 failed, 3 passed** (the launch file only, at the merge-base; the hydration file cannot COLLECT there — its subject does not exist — so it is reported separately rather than folded in) | **13 passed** | — |
 | **The resume-owning suites** — `test_console_resume_active_path`, `test_console_workspace_controller`, `test_console_session_settings`, `test_console_generation_store`, `test_console_video_message`, probe | **286 passed, 0 failed** (133.5s) | **286 passed, 0 failed** (128.8s) | **0** |
-| `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | see §10.1 | — |
-| **The whole Console population in ONE process** — every `Tests/UI/test_console_*.py` + `test_screen_residency` + probe | see §10.1 | see §10.1 | — |
+| `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | **1459 passed, 0 failed** (43.0s) | — |
+| **The whole Console population in ONE process** — every `Tests/UI/test_console_*.py` + `test_screen_residency` + probe (166 files branch / 165 base) | see §10.2 | see §10.2 | — |
 
-### 10.1 Final counts
+### 10.1 Stability
+
+The new files drive real navigation, real threads, real timers and up to
+four `TldwCli` lifetimes per test, so they were re-run for flakiness **with
+random ordering left ON** (no `-p no:randomly`), while the two Console
+population runs were saturating the machine:
+
+- before the production-tree-loader change: **12 passed** ×3
+  (59.8s / 60.4s / 59.7s);
+- after it: **12 passed** ×3 (59.8s / 59.8s / …).
+
+Order dependence is therefore ruled out as well as timing flakiness.
+
+### 10.2 Final counts
 
 *(filled in below from the completed runs)*
 
