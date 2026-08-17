@@ -28,10 +28,15 @@ Honest scope — what this sweep catches and what it cannot:
 * NOT CAUGHT HERE: a defect seeded inside the chain itself (an emptied
   migration step, a wrongly dropped column) that affects the fresh path and
   the replay path identically — both sides of the parity oracle run the same
-  chain, so no chain-derived oracle can see it. Those defects are caught by
-  the migrations' consumer tests (the marks-shape assertions, the
-  note-folder suite, the dictionary backfill test, each feature's own
-  tests), verified born-red in task-16840.
+  chain, so no chain-derived oracle can see it. Those defects are caught
+  only where a CONSUMER test pins the artifact (the marks-shape assertions,
+  the note-folder suite, the dictionary backfill test — verified born-red in
+  task-16840); an artifact no consumer asserts is pinned by NOTHING, here or
+  anywhere — the 16840 review seeded an index deletion into the chain and
+  everything stayed green (18 of 28 migration-created indexes are
+  unreferenced in Tests/). The retired registry was equally blind to this
+  class (its removals were DROP IF EXISTS), so nothing was lost — but the
+  hole is real and disclosed, not covered.
 """
 
 from __future__ import annotations

@@ -18,10 +18,16 @@ order, and no artifact of any later migration — which makes the "table
 already exists" fixture-breakage class (task-15730/15765/16197) impossible by
 construction, with zero per-version maintenance when the schema grows.
 
-One caveat, measured in task-16840: the "v4" base schema has drifted to bake
-in ``conversation_local_marks`` (a V16->V17 artifact, ``IF NOT EXISTS`` on
-replay), so a bootstrap at any version carries that one future-of-its-stamp
-table. A fixture that needs its migration-under-test to genuinely CREATE an
+One caveat, measured in task-16840 and censused in its review: SEVEN
+artifacts across four steps pre-exist their declaring migration — not only
+via base drift (``conversation_local_marks`` + its index in the v4 base) but
+because an EARLIER migration's DDL was retro-edited to include them
+(``flashcard_templates``/``flashcard_assets``/an index declared by V15->V16
+but created by V14->V15; ``world_book_entries.priority``/``regex`` declared
+by V20->V21/V21->V22 but inline in V8->V9's CREATE TABLE). The mechanism is
+"the artifact predates the step that declares it", base or not. The set is
+static (7 today), does NOT grow with schema bumps, and each case is local to
+the one test pinning that migration. A fixture that needs its migration-under-test to genuinely CREATE an
 artifact the base schema also ships must drop that specific artifact itself —
 knowledge about the single migration the test pins, owned by that test, which
 no future schema bump can invalidate.

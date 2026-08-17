@@ -4402,7 +4402,11 @@ collision class is impossible by construction and a schema bump costs
 nothing anywhere. Three generalisable findings from the replacement:
 (1) **a parity oracle derived from the system under test is the identity on
 that system's deterministic defects** — the old sweep caught its mutations
-only because the registry was a divergent SECOND copy of the knowledge;
+only where the registry happened to be a DIVERGENT second copy (the review
+verified: true for the DROP COLUMN shape — entry 30's bare DROP would have
+raised — but FALSE for the emptied-step shape, whose entry 36 was DROP IF
+EXISTS and would have stayed green too; the old design deserves less credit
+than this entry first gave it);
 re-run against the single-source architecture, the review's own MUT shapes
 (emptied V35→V36 step; a `DROP COLUMN messages.usage_json` seeded into
 V37→V38) leave the bootstrap-replay-parity sweep 35/35 green while the
