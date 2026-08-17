@@ -4836,3 +4836,65 @@ Two guards in depth meant no single observation covered both mutations;
 the four together did. Corollary: a no-work pin also needs a control that
 runs the same probes WITH work present and watches every one flip,
 otherwise a hook that never runs at all satisfies it perfectly.
+
+## Your test's own harness can make the guard you are testing unreachable (task-15860, 2026-08-17)
+
+The close-out gate had to prove one invariant no per-landing test owned:
+deliveries are serialized **app-wide**, enforced by one line in
+`ConsoleFleetWakeCoordinator._attempt` — `if self._delivering is not
+None: return`. Two successive drafts of that test passed, and **survived
+neutering that exact line**. Both were worthless, for two different
+reasons, and both reasons are general:
+
+1. **The first draft used one conversation.** A second completion in the
+   same conversation is refused by the *per-session busy* gate several
+   lines earlier, so `_delivering` was never the thing under test. A test
+   of gate N must construct the state where gates 1..N-1 all pass —
+   otherwise it is a test of gate 1 wearing gate N's name.
+2. **The second draft used two conversations and still survived**, because
+   the observation was "no second payload reached the provider". The
+   provider double stalls in its readiness probe, and the stall belongs to
+   the GATEWAY, not to a turn: with the guard removed, the second wake
+   turn genuinely started and then parked at the same stall, streaming
+   nothing. The two outcomes — "refused" and "started, then blocked
+   identically" — are indistinguishable at the observation point the test
+   was reading.
+
+The fix was to count *entries into the readiness probe*, which separates
+"a turn started" from "a turn produced output". The mutation then killed
+the test immediately.
+
+**The rule:** when a mutation survives, do not first suspect the
+assertion's strength — ask **what the harness itself does to the code path
+after the mutated line.** A shared blocking double, a fixture that stops
+upstream, a stall that is global rather than per-attempt: each converts
+"the guard fired" and "the guard did not fire" into the same measurement.
+Pick an observation that is downstream of the mutated line but *upstream*
+of whatever the harness blocks on.
+
+## Measure the invariant, then write the assertion — the honest answer may not be the one the plan states (task-15860, 2026-08-17)
+
+The same gate had to pin "exactly-once across a restart mid-commit". The
+plan and the shipped User Guide both asserted the strong form: a restart
+between a wake being accepted and the app exiting re-announces nothing.
+Rather than encode that, the test was written to *measure* first — die
+inside the window (the ledger stamp raises, leaving rows committed and the
+ledger unstamped, which is byte-identical to a process kill there), then
+relaunch and read what the conversation holds.
+
+It holds **six** rows, not four: the same child result announced to the
+supervisor twice, and paid for twice. `_deliver`'s own comment predicts
+it ("a lost stamp risks one re-announce at a later claim, never a lost
+result"); the user-facing doc had quietly promised more than the code
+does. The live pass then reproduced it by accident — an app quit while a
+wake turn sat blocked produced exactly one duplicate notice at the next
+launch.
+
+Two things followed, and both are the point. The doc was corrected to the
+measured behaviour. And the test asserts the **bound** (at most one
+re-announce, the row shape, no USER row on any of it, and that a third
+launch adds nothing) rather than the measured number — so closing the
+window later is an improvement, not a test failure. **Encoding a plan's
+claim as an assertion turns an unverified sentence into a fixture that
+future work must preserve.** Measure, then decide which part is the
+invariant and which part is merely today's value.
