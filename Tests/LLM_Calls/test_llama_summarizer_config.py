@@ -203,3 +203,68 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
     from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
 
     assert _is_summary_failure(result), result
+
+
+# --- token budget and empty-content reporting (task-17384) --------------------
+# Chunk summarization failed with "No choices in response data" while
+# per-result calls on the same path succeeded. Captured live: the model spends
+# its budget on reasoning_content (4028 of 4096 completion tokens on a real
+# 6000-char chunk, leaving 465 chars of content), so a chunk that reasons a
+# little longer returns EMPTY content. The summarizer was reading max_tokens
+# from the legacy section only, never the modern table a run primes -- the same
+# split that sent its requests to the wrong port.
+
+
+def test_summarize_with_llama_prefers_the_modern_max_tokens(monkeypatch, captured_post):
+    settings = _settings()
+    settings["api_settings"]["llama_cpp"]["max_tokens"] = 16384
+    monkeypatch.setattr(lib, "load_settings", lambda: settings)
+
+    lib.summarize_with_llama("text", "Summarize.", api_key=None)
+
+    assert captured_post["json"]["max_tokens"] == 16384
+
+
+def test_summarize_with_llama_falls_back_to_the_legacy_max_tokens(
+    monkeypatch, captured_post
+):
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings())
+
+    lib.summarize_with_llama("text", "Summarize.", api_key=None)
+
+    assert captured_post["json"]["max_tokens"] == 4096
+
+
+def test_empty_content_failure_names_the_actual_cause(monkeypatch):
+    """The old message blamed missing choices; the real cause is a completion
+    that spent its budget on reasoning. A caller reading the run's warnings
+    should be able to tell those apart."""
+    monkeypatch.setattr(lib, "load_settings", lambda: _settings())
+
+    class _Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, *_a, **_k):
+            return _FakeResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"role": "assistant", "content": "",
+                                        "reasoning_content": "thinking..." * 50},
+                        }
+                    ],
+                    "usage": {"completion_tokens": 4096},
+                }
+            )
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+
+    result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
+
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
+
+    assert _is_summary_failure(result), result
+    lowered = result.lower()
+    assert "length" in lowered and "reasoning" in lowered, result

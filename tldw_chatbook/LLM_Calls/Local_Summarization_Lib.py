@@ -265,11 +265,22 @@ def summarize_with_llama(
                 temp = 0.7
         logging.debug(f"Llama: Using temperature: {temp}")
 
-        # Check for max tokens
-        if "max_tokens" in llama_config:
-            max_tokens = llama_config["max_tokens"]
-            max_tokens = int(max_tokens)
-        else:
+        # Check for max tokens. task-17384: prefer the modern api_settings entry
+        # for the same reason as the URL above -- that is what a run priming a
+        # local endpoint sets, and reading only the legacy section left this at
+        # 4096 while the chat path ran on 16384. Captured live on a real
+        # 6000-char chunk: the model spent 4028 of 4096 completion tokens on
+        # reasoning_content and emitted 465 characters of content, so a chunk
+        # that reasons slightly longer returns EMPTY content -- which is exactly
+        # how map-reduce chunk summarization was failing.
+        raw_max_tokens = api_settings_llama.get("max_tokens")
+        if raw_max_tokens is None:
+            raw_max_tokens = llama_config.get("max_tokens")
+        try:
+            max_tokens = int(raw_max_tokens) if raw_max_tokens is not None else 4096
+        except (TypeError, ValueError):
+            max_tokens = 4096
+        if max_tokens < 1:
             max_tokens = 4096
         logging.debug(f"Llama: Using max tokens: {max_tokens}")
 
@@ -372,8 +383,40 @@ def summarize_with_llama(
                     logging.debug("llama: Summarization successful")
                     logging.info("Summarization successful.")
                     return summary
+                # The log line stays verbatim -- it is tracked in the reviewed
+                # diagnostic inventory (task-492/3750) and this change is about
+                # the RETURNED value, which is what a caller surfaces in a run's
+                # warnings. task-17384: "no choices" was a guess at the cause;
+                # the real one is a completion that spent its token budget on
+                # reasoning and emitted no content. The "no choices in response"
+                # prefix is preserved so the deep-search failure detector still
+                # recognizes it.
                 logging.error("Llama: No choices in response data")
-                return "Llama: No choices in response data"
+                detail = ""
+                if isinstance(response_data, dict):
+                    first = (response_data.get("choices") or [{}])[0]
+                    if isinstance(first, dict):
+                        finish = first.get("finish_reason")
+                        message = first.get("message")
+                        reasoning = ""
+                        if isinstance(message, dict):
+                            reasoning = str(message.get("reasoning_content") or "")
+                        spent = (response_data.get("usage") or {}).get(
+                            "completion_tokens"
+                        )
+                        parts = []
+                        if finish:
+                            parts.append(f"finish_reason={finish}")
+                        if spent is not None:
+                            parts.append(f"completion_tokens={spent}/{max_tokens}")
+                        if reasoning:
+                            parts.append(
+                                f"reasoning-only completion ({len(reasoning)} chars "
+                                "of reasoning, no content)"
+                            )
+                        if parts:
+                            detail = " (" + "; ".join(parts) + ")"
+                return f"Llama: No choices in response data{detail}"
         else:
             logging.error(
                 "Llama: API request failed; status_code=%s",
