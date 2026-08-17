@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape as html_escape
 from pathlib import PurePath
@@ -1162,3 +1163,177 @@ def turn_file_entries(
                 )
             )
     return paired
+
+
+# --------------------------------------------------------------------------
+# Diff hunk segmentation + annotate/feedback loop (task: turn-file-card
+# annotate loop, TASK-16800)
+# --------------------------------------------------------------------------
+
+#: Matches a unified-diff hunk header line verbatim, e.g. "@@ -1,4 +1,6 @@"
+#: or "@@ -1,4 +1,6 @@ def foo():" (git's optional trailing function
+#: context). Adapted from ``Tools/patch_tool_impls.py:58``'s
+#: ``_HUNK_HEADER`` -- copied locally rather than imported so this module's
+#: segmentation stays independent of the patch tool's own parser, which is
+#: not to be modified for this feature.
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+
+#: The delivery block's heading (spec §4). Shared verbatim between
+#: ``render_diff_feedback_block`` and its consumer (the bridge attach seam,
+#: Task 5) so the format can't drift between definition and use.
+_DIFF_FEEDBACK_HEADING = "## Diff feedback from the user (on your earlier file changes)"
+
+
+@dataclass(frozen=True)
+class DiffHunk:
+    """One hunk of a single file's unified diff, plus its shared prelude.
+
+    ``file_prelude`` (the ``diff --git``/``index``/``---``/``+++`` lines)
+    is identical across every hunk of the same file -- it is repeated on
+    each ``DiffHunk`` rather than factored out so a hunk is a
+    self-contained unit callers can pass around individually (e.g. one
+    hunk per note).
+    """
+
+    header: str
+    body_lines: tuple[str, ...]
+    file_prelude: str
+
+
+def split_unified_diff(text: str) -> list[DiffHunk]:
+    """Segment one file's unified-diff text into per-hunk blocks.
+
+    Always runs over the FULL diff text (spec §2) -- never a
+    display-truncated slice -- so hunk indices are stable regardless of any
+    display cap a caller later applies. Expects ``text`` to be a single
+    file's diff output (e.g. ``provider.diff_text(row, path)``); a
+    multi-file diff is not a supported input shape.
+
+    Args:
+        text: The unified diff text for one file, verbatim.
+
+    Returns:
+        One ``DiffHunk`` per ``@@ ... @@`` header found, in order. When
+        the diff has no hunk headers at all (a binary file, or a clean
+        rename with no content change), returns a single fallback
+        ``DiffHunk`` with an empty ``header``/``file_prelude`` and every
+        line of ``text`` as ``body_lines`` -- this keeps such diffs
+        annotatable as one unit instead of vanishing from segmentation.
+    """
+    lines = text.splitlines()
+    header_indices = [i for i, line in enumerate(lines) if _HUNK_HEADER.match(line)]
+    if not header_indices:
+        return [DiffHunk(header="", body_lines=tuple(lines), file_prelude="")]
+
+    file_prelude = "\n".join(lines[: header_indices[0]])
+    hunks: list[DiffHunk] = []
+    for position, start in enumerate(header_indices):
+        end = (
+            header_indices[position + 1]
+            if position + 1 < len(header_indices)
+            else len(lines)
+        )
+        hunks.append(
+            DiffHunk(
+                header=lines[start],
+                body_lines=tuple(lines[start + 1 : end]),
+                file_prelude=file_prelude,
+            )
+        )
+    return hunks
+
+
+def hunk_excerpt(hunk: DiffHunk, cap: int = 40) -> str:
+    """Render a capped, self-contained excerpt of one hunk.
+
+    This is the retention safety net (spec §1): captured once at note
+    creation, it keeps a note's display and delivery self-contained even
+    after the shadow repo prunes the snapshots the hunk came from.
+
+    Args:
+        hunk: The hunk to excerpt.
+        cap: Maximum number of body lines to include before eliding.
+
+    Returns:
+        The header (when non-empty) followed by up to ``cap`` body lines,
+        newline-joined. When the body is longer than ``cap``, an honest
+        "… N more lines" tail line is appended.
+    """
+    parts: list[str] = []
+    if hunk.header:
+        parts.append(hunk.header)
+    body = hunk.body_lines
+    parts.extend(body[:cap])
+    if len(body) > cap:
+        parts.append(f"… {len(body) - cap} more lines")
+    return "\n".join(parts)
+
+
+def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
+    """Render one note's block entry (spec §4), sans the shared heading."""
+    short_id = str(note["run_id"])[:8]
+    return (
+        f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+        f"> {note['note']}\n"
+        f"```\n{note['hunk_excerpt']}\n```"
+    )
+
+
+def render_diff_feedback_block(
+    notes: Sequence[dict], *, cap_bytes: int = 16384
+) -> "tuple[str, list[int]]":
+    """Render the auto-attached diff-feedback block (spec §4).
+
+    Notes are included oldest-first (callers pass ``ORDER BY id``) while
+    the running UTF-8 size of the block-so-far stays under ``cap_bytes``:
+    a note is included only if adding its full rendering keeps the total
+    strictly under the cap. The first note that would push the block over
+    the cap, and every note after it, are excluded and NOT stamped
+    delivered by the caller -- they stay pending and ride the next send.
+
+    Args:
+        notes: ``change_notes`` row dicts, oldest first.
+        cap_bytes: Maximum UTF-8 byte size of the rendered block.
+
+    Returns:
+        A ``(block, included_ids)`` pair. ``included_ids`` holds exactly
+        the ``id`` of every note that made it into ``block``, in the same
+        order. When any notes were excluded by the cap, ``block`` ends
+        with a "… N more notes held for the next message" line. Empty
+        ``notes`` returns ``("", [])``.
+    """
+    if not notes:
+        return "", []
+
+    lines: list[str] = [_DIFF_FEEDBACK_HEADING]
+    included_ids: list[int] = []
+    for index, note in enumerate(notes):
+        candidate = "\n".join(lines + [_diff_feedback_note_entry(note)])
+        if len(candidate.encode("utf-8")) >= cap_bytes:
+            held = len(notes) - index
+            block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
+            return block, included_ids
+        lines.append(_diff_feedback_note_entry(note))
+        included_ids.append(int(note["id"]))
+    return "\n".join(lines), included_ids
+
+
+def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
+    """Render the disclosure text for delivered diff-feedback notes.
+
+    Shared verbatim by live emission at run completion and by resume
+    re-derivation from delivered ``change_notes`` rows (spec §4) -- both
+    callers must render identical text for the same notes.
+
+    Args:
+        notes: ``change_notes`` row dicts to disclose, one line each.
+
+    Returns:
+        One "📝 Diff feedback attached — ``<path>`` ``<hunk_header>``:
+        ``"<note>"``" line per note, newline-joined. Empty ``notes``
+        returns ``""``.
+    """
+    return "\n".join(
+        f'📝 Diff feedback attached — {note["path"]} {note["hunk_header"]}: "{note["note"]}"'
+        for note in notes
+    )
