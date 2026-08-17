@@ -44,6 +44,27 @@ and this project adheres to Some kind of Versioning
   `CodeRepoCopyPasteWindow` is unaffected.
 
 ### Changed
+- **Behaviour change — reranking now really calls the provider, and really spends
+  (TASK-17065).** Reranking has silently no-opped since the feature existed: the
+  reranker resolved credentials from a `settings["API"]` table `load_settings()`
+  never builds, and dispatched `chat_api_call` with a positional argument list that
+  did not match its signature, so it could complete a scoring call for **none** of
+  the 29 chat providers the picker offers. It now calls `chat_api_call` the way every
+  other caller in this app does — by keyword, resolving no credential of its own and
+  letting each provider handler apply the documented precedence. **A profile that has
+  "Enable reranking" ticked therefore begins issuing real provider calls on its next
+  search — one per candidate result, up to the configured "Rerank results" top-k —
+  where it previously failed and skipped.** Nothing else has to be turned on for the
+  spend to start; untick "Enable reranking" to opt out. This lands on top of
+  TASK-3502's disclosure surfaces, which are what make the spend visible: the cost
+  line under the Reranking toggle in Settings ▸ RAG ("Reranking scores each result
+  with a separate `<provider>` call — up to `<n>` calls per search, billed at that
+  provider's rates"), and the skipped/degraded sentence on the Library results screen.
+  Two consequences of the old broken call worth naming: it put the token cap into the
+  `streaming` slot, so any scoring call that *had* resolved a credential would have
+  STREAMED — scoring calls are now non-streaming, each handler's default; and the
+  reranker's configured `max_tokens` (default 100) and `temperature` (default 0.0)
+  now reach providers for the first time.
 - Unsupported direct imports of `get_user_database_path`, `USER_DB_DIR`, and
   `USER_DB_PATH` have been removed.
 - Textual 8.x is now required (`>=8.0.0,<9`). This corrects the previously

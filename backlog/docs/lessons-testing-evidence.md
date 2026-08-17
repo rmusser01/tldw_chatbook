@@ -326,6 +326,41 @@ must fake threading/navigation seams, patch the **collaborator** (`app`) — nev
 a new attribute onto the class under test; an instance monkeypatch is also an
 existence claim, and nothing checks it.
 
+**Widest blast radius (TASK-17065, 2026-08-17).** One module diverged from the house
+pattern in *two* ways at once, and the single fake at its seam mirrored both.
+`RAG_Search/reranker.py` grew its own credential path (`self._settings =
+load_settings()`, then a hand-rolled `if/elif` reading
+`settings["API"]["<provider>_api_key"]` — a key `load_settings()` never builds) *and*
+its own dispatch convention (a positional argument list handed to `chat_api_call`
+through `run_in_executor`, which forwards positionals only). The seam fake,
+`Tests/RAG_Search/test_reranker_degraded_paths.py`'s `def
+fake_chat_api_call(api_key, messages_payload, provider, model, temp, maxp)`, declared
+the caller's own wrong order *and* planted a `_settings` table so the call got past
+the credential gate. Agreeing with both defects, it left ~2,500 green tests unable to
+see that reranking completed a scoring call for **zero of the 29 providers**
+`chat_api_call` dispatches — for the entire life of the feature. Binding the same call
+through `inspect.signature(chat_api_call).bind(...)` printed the truth in one line:
+`api_endpoint='THE-API-KEY'`, `api_key='openai'`, `temp='gpt-4o-mini'`,
+`system_message=0.25`, `streaming=128` — the mis-binding had also silently switched
+STREAMING on, a third defect nobody had filed.
+
+Two rules out of it:
+
+- **A fake at a seam you share with the rest of the app must bind against the real
+  signature, never re-type the call site's argument list.** Note how far this reaches:
+  even the guard written specifically to catch this
+  (`test_reranker_dispatch_binding_against_the_real_chat_api_call_signature`) first
+  asserted a literal tuple *it typed itself*, so it guarded a copy of the caller and
+  caught nothing. It only became evidence once it drove the real `_call_llm_impl` and
+  observed what landed.
+- **A feature that resolves credentials itself is a divergence to justify, not a
+  default.** The fix here was a DELETION: all 29 handlers already resolve their own key
+  or need none, and every other `chat_api_call` caller in the repo
+  (`UI/Tools_Settings_Window.py`, `UI/Screens/evals_screen.py`,
+  `Chat/console_provider_gateway.py`) already passes keywords and omits `api_key`. The
+  reranker was the sole outlier, and being the sole outlier is exactly what broke it.
+  Before writing a lookup at a shared seam, count the callers who do not have one.
+
 ---
 
 ## Mutation-test every guard you add

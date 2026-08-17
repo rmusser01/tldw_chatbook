@@ -135,11 +135,15 @@ not:
   provider and **Rerank results** you have staged, so the number you read
   is the ceiling you would actually buy. **Reranker provider** enumerates
   every chat provider this build registers, with the default shown
-  explicitly as "openai (default)" — note that the reranker's own
-  credential path currently reaches far fewer of them than the list offers,
-  so a pick can fail at search time (you get the skipped/degraded line
-  below, never a broken search); TASK-17065 tracks which providers the
-  reranker can actually call. **Reranker model** blank means the
+  explicitly as "openai (default)" — and since TASK-17065 the reranker
+  dispatches through that same table, so the name you pick really is the
+  provider that gets called and billed. It resolves no credential of its
+  own: each provider handler finds its key the usual way (explicit
+  `api_settings.<provider>.api_key` over env var over legacy `[API]`), and
+  the local providers that need no key at all need none here either. Pick
+  one you have not configured and the call fails at search time — you get
+  the skipped/degraded line below, never a broken search. **Reranker
+  model** blank means the
   reranker's own default model. If the reranker can't run, search results
   still come back — reranking is skipped, disclosed on the results screen
   ([Library Search/RAG](../library/search-and-rag.md#evidence-rows)), and
@@ -196,12 +200,14 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
    **Reranker provider** (or leave "openai (default)"), optionally name a
    **Reranker model** (blank uses the reranker's default), keep **Rerank
    results** at or below **Default results**, and **Save (s)** — no backfill
-   needed. Every search this profile runs will now attempt one extra provider
-   call per candidate result, at that provider's rates. Whether the call
-   actually goes out depends on the provider: the reranker's credential path
-   covers only some of the names the picker offers (TASK-17065), and when it
-   cannot call one the search still returns, with the reranking line on the
-   results screen saying so.
+   needed. Every search this profile runs now issues one extra provider
+   call per candidate result, at that provider's rates — and since
+   TASK-17065 those calls really go out. Before that fix reranking silently
+   no-opped for every provider the picker offered, so a profile with the
+   toggle already ticked starts spending on its next search without you
+   touching anything; untick **Enable reranking** to opt out. If the
+   provider has no credential configured, or the call fails, the search
+   still returns, with the reranking line on the results screen saying so.
 6. **Delete a profile you no longer want.** With a profile *of your own* active
    (see Quirks), pick the one to remove, press **Delete**, confirm — delete the
    active one and the pointer falls back to a built-in.
@@ -259,7 +265,10 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   candidate result with a separate provider call, so a profile with
   **Rerank results** at 15 can spend up to 15 calls on a single search —
   every surface that reads this profile (Library, Console manual/auto
-  retrieval) pays that cost, not just this pane.
+  retrieval) pays that cost, not just this pane. Until TASK-17065 those
+  calls never actually reached a provider (reranking failed and was skipped,
+  for every provider); they do now, so an already-ticked profile begins
+  spending on its next search.
 - **Backfill needs embeddings support.** Without it you get "Semantic indexing
   is unavailable (missing embeddings extras, or disabled in config)." and the
   index never builds; keyword search keeps working regardless. "RAG backfill
@@ -299,3 +308,14 @@ over-claim and now points at TASK-17065 instead.*
 Quirks bullet above to match B3's already-shipped behavior — **Default
 results** drives the Library window's per-source cap, clamped at 50; no
 code changed here).*
+
+*Verified against `fix/task-17065-reranker-dispatch` — 2026-08-17 (TASK-17065,
+doc-only on this page): the reranker's bespoke credential lookup and its
+mis-ordered positional `chat_api_call` are deleted, so the copy above that said
+its credential path "reaches far fewer" providers than the picker offers is no
+longer true and has been corrected — the reranker now passes no credential and
+each provider handler resolves its own. Pinned by
+`Tests/RAG_Search/test_reranker_degraded_paths.py` (a seam guard that drives the
+real caller and binds through `inspect.signature(chat_api_call)`, plus nine
+parametrised provider cells covering the five keyless locals and four remotes).
+No live provider call was made; the picker itself was not touched.*

@@ -322,10 +322,17 @@ def normalise_library_rag_reranker_provider(value: Any) -> str:
         a blank value the control shows the provider that would really be
         billed. A name this build does not register (a hand-edited profile
         file, a provider from a newer build) resolves there too rather than
-        raising ``InvalidSelectValueError`` out of ``compose()`` -- and in
-        THAT branch the control is showing the default while the profile
-        still carries the unrecognised name, which the picker cannot
-        currently repair (TASK-17065 owns display + repair for it).
+        raising ``InvalidSelectValueError`` out of ``compose()`` -- so in
+        THAT branch the control shows the default while the profile still
+        carries the unrecognised name. That branch IS repairable: the
+        reranker-provider change guard no longer folds an unrecognised
+        loaded value back (see ``settings_screen``'s
+        ``handle_library_rag_reranker_provider_changed``), so picking a
+        registered provider over it stages and saves
+        (``Tests/UI/test_settings_rag_profile_region.py::
+        test_an_unrecognised_stored_provider_is_repairable_from_the_picker``).
+        Left unrepaired, the stored name reaches ``chat_api_call``, which
+        cannot route it, and the results screen discloses the skip.
     """
     text = str(value).strip()
     if not text:
