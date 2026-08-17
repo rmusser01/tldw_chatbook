@@ -1,7 +1,7 @@
 ---
 id: TASK-17371
 title: Enable sub-question decomposition and bounded multi-hop for shipped research runs
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-08-17 07:30'
@@ -22,7 +22,7 @@ Sub-question fan-out and gap-driven replanning both ship but are off by default:
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The shipped default for research-run decomposition is set from the task-17370 measurement, and the choice is recorded with the numbers that justify it.
-- [ ] #2 A user can see and change the decomposition settings for a run before launching it, and the setting persists.
+- [x] #2 A user can see and change the decomposition settings for a run before launching it, and the setting persists.
 - [x] #3 The expected spend implication of the chosen default is documented where a user meets it, since fan-out multiplies gate LLM calls per run and iterations multiply rounds on top.
 - [x] #4 Existing runs, artifacts and tests that assume single-pass behaviour continue to pass or are updated with the reason recorded.
 <!-- AC:END -->
@@ -98,10 +98,19 @@ baseline recorder's tests, which pin that it passes `max_iterations`
 EXPLICITLY (default 1) -- the property that keeps recorded baselines
 reproducible byte-for-byte under a changed shipped default.
 
-AC #2 remains open: a user can override per run today only by typing limits
-into the Research window's existing input. A real control that shows the
-current setting and persists it is still to do, and is the part that matters
-more than the default itself.
+AC #2: the Research window now carries a rounds Select beside its policy
+picker, defaulting to the ENGINE's own resolver (`_configured_max_iterations`)
+rather than a second default that could drift from it, persisted through
+`save_state`/`restore_state` like the academic lane toggle, and merged into the
+launched run's `limits_json`. A typed `max_iterations=N` in the limits box still
+wins, because that is the more specific statement of intent and is what the
+engine treats as authoritative. Selecting a value states the trade-off in the
+status line rather than leaving the spend implicit.
+
+Three existing tests asserted the exact persisted state and `limits_json` and
+were updated with the reason recorded in-line (AC #4's requirement): the
+window's state gained `rounds`, and a launched run now carries `max_iterations`
+whenever the limits text does not state one.
 
 Modified: `tldw_chatbook/Research_Interop/local_research_engine.py`,
 `tldw_chatbook/config.py`,

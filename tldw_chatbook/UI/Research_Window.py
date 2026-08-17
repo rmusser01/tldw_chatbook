@@ -100,6 +100,43 @@ def _parse_config_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"true", "1", "yes", "on"}
 
 
+def _rounds_options(current: int) -> list[tuple[str, int]]:
+    """Rounds options that always include ``current`` (Qodo, PR 1769).
+
+    The control offered a fixed 1-4 with ``allow_blank=False``, so an install
+    configuring more rounds -- or a restored state holding more -- raised
+    InvalidSelectValueError and the window failed to mount entirely. Extending
+    the options rather than clamping the value keeps the control honest: it
+    shows what the run will actually do instead of quietly displaying a
+    different number.
+
+    Args:
+        current: The value that must be selectable.
+
+    Returns:
+        Ascending (label, value) pairs covering 1-4 plus ``current``.
+    """
+    values = sorted({1, 2, 3, 4, max(1, int(current or 1))})
+    return [(f"{n} round" if n == 1 else f"{n} rounds", n) for n in values]
+
+
+def _iteration_rounds_default() -> int:
+    """Rounds the window offers by default (task-17371).
+
+    Deliberately delegates to the engine's own resolver so the number a user
+    sees is the number a run would have used anyway -- a second default here
+    would drift from it. Lazy import keeps the window's module import cheap.
+    """
+    try:
+        from ..Research_Interop.local_research_engine import (
+            _configured_max_iterations,
+        )
+
+        return max(1, int(_configured_max_iterations()))
+    except Exception:  # noqa: BLE001 - a UI default must never fail to load
+        return 1
+
+
 def _academic_lane_default() -> bool:
     """Config default for the academic lane toggle: [SearchSettings]
     research_academic_lane (default False). Failures default OFF -- the
@@ -130,6 +167,10 @@ class ResearchWindow(Vertical):
         # task-16328: academic lane toggle (arXiv + Semantic Scholar papers
         # join the run's evidence pool when enabled).
         self.academic_enabled = _academic_lane_default()
+        # task-17371: rounds this window will launch with (multi-hop). Shown
+        # rather than buried in the limits box, and persisted like the lane
+        # toggle; a typed max_iterations still wins on create.
+        self.iteration_rounds = _iteration_rounds_default()
         # task-16334: budget limits text (parsed into limits_json on create)
         # and the rendered follow-up answer.
         self.limits_text = ""
@@ -142,6 +183,11 @@ class ResearchWindow(Vertical):
         )
 
     def compose(self) -> ComposeResult:
+        """Build the window: toolbar, run-creation row, run list and detail pane.
+
+        Yields:
+            The window's child widgets, in mount order.
+        """
         yield Label("Research Sessions")
         with Horizontal(id="research-toolbar"):
             yield Select(
@@ -169,6 +215,12 @@ class ResearchWindow(Vertical):
                 value=self.source_policy,
                 allow_blank=False,
                 id="research-policy-select",
+            )
+            yield Select(
+                _rounds_options(self.iteration_rounds),
+                value=self.iteration_rounds,
+                allow_blank=False,
+                id="research-rounds-select",
             )
             yield Input(
                 placeholder="Providers: arxiv, pubmed",
@@ -213,15 +265,31 @@ class ResearchWindow(Vertical):
                 )
 
     def save_state(self) -> dict[str, Any]:
+        """Capture the operator's run-creation choices for later restoration.
+
+        Returns:
+            The source, academic-lane flag, limits text, source policy,
+            provider tokens and multi-hop round count.
+        """
         return {
             "source": self.current_source,
             "academic": self.academic_enabled,
             "limits": self.limits_text,
             "policy": self.source_policy,
             "providers": self.providers_text,
+            "rounds": self.iteration_rounds,
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
+        """Reapply saved choices, falling back to defaults for bad values.
+
+        Every field is validated rather than trusted: an unknown source or
+        policy, or a non-positive round count, resolves to its default instead
+        of reaching a widget that would reject it.
+
+        Args:
+            state: A mapping previously produced by ``save_state`` (or empty).
+        """
         source = str((state or {}).get("source") or "local").strip().lower()
         self.current_source = source if source in {"local", "server"} else "local"
         self.academic_enabled = bool((state or {}).get("academic"))
@@ -233,7 +301,20 @@ class ResearchWindow(Vertical):
             } else "balanced"
         )
         self.providers_text = str((state or {}).get("providers") or "")
+        try:
+            rounds = int((state or {}).get("rounds") or 0)
+        except (TypeError, ValueError):
+            rounds = 0
+        self.iteration_rounds = rounds if rounds >= 1 else _iteration_rounds_default()
         self._sync_academic_toggle()
+        try:
+            rounds_select = self.query_one("#research-rounds-select", Select)
+            # Widen first: assigning a value the mounted control does not offer
+            # raises InvalidSelectValueError (Qodo, PR 1769).
+            rounds_select.set_options(_rounds_options(self.iteration_rounds))
+            rounds_select.value = self.iteration_rounds
+        except Exception:
+            pass  # not mounted yet; compose()'s initial value covers it
         try:
             self.query_one("#research-limits-input", Input).value = self.limits_text
         except Exception:
@@ -331,6 +412,21 @@ class ResearchWindow(Vertical):
         self.source_policy = str(event.value or "balanced")
         self._set_status(f"Source policy: {self.source_policy}")
 
+    @on(Select.Changed, "#research-rounds-select")
+    def _on_rounds_changed(self, event: Select.Changed) -> None:
+        try:
+            self.iteration_rounds = max(1, int(event.value))
+        except (TypeError, ValueError):
+            return
+        if self.iteration_rounds == 1:
+            self._set_status("Rounds: 1 (single pass -- no gap-driven follow-up).")
+        else:
+            self._set_status(
+                f"Rounds: {self.iteration_rounds}. Each extra round researches the "
+                "gaps the previous answer left open -- more evidence, and "
+                "proportionally more searches and LLM calls."
+            )
+
     @on(Checkbox.Changed, "#research-academic-toggle")
     def _on_academic_toggle_changed(self, event: Checkbox.Changed) -> None:
         self.academic_enabled = bool(event.value)
@@ -363,6 +459,19 @@ class ResearchWindow(Vertical):
         return self.runs
 
     async def create_run(self, payload: dict[str, Any]) -> Any:
+        """Create a run from the payload plus this window's live inputs.
+
+        Reads the limits and providers inputs directly (rather than trusting
+        the seeded attributes), folds in the source policy, provider overrides
+        and the multi-hop round count, then starts the local engine for a
+        freshly created local run.
+
+        Args:
+            payload: Base run fields from the caller, e.g. the query.
+
+        Returns:
+            The created run record, or whatever the controller returned.
+        """
         # Qodo (PR 1722): read the inputs live -- restore_state seeds the
         # attributes, but typing in the widgets must reach the payload.
         try:
@@ -378,6 +487,26 @@ class ResearchWindow(Vertical):
         limits, warnings = _parse_limits_text(self.limits_text)
         if warnings:
             self._set_status("Limits: " + "; ".join(warnings))
+        # task-17371: the rounds control contributes max_iterations unless the
+        # limits box already states one -- a typed value is the more specific
+        # statement of intent, and is what the engine treats as authoritative.
+        # Qodo (PR 1769): _parse_limits_text preserves key casing, so a typed
+        # "Max_Iterations=1" used to be invisible here AND invisible to the
+        # engine (which reads the canonical lowercase key), leaving the control's
+        # value in charge of a run the user had explicitly bounded. Any casing
+        # now counts, and is normalized onto the canonical key; a later variant
+        # wins, as a repeated key would.
+        typed_variants = [key for key in limits if key.lower() == "max_iterations"]
+        if typed_variants:
+            typed_value = limits[typed_variants[-1]]
+            limits = {
+                key: value
+                for key, value in limits.items()
+                if key not in typed_variants
+            }
+            limits["max_iterations"] = typed_value
+        else:
+            limits = {**limits, "max_iterations": max(1, int(self.iteration_rounds or 1))}
         if limits:
             payload = {**payload, "limits_json": limits}
         # task-16791: lane routing + provider selection ride the run record.
