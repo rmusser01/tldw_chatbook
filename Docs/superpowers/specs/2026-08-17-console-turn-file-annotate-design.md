@@ -127,13 +127,14 @@ finding #1 — this is a real widget change, planned as its own task):
 
 ### 4. Delivery: auto-attach + disclosure
 
-- **Attach seam:** `ConsoleChatController` collects
-  `pending_notes_for_conversation(...)` when building an agent reply and
-  passes a rendered `diff_feedback_block` into
-  `ConsoleAgentBridge.run_reply`, which appends it to the last
-  `role=="user"` message of its own outbound copy — the exact
-  `turn_bundle_block` mechanism (bridge `:2576/:3343-3353`). Block
-  format:
+- **Attach seam:** `ConsoleAgentBridge.run_reply` collects
+  `pending_notes_for_conversation(...)` itself at the attach point — the
+  bridge owns the AgentRuns DB, the conversation context, and the
+  completion seam, so the whole feature stays inside it; the controller
+  and `run_reply`'s signature are untouched. The rendered block is
+  appended to the last `role=="user"` message of the bridge's own
+  outbound copy, immediately after the `turn_bundle_block` append and by
+  the same mechanism (bridge `:2576/:3343-3353`). Block format:
 
   ```
   ## Diff feedback from the user (on your earlier file changes)
