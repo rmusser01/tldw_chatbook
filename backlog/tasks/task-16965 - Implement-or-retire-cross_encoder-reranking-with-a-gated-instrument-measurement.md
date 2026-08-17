@@ -1,9 +1,12 @@
 ---
 id: TASK-16965
-title: 'Implement or retire cross_encoder reranking, with a gated-instrument measurement'
-status: To Do
+title: >-
+  Implement or retire cross_encoder reranking, with a gated-instrument
+  measurement
+status: In Progress
 assignee: []
 created_date: '2026-08-16'
+updated_date: '2026-08-17 21:00'
 labels:
   - rag
   - measurement
@@ -48,7 +51,6 @@ is likewise an acceptable outcome provided it is recorded as a decision.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 A recorded decision exists for `cross_encoder`: implemented as a local deterministic reranking strategy, or retired from the strategy vocabulary -- not left as an unimplemented name
 - [ ] #2 If implemented: its retrieval effect is measured on the gated instrument as a pre-registered before/after over the 105 metrics, with the rule for "this helped" fixed BEFORE the run
@@ -57,3 +59,9 @@ is likewise an acceptable outcome provided it is recorded as a decision.
 - [ ] #5 The measurement requires no live provider spend and no network -- the whole reason a local cross-encoder is the measurable one
 - [ ] #6 The gate still reads `PASSED: No regression. 105 metric(s)` on the shipped state, whichever arm is taken
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+T1: implement CrossEncoderReranker (local, credential-free) behind create_reranker; RED tests with a stub model (no download).\nT2: env-gated offline probe over semantic+hybrid, prints census + VERDICT.\nT3: obey the pre-registered verdict (ship-with-docs or retire the name) and close.\nDecision rule fixed in Docs/superpowers/plans/2026-08-17-cross-encoder-measurement.md BEFORE any run.
+<!-- SECTION:PLAN:END -->

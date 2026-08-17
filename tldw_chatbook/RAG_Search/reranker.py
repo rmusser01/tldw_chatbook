@@ -1,12 +1,15 @@
 """
-LLM-based reranking for improved search result relevance.
+Reranking for improved search result relevance.
 
-This module implements various reranking strategies using language models
-to evaluate and reorder search results based on their relevance to the query.
+Three strategies (pointwise/pairwise/listwise) evaluate and reorder search
+results with a language model; ``cross_encoder`` (TASK-16965) does it with a
+local sentence-transformers cross-encoder, requiring no provider, no
+credential and no network.
 """
 
 import asyncio
 import functools
+import threading
 from typing import List, Optional, Union, Literal, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
@@ -98,7 +101,9 @@ class RerankingConfig:
     max_tokens: int = 100
 
     # Reranking settings
-    strategy: Literal["pairwise", "listwise", "pointwise"] = "pointwise"
+    strategy: Literal["pairwise", "listwise", "pointwise", "cross_encoder"] = (
+        "pointwise"
+    )
     top_k_to_rerank: int = 20  # Only rerank top K results
     batch_size: int = 5  # Number of results to evaluate at once
     include_reasoning: bool = False  # Whether to generate explanations
@@ -147,6 +152,95 @@ class BaseReranker(ABC):
 
         key_str = f"{query}|{'|'.join(sorted(result_ids))}"
         return hashlib.md5(key_str.encode()).hexdigest()
+
+    # NOTE (TASK-16965): these two live on the BASE class, not on
+    # PointwiseReranker where they were written. They are the shared
+    # score-application contract -- the `scored`-flag stamp rule in
+    # particular (TASK-3502 note-b) -- and `CrossEncoderReranker` is the
+    # second strategy that REPLACES a row's score, so duplicating them
+    # would mean two copies of that honesty rule free to drift apart.
+    def _apply_scores(
+        self,
+        results: List[Union[SearchResult, SearchResultWithCitations]],
+        reranking_results: List[RerankingResult],
+    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
+        """Apply reranking scores and reorder results."""
+        # Calculate final scores
+        scored_results = []
+        for result, rerank_result in zip(results, reranking_results):
+            if not rerank_result.scored:
+                # This row's scoring call failed: it keeps the score it
+                # arrived with, and -- crucially -- is NOT stamped with
+                # `rerank_score`. That stamp is what the Library reads as
+                # "this number is no longer a similarity, render
+                # ' | reranked'"; claiming it here made a partly-failed run
+                # over-claim on every row it never rescored (TASK-3502
+                # note-b). Conservative in both directions: no fabricated
+                # score, and no fabricated provenance.
+                final_score = result.score
+                metadata = {**result.metadata}
+            else:
+                if self.config.combine_original_score:
+                    # Weighted combination
+                    final_score = (
+                        self.config.original_score_weight * rerank_result.original_score
+                        + (1 - self.config.original_score_weight)
+                        * rerank_result.rerank_score
+                    )
+                else:
+                    final_score = rerank_result.rerank_score
+                metadata = {
+                    **result.metadata,
+                    "rerank_score": rerank_result.rerank_score,
+                }
+
+            # Create a copy of the result with new score
+            result_copy = type(result)(
+                id=result.id,
+                score=final_score,
+                document=result.document,
+                metadata=metadata,
+            )
+
+            # Preserve citations if present
+            if hasattr(result, "citations"):
+                result_copy.citations = result.citations
+
+            scored_results.append((final_score, result_copy, rerank_result))
+
+        # Sort by final score (descending)
+        scored_results.sort(key=lambda x: x[0], reverse=True)
+
+        # Update ranks in reranking results
+        for new_rank, (_, _, rerank_result) in enumerate(scored_results):
+            rerank_result.new_rank = new_rank
+
+        # Return reordered results
+        return [result for _, result, _ in scored_results]
+
+    def _log_reranking_metrics(self, reranking_results: List[RerankingResult]):
+        """Log metrics about reranking performance."""
+        if not reranking_results:
+            return
+
+        # Calculate rank changes
+        rank_changes = [r.rank_change for r in reranking_results]
+        avg_rank_change = sum(rank_changes) / len(rank_changes)
+
+        # Calculate score changes
+        score_changes = [r.rerank_score - r.original_score for r in reranking_results]
+        avg_score_change = sum(score_changes) / len(score_changes)
+
+        # Log metrics
+        log_histogram("reranker_avg_rank_change", avg_rank_change)
+        log_histogram("reranker_avg_score_change", avg_score_change)
+        log_counter("reranker_results_processed", value=len(reranking_results))
+
+        # Log significant reorderings
+        significant_changes = sum(
+            1 for r in reranking_results if abs(r.rank_change) >= 3
+        )
+        log_counter("reranker_significant_changes", value=significant_changes)
 
     async def _call_llm(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """Call LLM with retry logic."""
@@ -430,89 +524,6 @@ class PointwiseReranker(BaseReranker):
                 scored=False,
             )
 
-    def _apply_scores(
-        self,
-        results: List[Union[SearchResult, SearchResultWithCitations]],
-        reranking_results: List[RerankingResult],
-    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
-        """Apply reranking scores and reorder results."""
-        # Calculate final scores
-        scored_results = []
-        for result, rerank_result in zip(results, reranking_results):
-            if not rerank_result.scored:
-                # This row's scoring call failed: it keeps the score it
-                # arrived with, and -- crucially -- is NOT stamped with
-                # `rerank_score`. That stamp is what the Library reads as
-                # "this number is no longer a similarity, render
-                # ' | reranked'"; claiming it here made a partly-failed run
-                # over-claim on every row it never rescored (TASK-3502
-                # note-b). Conservative in both directions: no fabricated
-                # score, and no fabricated provenance.
-                final_score = result.score
-                metadata = {**result.metadata}
-            else:
-                if self.config.combine_original_score:
-                    # Weighted combination
-                    final_score = (
-                        self.config.original_score_weight * rerank_result.original_score
-                        + (1 - self.config.original_score_weight)
-                        * rerank_result.rerank_score
-                    )
-                else:
-                    final_score = rerank_result.rerank_score
-                metadata = {
-                    **result.metadata,
-                    "rerank_score": rerank_result.rerank_score,
-                }
-
-            # Create a copy of the result with new score
-            result_copy = type(result)(
-                id=result.id,
-                score=final_score,
-                document=result.document,
-                metadata=metadata,
-            )
-
-            # Preserve citations if present
-            if hasattr(result, "citations"):
-                result_copy.citations = result.citations
-
-            scored_results.append((final_score, result_copy, rerank_result))
-
-        # Sort by final score (descending)
-        scored_results.sort(key=lambda x: x[0], reverse=True)
-
-        # Update ranks in reranking results
-        for new_rank, (_, _, rerank_result) in enumerate(scored_results):
-            rerank_result.new_rank = new_rank
-
-        # Return reordered results
-        return [result for _, result, _ in scored_results]
-
-    def _log_reranking_metrics(self, reranking_results: List[RerankingResult]):
-        """Log metrics about reranking performance."""
-        if not reranking_results:
-            return
-
-        # Calculate rank changes
-        rank_changes = [r.rank_change for r in reranking_results]
-        avg_rank_change = sum(rank_changes) / len(rank_changes)
-
-        # Calculate score changes
-        score_changes = [r.rerank_score - r.original_score for r in reranking_results]
-        avg_score_change = sum(score_changes) / len(score_changes)
-
-        # Log metrics
-        log_histogram("reranker_avg_rank_change", avg_rank_change)
-        log_histogram("reranker_avg_score_change", avg_score_change)
-        log_counter("reranker_results_processed", value=len(reranking_results))
-
-        # Log significant reorderings
-        significant_changes = sum(
-            1 for r in reranking_results if abs(r.rank_change) >= 3
-        )
-        log_counter("reranker_significant_changes", value=significant_changes)
-
 
 @dataclass
 class _ComparisonTally:
@@ -759,6 +770,265 @@ class ListwiseReranker(BaseReranker):
         return set(ranking) == set(range(expected_length))
 
 
+#: The cross-encoder loaded when the config does not name one. Measured in
+#: this environment before the strategy was written (TASK-16965): it loads
+#: from the local HF cache offline and separates a relevant pair (+8.719)
+#: from an irrelevant one (-11.14). ``mixedbread-ai/mxbai-rerank-large-v2``
+#: is NOT usable here -- the cached copy is a 20 MB partial with no weights
+#: file and raises ``OSError`` offline.
+DEFAULT_CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+#: Substrings that mark a model id as a reranker/cross-encoder artifact.
+#: Checked FIRST, so a vendor namespace that publishes both chat models and
+#: rerankers (``Qwen/Qwen3-Reranker-0.6B``) is not redirected to the default.
+_RERANKER_NAME_MARKERS = ("rerank", "cross-encoder", "cross_encoder", "colbert")
+
+#: Repo-id namespaces that publish CHAT models. A profile that names one of
+#: these has configured an LLM strategy's model, not a cross-encoder.
+_LLM_REPO_NAMESPACES = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "google",
+        "meta-llama",
+        "mistralai",
+        "deepseek-ai",
+        "x-ai",
+        "cohere",
+        "perplexity",
+        "openrouter",
+        "groq",
+        "moonshotai",
+    }
+)
+
+#: Loaded cross-encoders, keyed by model name. Module level ON PURPOSE: the
+#: model costs ~18 s to load, the RAG service builds a reranker per profile
+#: switch, and a measurement run reranks 60 queries x 2 modes -- reloading
+#: per instance would dominate the wall clock and measure the loader.
+_CROSS_ENCODER_MODELS: dict = {}
+_CROSS_ENCODER_MODELS_LOCK = threading.Lock()
+
+
+def _import_cross_encoder_class():
+    """Import ``sentence_transformers.CrossEncoder`` at FIRST USE.
+
+    Deliberately not a module-level import: ``sentence-transformers`` ships
+    in the ``embeddings_rag`` extra, and importing torch at
+    ``reranker.py`` import time would tax every caller of the three
+    LLM strategies (and every test that imports this module) with it.
+    Isolated in its own function so a unit test can refuse it outright and
+    prove no model is ever downloaded.
+    """
+    from sentence_transformers import CrossEncoder
+
+    return CrossEncoder
+
+
+def _load_cross_encoder(model_name: str):
+    """Return the cached cross-encoder for ``model_name``, loading it once."""
+    model = _CROSS_ENCODER_MODELS.get(model_name)
+    if model is not None:
+        return model
+
+    with _CROSS_ENCODER_MODELS_LOCK:
+        # Re-check inside the lock: two searches can race the first load.
+        model = _CROSS_ENCODER_MODELS.get(model_name)
+        if model is None:
+            logger.info(f"Loading cross-encoder model '{model_name}' (first use)")
+            model = _import_cross_encoder_class()(model_name)
+            _CROSS_ENCODER_MODELS[model_name] = model
+    return model
+
+
+def _resolve_cross_encoder_model_name(model_name: Optional[str]) -> str:
+    """Pick the cross-encoder artifact to load from a config's ``model_name``.
+
+    ``RerankingConfig.model_name`` defaults to ``"gpt-3.5-turbo"`` and every
+    shipped profile sets a chat model there, because the three strategies
+    that existed before this one are LLM-driven. Handing such a name to
+    ``CrossEncoder`` would fail at load and degrade every rerank, so a name
+    that is not a plausible model artifact falls back to the measured
+    default. A caller that genuinely wants a different cross-encoder passes
+    its full repo id or a local path, which is used verbatim.
+    """
+    name = (model_name or "").strip()
+    if not name:
+        return DEFAULT_CROSS_ENCODER_MODEL
+
+    lowered = name.lower()
+    if any(marker in lowered for marker in _RERANKER_NAME_MARKERS):
+        return name
+
+    namespace, separator, _remainder = name.partition("/")
+    if not separator:
+        # No namespace: a bare chat model name ("gpt-4o-mini"), not a repo id.
+        return DEFAULT_CROSS_ENCODER_MODEL
+    if namespace.lower() in _LLM_REPO_NAMESPACES:
+        return DEFAULT_CROSS_ENCODER_MODEL
+    return name
+
+
+class CrossEncoderReranker(BaseReranker):
+    """Reranks with a LOCAL cross-encoder: no provider, no credential, no spend.
+
+    The other three strategies ask an LLM to score, compare or reorder
+    results through ``chat_api_call``. This one runs a sentence-transformers
+    cross-encoder over ``(query, document)`` pairs in-process, which is what
+    makes reranking measurable on the gated eval instrument at all
+    (TASK-16965): deterministic, unpriced, offline.
+
+    Two ``RerankingConfig`` fields are PROVIDER concepts and are therefore
+    no-ops here, stated rather than implied: ``max_retries`` (there is no
+    remote call to retry -- a failed ``predict`` is a local failure that a
+    second identical call would repeat) and ``include_reasoning`` (there is
+    no model being asked to explain itself; a cross-encoder emits one
+    number). ``model_provider`` is likewise unused: the model IS the
+    provider.
+
+    Scores are min-max normalised into ``config.score_scale`` over the
+    window. Cross-encoder outputs are unbounded logits (roughly -11..+11 for
+    the ms-marco default), so CLAMPING them to the (0.0, 1.0) scale the way
+    the pointwise strategy clamps an LLM's 0-1 score would collapse every
+    strongly-relevant row to 1.0 -- ties, in the one place ordering is the
+    entire product. Normalising is monotonic, so it preserves the model's
+    ordering exactly while putting the numbers on the scale
+    ``combine_original_score`` blends against.
+    """
+
+    def __init__(self, config: RerankingConfig):
+        super().__init__(config)
+        self.model_name = _resolve_cross_encoder_model_name(config.model_name)
+
+    @timeit("reranker_cross_encoder")
+    async def rerank(
+        self,
+        query: str,
+        results: List[Union[SearchResult, SearchResultWithCitations]],
+        **kwargs,
+    ) -> RerankOutcome:
+        """Rerank the top-k window with the cross-encoder."""
+        if not results:
+            return RerankOutcome(results=results, failed=0, total=0)
+
+        results_to_rerank = results[: self.config.top_k_to_rerank]
+        remaining_results = results[self.config.top_k_to_rerank :]
+
+        cache_key = None
+        if self._cache is not None:
+            cache_key = self._get_cache_key(query, [r.id for r in results_to_rerank])
+            if cache_key in self._cache:
+                log_counter("reranker_cache_hit", labels={"strategy": "cross_encoder"})
+                cached_scores = self._cache[cache_key]
+                return RerankOutcome(
+                    results=self._apply_scores(results_to_rerank, cached_scores)
+                    + remaining_results,
+                    failed=sum(1 for r in cached_scores if not r.scored),
+                    total=len(results_to_rerank),
+                )
+
+        log_counter("reranker_cache_miss", labels={"strategy": "cross_encoder"})
+
+        raw_scores = await self._predict_scores(query, results_to_rerank)
+        if raw_scores is None:
+            # Same shape as ListwiseReranker's failure: nothing was scored,
+            # so the caller's own ordering comes back untouched and unstamped
+            # (TASK-3502 note-b -- no row may claim a rerank that never
+            # happened), with the counts that let the service disclose it as
+            # degraded rather than as a successful no-op. Not cached: a model
+            # failure is transient in a way a parsed score is not.
+            log_counter("reranker_cross_encoder_failed")
+            return RerankOutcome(
+                results=results,
+                failed=len(results_to_rerank),
+                total=len(results_to_rerank),
+            )
+
+        reranking_results = self._normalize_scores(results_to_rerank, raw_scores)
+
+        if self._cache is not None and cache_key:
+            self._cache[cache_key] = reranking_results
+
+        reranked = self._apply_scores(results_to_rerank, reranking_results)
+        self._log_reranking_metrics(reranking_results)
+
+        return RerankOutcome(
+            results=reranked + remaining_results,
+            failed=0,
+            total=len(results_to_rerank),
+        )
+
+    async def _predict_scores(
+        self,
+        query: str,
+        rows: List[Union[SearchResult, SearchResultWithCitations]],
+    ) -> Optional[List[float]]:
+        """Score every row in one batched ``predict``; ``None`` on failure."""
+        try:
+            loop = asyncio.get_running_loop()
+            scores = await loop.run_in_executor(
+                None, functools.partial(self._predict_scores_sync, query, rows)
+            )
+        except Exception as exc:
+            # Reranking must NEVER fail a search: a missing model file, a
+            # missing sentence-transformers install and an OOM all land here
+            # and degrade to the unreranked ordering.
+            logger.error(f"Cross-encoder reranking failed ({self.model_name}): {exc}")
+            return None
+
+        if len(scores) != len(rows):
+            logger.error(
+                f"Cross-encoder returned {len(scores)} scores for {len(rows)} rows; "
+                "discarding them"
+            )
+            return None
+        return scores
+
+    def _predict_scores_sync(
+        self,
+        query: str,
+        rows: List[Union[SearchResult, SearchResultWithCitations]],
+    ) -> List[float]:
+        """Blocking model call, run in an executor.
+
+        The document is passed WHOLE: the model truncates to its own
+        ``max_length``, so a hand-picked character cap here would only be a
+        second, wronger truncation.
+        """
+        model = _load_cross_encoder(self.model_name)
+        pairs = [(query, row.document or "") for row in rows]
+        return [float(score) for score in model.predict(pairs)]
+
+    def _normalize_scores(
+        self,
+        rows: List[Union[SearchResult, SearchResultWithCitations]],
+        raw_scores: List[float],
+    ) -> List[RerankingResult]:
+        """Min-max the window's logits into ``score_scale`` (order-preserving)."""
+        low, high = self.config.score_scale
+        lowest = min(raw_scores)
+        span = max(raw_scores) - lowest
+
+        reranking_results = []
+        for rank, (row, raw_score) in enumerate(zip(rows, raw_scores)):
+            if span > 0:
+                normalized = low + (high - low) * (raw_score - lowest) / span
+            else:
+                # Every row scored identically: the model expressed no
+                # preference, so give them all the same value and let the
+                # original retrieval score break the tie.
+                normalized = (low + high) / 2
+            reranking_results.append(
+                RerankingResult(
+                    original_rank=rank,
+                    new_rank=rank,  # Updated by _apply_scores.
+                    original_score=row.score,
+                    rerank_score=normalized,
+                )
+            )
+        return reranking_results
+
+
 def create_reranker(strategy: str = "pointwise", **kwargs) -> BaseReranker:
     """Factory function to create a reranker with the specified strategy."""
     config = RerankingConfig(strategy=strategy, **kwargs)
@@ -787,6 +1057,8 @@ def create_reranker_from_config(config: RerankingConfig) -> BaseReranker:
         return PairwiseReranker(config)
     elif strategy == "listwise":
         return ListwiseReranker(config)
+    elif strategy == "cross_encoder":
+        return CrossEncoderReranker(config)
     else:
         raise ValueError(f"Unknown reranking strategy: {strategy}")
 

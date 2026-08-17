@@ -469,10 +469,12 @@ async def test_listwise_reranker_counts_total_failure():
 def test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity():
     """(Task 6, coordinator follow-up) What does a REAL reranked row carry?
 
-    `PointwiseReranker._apply_scores` is the only reranking path that
-    replaces a row's score: it writes `final_score` (by default a weighted
-    blend of the original similarity and the LLM's relevance score) and
-    stamps `metadata["rerank_score"]`. That stamp is the production marker
+    `BaseReranker._apply_scores` is the only reranking path that replaces a
+    row's score: it writes `final_score` (by default a weighted blend of the
+    original similarity and the scoring model's relevance score) and stamps
+    `metadata["rerank_score"]`. Pointwise is pinned here; the local
+    `cross_encoder` strategy shares that method (TASK-16965) and is pinned in
+    `test_cross_encoder_reranker.py`. That stamp is the production marker
     -- `_final_score_kind` is READ by `local_citation_capture` but written
     by nothing in the app.
 
