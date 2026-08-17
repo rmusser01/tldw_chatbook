@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -1245,3 +1246,72 @@ async def test_a_failing_audit_write_never_costs_the_user_their_feedback():
 
         assert len(store.calls) == 1
         assert queue.dispatched == ["[LGTM]\n> ship it"]
+
+
+@pytest.mark.asyncio
+async def test_feedback_reaches_the_real_database_unmocked(tmp_path):
+    """The screen -> store -> DB chain with NOTHING stubbed on the store.
+
+    Every other test here replaces ``record_feedback_event`` with a double,
+    which proves the screen CALLS it but would pass just as happily if the
+    store's own write were inert. This repo has shipped an inert feature
+    behind exactly that shape of mock before, so the real chain gets its own
+    test.
+
+    The console harness app carries no ChaChaNotes DB, so its store is built
+    without persistence. The test installs a real one through the screen's
+    own ``_console_chat_store`` setter (plus the controller's cached reference,
+    which the runtime swap does not reach) -- so the only thing the test does
+    is CONSTRUCT the store; every write after that is production code against
+    a real database.
+    """
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "selection_e2e")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            screen._prompt_queue = _RecordingPromptQueue()
+            _stub_comment_modal(screen, "needs a retry bound")
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            # The controller caches the store it was built with, so the
+            # runtime swap alone would leave the screen writing to the
+            # harness's persistence-less store.
+            controller.store = store
+            assert getattr(store.persistence, "db", None) is db  # control
+
+            session = store.ensure_session(title="Feedback e2e")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="retrying forever on 429",
+                persist=True,
+            )
+
+            screen.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action="request-changes",
+                    quote="retrying forever on 429",
+                    anchor_message_id=assistant.id,
+                )
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+            rows = [
+                row
+                for row in db.get_trajectory_rows(conversation_id)
+                if row.event_kind == "user_feedback"
+            ]
+            assert len(rows) == 1, "no user_feedback row reached the database"
+            assert rows[0].message_id == assistant.persisted_message_id
+            payload = json.loads(rows[0].payload_json)
+            assert payload["action"] == "request-changes"
+            assert payload["comment"] == "needs a retry bound"
+    finally:
+        db.close()
