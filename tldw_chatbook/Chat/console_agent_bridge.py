@@ -68,6 +68,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    format_diff_feedback_disclosure,
+    render_diff_feedback_block,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
@@ -3392,6 +3396,51 @@ class ConsoleAgentBridge:
                         "content": f"{content}\n\n{turn_bundle_block}",
                     }
                     break
+        # task-5 (turn-file-annotate, spec §4): auto-attach this
+        # conversation's pending diff-feedback notes to the SAME outbound
+        # copy, immediately after the bundle block above and by the same
+        # mechanism -- appended to the last role=="user" entry, never
+        # mutating the caller's `agent_messages`. `diff_feedback_included_
+        # ids`/`diff_feedback_included_notes` are captured HERE, before
+        # `run_turn` is even called, and read again at the completion seam
+        # below (same stack frame -- a local suffices, no run-context
+        # object needed). That freeze is the mid-run-race guard: a note
+        # created by the user WHILE this run is in flight is simply absent
+        # from this list, so completion below can never stamp it delivered
+        # even though `pending_notes_for_conversation` would return it if
+        # queried again later. A notes-subsystem failure must never break
+        # the reply -- this whole seam degrades to "no notes this turn"
+        # and logs, exactly like the marker/tracking seams above.
+        diff_feedback_included_ids: list[int] = []
+        diff_feedback_included_notes: list[dict] = []
+        try:
+            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
+            diff_feedback_block, diff_feedback_included_ids = (
+                render_diff_feedback_block(pending_notes)
+            )
+            diff_feedback_included_notes = pending_notes[
+                : len(diff_feedback_included_ids)
+            ]
+            if diff_feedback_block:
+                for index in range(len(run_messages) - 1, -1, -1):
+                    message = run_messages[index]
+                    content = message.get("content")
+                    if message.get(
+                        "role"
+                    ) == ConsoleMessageRole.USER.value and isinstance(content, str):
+                        if run_messages is agent_messages:
+                            run_messages = list(agent_messages)
+                        run_messages[index] = {
+                            **message,
+                            "content": f"{content}\n\n{diff_feedback_block}",
+                        }
+                        break
+        except Exception:  # noqa: BLE001 -- notes must never break the reply
+            logger.opt(exception=True).warning(
+                "change_review: could not attach pending diff-feedback notes"
+            )
+            diff_feedback_included_ids = []
+            diff_feedback_included_notes = []
         try:
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
@@ -3542,6 +3591,45 @@ class ConsoleAgentBridge:
                 except Exception:  # noqa: BLE001 -- never mask the run's outcome
                     logger.opt(exception=True).warning(
                         "change_review: end_turn failed; turn changes untracked"
+                    )
+            # task-5 (turn-file-annotate, spec §4): stamp exactly the
+            # notes this run's attach seam included (captured above,
+            # before `run_turn` was even called) and disclose what was
+            # sent. Placed BESIDE the marker seam above -- not inside
+            # `_append_change_markers`, and deliberately NOT nested under
+            # `if change_handle is not None:`: diff-feedback notes are
+            # about what the user told the agent, unrelated to whether
+            # THIS turn's own tracked roots changed, or whether change
+            # tracking is even configured for this run at all -- the
+            # marker seam's internal `if files:` gate ("nothing to
+            # report") must not become a reason to strand notes that were
+            # genuinely delivered in the outbound payload. Gated only on
+            # the run having actually produced assistant output: a run
+            # that errors, gets cancelled empty-handed, or crashes before
+            # a run row exists leaves every attached note pending for the
+            # retry -- the block only ever lived in the outbound COPY (see
+            # the attach seam above run_turn), so nothing is lost by not
+            # stamping. `run_id`/`outcome` are bound together by the same
+            # assignment, so the one `locals()` check covers both. Double
+            # delivery is impossible by construction (the pending query
+            # excludes already-stamped rows). Never breaks the reply.
+            if (
+                "run_id" in locals()
+                and outcome.final_text
+                and diff_feedback_included_ids
+            ):
+                try:
+                    self._db.mark_notes_delivered(diff_feedback_included_ids)
+                    self._store.append_message(
+                        session_id,
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_diff_feedback_disclosure(
+                            diff_feedback_included_notes
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 -- notes must never break the reply
+                    logger.opt(exception=True).warning(
+                        "change_review: could not stamp/disclose diff feedback"
                     )
         for step in outcome.steps:
             logger.info(
