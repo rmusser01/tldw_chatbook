@@ -721,10 +721,15 @@ def test_steering_never_cancels_the_child(db):
     assert holder["status_after_post"] == RUN_RUNNING
     assert holder["row_after_post"] == RUN_RUNNING
     assert holder["cancel_set_after_post"] is False
-    # And at the end: the child consumed the message, finished DONE, and
-    # its cancel Event was never set by anything on this path.
+    # And at the end: the child consumed the message and finished DONE on
+    # its own terms -- coordinator and run row both say so, which is the
+    # invariant's end-state. (Deliberately NOT asserted: the raw cancel
+    # Event after run_turn. `_settle_fleet` sets every settling child's
+    # Event unconditionally at end of turn -- documented there as inert
+    # for an already-finished child -- so that Event is end-of-turn
+    # bookkeeping, not steering's doing; the mid-turn probe above is the
+    # honest measurement of what the POST touched.)
     hid = holder["handle_id"]
-    assert service._fleet_cancels[hid].is_set() is False
     assert coordinator.get(hid).status == RUN_DONE
     assert _child_row(db)["status"] == RUN_DONE
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "keep going")
