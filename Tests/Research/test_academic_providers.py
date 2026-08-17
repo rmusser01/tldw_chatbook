@@ -754,3 +754,47 @@ def test_search_papers_accepts_categories(monkeypatch):
 
     assert calls == ["pubmed"]
     assert papers == []
+
+
+# --- malformed-payload degradation + OSF Accept header (task-16812) ----------------
+
+def test_search_osf_sends_accept_json_header(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text=json.dumps({"data": []}))])
+
+    search_osf(query="registration", client=client)
+
+    assert client.request.calls[0]["headers"] == {"Accept": "application/json"}
+
+
+def test_malformed_payload_degrades_only_the_bad_provider(monkeypatch):
+    import asyncio
+    from tldw_chatbook.Research_Interop import academic_providers as ap
+
+    def good_arxiv(**kw):
+        return {"items": [{"title": "Good", "abstract": "a", "doi": "10.1/g",
+                           "url": "https://doi.org/10.1/g", "source": "arxiv"}]}
+
+    def exploding_osf(**kw):
+        raise ap.AcademicProviderError("invalid JSON payload from osf")
+
+    monkeypatch.setattr(ap, "search_arxiv", good_arxiv)
+    monkeypatch.setattr(ap, "search_osf", exploding_osf)
+
+    papers = asyncio.run(ap.search_papers("topic", providers=["arxiv", "osf"]))
+
+    assert [p["title"] for p in papers] == ["Good"]  # good provider survived
+
+
+def test_non_json_response_raises_provider_error(monkeypatch):
+    monkeypatch.setattr(
+        "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
+        lambda attempt: None,
+    )
+    client = _client_returning([_response(text="<html>not json</html>")])
+
+    with pytest.raises(AcademicProviderError, match="osf"):
+        search_osf(query="x", client=client)

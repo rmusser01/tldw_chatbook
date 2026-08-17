@@ -67,6 +67,18 @@ class AcademicProviderError(Exception):
     non-retryable HTTP error)."""
 
 
+def _json_or_error(response: Any, provider: str) -> Any:
+    """Parse a provider response body as JSON; a malformed payload is a
+    typed provider failure (task-16812: a raw JSONDecodeError escaped the
+    lane's degradation catch and killed the OTHER providers' results too)."""
+    try:
+        return json.loads(response.text)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AcademicProviderError(
+            f"invalid JSON payload from {provider}: {exc}"
+        ) from exc
+
+
 def _request_with_retries_json(
     client: Any,
     method: str,
@@ -512,14 +524,14 @@ def search_openalex(
             client, "GET", f"{OPENALEX_API_BASE}/works",
             timeout=timeout, max_retries=max_retries, params=params,
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "openalex")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
                 http, "GET", f"{OPENALEX_API_BASE}/works",
                 timeout=timeout, max_retries=max_retries, params=params,
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "openalex")
 
     items: list[dict[str, Any]] = []
     for raw in data.get("results") or []:
@@ -585,14 +597,14 @@ def search_crossref(
             client, "GET", f"{CROSSREF_API_BASE}/works",
             timeout=timeout, max_retries=max_retries, params=params,
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "crossref")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
                 http, "GET", f"{CROSSREF_API_BASE}/works",
                 timeout=timeout, max_retries=max_retries, params=params,
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "crossref")
 
     message = data.get("message") or {}
     items: list[dict[str, Any]] = []
@@ -658,14 +670,14 @@ def search_zenodo(
             client, "GET", ZENODO_API_BASE,
             timeout=timeout, max_retries=max_retries, params=params,
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "zenodo")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
                 http, "GET", ZENODO_API_BASE,
                 timeout=timeout, max_retries=max_retries, params=params,
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "zenodo")
 
     hits = (data.get("hits") or {})
     items: list[dict[str, Any]] = []
@@ -731,14 +743,14 @@ def search_figshare(
             client, "POST", FIGSHARE_API_BASE, timeout=timeout,
             max_retries=max_retries, body=body,
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "figshare")
     else:
         with httpx.Client() as http:
             response = _request_with_retries_json(
                 http, "POST", FIGSHARE_API_BASE, timeout=timeout,
                 max_retries=max_retries, body=body,
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "figshare")
 
     items: list[dict[str, Any]] = []
     for raw in data if isinstance(data, list) else []:
@@ -802,19 +814,24 @@ def search_osf(
         "page[size]": max(1, min(results_per_page, 100)),
         "page[number]": 1,
     }
+    headers = {"Accept": "application/json"}  # server-adapter parity: OSF returns HTML without it
     if client is not None:
         response = _request_with_retries(
             client, "GET", OSF_API_BASE,
             timeout=timeout, max_retries=max_retries, params=params,
+            headers=headers,
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "osf")
     else:
-        with httpx.Client() as http:
+        # OSF intermittently 301s (first-hit redirects); httpx does not
+        # follow redirects by default, which yielded empty 301 bodies.
+        with httpx.Client(follow_redirects=True) as http:
             response = _request_with_retries(
                 http, "GET", OSF_API_BASE,
                 timeout=timeout, max_retries=max_retries, params=params,
+                headers=headers,
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "osf")
 
     items: list[dict[str, Any]] = []
     for raw in data.get("data") or []:
@@ -908,13 +925,13 @@ def search_biorxiv(
         response = _request_with_retries(
             client, "GET", url, timeout=timeout, max_retries=max_retries
         )
-        data = json.loads(response.text)
+        data = _json_or_error(response, "biorxiv")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
                 http, "GET", url, timeout=timeout, max_retries=max_retries
             )
-            data = json.loads(response.text)
+            data = _json_or_error(response, "biorxiv")
 
     total = 0
     messages = data.get("messages") or []

@@ -109,6 +109,40 @@ grounding untested, not failing). En route the script gained the
 `autonomy_mode="autonomous"` fix — checkpointed (the service default since
 task-16482) would park every run at plan review and produce no report.
 
+## Category-lane live baselines (2026-08-16, task-16812)
+
+Three more lanes measured with the same runner/config (local Qwen3.8-27B on
+:9191, duckduckgo web lane, bounded):
+
+| Metric | repositories (n=3) | open_research_graph (n=3) | biomedical stress (n=3) |
+|---|---|---|---|
+| `citation_accuracy` | **1.00 (73/73)** | **1.00 (85/85)** | **1.00 (62/62)** |
+| `claim_support_rate` | 0.97 | 1.00 | 1.00 |
+| `gate_pass_rate` | **0.29** | 0.72 | 0.53 |
+| `cited_sentence_ratio` | 0.52 | 0.69 | 0.73 |
+| `quote_grounding` | 0.00 (no quotes) | 0.00 (no quotes) | 0.00 (no quotes) |
+
+The biomedical stress run used the new `--question-set biomedical` domain
+questions (CRISPR off-target effects, tau aggregation, gut microbiome) —
+PubMed held perfect citation integrity under domain-specific vocabulary.
+
+**Lane-specific finding**: the repositories lane (Zenodo/Figshare/OSF) has
+the LOWEST gate pass rate (0.29) — repository records (datasets, figures)
+frequently fail the "answers the question comprehensively" bar even when
+on-topic, confirming the relevance gate's strictness hits
+non-paper sources hardest. Citation integrity is unaffected (every kept
+source verifies).
+
+Live-verification fixes en route (task-16812): OSF intermittently 301s —
+httpx does not follow redirects by default, which yielded empty bodies;
+the OSF client now follows redirects and sends the server-parity
+`Accept: application/json` header. Malformed payloads (the OSF 301 HTML)
+previously escaped the lane's typed degradation catch as a raw
+JSONDecodeError, killing the OTHER providers' results — all provider
+JSON parsing now raises `AcademicProviderError` so one bad payload
+degrades that provider only. The script also gained
+`--question-set {default,biomedical}`.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,

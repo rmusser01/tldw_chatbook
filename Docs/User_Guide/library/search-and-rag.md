@@ -374,6 +374,18 @@ entirely, so saying "semantic search found nothing from Prompts" would
 blame a search that was never run. Search mode never shows this line; its
 keyword leg always queries every selected source.
 
+The same line also carries the one disclosure a reranking-enabled profile
+owes you. Reranking never fails a search — if the reranker cannot run, or
+runs and silently fails to score some rows, the unreranked results come
+back anyway — so without a line saying so the screen looks identical to a
+successful rerank. When it happens you get exactly one sentence, appended
+last: "Reranking was skipped (\<reason>) — these results are in their
+original retrieval order." if the attempt raised (a dead credential, a
+provider outage), or "Reranking was degraded (3/5 scorings failed) — …" if
+it returned having scored only some of them. Rows the reranker never
+actually scored also keep their original score band rather than claiming
+`| reranked`.
+
 ### Recent searches
 
 The "Recent searches" fold keeps your last 10 queries and persists them
@@ -689,6 +701,17 @@ away.*
   log summary for a supervisor* as evidence row 4, typed `prompt` and
   banded **`| keyword match`** — the first time a prompt has appeared in
   these results at all.
+
+*Verified against `feat/rag-3502-reranker-followups` — 2026-08-16
+(TASK-3502 note-(a), the reranking-disclosure sentence on the Evidence
+region's quiet note line — the first UI consumer of tags the engine had
+been writing with nothing reading them). Verified by tests, not a live
+walkthrough: the tag is traced end to end from the engine's `SearchResult`
+metadata onto the panel's row provenance
+(`Tests/Library/test_library_local_rag_search_service.py`), and both
+sentences plus an untagged control are asserted on the rendered
+`#library-rag-coverage-note` Static
+(`Tests/UI/test_product_maturity_gate16_library_search_rag.py`).*
 
 *Verified against fix/rag-four-seam-cross-ranking @ 6af4ea3bc — 2026-08-14
 (TASK-16071, the "Row order in Search mode" paragraph under

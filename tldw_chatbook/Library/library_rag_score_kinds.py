@@ -61,6 +61,16 @@ HYBRID_FUSION_METADATA_KEY = "hybrid_fusion"
 #: keep being banded. Suppressing their band would throw away a true
 #: number.
 #:
+#: For the same reason the stamp is PER ROW, not per rerank() call: a
+#: pointwise run whose provider call failed for some candidates keeps those
+#: rows' original scores, and ``_apply_scores`` leaves them unstamped
+#: (``RerankingResult.scored is False``). It used to stamp them with the
+#: original score, so a 14/15-failed rerank rendered " | reranked" on
+#: fourteen rows no model ever looked at -- conservative about the NUMBER
+#: but an over-claim about what happened (TASK-3502 note-b). A partly
+#: degraded search therefore mixes kinds across its rows, which is the
+#: honest rendering: each row states what was actually done to it.
+#:
 #: The danger this closes is quiet: ``RerankingConfig.score_scale``
 #: defaults to ``(0.0, 1.0)``, so a default-configured pointwise reranker
 #: emits scores INSIDE the similarity band range -- a 0.95 relevance score

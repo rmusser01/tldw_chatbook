@@ -413,9 +413,20 @@ class TestChatApiCall:
         assert '{"type":"error"' in exc_info.value.message
 
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
+        """TASK-17165 changed this contract deliberately: an UNRECOGNISED
+        endpoint is no longer echoed back, because the sink cannot tell a
+        typo from a credential a mis-ordered caller put there (TASK-17065).
+        The message names the valid endpoints instead, which serves the typo
+        case better than repeating the typo."""
         mock_handlers.get.return_value = None
-        with pytest.raises(ValueError, match="Unsupported API endpoint: unsupported"):
+        with pytest.raises(ValueError, match="Unsupported API endpoint") as excinfo:
             chat_api_call("unsupported", messages_payload=[])
+
+        assert "redacted" in str(excinfo.value)
+        assert "unsupported" not in str(excinfo.value).replace(
+            "Unsupported API endpoint", ""
+        )
+        assert "Valid endpoints:" in str(excinfo.value)
 
     def test_http_error_401_raises_auth_error(self, mock_handlers, mocker):
         mock_response = MagicMock()
