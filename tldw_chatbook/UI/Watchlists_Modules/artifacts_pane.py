@@ -32,18 +32,41 @@ buttons in place. The remaining `recompose=True` reactives (`briefings`,
 the scope/toolbar/picker state) still rebuild the whole pane, table
 included, since they change what the table itself must show.
 
+Task-16852 applies the identical recipe one level down. Task-15779
+disclosed, as deliberately unexpanded scope, that selecting a SCRIPT still
+rebuilt the whole `BriefingDetailRegion` -- scripts `DataTable` included --
+because `selected_script`/`script_audio` funnelled into the same
+`_refresh_detail_region()` every other selection-derived reactive did.
+`selected_script` and `script_audio` now rebuild only `ScriptDetailRegion`,
+a second stateless boundary nested inside `BriefingDetailRegion` that holds
+just the script detail `Static` and the Synthesize/Play/Stop toolbar;
+`watch_selected_script` additionally patches the scripts table's highlight
+in place, mirroring `watch_selected_briefing`'s treatment of the briefings
+table. `scripts`/`citations` are unchanged: they still rebuild the WHOLE
+detail region, because they change what the scripts (or citations) table
+itself must show -- a genuine row-SET change. `scripts_with_audio` was
+INITIALLY left on that same wide path too, on the same "changes what the
+table must show" reasoning -- but review caught that the reasoning does not
+actually hold for it: it never adds or removes a script row, only a row's
+existing Audio-column cell, and a first synthesis for the selected script
+(the pane's own primary action on a script, right after the very selection
+this task made survive) was reopening the destroy-rebuild defect on its own
+happy path. `watch_scripts_with_audio` now patches every row's cells in
+place instead (`_restyle_script_row`, the same helper `watch_selected_
+script` already uses), and never touches the table's mounted identity.
+
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
 
-Spec #2 phase 2b, Task 7 (audio): `selected_script` rebuilds the whole
-detail region on every script selection (its watcher refreshes
-`BriefingDetailRegion`), so EVERY script selection rebuilds every widget
-`compose_briefing_detail()` yields -- including Play/Stop. That rules out
-ever holding "is this row currently playing" as a reactive/attribute on
-this widget: it would be silently reset to its default on the very next
-selection, wrong by construction. The shared `SimpleAudioPlayer` singleton
-(`TTS/audio_player.get_audio_player`) is the only thing that survives a
-recompose, so it is also the only thing consulted for playback state -- see
+Spec #2 phase 2b, Task 7 (audio): `selected_script`/`script_audio` rebuild
+`ScriptDetailRegion` (task-16852) on every script selection or audio
+arrival, so EVERY one of those rebuilds every widget `compose_script_
+detail()` yields -- including Play/Stop. That rules out ever holding "is
+this row currently playing" as a reactive/attribute on this widget: it
+would be silently reset to its default on the very next selection, wrong
+by construction. The shared `SimpleAudioPlayer` singleton (`TTS/audio_
+player.get_audio_player`) is the only thing that survives a recompose, so
+it is also the only thing consulted for playback state -- see
 `WatchlistsCollectionsScreen.handle_stop_audio_requested`.
 """
 
@@ -677,6 +700,39 @@ class BriefingDetailRegion(RecomposeCaptureGuard, Vertical):
         yield from self._pane.compose_briefing_detail()
 
 
+class ScriptDetailRegion(RecomposeCaptureGuard, Vertical):
+    """The script-selection-dependent tail of the detail region (task-16852).
+
+    Nested one level inside `BriefingDetailRegion`: the script detail
+    `Static` and the Synthesize/Play/Stop toolbar render from whichever
+    script is selected. Before this widget existed, `selected_script`'s
+    (and `script_audio`'s) watcher rebuilt the WHOLE `BriefingDetailRegion`
+    -- scripts `DataTable` included -- destroying the very table the user
+    was navigating (focus, cursor and scroll all lost with it): the exact
+    task-15779 defect, one level down, disclosed there as deliberately
+    unexpanded scope and found again independently as task-16852.
+
+    Stateless, exactly like its parent: it holds no reactives of its own
+    and renders straight from the pane's state
+    (`ArtifactsPane.compose_script_detail`), so `watch_selected_script`/
+    `watch_script_audio` can rebuild JUST this region while the scripts
+    table above it -- and everything else in `BriefingDetailRegion` -- is
+    left standing.
+
+    `RecomposeCaptureGuard` for the same task-627/637 reason both of its
+    ancestors (`ArtifactsPane`, `BriefingDetailRegion`) carry it: this
+    widget recomposes independently of either of them, so a mouse capture
+    held by one of its own children at rebuild time would otherwise leak.
+    """
+
+    def __init__(self, pane: "ArtifactsPane", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pane = pane
+
+    def compose(self):
+        yield from self._pane.compose_script_detail()
+
+
 class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     """List a watchlist's briefings and render the selected one."""
 
@@ -768,11 +824,19 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: across the whole watchlist, since a script belongs to exactly one
     #: briefing and this pane only ever shows one briefing's detail at a
     #: time. Selection-derived: `recompose=False`, watcher refreshes the
-    #: detail region only (task-15779 -- see `selected_briefing` above).
+    #: WHOLE detail region (task-15779 -- see `selected_briefing` above):
+    #: unlike `selected_script`/`script_audio` below, a new `scripts` list
+    #: changes what the scripts table itself must show, so it cannot be
+    #: scoped to `ScriptDetailRegion` alone (task-16852).
     scripts = reactive[list[dict[str, Any]]](list)
     #: The script whose detail is rendered below the scripts table, or
     #: `None` when nothing is selected. Selection-derived: `recompose=
-    #: False`, watcher refreshes the detail region only (task-15779).
+    #: False`. Task-16852: its watcher patches the scripts table's
+    #: highlight in place (mirroring `watch_selected_briefing`) and
+    #: refreshes only `ScriptDetailRegion`, the nested boundary holding the
+    #: script detail and the audio toolbar -- NOT the whole detail region
+    #: (task-15779's original scope), so the scripts table itself is never
+    #: rebuilt by a script selection.
     selected_script = reactive[dict[str, Any] | None](None)
     #: Task 7: the SELECTED script's newest `briefing_audio` render, or
     #: `None` when it has never been synthesized. Screen-supplied, resolved
@@ -780,8 +844,10 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: this widget itself, so (unlike `selected_briefing`/`selected_script`)
     #: it carries no `watch_`/message pair: there is nothing on this pane
     #: that "selects" a particular audio render, only ever the newest one.
-    #: Selection-derived: `recompose=False`, watcher refreshes the detail
-    #: region only (task-15779).
+    #: Selection-derived: `recompose=False`, watcher refreshes only
+    #: `ScriptDetailRegion` (task-16852; task-15779 originally rebuilt the
+    #: whole detail region) -- this value never appears on the scripts
+    #: table, only in the script detail/Play button below it.
     script_audio = reactive[dict[str, Any] | None](None)
     #: Review round 1, Minor #4: `{script_id: status}` for every one of
     #: `scripts`' ids that has at least one `briefing_audio` render, keyed
@@ -797,8 +863,15 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: (see `_AUDIO_FAILED_MARK` above), which the old presence-only
     #: shape could not do: a failed synthesis rendered visually identical
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
-    #: inside `_load_briefings`. Selection-derived: `recompose=False`,
-    #: watcher refreshes the detail region only (task-15779).
+    #: inside `_load_briefings`. Selection-derived: `recompose=False`.
+    #: Task-16852 review fix: `watch_scripts_with_audio` patches the
+    #: scripts table's Audio cells in place (`_restyle_script_row`) --
+    #: NOT a whole-region rebuild. Unlike `scripts` above (a real row-SET
+    #: change), a synthesis never adds or removes a script row, only an
+    #: existing row's Audio cell -- and a first synthesis for the SELECTED
+    #: script is the pane's own primary action on a script, so tearing the
+    #: table down for it would reopen this task's own defect on the
+    #: feature's happy path (caught in review, not in the original pass).
     scripts_with_audio = reactive[dict[int, str]](dict)
     #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
     #: selected script -- has at least one export-ready audio episode
@@ -863,6 +936,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: table is built so `_restyle_briefing_row` can address cells by key
     #: (task-15779). A tuple default, never a mutable class attribute.
     _briefings_column_keys: tuple[ColumnKey, ...] = ()
+    #: The scripts table's own `ColumnKey`s, captured by `compose_briefing_
+    #: detail` when the table is built -- `_restyle_script_row`'s own
+    #: addressing, mirroring `_briefings_column_keys` one level down
+    #: (task-16852).
+    _scripts_column_keys: tuple[ColumnKey, ...] = ()
 
     def _preset_select_options(self) -> list[tuple[str, int | None]]:
         """Options for the default-preset picker: "App default" then every
@@ -992,6 +1070,24 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
             # It goes through the same formatter as every other Watchlists
             # table so the whole screen agrees on one zone.
             Text(humane_timestamp(row.get("created_at")), style=style),
+        )
+
+    def _script_row_cells(self, row: dict[str, Any], style: str) -> tuple[Text, ...]:
+        """One scripts-table row's four cells, styled as a unit.
+
+        Task-16852: shared by `compose_briefing_detail` (the build) and
+        `_restyle_script_row` (the in-place highlight move a script
+        selection now performs instead of rebuilding the whole detail
+        region), so the selected-row presentation cannot drift between the
+        two paths -- the same discipline `_briefing_row_cells` established
+        for the briefings table in task-15779.
+        """
+        audio_status = self.scripts_with_audio.get(row.get("id"))
+        return (
+            Text(strip_control_characters(row.get("preset_name") or "—"), style=style),
+            Text(_script_status_text(row) or "—", style=style),
+            Text(humane_timestamp(row.get("created_at")), style=style),
+            self._audio_cell(audio_status, style),
         )
 
     def _export_button_state(self) -> tuple[bool, str]:
@@ -1448,7 +1544,12 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 else None
             )
             scripts_table = DataTable(id="artifacts-scripts-table")
-            scripts_table.add_columns("Preset", "Status", "Created", "Audio")
+            # The keys are kept so `_restyle_script_row` can update cells on
+            # the MOUNTED table when the selection moves (task-16852) --
+            # mirrors `_briefings_column_keys` above.
+            self._scripts_column_keys = tuple(
+                scripts_table.add_columns("Preset", "Status", "Created", "Audio")
+            )
             selected_script_index: int | None = None
             for index, row in enumerate(self.scripts):
                 row_key = str(row.get("id"))
@@ -1459,13 +1560,8 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                     if row_key == selected_script_key
                     else ""
                 )
-                audio_status = self.scripts_with_audio.get(row.get("id"))
                 scripts_table.add_row(
-                    Text(strip_control_characters(row.get("preset_name") or "—"), style=style),
-                    Text(_script_status_text(row) or "—", style=style),
-                    Text(humane_timestamp(row.get("created_at")), style=style),
-                    self._audio_cell(audio_status, style),
-                    key=row_key,
+                    *self._script_row_cells(row, style), key=row_key
                 )
             if selected_script_index is not None:
                 # Same TASK-1105 seeding as the briefings table above.
@@ -1474,57 +1570,75 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 )
             yield scripts_table
 
-            # No separate `.pane-title` here (unlike "Briefing detail"
-            # above): a `.pane-title` costs 4 rows (`height: 3` +
-            # `margin-bottom: 1`) inside a region whose total budget is
-            # already fixed and now shared with a second list-over-body
-            # pair -- measured to matter, not assumed (a first draft with
-            # the title pushed `#artifacts-detail` below the height its own
-            # test fixture needs). `_script_detail_renderable`'s own header
-            # names it as "Script:" instead, for one row instead of four.
-            yield Static(self._script_detail_renderable(), id="artifacts-script-detail")
+            # Task-16852: everything below the scripts table is SCRIPT-
+            # selection-dependent, so it lives behind its own nested
+            # recompose boundary -- selecting a script rebuilds
+            # `ScriptDetailRegion` alone, and the scripts table above it
+            # (focus, cursor, scroll) survives. See the class's own
+            # docstring; mirrors `BriefingDetailRegion` one level down.
+            yield ScriptDetailRegion(self, id="artifacts-script-detail-region")
 
-            if self.selected_script is not None:
-                # Task 7: synthesizing/playing audio is an action on THE
-                # SELECTED SCRIPT, so -- exactly like Cast's own gating on
-                # `selected_briefing` above -- there is nothing for it to
-                # act on without one, and this whole section renders only
-                # once a script is selected.
-                play_disabled = not _audio_file_is_playable(self.script_audio)
-                with Horizontal(
-                    id="artifacts-audio-toolbar", classes="destination-filter-strip"
-                ):
-                    yield Button(
-                        "Synthesize",
-                        id="artifacts-synthesize-button",
-                        compact=True,
-                        tooltip=(
-                            "Synthesize spoken audio for this script, using "
-                            "its roster's voices."
-                        ),
-                    )
-                    yield Button(
-                        "Play",
-                        id="artifacts-play-button",
-                        compact=True,
-                        disabled=play_disabled,
-                        tooltip=(
-                            "No playable audio file for this script."
-                            if play_disabled
-                            else "Play this script's synthesized audio."
-                        ),
-                    )
-                    yield Button(
-                        "Stop",
-                        id="artifacts-stop-button",
-                        compact=True,
-                        tooltip="Stop this script's audio playback.",
-                    )
-                # No separate audio-detail `Static`: its status/duration/
-                # error is folded into `_script_detail_renderable`'s own
-                # render, right above -- see that method's own comment on
-                # why (this section's `fr` budget is already measured and
-                # pinned; a second scrollable region would steal from it).
+    def compose_script_detail(self):
+        """The nested script-detail region's content, yielded by
+        `ScriptDetailRegion` (task-16852).
+
+        Everything here reads the PANE's reactives -- the region owns no
+        state (see its docstring), exactly like `compose_briefing_detail`.
+        Extracted verbatim from that method's own tail; the structure, ids
+        and gating are unchanged, only the recompose scope moved one level
+        deeper.
+        """
+        # No separate `.pane-title` here (unlike "Briefing detail" above):
+        # a `.pane-title` costs 4 rows (`height: 3` + `margin-bottom: 1`)
+        # inside a region whose total budget is already fixed and now
+        # shared with a second list-over-body pair -- measured to matter,
+        # not assumed (a first draft with the title pushed `#artifacts-
+        # detail` below the height its own test fixture needs).
+        # `_script_detail_renderable`'s own header names it as "Script:"
+        # instead, for one row instead of four.
+        yield Static(self._script_detail_renderable(), id="artifacts-script-detail")
+
+        if self.selected_script is not None:
+            # Task 7: synthesizing/playing audio is an action on THE
+            # SELECTED SCRIPT, so -- exactly like Cast's own gating on
+            # `selected_briefing` above -- there is nothing for it to act
+            # on without one, and this whole section renders only once a
+            # script is selected.
+            play_disabled = not _audio_file_is_playable(self.script_audio)
+            with Horizontal(
+                id="artifacts-audio-toolbar", classes="destination-filter-strip"
+            ):
+                yield Button(
+                    "Synthesize",
+                    id="artifacts-synthesize-button",
+                    compact=True,
+                    tooltip=(
+                        "Synthesize spoken audio for this script, using "
+                        "its roster's voices."
+                    ),
+                )
+                yield Button(
+                    "Play",
+                    id="artifacts-play-button",
+                    compact=True,
+                    disabled=play_disabled,
+                    tooltip=(
+                        "No playable audio file for this script."
+                        if play_disabled
+                        else "Play this script's synthesized audio."
+                    ),
+                )
+                yield Button(
+                    "Stop",
+                    id="artifacts-stop-button",
+                    compact=True,
+                    tooltip="Stop this script's audio playback.",
+                )
+            # No separate audio-detail `Static`: its status/duration/error
+            # is folded into `_script_detail_renderable`'s own render,
+            # right above -- see that method's own comment on why (this
+            # section's `fr` budget is already measured and pinned; a
+            # second scrollable region would steal from it).
 
     def _detail_renderable(self) -> RenderableType:
         """What the detail area shows for the current selection.
@@ -1770,6 +1884,84 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
                 # will replace it) -- nothing to patch, nothing lost.
                 return
 
+    def _apply_script_selection_in_place(
+        self, old: dict[str, Any] | None, new: dict[str, Any] | None
+    ) -> None:
+        """Repaint what a script selection changes WITHOUT rebuilding the
+        scripts table (task-16852) -- `_apply_briefing_selection_in_place`'s
+        own sibling, one level down.
+
+        A script selection changes exactly two things this pane shows:
+
+        * the scripts table's selected-row highlight (moved cell-by-cell
+          here, on the SURVIVING table);
+        * everything below the scripts table -- `ScriptDetailRegion`'s
+          whole content, rebuilt as one unit.
+
+        Guarded exactly like `_apply_briefing_selection_in_place`: this
+        watcher can fire before `compose_briefing_detail` has ever built
+        the scripts table (e.g. no briefing selected yet, or seeding
+        before mount), in which case there is nothing here yet to patch
+        and the eventual recompose repaints from current state anyway.
+        """
+        try:
+            table = self.query_one("#artifacts-scripts-table", DataTable)
+        except NoMatches:
+            table = None
+        if table is not None:
+            self._move_script_row_highlight(table, old, new)
+        self._refresh_script_detail_region()
+
+    def _move_script_row_highlight(
+        self,
+        table: DataTable,
+        old: dict[str, Any] | None,
+        new: dict[str, Any] | None,
+    ) -> None:
+        """Restyle the outgoing and incoming script rows, and keep the
+        cursor on the selection when it was moved programmatically.
+
+        Mirrors `_move_briefing_row_highlight` exactly, one level down
+        (task-16852): the cursor move is a no-op for the user-driven path
+        (the cursor arriving on the row IS what selected it), and keyed on
+        row index alone so a programmatic selection never yanks the column
+        out from under a cell cursor.
+        """
+        old_key = str(old.get("id")) if old else None
+        new_key = str(new.get("id")) if new else None
+        if old_key is not None and old_key != new_key:
+            self._restyle_script_row(table, old_key, "")
+        if new_key is None:
+            return
+        self._restyle_script_row(table, new_key, self._SELECTED_ROW_STYLE)
+        try:
+            row_index = table.get_row_index(new_key)
+        except RowDoesNotExist:
+            return
+        if table.cursor_coordinate.row != row_index:
+            table.move_cursor(row=row_index)
+
+    def _restyle_script_row(
+        self, table: DataTable, row_key: str, style: str
+    ) -> None:
+        """Rewrite one scripts-table row's cells with `style`, by key, on
+        the mounted table. Characters are identical either way --
+        `_script_row_cells` is the single source for both the build and
+        this patch (mirrors `_restyle_briefing_row`)."""
+        row = next(
+            (r for r in self.scripts if str(r.get("id")) == row_key), None
+        )
+        if row is None:
+            return
+        cells = self._script_row_cells(row, style)
+        for column_key, cell in zip(self._scripts_column_keys, cells):
+            try:
+                table.update_cell(row_key, column_key, cell)
+            except CellDoesNotExist:
+                # The mounted table predates the row (or a queued recompose
+                # will replace it) -- nothing to patch, nothing lost.
+                return
+
     def _update_selection_dependent_buttons(self) -> None:
         """Patch Export/Keep in place -- the one piece of selection-
         dependent chrome outside `BriefingDetailRegion` (task-15779)."""
@@ -1799,6 +1991,25 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         try:
             region = self.query_one(
                 "#artifacts-detail-region", BriefingDetailRegion
+            )
+        except NoMatches:
+            return
+        region.refresh(recompose=True)
+
+    def _refresh_script_detail_region(self) -> None:
+        """Schedule ONE rebuild of the script-detail sub-region only
+        (task-16852) -- the Cast toolbar, the scripts table and the
+        citations table above it are never touched.
+
+        `_refresh_detail_region`'s own sibling, scoped one level deeper:
+        multiple calls inside one message-pump drain coalesce the same way
+        (`refresh(recompose=True)` only sets `_recompose_required`), so a
+        script selection plus its audio reload landing costs at most one
+        `ScriptDetailRegion` rebuild per drain.
+        """
+        try:
+            region = self.query_one(
+                "#artifacts-script-detail-region", ScriptDetailRegion
             )
         except NoMatches:
             return
@@ -1837,25 +2048,79 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         self.set_reactive(ArtifactsPane.scripts_with_audio, {})
         self.set_reactive(ArtifactsPane.citations, [])
 
-    def watch_selected_script(self, script: dict[str, Any] | None) -> None:
-        if self.is_mounted:
-            self._refresh_detail_region()
-            self.post_message(ScriptSelected(script))
+    def watch_selected_script(
+        self, old: dict[str, Any] | None, script: dict[str, Any] | None
+    ) -> None:
+        if not self.is_mounted:
+            # Same defense in depth as `watch_selected_briefing`, for the
+            # same pre-mount-seeding reason (task-15778/15779).
+            return
+        self._apply_script_selection_in_place(old, script)
+        self.post_message(ScriptSelected(script))
 
     def watch_scripts(self) -> None:
         """Selection-derived (task-15779): rebuild the detail region only.
 
         No `is_mounted` guard needed beyond `_refresh_detail_region`'s own:
         an unmounted pane has no region to find, so the query simply
-        misses. The same applies to the three watchers below.
+        misses. The same applies to `watch_citations` below. Unlike
+        `selected_script`/`script_audio`/`scripts_with_audio` (task-16852),
+        a new `scripts` list is a real row-SET change -- it changes what
+        the scripts table itself must show, so it stays scoped to the
+        WHOLE detail region.
         """
         self._refresh_detail_region()
 
     def watch_script_audio(self) -> None:
-        self._refresh_detail_region()
+        """Task-16852: scoped to `ScriptDetailRegion` alone -- `script_
+        audio` never appears on the scripts table (only `scripts_with_
+        audio`, below, does), so refreshing the whole detail region for it
+        would rebuild that table for no reason."""
+        self._refresh_script_detail_region()
 
     def watch_scripts_with_audio(self) -> None:
-        self._refresh_detail_region()
+        """Review fix, task-16852: patch the scripts table's Audio column
+        in place -- do NOT tear down the whole detail region.
+
+        Unlike `scripts`/`citations` (real row-SET changes: rows are added
+        or removed, so the table genuinely needs rebuilding), `scripts_
+        with_audio` never adds or removes a script row -- it is only ever
+        consulted inside `_script_row_cells` for the Audio column's own
+        cell (`self.scripts_with_audio.get(row.get("id"))`), a per-CELL
+        change on rows the table already has. A first synthesis for the
+        selected script is exactly the pane's own primary action on a
+        script, landing right after a selection this task already made
+        survive -- so tearing the table down here would silently reopen
+        the destroy-rebuild defect this task exists to close, on the
+        feature's own happy path (found in review).
+
+        Repaints EVERY row (not just the ones whose status literally
+        changed): `_restyle_script_row` already recomputes each row's
+        cells from current state, so repainting every row costs one cheap
+        `update_cell` call per cell and cannot drift from a rebuild --
+        cheaper and simpler than diffing which ids `scripts_with_audio`
+        actually touched, and provably identical output either way, since
+        both paths share `_script_row_cells`.
+
+        The Synthesize/Play/Stop toolbar is NOT touched here: it renders
+        from `script_audio` (the SELECTED script's own newest render),
+        never from `scripts_with_audio` (every script's newest STATUS,
+        table-only) -- `compose_script_detail`/`_script_detail_renderable`
+        never read `scripts_with_audio` at all. `watch_script_audio`
+        already refreshes `ScriptDetailRegion` on its own, independently,
+        whenever a synthesis lands new playback state.
+        """
+        try:
+            table = self.query_one("#artifacts-scripts-table", DataTable)
+        except NoMatches:
+            return
+        selected_key = (
+            str(self.selected_script.get("id")) if self.selected_script else None
+        )
+        for row in self.scripts:
+            row_key = str(row.get("id"))
+            style = self._SELECTED_ROW_STYLE if row_key == selected_key else ""
+            self._restyle_script_row(table, row_key, style)
 
     def watch_citations(self) -> None:
         self._refresh_detail_region()
