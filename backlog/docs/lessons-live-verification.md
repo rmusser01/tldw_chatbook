@@ -995,3 +995,27 @@ never passes `autonomy_mode`, so the service default applies), so it parks at
 `plan_review` and never reaches `collecting` until the checkpoint is approved.
 A harness that used `autonomy_mode="autonomous"` would have "verified" a path
 no user takes.
+
+## tmux synthetic mouse (`send-keys -l` SGR bytes) reaches some widgets and not others — a dead click is not a dead control (task-17500, 2026-08-17)
+
+**What happened.** Live-verifying the fixed approval card, clicks synthesized as
+raw SGR sequences (`\e[<0;COL;ROWM` / `…m` via `tmux send-keys -l`) worked on
+the Console session TAB STRIP (they created a tab and switched sessions, with
+one-shot coordinates computed from a single capture) but never registered on
+anything inside the transcript region — the approval card's fast Deny, Deny
+all, and its decision Select all ignored identical sequences at verified
+coordinates, across press/release timing variants and a hover-first attempt.
+Real user mouse input is not this selective; ~15 minutes went into suspecting
+the buttons before the pattern (tab strip yes, transcript region no) showed it
+was the harness. Blind Tab-walking (25 presses with probes) never reached the
+card either.
+
+**What to do.** When a synthetic click does not land, test a KNOWN-clickable
+control elsewhere on screen before concluding anything about the target — and
+compute coordinates from ONE capture in the same shell invocation as the click
+(captures taken across separate invocations race the UI and land clicks on
+stale coordinates). If the control stays unreachable, do not force it: prove
+press-resolution with the automated widget test (a mounted-widget `press()`
+drives the same production seam) and use a documented keyboard path (here:
+quit-denies) to end the live round. Record which regions accepted synthetic
+mouse so the next rig starts there.

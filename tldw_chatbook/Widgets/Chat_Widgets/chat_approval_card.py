@@ -479,6 +479,17 @@ class ChatApprovalCard(Container):
         #: whenever no batch (or a caller that predates round ids) is
         #: showing.
         self._batch_round_id: str | None = None
+        # task-17500: the initial hide is CONSTRUCTION state, never deferred
+        # mount work. This used to live in `on_mount` (`self.display =
+        # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
+        # body) -- and on a real terminal the fresh Console screen's first
+        # paint takes longer than the screen's 0.05s mount sync, so the
+        # deferred hide landed AFTER `set_batch` had rendered a headless
+        # round's card and unrendered it: the "Approval required"-and-
+        # nothing-else pane the close-out live pass reproduced on both
+        # headless paths. A hide applied here cannot race anything; the
+        # batch body gets the same treatment in `compose`.
+        self.display = False
 
     def compose(self) -> ComposeResult:
         yield Static("Approval required", id="approval-title")
@@ -487,7 +498,10 @@ class ChatApprovalCard(Container):
         deadline = Static("", id="approval-deadline", markup=False)
         deadline.display = False
         yield deadline
-        with Container(id="approval-batch-body"):
+        # task-17500: built hidden, like the deadline above -- see __init__.
+        batch_body = Container(id="approval-batch-body")
+        batch_body.display = False
+        with batch_body:
             yield Vertical(id="approval-batch-rows")
             with Horizontal(id="approval-batch-actions"):
                 yield Button(
@@ -507,22 +521,6 @@ class ChatApprovalCard(Container):
                     variant="error",
                     tooltip="Set every pending tool call's decision to Deny.",
                 )
-
-    def on_mount(self) -> None:
-        self.display = False
-        # Mount can fire before this widget's composed children are attached
-        # to the DOM (observed as a NoMatches crash on '#approval-batch-body'
-        # during Console screen mount), so defer the initial batch-body hide
-        # until after the children have settled.
-        self.call_after_refresh(self._hide_batch_body)
-
-    def _hide_batch_body(self) -> None:
-        try:
-            self.query_one("#approval-batch-body").display = False
-        except NoMatches:
-            # The card is hidden anyway (display = False above); a missing
-            # batch body at this point is harmless.
-            pass
 
     # -- batch-approval API (task-5) -----------------------------------------
 
@@ -555,7 +553,20 @@ class ChatApprovalCard(Container):
                 resolve THIS exact round rather than guessing from
                 whichever session happens to be active when the decision
                 is delivered.
+
+        Raises:
+            NoMatches: When the card's composed containers are not attached
+                yet. Raised BEFORE any state is touched (task-17500): the
+                production caller (``sync_task_resume_state``) swallows
+                ``QueryError`` with no retry, so a ``set_batch`` that
+                mutated ``display`` first would strand a visible,
+                title-only card -- the same user-visible state as the
+                mount-ordering bug, through a different writer.
         """
+        # task-17500: all-or-nothing -- resolve every container this method
+        # writes to before mutating anything, including the round-id stash.
+        batch_body = self.query_one("#approval-batch-body")
+        rows_container = self.query_one("#approval-batch-rows", Vertical)
         self._batch_round_id = round_id
         # TASK-1844: actually surface the deadline the docstring promised.
         try:
@@ -567,7 +578,7 @@ class ChatApprovalCard(Container):
             pass
         if not calls:
             self.display = False
-            self.query_one("#approval-batch-body").display = False
+            batch_body.display = False
             self._batch_names = []
             self._batch_selects = []
             self._batch_legal_values = []
@@ -576,7 +587,7 @@ class ChatApprovalCard(Container):
             return
 
         self.display = True
-        self.query_one("#approval-batch-body").display = True
+        batch_body.display = True
         # task-1234 review round 1: a submit-shaped control (Submit, or
         # either fast button) disables itself right after a press to close
         # the double-submit window -- see `_disable_batch_submit_controls`.
@@ -701,7 +712,6 @@ class ChatApprovalCard(Container):
         self._batch_rows = rows
         self._batch_fast_buttons = fast_buttons
 
-        rows_container = self.query_one("#approval-batch-rows", Vertical)
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
