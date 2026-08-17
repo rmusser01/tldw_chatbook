@@ -933,3 +933,39 @@ bottom chain (F12 → regions/display/dock/height of every screen child) turned
 one angry screenshot into an exact attribution — screen-children dumps beat
 fixed-widget dumps because they can name a consumer you didn't think to ask
 about.
+
+## Mouse capture reroutes the synthesized Click to the capturer — pilot clicks bypass capture entirely (console "dead buttons"/"can't select messages" spike, 2026-08-16)
+
+Two live-only mouse defects, both invisible to pilot tests, both traced only
+after a user-run F12-style event dump:
+
+1. **The drag's synthesized release Click can arrive after `just_finished`
+   was already consumed.** The row guard's `or` chain short-circuited past
+   `consume_release_click()` and did not stop the event, so the artifact
+   click bubbled to the transcript's `on_click`, whose dismissal cleanup
+   (`_remove_selection_menu` → `row.clear_selection()`) erased the selection
+   the just-opened menu existed to act on. Every selection-dependent menu
+   action then read an empty quote and hit the silent blank-selection guard
+   — "buttons only work once", because the first menu of a session usually
+   won the message-queue race and later ones (after a modal round-trip
+   reordered the queues) reliably lost. One-shot suppression tokens must be
+   consumed at EVERY layer that can see the artifact, and the artifact must
+   be `stop()`ped where identified.
+2. **A plain click's synthesized Click routes to the mouse CAPTURER, not the
+   widget under the pointer.** Arming the selection drag captures the mouse
+   on press; the capture only releases when the MouseUp is *processed*, which
+   happens after the Click was already forwarded — so the click landed on
+   the transcript while the row the user clicked never saw it, and mouse
+   click-to-select a message never toggled in any real terminal. Pilot
+   `click()` computes the target itself and delivers directly, bypassing
+   capture — the same pilot-vs-real divergence class as the phase-1 arming
+   bug. Widgets that capture on press must re-dispatch clicks themselves:
+   the transcript's `on_click` walks `event.control` (the true target,
+   preserved on the synthesized event) up to the row and applies the row's
+   click semantics.
+
+Fixed in 78cd9aeba and 86f5807c9. The diagnostic pattern that cracked both:
+log events at the WIDGET level (menu received down/up, hit-test result,
+app-level `_mouse_down_widget`) and — when the chain completes but nothing
+happens — at the app's raw-event boundary. A fixed widget list cannot name a
+consumer you did not think to ask about; a screen-children dump can.

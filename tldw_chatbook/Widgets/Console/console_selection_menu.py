@@ -32,7 +32,7 @@ from typing import ClassVar
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.events import Click, Key, MouseDown, MouseUp
+from textual.events import Click, Key
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
@@ -42,20 +42,6 @@ from textual.widgets import Button, Static
 #: shorter than even the compact menu; drops the container border and the
 #: hint line (3 rows) before the top-out tie-break. No actions are hidden.
 _SHRUNK_CLASS = "shrunk-for-short-owner"
-
-# TEMPORARY live-spike instrumentation (dead menu buttons in one user
-# terminal, 2026-08-16). Remove with the menu's spike log handlers.
-_SPIKE_BUTTON_PRESS_WRAPPED = False
-
-
-def _spike_log_line(line: str) -> None:
-    from datetime import datetime
-
-    try:
-        with open("/tmp/console_mouse_log.txt", "a") as fh:
-            fh.write(f"{datetime.now().isoformat()} {line}\n")
-    except Exception:
-        pass
 
 #: Shown (dim, inside the menu) and carried on the disabled buttons'
 #: tooltips when Request changes / LGTM are run-gated (phase 3 task 2).
@@ -279,54 +265,8 @@ class ConsoleSelectionMenu(Vertical):
                 yield Static(_NO_RUN_HINT, id="console-selection-feedback-hint")
 
     def on_mount(self) -> None:
-        # TEMPORARY spike instrumentation: log every Button press app-wide
-        # (dead menu buttons in one terminal, 2026-08-16). Remove with the
-        # other spike logs.
-        global _SPIKE_BUTTON_PRESS_WRAPPED
-        if not _SPIKE_BUTTON_PRESS_WRAPPED:
-            _SPIKE_BUTTON_PRESS_WRAPPED = True
-            _original_press = Button.press
 
-            def _spike_press(btn_self):
-                _spike_log_line(f"Button.press id={btn_self.id!r}")
-                return _original_press(btn_self)
-
-            Button.press = _spike_press  # type: ignore[method-assign]
-
-            # App-level mouse trace: the raw event stream + click-synthesis
-            # inputs exactly as App.on_event sees them (menu-side logs only
-            # see post-forwarding state).
-            from textual.app import App
-            from textual.events import MouseEvent
-
-            _original_on_event = App.on_event
-
-            async def _spike_on_event(app_self, event):
-                if (
-                    isinstance(event, MouseEvent)
-                    and not event.is_forwarded
-                    and (
-                        type(event).__name__ != "MouseMove" or event.button != 0
-                    )
-                ):
-                    _spike_log_line(
-                        f"App.on_event {type(event).__name__} x={event.x} y={event.y} "
-                        f"sx={event.screen_x} sy={event.screen_y} btn={event.button} "
-                        f"down_widget_in={app_self._mouse_down_widget!r}"
-                    )
-                try:
-                    await _original_on_event(app_self, event)
-                finally:
-                    if (
-                        isinstance(event, MouseEvent)
-                        and not event.is_forwarded
-                        and type(event).__name__ == "MouseUp"
-                    ):
-                        _spike_log_line(
-                            f"App.after MouseUp down_widget={app_self._mouse_down_widget!r}"
-                        )
-
-            App.on_event = _spike_on_event  # type: ignore[method-assign]        # Capture the pre-mount focus holder BEFORE focusing a menu button:
+        # Capture the pre-mount focus holder BEFORE focusing a menu button:
         # a drag that started from a focused transcript must return focus
         # there on dismissal, not be pulled into the composer (final review).
         try:
@@ -439,42 +379,6 @@ class ConsoleSelectionMenu(Vertical):
             max(bounds.y, y - shift_y),
         )
         self.absolute_offset = Offset(*self._anchor)
-
-    # TEMPORARY live-spike diagnostics (dead menu buttons in one user
-    # terminal, 2026-08-16): log every mouse event this menu receives, with
-    # the widget the screen hit-test resolves for its coordinates. Remove
-    # once the spike closes.
-    async def _on_mouse_down(self, event: MouseDown) -> None:
-        try:
-            hit, _ = self.screen.get_widget_at(event.screen_x, event.screen_y)
-            self._spike_log(f"menu MouseDown at ({event.screen_x},{event.screen_y}) hit={hit!r} captured={self.app.mouse_captured!r}")
-        except Exception as exc:
-            self._spike_log(f"menu MouseDown log failed: {exc!r}")
-        await super()._on_mouse_down(event)
-
-    async def _on_mouse_up(self, event: MouseUp) -> None:
-        try:
-            hit, _ = self.screen.get_widget_at(event.screen_x, event.screen_y)
-            self._spike_log(
-                f"menu MouseUp at ({event.screen_x},{event.screen_y}) hit={hit!r} "
-                f"app_mouse_down_widget={getattr(self.app, '_mouse_down_widget', '<missing>')!r}"
-            )
-        except Exception as exc:
-            self._spike_log(f"menu MouseUp log failed: {exc!r}")
-        await super()._on_mouse_up(event)
-
-    async def _on_click(self, event: Click) -> None:
-        self._spike_log(f"menu Click at ({event.screen_x},{event.screen_y}) widget={event.widget!r} chain={getattr(event, 'chain', None)}")
-        await super()._on_click(event)
-
-    def _spike_log(self, line: str) -> None:
-        _spike_log_line(line)
-
-    @on(Button.Pressed)
-    def _spike_log_pressed(self, event: Button.Pressed) -> None:
-        # Catch-all observer only: does not consume (specific handlers run
-        # independently) -- logs that Pressed reached the menu at all.
-        _spike_log_line(f"menu Button.Pressed id={event.button.id!r}")
 
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.

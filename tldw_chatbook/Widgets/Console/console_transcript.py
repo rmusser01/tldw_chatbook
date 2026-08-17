@@ -3609,22 +3609,6 @@ class ConsoleTranscript(VerticalScroll):
     def on_mouse_down(self, event: MouseDown) -> None:
         """Arm a text-selection drag on a left press over a selectable row."""
         press_control = self._selection_press_widget(event)
-        # TEMPORARY live-spike diagnostics (dead menu buttons in one user
-        # terminal, 2026-08-16): a press reaching the TRANSCRIPT while a
-        # selection menu is mounted means the click never hit the menu --
-        # log where it landed. Remove once the spike closes.
-        if self._attached_selection_menus():
-            from datetime import datetime
-
-            try:
-                with open("/tmp/console_mouse_log.txt", "a") as fh:
-                    fh.write(
-                        f"{datetime.now().isoformat()} transcript MouseDown "
-                        f"at ({event.screen_x},{event.screen_y}) "
-                        f"hit={press_control!r}\n"
-                    )
-            except Exception:
-                pass
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
         # open a press on another row's body never reaches this
