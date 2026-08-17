@@ -149,11 +149,11 @@ from ...Chat.console_roleplay_identity import (
     expand_character_template,
     normalize_chat_display_name,
 )
-from ...Chat.console_prefill import pinned_prefill_from_conversation_metadata
+from ...Chat.console_conversation_hydration import apply_resume_settings_overrides
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
-    build_default_console_session_settings,
+    default_console_session_settings,
 )
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
@@ -1702,17 +1702,10 @@ class ConsoleSessionController:
     def _default_console_session_settings(self) -> ConsoleSessionSettings:
         """Build the default settings snapshot for a new native Console session."""
         provider, model = self._effective_console_provider_model()
-        settings = build_default_console_session_settings(
+        return default_console_session_settings(
             self._provider_readiness_app_config(),
             str(provider).strip() if _has_selected_text(provider) else None,
             str(model).strip() if _has_selected_text(model) else None,
-        )
-        provider_key = provider_config_key(settings.provider)
-        return replace(
-            settings,
-            base_url=None
-            if provider_key in {"llama_cpp", "local_llamacpp"}
-            else settings.base_url,
         )
 
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
@@ -1865,22 +1858,12 @@ class ConsoleSessionController:
             self._active_console_session_settings()
             or self._default_console_session_settings()
         )
-        raw_system_prompt = conversation.get("system_prompt")
-        # Only blank/whitespace-only text collapses to "no system prompt";
-        # anything else is restored verbatim (leading/trailing whitespace
-        # and internal formatting included) rather than stripped, so a
-        # formatting-sensitive prompt survives close/resume unchanged.
-        system_prompt = (
-            raw_system_prompt
-            if isinstance(raw_system_prompt, str) and raw_system_prompt.strip()
-            else None
-        )
-        pinned_prefill = pinned_prefill_from_conversation_metadata(
-            conversation.get("metadata")
-        )
-        return replace(
-            settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill
-        )
+        # task-15860 Task 6: what the CONVERSATION ROW contributes is shared
+        # with the launch wake's viewless hydration
+        # (`Chat/console_conversation_hydration.py`); only the BASE above --
+        # the currently active session's settings -- is screen state, and a
+        # launch has no active session to inherit from.
+        return apply_resume_settings_overrides(settings, conversation)
 
     def _apply_console_session_system_prompt(
         self, system_prompt: Optional[str]

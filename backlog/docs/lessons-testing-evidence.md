@@ -4764,3 +4764,44 @@ demonstrated. Rule: when new-code symbols would make a born-red file
 unimportable at base, reference them lazily (or split the white-box asserts
 out) so the base-tree run fails on the assertion that carries the evidence,
 not on `import`.
+
+## A guard sitting behind an earlier early-return is unreachable, so no fixture can own it (task-15860, 2026-08-16)
+
+Third mutation-survivor in this arc, and a different shape from the two
+above (which were two guards in SERIES at one read site). The launch-wake
+loop skips a marked conversation that owes nothing —
+`if not wake.has_pending(cid): continue` — and mutating that line to
+`if False:` left the whole suite **green**. Investigating rather than
+patching around it: every test that exercised an unowed mark used exactly
+ONE mark, and with one unowed mark the function returns earlier, at
+`if not wake.seed_from_marks(): return 0`, before the loop runs at all.
+The guard was not weakly tested, it was *unreachable* for every fixture in
+the file, so no assertion anywhere could have distinguished "we checked
+each conversation" from "we never got that far". The repair is a fixture
+change, not an assertion change: a test with TWO marks, one owed and one
+not, gets past the earlier return and then asserts the unowed conversation
+was never hydrated. Under the same mutation it now dies alone (1 failed,
+8 passed). Rule: when a mutation survives, before touching assertions ask
+whether the mutated line *executes* under any fixture you have — an
+earlier `return` upstream of it is the commonest reason it does not, and
+it is invisible in the diff you are mutating.
+
+## A "constructs nothing" pin needs an observer the production code cannot lie to (task-15860, 2026-08-16)
+
+The owner's ruling on wake-at-launch required that an install with no
+background work pay one indexed read and build NOTHING, so startup stays
+byte-identical. "Nothing was constructed" is exactly the claim a weak test
+states and never checks, so the pin took four independent observations:
+the marks service's call list, the four `ConsoleRuntime` slots being
+`None`, no `deferred_launch_wake` task ever created — and **the absence of
+the `agent_runs.db` FILE on disk**, because constructing the agent bridge
+opens (and creates) it. The filesystem one is the observation that cannot
+be satisfied by a mock, a stub or a lazily-`None` attribute. It earned its
+place under mutation: removing both empty-marks guards was caught by the
+call-count and by a sibling test's runtime assertion, and removing only
+the outer guard was caught *solely* by the task-name observation — the
+`None` slots stayed `None` because the inner function had its own guard.
+Two guards in depth meant no single observation covered both mutations;
+the four together did. Corollary: a no-work pin also needs a control that
+runs the same probes WITH work present and watches every one flip,
+otherwise a hook that never runs at all satisfies it perfectly.

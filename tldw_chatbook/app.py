@@ -10821,6 +10821,45 @@ class TldwCli(
                 self._migrate_legacy_citations_idle_unit(),
                 name="deferred_legacy_citation_migration",
             )
+        self._schedule_launch_wake()
+
+    def _schedule_launch_wake(self) -> None:
+        """Deliver a supervisor wake this install already owed at launch.
+
+        task-15860 Task 6. A background sub-agent that finished while the
+        app was closed -- or one whose delivery the user quit out from
+        under -- used to wait for the next Console visit. It no longer
+        does, under the owner's mark-gated ruling: only a conversation
+        that already carries a durable ``FLEET_UNSEEN`` mark AND an owed
+        ``agent_runs`` row is delivered, behind the existing ``[agents]
+        autowake_enabled`` (there is no separate launch switch).
+
+        **The common path costs one indexed read and constructs nothing.**
+        With no marks -- every install that has never run a background
+        sub-agent, and every one whose results have all been seen -- this
+        returns before touching the Console store, provider gateway, agent
+        bridge (so ``agent_runs.db`` is not even opened) or controller.
+        That is pinned in ``Tests/UI/test_console_launch_wake.py``.
+        """
+        try:
+            from tldw_chatbook.Chat.console_launch_wake import (
+                LAUNCH_WAKE_TASK_NAME,
+                deliver_launch_wakes,
+                marked_conversations_at_launch,
+            )
+
+            marked = marked_conversations_at_launch(self)
+            if not marked:
+                return
+            self._create_deferred_startup_task(
+                deliver_launch_wakes(self, marked),
+                name=LAUNCH_WAKE_TASK_NAME,
+            )
+        except Exception:  # noqa: BLE001 -- a launch never dies on this
+            logger.opt(exception=True).warning(
+                "Launch wake scheduling failed; owed wakes stay staged for "
+                "the next Console visit."
+            )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
         """Run one bounded recovery batch without blocking the UI loop."""

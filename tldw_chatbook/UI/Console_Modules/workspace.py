@@ -38,7 +38,12 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
-from ...Chat.console_roleplay_metadata import parse_console_roleplay_context
+from ...Chat.console_conversation_hydration import (
+    ConversationLoadFailed,
+    ConversationServiceUnavailable,
+    hydrate_console_session,
+    load_console_conversation_tree,
+)
 from ...Chat.rag_scope import RagScope
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.glyph_fallback import resolve_glyph
@@ -1999,30 +2004,22 @@ class ConsoleWorkspaceController:
         # TASK-339: keystrokes typed while the conversation tree loads
         # belong to the resumed session — snapshot the composer now.
         self._capture_console_draft_switch_snapshot()
-        conversation_service = getattr(
-            self.app_instance,
-            "chat_conversation_scope_service",
-            None,
-        )
-        get_conversation_tree = getattr(
-            conversation_service, "get_conversation_tree", None
-        )
-        if not callable(get_conversation_tree):
+        # task-15860 Task 6: the tree load and the session build moved to
+        # `Chat/console_conversation_hydration.py` -- the launch wake has to
+        # hydrate a conversation with no screen in existence, and one policy
+        # beats two. Everything BELOW the hydration call is this screen's own
+        # work (marker overlay, character identity, scope warm, repaint,
+        # focus) and stays here; so do both failure toasts, because the UX
+        # for each failure is a view concern.
+        try:
+            tree = await load_console_conversation_tree(self.app_instance, target)
+        except ConversationServiceUnavailable:
             self.app_instance.notify(
                 "Saved conversation resume is unavailable in this build.",
                 severity="warning",
             )
             return None
-
-        try:
-            # Task 8: raise the depth/root caps well past the service defaults
-            # (50) so a long or branchy conversation's full tree -- every
-            # branch, not just the latest -- is loaded intact, not truncated.
-            maybe_tree = get_conversation_tree(
-                target, mode="local", depth_cap=10_000, root_limit=10_000
-            )
-            tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
-        except Exception:
+        except ConversationLoadFailed:
             logger.exception(
                 f"Unable to resume Console saved conversation: conversation_id={target}"
             )
@@ -2032,7 +2029,7 @@ class ConsoleWorkspaceController:
             )
             return None
 
-        if not isinstance(tree, dict) or not tree.get("conversation"):
+        if tree is None:
             # TASK-717: missing record - the caller owns this failure's UX
             # (honest toast + marking the row visibly broken), so do not
             # stack a second notification here.
@@ -2042,82 +2039,15 @@ class ConsoleWorkspaceController:
         if not isinstance(conversation, dict):
             conversation = {}
         store = self._ensure_console_chat_store()
-        active_workspace_id = str(
-            store.workspace_context.active_workspace_id or ""
-        ).strip()
-        persisted_workspace_id = (
-            str(conversation.get("workspace_id")).strip()
-            if conversation.get("workspace_id") is not None
-            else ""
-        )
-        target_scope = str(target_scope_type or "").strip()
-        requested_workspace_id = (
-            str(target_workspace_id).strip() if target_workspace_id is not None else ""
-        )
-        if target_scope == "global":
-            workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
-        else:
-            workspace_id = (
-                persisted_workspace_id
-                or requested_workspace_id
-                or active_workspace_id
-                or None
-            )
-        title = str(conversation.get("title") or "Saved conversation").strip()
-        if not title:
-            title = "Saved conversation"
-        # Task 8: load the WHOLE persisted tree (every branch), then reconstruct
-        # the active branch from the stored active-leaf pointer. Loading all
-        # branches (not just the latest) is what makes off-path siblings
-        # navigable (swipe) right after resume.
-        all_nodes = self._console_messages_from_conversation_tree(tree)
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
-            target
-        )
-        raw_runtime_backend = conversation.get("runtime_backend")
-        if type(raw_runtime_backend) is str:
-            runtime_backend = raw_runtime_backend
-        else:
-            runtime_backend = ""
-        raw_assistant_kind = conversation.get("assistant_kind")
-        assistant_kind = raw_assistant_kind if type(raw_assistant_kind) is str else None
-        raw_assistant_id = conversation.get("assistant_id")
-        assistant_id = raw_assistant_id if type(raw_assistant_id) is str else None
-        raw_assistant_authority_id = conversation.get("assistant_authority_id")
-        assistant_authority_id = (
-            raw_assistant_authority_id
-            if type(raw_assistant_authority_id) is str
-            else None
-        )
-        raw_character_id = conversation.get("character_id")
-        character_id = (
-            raw_character_id
-            if (
-                runtime_backend == "local"
-                and assistant_kind == "character"
-                and type(raw_character_id) is int
-                and raw_character_id > 0
-                and assistant_id == str(raw_character_id)
-            )
-            else None
-        )
-        session = store.restore_persisted_session(
-            title=title,
-            workspace_id=workspace_id,
-            persisted_conversation_id=target,
-            all_nodes=all_nodes,
-            active_leaf_persisted_id=active_leaf_id,
+        session = hydrate_console_session(
+            app=self.app_instance,
+            store=store,
+            conversation_id=target,
+            tree=tree,
             settings=self._console_session_settings_for_resume(conversation),
-            runtime_backend=runtime_backend,
-            assistant_kind=assistant_kind,
-            assistant_id=assistant_id,
-            assistant_authority_id=assistant_authority_id,
-            character_id=character_id,
+            target_scope_type=target_scope_type,
+            target_workspace_id=target_workspace_id,
         )
-        roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
-        session.user_display_name_override = roleplay_context.user_name_override
-        session.character_system_template = roleplay_context.character_system_template
         # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
         # them onto the restored active-path VIEW (markers are never tree nodes;
         # the next tree mutation's recompute rebuilds the view from live nodes
