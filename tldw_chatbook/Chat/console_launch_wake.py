@@ -226,6 +226,31 @@ def _build_viewless_runtime(app: Any) -> Any:
     return controller
 
 
+def _restore_active_session(store: Any, session_id: str | None) -> None:
+    """Put the active tab back where hydration found it.
+
+    A launch with Console as the startup tab already has an active session
+    -- the one the user is looking at. Hydrating a marked conversation
+    activates the session it creates, so without this the wake would move
+    the user off their tab while they watched. With nothing open (the
+    headless launch) there is no prior session and the hydrated one stays
+    active, which is the only sensible answer there.
+    """
+    if not session_id or getattr(store, "active_session_id", None) == session_id:
+        return
+    switch = getattr(store, "switch_session", None)
+    if not callable(switch):
+        return
+    try:
+        switch(session_id)
+    except Exception as exc:  # noqa: BLE001 -- a gone session is not an error
+        logger.debug(
+            "launch wake could not restore the prior active session "
+            "(exception_type={})",
+            type(exc).__name__,
+        )
+
+
 async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
     """Hydrate and fire every wake this launch already owed.
 
@@ -263,6 +288,11 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
         return 0
     store = controller.store
     app_config = getattr(app, "app_config", {}) or {}
+    # `restore_persisted_session` ACTIVATES what it creates, which is right
+    # for a launch with nothing open and wrong for one where Console is the
+    # startup tab: a wake must never move the user off the tab they landed
+    # on. Captured here and restored below.
+    prior_active_session_id = getattr(store, "active_session_id", None)
     hydrated = 0
     for conversation_id in marked:
         if not wake.has_pending(conversation_id):
@@ -311,5 +341,6 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
             continue
         hydrated += 1
     if hydrated:
+        _restore_active_session(store, prior_active_session_id)
         wake.retry_soon()
     return hydrated

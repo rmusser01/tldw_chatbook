@@ -357,6 +357,60 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         )
 
 
+@pytest.mark.asyncio
+async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
+    tmp_path,
+):
+    """The OTHER launch shape, and the shipped default: `default_tab` is
+    Console, so the startup screen IS a `ChatScreen` with its own fresh
+    session.
+
+    The owed wake must still be delivered -- the User Guide's promise is
+    "at the next start", not "at the next start if you land somewhere
+    else" -- and it must NOT move the user off the tab they landed on.
+    `restore_persisted_session` activates what it creates, so the second
+    half is a real hazard rather than a hypothetical.
+    """
+    conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
+
+    app = _build_test_app("chat")
+    marks = _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    gateway = _StallingWakeGateway(reply=LAUNCH_REPLY)
+    app.console_provider_gateway_factory = lambda: gateway
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        _fixture_tree(conversation_id, rows)
+    )
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        assert await _settle(
+            pilot, lambda: any(isinstance(s, ChatScreen) for s in app.screen_stack)
+        ), (
+            "harness precondition: this test is about launching INTO Console; "
+            f"stack is {[type(s).__name__ for s in app.screen_stack]}"
+        )
+        store = app.console_runtime.chat_store
+        assert await _settle(pilot, lambda: store.active_session_id is not None), (
+            "harness precondition: the Console mount must have made a session "
+            "active, or there is no tab to steal"
+        )
+        landed_on = store.active_session_id
+        assert await _settle(pilot, lambda: bool(gateway.payloads)), (
+            "launching INTO Console delivered no owed wake at all -- the "
+            "shipped default tab would get nothing"
+        )
+        assert CHILD_RESULT in str(gateway.payloads[-1][-1]["content"])
+        assert store.active_session_id == landed_on, (
+            "the launch wake moved the user off the tab they landed on: "
+            f"{landed_on} -> {store.active_session_id}"
+        )
+        assert marks.has_mark(conversation_id, FLEET_UNSEEN), (
+            "the wake landed in a tab the user was not viewing, so the ◈ mark "
+            "must survive to point them at it"
+        )
+
+
 # ---------------------------------------------------------------------------
 # The startup-cost pin -- the one that protects everyone who never uses
 # the fleet.
