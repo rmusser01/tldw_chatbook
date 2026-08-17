@@ -376,6 +376,54 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
 #: pre-flight (task-17371) does exactly that, after a window-launched run
 #: reaching this validation was the only signal that the window passed no
 #: params at all.
+#: Failure markers the summarizers use when they report by RETURNING a string
+#: instead of raising (task-17382). Matched case-insensitively against the
+#: START of the value only -- these functions put the marker in the first
+#: clause ("Llama: Error occurred while ...", "Ollama: JSON parse error ..."),
+#: so a legitimate summary that merely discusses errors downstream cannot be
+#: mistaken for one. The old guard tested only the "Error:" prefix, which no
+#: provider-prefixed message matches.
+_SUMMARY_FAILURE_MARKERS = (
+    "error",
+    "unexpected error",
+    "api request failed",
+    "json parse error",
+    "no choices in response",
+    "failed to",
+)
+
+#: How far into the value a marker still counts as the leading clause.
+_SUMMARY_FAILURE_PREFIX_CHARS = 60
+
+
+def _is_summary_failure(value: Any) -> bool:
+    """Whether a summarizer's return value is one of its error strings.
+
+    Args:
+        value: The summarizer's return value (any type; only str can fail).
+
+    Returns:
+        True when the value is a provider failure report rather than a summary.
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return True
+    head = text[:_SUMMARY_FAILURE_PREFIX_CHARS].casefold()
+    # Either the message leads with the marker, or a provider prefix does:
+    # "<provider>: <marker> ...". Split once so prose containing a colon
+    # later on cannot smuggle a marker in.
+    candidates = [head]
+    if ":" in head:
+        candidates.append(head.split(":", 1)[1].lstrip())
+    return any(
+        candidate.startswith(marker)
+        for candidate in candidates
+        for marker in _SUMMARY_FAILURE_MARKERS
+    )
+
+
 GENERATE_AND_SEARCH_REQUIRED_PARAMS = (
     "engine",
     "content_country",
@@ -1386,13 +1434,15 @@ async def search_result_relevance(
                         except Exception as summ_error:
                             logger.error(f"Summary generation failed: {summ_error}")
 
-                        # `analyze()` reports failure by returning an "Error: ..."
-                        # string rather than raising -- treat both cases the same
-                        # way the port source treats a raised exception: fall back
-                        # to the (scraped or fallback) source content itself.
-                        if not summary or (
-                            isinstance(summary, str) and summary.startswith("Error:")
-                        ):
+                        # `analyze()` reports failure by RETURNING one of its
+                        # providers' error strings rather than raising -- treat
+                        # that the same way the port source treats a raised
+                        # exception: fall back to the (scraped or fallback)
+                        # source content itself. Detection cannot be a bare
+                        # "Error:" prefix test: a llama.cpp failure returns
+                        # "Llama: Error occurred while ..." and used to be
+                        # stored here AS the evidence (task-17382).
+                        if _is_summary_failure(summary) or not summary:
                             summary = source_content[:2000] or "Summary generation failed"
 
                         relevant_results[result_id] = {
@@ -1780,9 +1830,7 @@ def aggregate_results(
                     system_message=None,
                     streaming=False,
                 )
-                if not chunk_summary or (
-                    isinstance(chunk_summary, str) and chunk_summary.startswith("Error:")
-                ):
+                if _is_summary_failure(chunk_summary) or not chunk_summary:
                     raise RuntimeError(chunk_summary or "empty chunk summary")
                 generated = True
             except Exception as chunk_error:
