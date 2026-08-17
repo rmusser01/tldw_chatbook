@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-14
-Related Task: TASK-16481
+Related Task: TASK-17166
 Supersedes: N/A
 
 ## Decision
@@ -89,7 +89,7 @@ across the stack.
 - Markdown rows are selectable at line granularity only until a later
   phase tightens cell-to-offset mapping; this is a recorded phase-1
   simplification, not a permanent ceiling. Implemented as decided in
-  phase 1 (TASK-16481): `ConsoleMarkdownMessage` snaps selections outward
+  phase 1 (TASK-17166): `ConsoleMarkdownMessage` snaps selections outward
   to whole markdown source lines (`_snap_to_line_bounds`) and renders the
   highlight as a reverse-video `Static` strip below the Markdown widget
   (the Markdown renderer's block widgets are left untouched); pointer
@@ -122,7 +122,7 @@ across the stack.
 
 - [Console Text Selection, Selection Menu, Side Chat, and Annotations — Design](../../Docs/superpowers/specs/2026-08-14-console-selection-annotations-design.md)
 - [ADR-031: TUI Keybinding and Footer-Hint Conventions](031-tui-keybinding-and-footer-hint-conventions.md) — no new keybindings in phase 1
-- [TASK-16481](../tasks/task-16481%20-%20Console-text-selection-phase-1.md)
+- [TASK-17166](../tasks/task-17166%20-%20Console-text-selection-phase-1.md)
 
 ## Amendments (2026-08-15, live-terminal spike)
 

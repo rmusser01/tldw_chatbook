@@ -1,5 +1,5 @@
 ---
-id: TASK-16481
+id: TASK-17166
 title: Console text selection phase 1
 status: Done
 assignee:

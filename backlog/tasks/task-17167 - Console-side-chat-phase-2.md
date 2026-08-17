@@ -1,5 +1,5 @@
 ---
-id: TASK-16482
+id: TASK-17167
 title: Console side chat phase 2
 status: Done
 assignee:
