@@ -1012,3 +1012,48 @@ def test_provider_overrides_reach_params_and_papers():
     assert state["last_params"]["engine"] == "duckduckgo"
     assert state["last_params"]["result_count"] == 3
     assert state["papers"] == [["pubmed"]]
+
+
+# --- pipeline params pre-flight (task-17371) --------------------------------
+# A run whose engine was constructed WITHOUT search_params used to reach the
+# real pipeline and die inside generate_and_search's own validation with
+# "Invalid search_params parameter" -- a message that names neither what is
+# missing nor where it comes from. Research_Window shipped exactly that
+# construction (no search_params at all), so every window-launched run failed
+# with it. The engine now refuses the unusable configuration up front, and
+# only when the REAL pipeline is the search function.
+
+
+def test_default_pipeline_without_search_params_fails_legibly():
+    """No search_params + the default (real) pipeline: the run must fail
+    naming the missing keys and where they come from, not with the
+    pipeline's opaque 'Invalid search_params parameter'."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)  # no search_params -- the window's bug
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    # fail_run records the reason in progress_message (service contract).
+    message = str(final.get("progress_message") or final.get("error_msg") or "")
+    # Names the missing keys...
+    assert "engine" in message and "result_count" in message
+    # ...and where they come from.
+    assert "SearchSettings" in message
+
+
+def test_injected_search_fn_skips_the_pipeline_preflight():
+    """The pre-flight is the REAL pipeline's requirement, not the engine's:
+    a caller injecting its own search_fn (every other test here, and any
+    future non-web lane) still runs with empty search_params."""
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=analyze_fn
+    )  # still no search_params
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"

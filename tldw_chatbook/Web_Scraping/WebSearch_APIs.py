@@ -370,6 +370,21 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
     return sanitized
 
 
+#: search_params keys generate_and_search cannot run without. Exported
+#: because callers that ASSEMBLE these params need to be able to check their
+#: own assembly before spending a run on it -- LocalResearchEngine's
+#: pre-flight (task-17371) does exactly that, after a window-launched run
+#: reaching this validation was the only signal that the window passed no
+#: params at all.
+GENERATE_AND_SEARCH_REQUIRED_PARAMS = (
+    "engine",
+    "content_country",
+    "search_lang",
+    "output_lang",
+    "result_count",
+)
+
+
 def generate_and_search(question: str, search_params: Dict) -> Dict:
     """
     Generate sub-queries and perform web searches.
@@ -442,14 +457,7 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
         raise ValueError("Invalid search_params parameter")
 
     # Check for required keys in search_params
-    required_keys = [
-        "engine",
-        "content_country",
-        "search_lang",
-        "output_lang",
-        "result_count",
-    ]
-    for key in required_keys:
+    for key in GENERATE_AND_SEARCH_REQUIRED_PARAMS:
         if key not in search_params:
             raise ValueError(f"Missing required key in search_params: {key}")
 

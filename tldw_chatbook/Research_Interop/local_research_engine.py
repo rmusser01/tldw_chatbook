@@ -82,6 +82,12 @@ class LocalResearchEngine:
     ) -> None:
         self.service = local_service
         self.search_fn = search_fn or self._default_search_fn
+        # task-17371: the pipeline's own required params are pre-flighted
+        # before a run spends anything -- but ONLY when the real pipeline is
+        # what will be called. An injected search_fn carries its own
+        # contract (tests, and any future non-web lane), so the pre-flight
+        # must not speak for it.
+        self._uses_default_search_fn = search_fn is None
         self.analyze_fn = analyze_fn or self._default_analyze_fn
         self.gap_fn = gap_fn or self._default_gap_fn
         self.search_params = dict(search_params or {})
@@ -190,6 +196,39 @@ class LocalResearchEngine:
                 and recorder.exact_tokens() == recorder.total_tokens(),
             )
         return result
+
+    def _require_pipeline_params(self, params: dict[str, Any]) -> None:
+        """Refuse a run the real pipeline cannot execute (task-17371).
+
+        ``generate_and_search`` validates these keys itself, but it does so
+        from inside the collecting phase, and its message ("Invalid
+        search_params parameter" for an empty dict) names neither what is
+        missing nor where it comes from. Research_Window shipped an engine
+        built with no search_params at all, so every window-launched run
+        failed with exactly that. Failing here instead states the missing
+        keys and their source before any search, LLM call or budget spend.
+
+        Raises:
+            ValueError: If a required pipeline param is absent. The caller's
+                terminal-failure path turns it into the run's error_msg.
+        """
+        from ..Web_Scraping.WebSearch_APIs import (
+            GENERATE_AND_SEARCH_REQUIRED_PARAMS,
+        )
+
+        missing = [
+            key for key in GENERATE_AND_SEARCH_REQUIRED_PARAMS if key not in params
+        ]
+        if not missing:
+            return
+        raise ValueError(
+            "deep-search pipeline params are missing: "
+            + ", ".join(missing)
+            + ". They are assembled from [SearchSettings] by "
+            "Tools.web_tool_impls.deep_search_pipeline_params(); pass the "
+            "result as the engine's search_params (or inject a search_fn "
+            "that does not need them)."
+        )
 
     def _get_run(self, run_id: str) -> dict[str, Any]:
         run = self.service.get_run(run_id)
@@ -324,6 +363,8 @@ class LocalResearchEngine:
         self._active_academic_providers = overrides.get("academic_providers")
 
         try:
+            if self._uses_default_search_fn:
+                self._require_pipeline_params(run_params)
             return await self._execute_phases(run, ledger)
         except _RunAwaitingReview as awaiting:
             logger.info(f"Research run {run_id} awaiting checkpoint review")

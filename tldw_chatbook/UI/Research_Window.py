@@ -424,8 +424,29 @@ class ResearchWindow(Vertical):
         # behavior with a None paper_search_fn.
         from ..Research_Interop.academic_providers import search_papers
 
+        # task-17371: the window used to construct the engine with NO
+        # search_params, so the pipeline rejected every window-launched run
+        # ("Invalid search_params parameter") before a single search, and the
+        # engine's gap analysis -- which reads final_answer_llm from these
+        # params -- could never fire. Assemble them the way the Console
+        # /research command and the baseline recorder do (one shared
+        # assembly, task-16484); a failure to assemble is reported instead of
+        # being spent on a run that cannot succeed.
+        try:
+            from ..Tools.web_tool_impls import deep_search_pipeline_params
+
+            search_params = deep_search_pipeline_params()
+        except Exception as exc:  # noqa: BLE001 - report, never crash the window
+            logger.error(f"Research engine params unavailable: {exc}")
+            self._set_status(
+                "Research engine unavailable: deep-search settings could not be "
+                f"assembled ({exc}). Check [SearchSettings] in your config."
+            )
+            return
+
         engine = LocalResearchEngine(
             local_service,
+            search_params=search_params,
             paper_search_fn=search_papers if self.academic_enabled else None,
         )
 
