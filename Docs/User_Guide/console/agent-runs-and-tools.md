@@ -31,6 +31,17 @@ refused with a message like "2 agents already running (…). Wait for one to
 finish or interrupt it." Runs live only while Console stays open — see
 [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
 
+**In the reply row itself** — while the turn works, the unfinished
+`Assistant` row shows a live activity line in place of its (empty) text, so
+a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
+is running and how long it has been running, `Thinking… · 6s` means the
+tool finished and the model is composing the next round, and `Generating…`
+is the wait for the model's first response of the turn. The elapsed figure
+advances while you watch. The line is live-only — it vanishes the moment
+the reply's own text arrives, and a conversation you reopen later shows the
+completed `Tool` rows below instead. A sub-agent's work never appears here;
+it belongs to the **Sub-agents** panel in the left rail.
+
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
 
@@ -924,3 +935,16 @@ presentation layer over TASK-1972's existing change-review subsystem; the
 `[console] turn_file_cards` kill switch reverts to the pre-card plain-text
 marker row byte-for-byte, confirmed by
 `test_summary_row_stays_plain_marker_when_disabled`.)*
+
+*Live turn-activity line added against dev @ feea06193 — 2026-08-16.
+Verified by execution, not by a tmux walkthrough: a real
+`ConsoleAgentBridge` ran a real `agent_runtime` turn whose tool call was
+held in flight on an Event, and the MOUNTED transcript row was read back —
+before the change it rendered the bare word `Assistant` (the row is
+`status='pending'`, `content=''`, so even the old `Generating…` copy never
+applied to it); after, it renders `Assistant  ⚙ calculator · <1s` and
+advances to `· 5s` on the next poll
+(`Tests/UI/test_console_turn_activity_line.py`, 26 passed). Not
+live-walked in a terminal — the states and the elapsed are covered by that
+suite plus mutation testing; the rest of this page's content is unchanged
+from the prior stamp.*

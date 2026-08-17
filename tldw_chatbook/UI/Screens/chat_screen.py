@@ -15548,6 +15548,13 @@ class ChatScreen(BaseAppScreen):
                 transcript.pending_selection_id = self._pending_console_swipe_selection
                 self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
+            # Live turn-activity line. `apply_turn_activity` hands back the
+            # EFFECTIVE value ("" unless a row is actually in flight), which
+            # is what joins the refresh key below -- so an idle transcript
+            # can never repaint once a second off a stale run snapshot.
+            turn_activity = transcript.apply_turn_activity(
+                self._agent.console_turn_activity()
+            )
             visible_citation_counts = {
                 message_id: count
                 for message_id, count in self._console_citation_counts.items()
@@ -15642,6 +15649,7 @@ class ChatScreen(BaseAppScreen):
                 # before-boundary) must force a refresh so the banner appears
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
+                turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
                 tuple(sorted(self._console_speech_states.items())),

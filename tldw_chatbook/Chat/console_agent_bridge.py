@@ -875,11 +875,28 @@ class AgentLiveStep:
             raw/unescaped for the rail's markup-off ``Static``.
         agent_kind: Which agent produced the step -- ``AGENT_KIND_PRIMARY``
             or ``AGENT_KIND_SUBAGENT``.
+        started_at: ``time.monotonic()`` at the moment THIS bridge observed
+            the step, or ``None`` when there is no honest base (every
+            resume-derived step; see ``_derive_historical_snapshot``).
+
+            Stamped here, in the impure seam, rather than on ``AgentStep``:
+            ``AgentStep.created_at`` is a ``str`` that stays EMPTY for the
+            whole life of a live run (``AgentService`` stamps the batch
+            once, at end-of-run persist), and ``Agents/agent_runtime.py`` /
+            ``agent_models.py`` are pure-logic modules by design -- reading
+            a clock there would put wall-time into the layer whose whole
+            contract is that it has none. ``on_step`` is called
+            SYNCHRONOUSLY from the runtime the instant a step is added --
+            for ``STEP_TOOL_CALL`` that is the statement immediately before
+            ``deps.invoke_tool(call)`` -- so this reading is the tool's own
+            start, not a poll-quantised approximation of it. Monotonic
+            (never wall clock) because the only consumer is a duration.
     """
 
     kind: str
     text: str
     agent_kind: str
+    started_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -3085,7 +3102,13 @@ class ConsoleAgentBridge:
             )
             key_steps = run_live_steps.setdefault(live_key, [])
             key_steps.append(
-                AgentLiveStep(step.kind, self._summarize(step), agent_kind)
+                # `time.monotonic()` HERE is the step's real start: this hook
+                # runs synchronously inside the runtime loop, before the work
+                # the step announces (a STEP_TOOL_CALL lands one statement
+                # ahead of `deps.invoke_tool`). See `AgentLiveStep.started_at`.
+                AgentLiveStep(
+                    step.kind, self._summarize(step), agent_kind, time.monotonic()
+                )
             )
             # TASK-1366: pair this result step with the raw before/after
             # contents the provider's diff_sink captured at the strip seam,

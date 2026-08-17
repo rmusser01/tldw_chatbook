@@ -598,6 +598,15 @@ class ConsoleChatMessage:
     # resume+edit can never clobber the video payload). None for every
     # non-video message.
     video_metadata: "VideoGenerationMetadata | None" = None
+    #: Render-only live activity line for an IN-FLIGHT assistant row ("⚙
+    #: read_file · 4s"). Set by nothing that owns messages: the store never
+    #: writes it, no persistence path reads it, and it is never echoed to a
+    #: model or a run log. ``ConsoleTranscript`` alone stamps it, on a
+    #: throwaway ``replace()`` copy made inside its row-planning walk (the
+    #: same seam ``tool_output_full`` expansion uses), from a value the
+    #: 0.2s Console poll re-derives every tick. It is therefore always
+    #: ``""`` on every message the rest of the app ever sees.
+    live_activity: str = ""
 
 
 @dataclass(frozen=True)

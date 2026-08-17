@@ -4765,6 +4765,37 @@ unimportable at base, reference them lazily (or split the white-box asserts
 out) so the base-tree run fails on the assertion that carries the evidence,
 not on `import`.
 
+---
+
+## A per-tick view value needs its CACHE KEY and its SCOPE mutation-tested; display assertions see neither (turn-activity line, 2026-08-16)
+
+The Console's in-flight assistant row gained a live activity line (`⚙
+read_file · 4s`) refreshed on the 0.2s poll. Every display assertion was
+green, and mutation testing then found two defects that no rendered-text
+assertion could have seen:
+
+1. **The cache key.** `ConsoleTranscript` has TWO renderers — markdown (the
+   default for assistant rows, which carries the line in its *header*) and
+   plain. `_message_row_signature` is built from the PLAIN renderer only, so
+   the markdown row's elapsed advanced solely as a side effect of the plain
+   renderer embedding the same string. Disabling the plain branch left the
+   first paint correct and froze every later tick — the tell was not "the
+   line is missing" but "the FIRST tick passed and the SECOND did not".
+2. **The scope.** Stamping the value on every message instead of only the
+   in-flight row changes nothing a reader can see (a row with content never
+   renders it; only assistant rows can) — but it lands in every row's
+   signature, so the whole transcript re-derives and re-syncs once per
+   second for the entire turn. The mutant SURVIVED a suite of rendered-row
+   assertions.
+
+**What to do.** For any value the poll re-supplies each tick: (a) mutate the
+signature/cache key and require a test that paints two ticks differing in
+*nothing but that value*; (b) mutate the scope and assert **blast radius**,
+not pixels — `row_render_signatures()` and
+`message_signature_compute_counts()` make "exactly one row moved" a direct
+assertion. Also worth knowing for this widget: a signature that renders one
+of two renderers silently couples them, so name the field in the signature
+outright rather than relying on it riding along inside rendered text.
 ## A guard sitting behind an earlier early-return is unreachable, so no fixture can own it (task-15860, 2026-08-16)
 
 Third mutation-survivor in this arc, and a different shape from the two
