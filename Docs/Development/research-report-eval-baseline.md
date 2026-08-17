@@ -165,6 +165,58 @@ closing the gap would need either a per-kind relevance threshold or
 category-tuned question sets — recorded as the follow-up lever, with the
 fallback (top-3 flagged) still covering the remainder.
 
+## Decomposition measured on the repositories lane (2026-08-17, task-17370)
+
+Same runner, same three questions, same judge (local Qwen3.8-27B on
+`:9191`), same 5-results bound as the 0.29 and 0.42 arms; the only change is
+`--max-queries 3`, which turns on phase-1 sub-question generation:
+
+Command:
+`python3 Helper_Scripts/Benchmarks/record_research_baseline.py --questions 3 --engine duckduckgo --academic --providers repositories --llm-base-url http://127.0.0.1:9191/v1 --max-queries 3 --max-iterations 1 --deadline-s 900`
+
+| Metric | 1 query, strict | 1 query + source-type note | **3 queries + note** |
+|---|---|---|---|
+| `gate_pass_rate` | 0.29 | 0.42 | **0.38** |
+| `citation_accuracy` | 1.00 (73/73) | 1.00 (72/72) | 1.00 (70/70) |
+| `claim_support_rate` | 0.97 | 1.00 | 1.00 |
+| `cited_sentence_ratio` | 0.52 | 0.75 | 0.70 |
+| `quote_grounding` | 0.00 | 0.33 | 0.33 |
+
+Per-question `gate_pass` in the fan-out arm: 0.54, 0.40, 0.20.
+
+**The result is negative: giving the gate narrower facets did not admit more
+repository evidence.** 0.38 against 0.42 is flat to slightly down, and this
+doc already records that gate pass-rate varies between identical runs on this
+model, so the honest reading is "no measurable improvement", not "a
+regression". Citation integrity again held (70/70 markers resolved).
+
+What this arm did and did not test, because it decides how far the result
+generalizes:
+
+- **Tested:** the gate's context. `websearch.result_relevance_eval` takes
+  `sub_questions` as a required placeholder, so the earlier arms rendered it
+  as an empty list and this one rendered real facets. That is a genuine
+  change in what the judge was asked.
+- **Not tested:** retrieval. The web lane returned zero results throughout
+  (the DuckDuckGo bot challenge this doc notes elsewhere), and the academic
+  lane only searches round 1's `[question]` (task-17372), so the repository
+  records under judgment were the SAME set as the 0.42 arm. Fan-out changed
+  how they were judged, not which ones existed.
+
+So the case for decomposition on this lane now rests on retrieval rather than
+on gate context: multi-hop rounds >= 2 do drive retrieval (measured
+separately below), and fan-out reaching the paper providers does not happen
+today at all (task-17372).
+
+One bound on the non-gate rows of every table in this document, including
+this arm's: per-result summarization was silently failing for llama.cpp
+(task-17382), so the synthesis was built from titles and gate reasoning with
+an error string where each source body belonged. `gate_pass_rate` is
+unaffected — the gate judges scraped content before summarization — but
+`cited_sentence_ratio`, `claim_support_rate` and `quote_grounding` were
+graded on reports written without their sources, and should be re-measured
+after that fix.
+
 ## What every number above was measured with (task-17370)
 
 Both of the pipeline's decomposition mechanisms were OFF for every baseline
