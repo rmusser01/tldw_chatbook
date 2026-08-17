@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+import json
 import os
 from pathlib import Path
 import threading
@@ -171,7 +172,13 @@ def workspace_context_note(
     launch_label = f"{launch.name}/" if launch.name else (launch.anchor or "/")
     lines = [
         _NOTE_HEADER,
-        f'Active workspace: "{name}"',
+        # Render the (user-controlled) workspace name as a JSON string literal:
+        # it delimits the value as data and escapes embedded quotes/backslashes/
+        # control chars, so a crafted name cannot break out of the quoted field
+        # to add instruction-like text. Belt-and-suspenders with the
+        # whitespace-collapse above; ``ensure_ascii=False`` keeps unicode names
+        # readable.
+        f"Active workspace: {json.dumps(name, ensure_ascii=False)}",
         f"Launched from: {launch_label}",
     ]
     if root_lines:
