@@ -12347,6 +12347,16 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
 
 # --- Main execution block ---
 if __name__ == "__main__":
+    # Record the launch directory first, before anything can chdir -- the
+    # `python -m tldw_chatbook.app` path does not route through
+    # main_cli_runner, so it needs its own capture (set-once; harmless if
+    # already recorded). See workspace_context_note for why this matters.
+    from tldw_chatbook.Tools.workspace_file_roots import (
+        set_launch_cwd as _set_launch_cwd,
+    )
+
+    _set_launch_cwd()
+
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 

@@ -3013,6 +3013,12 @@ class ConsoleAgentBridge:
             # Non-default workspace: tell the agent (and, via config
             # propagation, its sub-agents) which workspace it is in and that
             # the launch directory differs. Empty for the default workspace.
+            # The note describes the session's own workspace roots, which the
+            # file tools honor on the production path (console_chat_controller
+            # always passes builtin_gate -> the fresh-build branch binds
+            # run_workspace(run_workspace_id)). On the no-gate fast path the
+            # shared provider falls back to the active workspace, so note and
+            # enforced roots can diverge there -- test/embedding only.
             workspace_context_note=workspace_context_note(run_workspace_id),
         )
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn

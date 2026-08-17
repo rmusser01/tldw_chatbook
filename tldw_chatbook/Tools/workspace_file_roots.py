@@ -35,9 +35,11 @@ _LAUNCH_CWD: str | None = None
 def set_launch_cwd(path: str | os.PathLike[str] | None = None) -> None:
     """Record the app's launch directory once, at boot (first write wins).
 
-    Called once during application startup. Subsequent calls are ignored so a
-    re-entrant boot (or a test that constructs a second app) cannot move the
-    recorded launch location out from under an in-flight run.
+    Intended to be called once, from single-threaded process startup. A later
+    (sequential) re-entrant boot -- or a test that constructs a second app --
+    is ignored, so the recorded launch location cannot move out from under an
+    in-flight run. The set-once check is not internally locked; it relies on
+    boot being single-threaded rather than guarding concurrent first calls.
 
     Args:
         path: Directory to record as the launch location; defaults to the
@@ -148,6 +150,11 @@ def workspace_context_note(
             if folder.is_symlink() or folder.resolve() != folder:
                 continue
             display, outside = _relativize_root(folder, launch)
+            # Collapse whitespace in the rendered path exactly as the workspace
+            # name is collapsed above: a bound folder whose leaf name contains
+            # a newline (legal on POSIX) would otherwise splice a fake prompt
+            # section into the note the agent reads as instructions.
+            display = " ".join(display.split())
             read_only = str(binding.metadata.get("access", "ro")) != "rw"
             tags: list[str] = []
             if outside:
@@ -161,10 +168,11 @@ def workspace_context_note(
             "workspace_context_note: registry unavailable"
         )
         return _NOTE_UNAVAILABLE
+    launch_label = f"{launch.name}/" if launch.name else (launch.anchor or "/")
     lines = [
         _NOTE_HEADER,
         f'Active workspace: "{name}"',
-        f"Launched from: {launch.name or os.sep}/",
+        f"Launched from: {launch_label}",
     ]
     if root_lines:
         lines.append("Workspace file roots (relative to the launch directory):")

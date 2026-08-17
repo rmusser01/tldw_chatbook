@@ -876,9 +876,10 @@ class AgentService:
             if config.workspace_context_note:
                 # Non-default workspace: append the environment note LAST, as a
                 # stable per-turn suffix (cache-friendly, like the sections
-                # above). Appended after ``config.system_prompt``, so a
-                # sub-agent's identity prefix -- which ``_is_subagent`` matches
-                # against the stored ``config.system_prompt`` -- is untouched.
+                # above). ``_is_subagent`` prefix-matches the SENT system
+                # content (messages_payload[0]); appending after
+                # ``config.system_prompt`` keeps the sub-agent identity prefix
+                # leading the emitted prompt, so detection is unaffected.
                 system_content = (
                     f"{system_content}\n\n{config.workspace_context_note}"
                 )
