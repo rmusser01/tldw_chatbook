@@ -217,6 +217,55 @@ unaffected — the gate judges scraped content before summarization — but
 graded on reports written without their sources, and should be re-measured
 after that fix.
 
+## Multi-hop measured on the repositories lane (2026-08-17, task-17370)
+
+The same arm plus `--max-iterations 2`, so gap analysis gets to spend a second
+round. Read this table per question, NOT by its mean: the three runs did three
+different things.
+
+| | Arm B: 1 round | Arm C: 2 rounds |
+|---|---|---|
+| Q1 RAG | gate 0.54, markers 33/33, cited 0.92 | gate **0.71**, markers **0/0**, cited 0.00 |
+| Q2 MoE | gate 0.40, markers 24/24, cited 0.77 | gate 0.37, markers **39/39**, cited **0.95** |
+| Q3 GNN | gate 0.20, markers 13/13, cited 0.42 | gate 0.07, markers 1/1, cited 0.02 |
+| mean `gate_pass_rate` | 0.379 | 0.381 |
+
+**Multi-hop does what fan-out could not: it changes retrieval.** Gap analysis
+produced well-formed follow-ups rather than restatements (for Q1: "how vector
+databases support semantic search in RAG", "RAG evaluation metrics faithfulness
+relevance hallucination", "advanced RAG variants self-RAG GraphRAG hybrid
+retrieval reranking"), and round-2 queries DO reach the paper providers,
+because the academic lane loops `round_queries` -- `[question]` in round 1, the
+gap list afterwards. Search calls: 3 in Arm B (one per question), 12 in Arm C
+(Q1 1+5, Q2 1+4, Q3 1+0).
+
+Per question, what actually happened:
+
+- **Q2 is the clean datapoint, and it is positive.** Same gate rate (0.37 vs
+  0.40) but 39 resolved markers against 24, and citation density 0.95 against
+  0.77 -- multi-hop admitted more usable evidence and the report used it.
+- **Q1 retrieved the most and cited nothing**, which is not a gate result but a
+  synthesis failure: it is the ONLY question where map-reduce chunking engaged
+  (54 chunk operations, 5 MAP calls), and under task-17382 every chunk summary
+  was the provider error string the caller's guard failed to recognize. The
+  model was handed five copies of an error message and had nothing to cite.
+  Q2, which fit in a single pass, was unaffected. That defect is now fixed, so
+  this run needs redoing before Q1's number means anything.
+- **Q3 is not a multi-hop datapoint at all**: gap analysis returned no gaps, so
+  only round 1 ran. Its 0.07 reflects a round-1 pool of 9 judged results (2
+  admitted), not the effect of iteration.
+
+So the mean `gate_pass_rate` moving 0.379 -> 0.381 states nothing. The
+measurable claims from this arm are: multi-hop retrieval works and reaches the
+academic lane; where the synthesis path held together it produced markedly more
+cited evidence; and the pipeline's bottleneck under a larger evidence pool was
+the SYNTHESIS path, not the relevance gate.
+
+`gate_pass_rate` also needs reading as the ratio it is: round 2 adds to the
+denominator, so pulling in more marginal repository records can lower the rate
+while admitting more good evidence -- Q1 (0.71) and Q2 (39 markers) are the
+same mechanism seen from two sides.
+
 ## What every number above was measured with (task-17370)
 
 Both of the pipeline's decomposition mechanisms were OFF for every baseline
