@@ -32,7 +32,7 @@ from typing import ClassVar
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.events import Click, Key
+from textual.events import Click, Key, MouseDown, MouseUp
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
@@ -378,6 +378,35 @@ class ConsoleSelectionMenu(Vertical):
             max(bounds.y, y - shift_y),
         )
         self.absolute_offset = Offset(*self._anchor)
+
+    # TEMPORARY live-spike diagnostics (dead menu buttons in one user
+    # terminal, 2026-08-16): log every mouse event this menu receives, with
+    # the widget the screen hit-test resolves for its coordinates. Remove
+    # once the spike closes.
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        try:
+            hit, _ = self.screen.get_widget_at(event.screen_x, event.screen_y)
+            self._spike_log(f"menu MouseDown at ({event.screen_x},{event.screen_y}) hit={hit!r} captured={self.app.mouse_captured!r}")
+        except Exception as exc:
+            self._spike_log(f"menu MouseDown log failed: {exc!r}")
+        await super()._on_mouse_down(event)
+
+    async def _on_mouse_up(self, event: MouseUp) -> None:
+        try:
+            hit, _ = self.screen.get_widget_at(event.screen_x, event.screen_y)
+            self._spike_log(f"menu MouseUp at ({event.screen_x},{event.screen_y}) hit={hit!r}")
+        except Exception as exc:
+            self._spike_log(f"menu MouseUp log failed: {exc!r}")
+        await super()._on_mouse_up(event)
+
+    def _spike_log(self, line: str) -> None:
+        from datetime import datetime
+
+        try:
+            with open("/tmp/console_mouse_log.txt", "a") as fh:
+                fh.write(f"{datetime.now().isoformat()} {line}\n")
+        except Exception:
+            pass
 
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.
