@@ -31,14 +31,23 @@ if str(REPO_ROOT) not in sys.path:
 
 # Default question set: neutral, stable topics so future re-runs stay
 # comparable; single-facet questions keep verification payloads small.
-# Academic-topic questions: with --academic the evidence pool is arXiv/S2
-# papers, so non-research topics (product features, protocols) legitimately
-# score zero relevance and produce no synthesis to verify.
-DEFAULT_QUESTIONS = [
-    "What is retrieval augmented generation?",
-    "What are mixture of experts language models?",
-    "How do graph neural networks work?",
-]
+# Question sets: with --academic the evidence pool is papers/datasets, so
+# non-research topics (product features, protocols) legitimately score zero
+# relevance and produce no synthesis to verify. The biomedical set stresses
+# domain-specific vocabulary the PubMed lane must match (task-16812).
+QUESTION_SETS: dict[str, list[str]] = {
+    "default": [
+        "What is retrieval augmented generation?",
+        "What are mixture of experts language models?",
+        "How do graph neural networks work?",
+    ],
+    "biomedical": [
+        "What are the mechanisms of CRISPR-Cas9 off-target effects?",
+        "How does tau protein aggregation contribute to Alzheimer's disease?",
+        "What is the role of the gut microbiome in immune regulation?",
+    ],
+}
+DEFAULT_QUESTIONS = QUESTION_SETS["default"]
 
 
 # Credential requirements per engine (None = keyless). The preflight fails
@@ -200,8 +209,10 @@ async def main_async(args: argparse.Namespace) -> int:
             service, search_params=search_params, paper_search_fn=paper_search_fn
         )
 
+        question_set = QUESTION_SETS[args.question_set]
+        print(f"question set: {args.question_set}")
         payloads = []
-        for question in DEFAULT_QUESTIONS[: args.questions]:
+        for question in question_set[: args.questions]:
             print(f"Running: {question}")
             payload = await _run_question(engine, service, question)
             if payload is not None:
@@ -240,6 +251,12 @@ async def main_async(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--questions", type=int, default=3, help="number of questions to run")
+    parser.add_argument(
+        "--question-set",
+        default="default",
+        choices=sorted(QUESTION_SETS),
+        help="named question set to run (default keeps the general-purpose set)",
+    )
     parser.add_argument(
         "--max-results", type=int, default=5, help="search results per query (spend bound)"
     )
