@@ -177,11 +177,24 @@ model = "gpt-3.5-turbo"
 max_expansions = 3
 include_synonyms = true
 
+# NOT a quality claim, and -- read this before wiring it up -- currently a
+# NO-OP. `PipelineLoader._apply_after_middleware` (RAG_Search/pipeline_loader.py)
+# handles "result_reranking" with a bare `pass`, so `enabled = true` and the
+# model below buy nothing today, on `high_accuracy` or anywhere else.
+#
+# If anyone implements it: cross-encoder reranking is the ONE reranking
+# strategy that has been measured on this repo's gated eval instrument
+# (TASK-16965), and it came out net HARMFUL on the averaged row -- large
+# gains on weak-retrieval query categories (hybrid `scoped` MRR
+# 0.163 -> 0.929), paid for by demoting already-correct top hits on
+# categories retrieval already got right. It is the default of nothing and
+# the recommendation of nothing. Numbers and method:
+# Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
 [middleware.result_reranking]
 name = "Advanced Result Re-ranking"
 type = "after_search"
 enabled = true
-description = "Re-ranks results using cross-encoder models"
+description = "Re-ranks results with a cross-encoder (measured net-harmful on average; see TASK-16965)"
 
 [middleware.result_reranking.config]
 model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
