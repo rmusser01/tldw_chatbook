@@ -1165,6 +1165,39 @@ def turn_file_entries(
     return paired
 
 
+def middle_elide_path(path: str, budget: int) -> str:
+    """Middle-elide a path to fit a display budget, preserving both ends.
+
+    Keeps the first and last path components intact -- the two fragments a
+    user actually recognizes a file by (its directory of origin and its
+    own name) -- and collapses everything between them into a single "…"
+    placeholder component. Splits on "/" rather than going through
+    `pathlib`: every path this renders (``TurnFileEntry.label``) is
+    already a root-relative git path, not a local filesystem path to
+    resolve, and git always uses "/" regardless of host OS.
+
+    Args:
+        path: The path to elide.
+        budget: Maximum character length of the result.
+
+    Returns:
+        ``path`` unchanged when it already fits within ``budget``, or when
+        it has two or fewer components -- there is no middle left to drop
+        without mangling the one meaningful fragment that remains (a bare
+        filename, or a directory/filename pair where both ends already
+        ARE the whole path). Otherwise ``"<first>/…/<last>"``, even when
+        that combined form itself still exceeds ``budget`` -- a single
+        overlong component can't be shortened further at this
+        path-component granularity.
+    """
+    if len(path) <= budget:
+        return path
+    parts = path.split("/")
+    if len(parts) <= 2:
+        return path
+    return f"{parts[0]}/…/{parts[-1]}"
+
+
 # --------------------------------------------------------------------------
 # Diff hunk segmentation + annotate/feedback loop (task: turn-file-card
 # annotate loop, TASK-16800)

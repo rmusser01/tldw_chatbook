@@ -468,6 +468,64 @@ def test_no_pending_notes_leaves_payload_byte_identical(tmp_path):
     assert tool_rows == []
 
 
+# -- kill switch: presentation OFF must not affect bridge-level delivery --
+
+
+def test_kill_switch_off_does_not_prevent_note_delivery(tmp_path, monkeypatch):
+    """AC#5 / the spec's "Kill switch" section: `[console] turn_file_cards
+    = false` keeps the CARD off -- pinned separately (byte-identical plain
+    marker, no card mounts) by
+    `Tests/UI/test_console_turn_file_card_factory.py`'s
+    `test_summary_row_stays_plain_marker_when_disabled`, using the same
+    monkeypatch shape as here. This is the OTHER half of AC#5: the
+    delivery seam lives in ``ConsoleAgentBridge.run_reply`` and never
+    consults that presentation switch at all, so a pending note must
+    still auto-attach, stamp, and disclose exactly like every other run in
+    this file even while the switch is OFF -- "no note UI" must never mean
+    "notes silently vanish".
+
+    Patches ``tldw_chatbook.config.get_cli_setting`` itself (not a
+    module-local re-export) because every ``get_cli_setting`` call this
+    exercises -- including the bridge's own -- is a LOCAL `from
+    tldw_chatbook.config import get_cli_setting` inside a function body;
+    patching the defining module is the only patch point every one of
+    those local imports actually resolves through.
+    """
+    import tldw_chatbook.config as config_module
+
+    real_get_cli_setting = config_module.get_cli_setting
+
+    def _turn_file_cards_off(section, key, default=None):
+        if (section, key) == ("console", "turn_file_cards"):
+            return False
+        return real_get_cli_setting(section, key, default)
+
+    monkeypatch.setattr(config_module, "get_cli_setting", _turn_file_cards_off)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Done."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    _add_note(db, earlier_run, note="fix this even with the card switched off")
+
+    run_id, outcome = bridge.run_reply(**_run_kwargs(session, aid))
+
+    assert outcome.status == "done"
+    assert db.pending_notes_for_conversation("conv-1") == []
+    delivered = db.notes_for_run(earlier_run)
+    assert len(delivered) == 1
+    assert delivered[0]["delivered_at"] is not None
+
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert len(tool_rows) == 1
+    assert "fix this even with the card switched off" in tool_rows[0].content
+
+
 # -- protective posture: notes subsystem failures never break the reply ---
 
 

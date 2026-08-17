@@ -3,10 +3,13 @@
 Runs on the REAL app CSS stack (screen css + bundle): geometry measured
 without the bundle is not measured (task-15110's lesson).
 """
+import time
 from pathlib import Path
 
 import pytest
+from textual import on
 from textual.app import App, ComposeResult
+from textual.widgets import Button
 
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Console.console_turn_file_card import (
@@ -506,3 +509,179 @@ async def test_selected_card_uses_the_bundles_focus_background():
         plain_bg = pilot.app.query_one("#card-unselected").styles.background
         assert card_bg == peer_bg
         assert card_bg != plain_bg
+
+
+# -- Task 7: Review button, expand/collapse-all, elided paths, AC#4 guard --
+
+
+class _ReviewCaptureHost(_Host):
+    """`_Host`, plus a capture of every posted `ReviewRequested`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.review_requests: list[str] = []
+
+    @on(ConsoleTurnFileCard.ReviewRequested)
+    def _capture_review_requested(
+        self, event: ConsoleTurnFileCard.ReviewRequested
+    ) -> None:
+        self.review_requests.append(event.run_id)
+
+
+@pytest.mark.asyncio
+async def test_review_button_posts_review_requested_with_the_cards_run_id():
+    async with _ReviewCaptureHost().run_test(size=(120, 40)) as pilot:
+        await _settled_card(pilot)
+        review_btn = pilot.app.query_one(".console-turn-file-review-btn", Button)
+        review_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.review_requests == ["run-1"]
+
+
+async def _toggle_all_and_wait_expanded(pilot, card):
+    """Press the header toggle-all button and wait for every body to show."""
+    toggle_btn = card.query_one(".console-turn-file-toggle-all-btn", Button)
+    toggle_btn.focus()
+    await pilot.press("enter")
+    for _ in range(120):
+        bodies = list(card.query(".console-turn-file-diff"))
+        if bodies and all(body.display for body in bodies):
+            return bodies
+        await pilot.pause(0.02)
+    raise AssertionError("expand-all never showed every row's body")
+
+
+@pytest.mark.asyncio
+async def test_toggle_all_expands_every_row_then_collapses_them_all():
+    async with _Host().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        bodies = await _toggle_all_and_wait_expanded(pilot, card)
+        assert len(bodies) == 2
+        for body in bodies:
+            assert list(body.query(".console-turn-file-hunk")), (
+                "expand-all must mount every row's hunk blocks, not just "
+                "flip display"
+            )
+        toggle_btn = card.query_one(".console-turn-file-toggle-all-btn", Button)
+        toggle_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        bodies = list(card.query(".console-turn-file-diff"))
+        assert not any(body.display for body in bodies), (
+            "collapse-all must hide every row's body"
+        )
+        # display-managed, never unmounted (parity with the single-row
+        # collapse/re-expand cache contract).
+        assert all(body.is_mounted for body in bodies)
+
+
+@pytest.mark.asyncio
+async def test_toggle_all_loads_uncached_diffs_serialized_never_concurrently():
+    """Hard constraint (spec §5): expand-all must load uncached diffs
+    SERIALIZED in one worker, never N concurrent git subprocesses. A
+    provider that tracks its own concurrent-call high-water mark, with a
+    real sleep inside the off-thread read to widen the race window, would
+    catch a switch to `asyncio.gather`-style concurrent loading.
+    """
+
+    class _ConcurrencyTrackingProvider(_FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.max_active = 0
+
+        def diff_text(self, row, path):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n"
+            finally:
+                self.active -= 1
+
+    provider = _ConcurrencyTrackingProvider()
+
+    class _ConcurrencyHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _ConcurrencyHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        await _toggle_all_and_wait_expanded(pilot, card)
+        assert provider.max_active == 1, (
+            "expand-all loaded more than one diff concurrently"
+        )
+
+
+@pytest.mark.asyncio
+async def test_row_tooltip_carries_the_full_unelided_path():
+    async with _Host().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows = list(card.query(".console-turn-file-row"))
+        assert rows[0].tooltip == "a.py"
+        assert rows[1].tooltip == "b.md"
+
+
+@pytest.mark.asyncio
+async def test_narrow_card_elides_a_long_path_but_tooltip_keeps_it_whole():
+    long_path = (
+        "very/deeply/nested/directory/structure/that/is/quite/long/module.py"
+    )
+
+    class _LongPathProvider(_FakeProvider):
+        def changed_files(self, row):
+            from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+            return [ChangedFile(path=long_path, status="M", adds=1, dels=1)]
+
+    provider = _LongPathProvider()
+
+    class _NarrowHost(App):
+        CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
+
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _NarrowHost().run_test(size=(40, 20)) as pilot:
+        card = await _settled_card(pilot)
+        row = card.query_one(".console-turn-file-row", Button)
+        rendered = str(row.render())
+        assert long_path not in rendered, (
+            "a long path in a narrow card must be elided, not shown whole"
+        )
+        assert "…" in rendered
+        assert row.tooltip == long_path, (
+            "the FULL path must still be reachable via the row's tooltip"
+        )
+
+
+@pytest.mark.asyncio
+async def test_no_destructive_control_exists_anywhere_on_the_card():
+    """AC#4 guard: no button on the card matches a revert/undo label or
+    class -- revert stays exclusively on the Review screen behind its own
+    confirm (the TASK-1845/TASK-1972 precedent). Checked against the FULL
+    button surface (header + expanded per-hunk note/delete buttons), not
+    just the header, by expanding every row first.
+    """
+    async with _Host().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        await _toggle_all_and_wait_expanded(pilot, card)
+
+        forbidden = ("revert", "undo")
+        buttons = list(card.query(Button))
+        assert buttons, "expected at least the header + row buttons to exist"
+        for button in buttons:
+            label_text = str(button.render()).lower()
+            classes_text = " ".join(button.classes).lower()
+            for word in forbidden:
+                assert word not in label_text, (
+                    f"destructive-looking label on {button!r}: {label_text!r}"
+                )
+                assert word not in classes_text, (
+                    f"destructive-looking class on {button!r}: {classes_text!r}"
+                )

@@ -435,6 +435,7 @@ from ...Widgets.Console.console_control_bar import (
     CONSOLE_CONTROL_BAR_HEIGHT,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
+from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -18027,6 +18028,20 @@ class ChatScreen(BaseAppScreen):
         """Open the Change Review screen from the run inspector (TASK-1972)."""
         event.stop()
         self._open_change_review()
+
+    @on(ConsoleTurnFileCard.ReviewRequested)
+    def handle_console_turn_file_card_review_requested(
+        self, event: ConsoleTurnFileCard.ReviewRequested
+    ) -> None:
+        """Open the Change Review screen from a card's own `Review` button.
+
+        TASK-16800 (V1.5): the same opener recipe as `v` and the run
+        inspector's own button above, except the run id needs no lookup at
+        all -- the card that posted this message already knows exactly
+        which run it renders.
+        """
+        event.stop()
+        self._open_change_review(event.run_id)
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:

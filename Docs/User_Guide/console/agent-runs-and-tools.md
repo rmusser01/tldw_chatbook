@@ -217,17 +217,56 @@ already streaming.
 
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
-counts ("✎ Edited 3 files  +92 −468"), then one row per changed file. Press
-**Enter** or click a row to expand its diff in place — expanding is
-per-row and the diff loads (and is cached) the first time you open it, so
-collapsing and reopening a row is instant. The card never mutates
-anything; there is no undo or revert control on it.
+counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle, a
+**Review** button, then one row per changed file. Press **Enter** or click
+a row to expand its diff in place — expanding is per-row and the diff
+loads (and is cached) the first time you open it, so collapsing and
+reopening a row is instant. Long paths are middle-elided to fit the row
+(the start and end stay visible, with `…` in between); the row's tooltip
+always shows the full, un-elided path. The card never mutates anything
+directly; there is no undo or revert control on it.
 
-**`v`** still opens the full **Review** screen for that turn — the same
-key as before the card shipped. Reach it from the selected transcript row
-or the run inspector's **Review changes** action. Revert-all and the other
-destructive actions live only on that screen, behind a confirm, never as a
-one-keystroke action in the transcript.
+The header's chevron toggle expands or collapses every row at once. The
+first expand-all loads whatever diffs aren't cached yet one at a time (not
+all in parallel), so a turn with many changed files doesn't launch a burst
+of concurrent git work — collapsing again just hides the bodies, it never
+throws away what was loaded.
+
+Click **Review** (or press **`v`**, unchanged from before the card
+shipped) to open the full **Review** screen scoped to *this card's own
+turn* — no need to reselect it once the screen opens. Reach the same
+screen from the selected transcript row or the run inspector's **Review
+changes** action. Revert-all and the other destructive actions live only
+on that screen, behind a confirm, never as a one-keystroke action in the
+transcript.
+
+#### Leaving feedback on a hunk
+
+Expand a row and each hunk of its diff gets its own block with a small
+**✎ note** action beneath it. Click it, type a short note, and press
+**Enter** to save (**Escape** cancels without saving). The note renders in
+place under that hunk; while it's still unsent it carries a **✕** to
+delete it. You can leave more than one note per hunk, and notes on
+different hunks and files are independent.
+
+A note you leave doesn't go anywhere by itself — it's picked up
+automatically the next time you send a message that the agent runtime
+handles (not a plain-provider send with the agent runtime off). At that
+point every note still pending across the conversation is bundled into
+your message as extra context under a "Diff feedback from the user"
+heading, and once the reply is produced a TOOL-role row appears in the
+transcript disclosing exactly what was attached, e.g. `📝 Diff feedback
+attached — a.py @@ -1,4 +1,6 @@: "use the cached value here"` (one line
+per note). Once delivered, a note's row swaps its **✕** for a `sent`
+marker and becomes read-only — it's now part of the record.
+
+A note stays pending — and is never silently dropped — whenever it
+can't actually reach the model: the run fails before producing a reply
+(so nothing was sent — it rides the retry), your send doesn't go through
+the agent runtime at all, or you've queued more feedback than fits one
+message (older notes go first; anything left over waits for your next
+send). Only feedback that genuinely reached the model gets the `sent`
+marker and the disclosure row.
 
 If change tracking failed for one of a turn's roots, that failure shows up
 as its own plain-text disclosure row next to the card, not inside it — the
@@ -242,14 +281,18 @@ it from the stored snapshot.
 **`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
 presentation kill switch: set it to `false` to fall back to the original
 plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
-byte-identical to the pre-card behavior). `v` and the inspector's Review
-changes action work identically either way.
+byte-identical to the pre-card behavior) — no card, no note UI, no Review
+button, no expand-all. `v` and the inspector's Review changes action work
+identically either way. Turning the switch off does **not** lose any
+feedback you already queued: notes created while the card was on still
+auto-attach and deliver on your next agent send, disclosure row included,
+exactly as if the switch had stayed on.
 
 The "✎ A sub-agent edited N files after this turn" row (see [Parallel
 sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
 by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
-that run.
+that run. It supports notes and Review exactly like a turn's own card.
 
 ### Parallel sub-agents (the fleet)
 
@@ -979,7 +1022,26 @@ interactive live-tmux walkthrough of the card itself. The card is a pure
 presentation layer over TASK-1972's existing change-review subsystem; the
 `[console] turn_file_cards` kill switch reverts to the pre-card plain-text
 marker row byte-for-byte, confirmed by
-`test_summary_row_stays_plain_marker_when_disabled`.)*
+`test_summary_row_stays_plain_marker_when_disabled`.) The "Change review"
+section rewritten @ HEAD — 2026-08-17 (TASK-16800 V1.5: the annotate/
+feedback loop, the `Review` button, the expand/collapse-all chevron, and
+middle-elided paths — every claim checked against the shipped code in
+`Widgets/Console/console_turn_file_card.py`,
+`Chat/console_agent_bridge.py`'s `run_reply` attach/stamp/disclosure seam,
+and `Chat/console_display_state.py`'s `render_diff_feedback_block`/
+`format_diff_feedback_disclosure`/`middle_elide_path`, then confirmed by
+the whole-module test run — `Tests/UI/test_console_turn_file_card.py`,
+`Tests/UI/test_console_turn_file_card_notes.py`,
+`Tests/UI/test_console_turn_file_card_factory.py`,
+`Tests/UI/test_change_review_screen.py`,
+`Tests/Chat/test_console_diff_hunks.py`, and
+`Tests/Chat/test_console_diff_feedback_delivery.py`, 91 passed — again a
+docs-only pass, not an interactive live-tmux walkthrough. The kill-switch
+claim ("pending notes still deliver with the switch off") is pinned by a
+new bridge-level test,
+`test_kill_switch_off_does_not_prevent_note_delivery`, which forces
+`[console] turn_file_cards = false` and confirms the attach/stamp/
+disclosure seam is entirely unaffected — it never reads that switch.)*
 
 *Live turn-activity line added against dev @ feea06193 — 2026-08-16.
 Verified by execution, not by a tmux walkthrough: a real

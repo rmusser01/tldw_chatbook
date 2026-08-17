@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_display_state import (
     DiffHunk,
     format_diff_feedback_disclosure,
     hunk_excerpt,
+    middle_elide_path,
     render_diff_feedback_block,
     split_unified_diff,
 )
@@ -432,3 +433,65 @@ def test_format_diff_feedback_disclosure_one_line_per_note():
 
 def test_format_diff_feedback_disclosure_empty_notes_returns_empty_string():
     assert format_diff_feedback_disclosure([]) == ""
+
+
+# -- middle_elide_path (Task 7, spec §5: row-label path elision) ----------
+
+
+def test_middle_elide_path_fits_returns_unchanged():
+    assert middle_elide_path("a/b/c.py", 100) == "a/b/c.py"
+
+
+def test_middle_elide_path_exact_budget_returns_unchanged():
+    path = "a/b/c.py"
+    assert middle_elide_path(path, len(path)) == path
+
+
+def test_middle_elide_path_loose_elides_the_middle_keeping_ends():
+    path = "root/sub1/sub2/sub3/file.py"
+    elided = middle_elide_path(path, 15)
+    assert elided == "root/…/file.py"
+    assert len(elided) <= 15
+    assert elided.startswith("root/")
+    assert elided.endswith("/file.py")
+
+
+def test_middle_elide_path_many_components_still_yields_one_ellipsis():
+    """Regardless of how many components sit between the first and last,
+    only ONE "…" placeholder replaces all of them -- never one per
+    dropped component."""
+    path = "a/b/c/d/e/f/g/h/deep_file_name.py"
+    elided = middle_elide_path(path, 20)
+    assert elided == "a/…/deep_file_name.py"
+    assert elided.count("…") == 1
+    assert len(elided) < len(path)
+
+
+def test_middle_elide_path_degenerate_one_component_returns_unchanged():
+    """A bare filename with no "/" at all has no middle to drop -- eliding
+    it would mangle the one meaningful fragment left, so it is returned
+    unchanged even though it doesn't fit the budget."""
+    path = "a_very_long_filename_with_no_directory_component.py"
+    assert middle_elide_path(path, 10) == path
+
+
+def test_middle_elide_path_two_components_returns_unchanged():
+    """Both ends already ARE the whole path -- there is no middle
+    component to remove, and the elided 3-part form would not even be
+    shorter than the original two-part path."""
+    path = "dir/file.py"
+    assert middle_elide_path(path, 5) == path
+
+
+def test_middle_elide_path_empty_string_returns_unchanged():
+    assert middle_elide_path("", 10) == ""
+
+
+def test_middle_elide_path_best_effort_when_even_elided_form_overflows():
+    """Neither end is shrinkable at the component granularity this helper
+    works at -- the 3-part elided form is still returned, even though it
+    remains longer than the budget."""
+    path = "a_very_long_first_component/mid/another_very_long_last_component.py"
+    elided = middle_elide_path(path, 10)
+    assert elided == "a_very_long_first_component/…/another_very_long_last_component.py"
+    assert len(elided) > 10
