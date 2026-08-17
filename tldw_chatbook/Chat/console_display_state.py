@@ -1291,6 +1291,13 @@ def render_diff_feedback_block(
     the cap, and every note after it, are excluded and NOT stamped
     delivered by the caller -- they stay pending and ride the next send.
 
+    The cap covers the WHOLE rendered block, including the trailing
+    "… N more notes held for the next message" line when one is needed --
+    that line is never allowed to push the total over ``cap_bytes`` on its
+    own. When nothing is excluded, no such line is appended and nothing is
+    reserved for one, so a cap that exactly fits every note's own bytes is
+    never needlessly short by the holdover line's size.
+
     Args:
         notes: ``change_notes`` row dicts, oldest first.
         cap_bytes: Maximum UTF-8 byte size of the rendered block.
@@ -1306,16 +1313,35 @@ def render_diff_feedback_block(
         return "", []
 
     lines: list[str] = [_DIFF_FEEDBACK_HEADING]
-    included_ids: list[int] = []
-    for index, note in enumerate(notes):
+    included_count = 0
+    for note in notes:
         candidate = "\n".join(lines + [_diff_feedback_note_entry(note)])
         if len(candidate.encode("utf-8")) >= cap_bytes:
-            held = len(notes) - index
-            block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
-            return block, included_ids
+            break
         lines.append(_diff_feedback_note_entry(note))
-        included_ids.append(int(note["id"]))
-    return "\n".join(lines), included_ids
+        included_count += 1
+
+    if included_count == len(notes):
+        # Everything fit -- no holdover line, so nothing needed to be
+        # reserved for one either.
+        return "\n".join(lines), [int(note["id"]) for note in notes]
+
+    # At least one note was excluded by the loop above (which did not yet
+    # account for the holdover line's own bytes). Evict from the tail
+    # until the holdover-inclusive block actually fits under cap_bytes --
+    # each eviction both shrinks the notes portion and (usually) shrinks
+    # "held"'s digit count, so this converges quickly. `included_count ==
+    # 0` is the irreducible floor (heading + holdover for every note) and
+    # is returned even if it still exceeds cap_bytes -- there is nothing
+    # left to evict.
+    while True:
+        held = len(notes) - included_count
+        block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
+        if len(block.encode("utf-8")) <= cap_bytes or included_count == 0:
+            included_ids = [int(note["id"]) for note in notes[:included_count]]
+            return block, included_ids
+        included_count -= 1
+        lines.pop()
 
 
 def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:

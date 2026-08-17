@@ -247,6 +247,19 @@ def _note(
     }
 
 
+def _expected_entry(note: dict) -> str:
+    """Independently reproduce spec §4's per-note entry format (heading
+    excluded) -- duplicated here rather than imported from the module
+    under test, so an exact-format test can't be satisfied by a change to
+    the implementation's own formatting helper."""
+    short_id = note["run_id"][:8]
+    return (
+        f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+        f"> {note['note']}\n"
+        f"```\n{note['hunk_excerpt']}\n```"
+    )
+
+
 def test_render_diff_feedback_block_empty_notes_returns_empty_and_no_ids():
     assert render_diff_feedback_block([]) == ("", [])
 
@@ -291,23 +304,92 @@ def test_render_diff_feedback_block_includes_multiple_notes_oldest_first_under_c
     assert "more notes held" not in block
 
 
-def test_render_diff_feedback_block_excludes_over_cap_notes_and_appends_holdover_line():
-    notes = [
-        _note(id=1, path="a.py", note="first note"),
-        _note(id=2, path="b.py", note="second note"),
-        _note(id=3, path="c.py", note="third note"),
-    ]
-    # Learn the byte-exact size of the block with only the first two notes,
-    # then cap just past it so the third note cannot fit -- deterministic
-    # without hand-computed magic numbers.
-    two_note_block, two_ids = render_diff_feedback_block(notes[:2], cap_bytes=1_000_000)
-    assert two_ids == [1, 2]
-    cap = len(two_note_block.encode("utf-8")) + 1
+def _equal_length_note(i: int) -> dict:
+    """A `_note` whose rendered entry is the SAME byte length for every
+    `i` (same-length path/header/note/excerpt) -- lets a test hand-derive
+    exact block byte counts (137 / 213 / 289 bytes for 1 / 2 / 3 such
+    notes, +76 bytes per note) without depending on `render_diff_feedback_
+    block` to compute its own expected values."""
+    return _note(
+        id=i,
+        run_id="12345678-abcd-4a4a-9a9a-abcdefabcdef",
+        path=f"p{i}.py",
+        hunk_header="@@ -1,4 +1,6 @@",
+        hunk_excerpt="excerptX",
+        note="edit here",
+    )
 
-    block, included_ids = render_diff_feedback_block(notes, cap_bytes=cap)
-    assert included_ids == [1, 2]
-    assert block.startswith(two_note_block)
-    assert block == two_note_block + "\n\n… 1 more notes held for the next message"
+
+def test_render_diff_feedback_block_holdover_line_bytes_are_included_in_cap():
+    """Regression: the holdover line's own bytes must fit under cap_bytes
+    too -- appending it unconditionally after the per-note check let the
+    final block exceed the cap (reviewer reproduced 441 bytes against a
+    398-byte cap on the pre-fix version).
+
+    Byte arithmetic (independent of the function under test, computed by
+    hand from `_equal_length_note`'s fixed entry size): 1/2/3-note blocks
+    (no holdover) are 137 / 213 / 289 bytes; the holdover suffix
+    "\\n\\n… N more notes held for the next message" is 44 bytes for any
+    single-digit N. At cap_bytes=214, two notes fit on their own (213 <
+    214) -- the PRE-FIX code stopped there and appended the 44-byte
+    holdover unconditionally, producing a 257-byte block that blows the
+    214-byte cap. The fix must instead notice 213 + 44 > 214, evict the
+    second note, and land on the one-note-plus-holdover block (137 + 44 =
+    181 bytes), which fits.
+    """
+    notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
+
+    block, included_ids = render_diff_feedback_block(notes, cap_bytes=214)
+
+    assert len(block.encode("utf-8")) <= 214, (
+        "the rendered block, holdover line included, must never exceed cap_bytes"
+    )
+    assert included_ids == [1]
+    entry_one = _expected_entry(notes[0])
+    expected = (
+        "## Diff feedback from the user (on your earlier file changes)\n"
+        + entry_one
+        + "\n\n… 2 more notes held for the next message"
+    )
+    assert block == expected
+    assert len(expected.encode("utf-8")) == 181
+
+
+def test_render_diff_feedback_block_holdover_never_exceeds_cap_across_boundary_caps():
+    """Property sweep (not tied to one hand-picked cap): for every cap in
+    the range where at least one note is excluded, the returned block
+    (holdover line included) must stay within cap_bytes, and included_ids
+    must remain an oldest-first prefix."""
+    notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
+    for cap in range(150, 290, 7):
+        block, included_ids = render_diff_feedback_block(notes, cap_bytes=cap)
+        assert len(block.encode("utf-8")) <= cap or included_ids == [], (
+            f"cap={cap} block exceeded cap_bytes with a non-empty inclusion set"
+        )
+        assert included_ids == [n["id"] for n in notes[: len(included_ids)]]
+        if len(included_ids) < len(notes):
+            held = len(notes) - len(included_ids)
+            assert block.endswith(f"… {held} more notes held for the next message")
+
+
+def test_render_diff_feedback_block_no_holdover_reserved_when_nothing_excluded():
+    """Boundary: a cap that exactly fits all notes' own bytes (no note
+    excluded) must not be short by the holdover line's size -- the reserve
+    must only apply once exclusion is actually happening."""
+    notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
+    full_block, full_ids = render_diff_feedback_block(notes, cap_bytes=1_000_000)
+    full_bytes = len(full_block.encode("utf-8"))
+    assert full_bytes == 289
+
+    # One byte above the exact all-notes size: a naive "always reserve the
+    # holdover budget" implementation would still evict the last note here
+    # (289 + 44 > 290); the correct implementation must not.
+    block, included_ids = render_diff_feedback_block(notes, cap_bytes=full_bytes + 1)
+
+    assert included_ids == [1, 2, 3]
+    assert block == full_block
+    assert "more notes held" not in block
+    assert len(block.encode("utf-8")) <= full_bytes + 1
 
 
 def test_render_diff_feedback_block_excludes_all_notes_when_cap_too_small():
