@@ -57,6 +57,11 @@ from ...Chat.console_session_settings import (
     _summary_row_value,
 )
 from ...Widgets.Console import ConsoleWorkspaceContextTray
+from ...Widgets.Console.console_agent_steering_bar import (
+    STEERING_BAR_ID,
+    ConsoleAgentSteeringBar,
+    ConsoleAgentSteeringState,
+)
 from ...Widgets.Console.console_image_viewer_modal import ClickableAvatarBox
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
@@ -124,6 +129,7 @@ class ConsoleLeftRail(Vertical):
         agent_fleet_section_state: ConsoleInspectorSectionState,
         agent_drilldown_active: bool,
         agent_full_log_available: bool,
+        agent_steering_state: ConsoleAgentSteeringState | None = None,
         show_character_section: bool,
         character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
@@ -160,6 +166,14 @@ class ConsoleLeftRail(Vertical):
                 active, driving the "Back" button's visibility.
             agent_full_log_available: Whether the "View full log" button
                 should be visible.
+            agent_steering_state: The drill-in steering bar's state (PR3b
+                Task 3), computed by ``ConsoleAgentController._console_
+                agent_steering_state`` -- visible only while drilled into
+                a LIVE child. Passed at construction for the same reason
+                ``agent_drilldown_active`` is: a rail recompose while
+                drilled in must paint the bar correctly immediately,
+                without waiting for the next equality-guarded sync tick.
+                ``None`` (bare test constructions) means hidden.
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
@@ -203,6 +217,7 @@ class ConsoleLeftRail(Vertical):
         self._agent_fleet_section_state = agent_fleet_section_state
         self._agent_drilldown_active = agent_drilldown_active
         self._agent_full_log_available = agent_full_log_available
+        self._agent_steering_state = agent_steering_state
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
@@ -545,6 +560,18 @@ class ConsoleLeftRail(Vertical):
                     "block" if self._agent_fleet_section_state.rows else "none"
                 )
                 yield fleet_section
+                # PR3b Task 3: the drill-in steering input + queued line.
+                # Part of the drill-in chrome beside the Back button --
+                # visible only while drilled into a LIVE child (the state
+                # itself decides; the widget applies it, at construction
+                # and on every `_sync_console_agent_section` apply). The
+                # widget owns its own explicit sizing (width 100%, height
+                # auto) -- see its module docstring for the 1fr-default
+                # trap that rule exists for.
+                yield ConsoleAgentSteeringBar(
+                    self._agent_steering_state,
+                    id=STEERING_BAR_ID,
+                )
                 back_button = Button(
                     "Back",
                     id="console-agent-drilldown-back",
