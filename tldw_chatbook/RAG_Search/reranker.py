@@ -22,9 +22,12 @@ recommendation of nothing.
 
 import asyncio
 import functools
+import hashlib
+import os
+import re
 import threading
-from typing import List, Optional, Union, Literal, Tuple
-from dataclasses import dataclass
+from typing import Any, List, Optional, Union, Literal, Tuple
+from dataclasses import dataclass, replace
 from abc import ABC, abstractmethod
 import json
 from loguru import logger
@@ -838,14 +841,51 @@ def _import_cross_encoder_class():
     LLM strategies (and every test that imports this module) with it.
     Isolated in its own function so a unit test can refuse it outright and
     prove no model is ever downloaded.
-    """
-    from sentence_transformers import CrossEncoder
 
-    return CrossEncoder
+    Routed through ``Utils/optional_deps.py`` rather than importing the
+    package directly, so a missing extra lands in the project's ONE
+    optional-dependency registry (and produces the project's own message
+    naming the extra to install) instead of a bare ``ModuleNotFoundError``
+    from inside a rerank.
+
+    Returns:
+        The ``sentence_transformers.CrossEncoder`` class.
+
+    Raises:
+        ImportError: ``sentence-transformers`` is not installed. Callers
+            treat this as any other load failure: the rerank degrades to the
+            caller's ordering rather than failing the search.
+    """
+    from ..Utils.optional_deps import MODULES, check_dependency
+
+    if not check_dependency("sentence_transformers"):
+        raise ImportError(
+            "The 'cross_encoder' reranking strategy needs sentence-transformers, "
+            "which ships in the 'embeddings_rag' extra: "
+            "pip install tldw_chatbook[embeddings_rag]"
+        )
+    return MODULES["sentence_transformers"].CrossEncoder
 
 
 def _load_cross_encoder(model_name: str):
-    """Return the cached cross-encoder for ``model_name``, loading it once."""
+    """Return the cached cross-encoder for ``model_name``, loading it once.
+
+    Loaded with ``local_files_only=True``. This strategy's whole claim is
+    that it costs no credential and no network (TASK-16965 AC#5), and the
+    user-facing docs say so; without the flag an uncached first use would
+    quietly reach huggingface.co and download a model mid-search, turning a
+    documented no-network path into a network path exactly when nobody is
+    watching. Failing fast instead is the honest behaviour: the load raises,
+    the rerank degrades to the retrieval ordering, and the log names the
+    missing artifact.
+
+    Args:
+        model_name: A hub repo id or a local path, already resolved by
+            `_resolve_cross_encoder_model_name`.
+
+    Returns:
+        The loaded cross-encoder, from the module-level cache when warm.
+    """
     model = _CROSS_ENCODER_MODELS.get(model_name)
     if model is not None:
         return model
@@ -855,9 +895,40 @@ def _load_cross_encoder(model_name: str):
         model = _CROSS_ENCODER_MODELS.get(model_name)
         if model is None:
             logger.info(f"Loading cross-encoder model '{model_name}' (first use)")
-            model = _import_cross_encoder_class()(model_name)
+            model = _import_cross_encoder_class()(model_name, local_files_only=True)
             _CROSS_ENCODER_MODELS[model_name] = model
     return model
+
+
+#: A name that looks like a filesystem path even when nothing is there to
+#: stat: a Windows drive prefix (``C:\...``/``C:/...``). Checked as a regex
+#: because ``os.path`` on POSIX has no opinion about drive letters.
+_WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _looks_like_a_local_path(name: str) -> bool:
+    """Is ``name`` a filesystem path rather than a hub repo id?
+
+    Three signals, in the order they cost: a path that EXISTS is a path
+    whatever it is called (a bare directory ``models`` has no ``/`` to
+    partition on, which is what the repo-id heuristic keys off); a Windows
+    drive prefix or a backslash cannot be a hub repo id; and a leading
+    ``.``/``~``/``/`` is path syntax nobody uses for a repo id.
+
+    Args:
+        name: The configured model name, already stripped.
+
+    Returns:
+        True when the name must be handed to the loader verbatim.
+    """
+    if _WINDOWS_DRIVE_PATH.match(name) or "\\" in name:
+        return True
+    if name.startswith(("./", "../", ".\\", "..\\", "~", "/")):
+        return True
+    try:
+        return os.path.exists(os.path.expanduser(name))
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        return False
 
 
 def _resolve_cross_encoder_model_name(model_name: Optional[str]) -> str:
@@ -870,10 +941,29 @@ def _resolve_cross_encoder_model_name(model_name: Optional[str]) -> str:
     that is not a plausible model artifact falls back to the measured
     default. A caller that genuinely wants a different cross-encoder passes
     its full repo id or a local path, which is used verbatim.
+
+    **A local path is checked FIRST and is never substituted.** The
+    chat-model heuristic keys off "no ``/`` in the name", which a bare model
+    directory (``models``, ``my-reranker``) and every Windows path
+    (``C:\\models\\bge-base``) also satisfy -- so before this check they were
+    silently replaced by the default artifact and the user loaded a model
+    they did not ask for, with nothing in the log to say so. A path-shaped
+    name that does not exist is still returned verbatim: the loader's
+    "no such model" is the right failure, and the rerank degrades rather
+    than quietly succeeding against a substitute.
+
+    Args:
+        model_name: ``RerankingConfig.model_name``, possibly ``None``.
+
+    Returns:
+        The model name to hand `_load_cross_encoder`.
     """
     name = (model_name or "").strip()
     if not name:
         return DEFAULT_CROSS_ENCODER_MODEL
+
+    if _looks_like_a_local_path(name):
+        return name
 
     lowered = name.lower()
     if any(marker in lowered for marker in _RERANKER_NAME_MARKERS):
@@ -973,13 +1063,64 @@ class CrossEncoderReranker(BaseReranker):
         self.model_name = _resolve_cross_encoder_model_name(config.model_name)
 
     @timeit("reranker_cross_encoder")
+    def _cross_encoder_cache_key(
+        self, query: str, results: List[Union[SearchResult, SearchResultWithCitations]]
+    ) -> str:
+        """Cache key for one cross-encoder rerank of ``results`` under ``query``.
+
+        Qodo PR-1775 finding 1. The base `_get_cache_key` SORTS the ids, but
+        this strategy caches a POSITIONAL list of `RerankingResult`s that
+        `_apply_scores` zips back onto `results_to_rerank` by index. Under an
+        order-insensitive key, the same documents arriving in a different
+        order would replay the previous run's scores against the wrong rows --
+        silently, and in the one place where ordering IS the product.
+
+        The retrieval scores are part of the key as well, because the default
+        `combine_original_score` blend folds 30% of them into the final sort
+        key: two windows with identical ids in identical order but different
+        retrieval scores do NOT have the same answer.
+
+        Args:
+            query: The search query the window is being reranked against.
+            results: The rerank window, in the order it will be scored.
+
+        Returns:
+            A hex digest over (query, ordered ids, ordered retrieval scores).
+        """
+        ordered = "|".join(
+            f"{getattr(r, 'id', '')}:{getattr(r, 'score', '')!r}:"
+            f"{hashlib.md5((getattr(r, 'document', '') or '').encode()).hexdigest()}"
+            for r in results
+        )
+        return hashlib.md5(f"{query}|{ordered}".encode()).hexdigest()
+
     async def rerank(
         self,
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
-        **kwargs,
+        **kwargs: Any,
     ) -> RerankOutcome:
-        """Rerank the top-k window with the cross-encoder."""
+        """Rerank the top ``top_k_to_rerank`` results with the cross-encoder.
+
+        The window is scored in one batched ``predict``; anything past the
+        window is appended unchanged and unstamped. A model failure (missing
+        artifact, missing extra, OOM, timeout) degrades to the caller's own
+        ordering rather than raising -- reranking must never fail a search.
+
+        Args:
+            query: The user's query, one half of every scored pair.
+            results: The retrieved results, in retrieval order. Never
+                mutated; scored rows come back as copies.
+            **kwargs: Accepted and ignored. `rerank_results` forwards the
+                whole construction kwargs bag to this call, so the signature
+                has to tolerate it; this strategy takes no per-call options.
+
+        Returns:
+            A `RerankOutcome` whose ``results`` are the reordered window
+            followed by the untouched tail, and whose ``failed``/``total``
+            describe THIS call (never instance state -- the RAG service
+            holds one reranker across concurrent searches).
+        """
         if not results:
             return RerankOutcome(results=results, failed=0, total=0)
 
@@ -988,10 +1129,13 @@ class CrossEncoderReranker(BaseReranker):
 
         cache_key = None
         if self._cache is not None:
-            cache_key = self._get_cache_key(query, [r.id for r in results_to_rerank])
+            cache_key = self._cross_encoder_cache_key(query, results_to_rerank)
             if cache_key in self._cache:
                 log_counter("reranker_cache_hit", labels={"strategy": "cross_encoder"})
-                cached_scores = self._cache[cache_key]
+                # COPIED, not replayed by reference: `_apply_scores` writes
+                # `new_rank` onto the objects it is given, and the cache is
+                # shared across concurrent searches on the singleton reranker.
+                cached_scores = [replace(r) for r in self._cache[cache_key]]
                 return RerankOutcome(
                     results=self._apply_scores(results_to_rerank, cached_scores)
                     + remaining_results,
@@ -1038,9 +1182,21 @@ class CrossEncoderReranker(BaseReranker):
         """Score every row in one batched ``predict``; ``None`` on failure."""
         try:
             loop = asyncio.get_running_loop()
-            scores = await loop.run_in_executor(
+            future = loop.run_in_executor(
                 None, functools.partial(self._predict_scores_sync, query, rows)
             )
+            # Qodo PR-1775 finding 8: honour `timeout_seconds`. The executor
+            # THREAD cannot be cancelled -- it runs to completion and its
+            # result is dropped -- but the AWAIT is what a search's latency
+            # actually depends on, so that is what gets bounded. A timeout
+            # degrades like any other failure (note-b: an unscored row must
+            # not claim a rerank score) and is not cached, because it is
+            # transient rather than an answer.
+            timeout = self.config.timeout_seconds
+            if timeout and timeout > 0:
+                scores = await asyncio.wait_for(future, timeout=timeout)
+            else:
+                scores = await future
         except Exception as exc:
             # Reranking must NEVER fail a search: a missing model file, a
             # missing sentence-transformers install and an OOM all land here
@@ -1069,7 +1225,14 @@ class CrossEncoderReranker(BaseReranker):
         """
         model = _load_cross_encoder(self.model_name)
         pairs = [(query, row.document or "") for row in rows]
-        return [float(score) for score in model.predict(pairs)]
+        # Qodo PR-1775 finding 7: `batch_size` is an exposed inference knob,
+        # so it must reach the model rather than silently deferring to the
+        # library's own 32 -- this arc's own follow-up (TASK-17600) exists
+        # because of config surfaces that read nothing. Floored to 1: a zero
+        # or negative value is nonsense the model would raise on, and a
+        # rerank must degrade rather than fail a search.
+        batch_size = max(1, int(self.config.batch_size or 1))
+        return [float(score) for score in model.predict(pairs, batch_size=batch_size)]
 
     def _normalize_scores(
         self,

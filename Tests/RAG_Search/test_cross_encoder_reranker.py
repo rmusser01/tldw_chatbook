@@ -31,6 +31,7 @@ out of the implementation rather than out of a promise.
 
 import ast
 import inspect
+import time
 
 import pytest
 
@@ -46,6 +47,12 @@ from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 
 STUB_MODEL = "stub-org/stub-cross-encoder"
 
+#: Captured at import time, BEFORE the autouse fixture below replaces it with
+#: a refusal. The one test that exercises the optional-dependency guard needs
+#: the real function; it never reaches an import, because it makes
+#: `optional_deps.check_dependency` report the package missing first.
+_REAL_IMPORTER = reranker_module._import_cross_encoder_class
+
 
 class _StubModelDown(RuntimeError):
     """Raised by the stub model; never a real load or a real network call."""
@@ -56,15 +63,26 @@ class _StubCrossEncoder:
 
     Scores are keyed by DOCUMENT so an assertion about ordering cannot be
     satisfied by the reranker handing the model its rows in a lucky order.
+    ``batch_sizes`` records what the strategy forwarded, because the real
+    `CrossEncoder.predict` takes ``batch_size`` and silently defaults to 32
+    when nobody passes one -- a config field that never arrives is
+    indistinguishable from one that does, without recording it.
     """
 
-    def __init__(self, scores: dict[str, float], fail: bool = False):
+    def __init__(
+        self, scores: dict[str, float], fail: bool = False, sleep_s: float = 0.0
+    ):
         self._scores = scores
         self._fail = fail
+        self._sleep_s = sleep_s
         self.calls: list[list[tuple[str, str]]] = []
+        self.batch_sizes: list[object] = []
 
-    def predict(self, pairs):
+    def predict(self, pairs, batch_size=None, **kwargs):
         self.calls.append([tuple(pair) for pair in pairs])
+        self.batch_sizes.append(batch_size)
+        if self._sleep_s:
+            time.sleep(self._sleep_s)
         if self._fail:
             raise _StubModelDown("stub cross-encoder is down")
         return [self._scores[document] for _query, document in pairs]
@@ -291,3 +309,287 @@ async def test_provider_shaped_fields_are_no_ops(monkeypatch):
     )
     assert len(failing_stub.calls) == 1
     assert (degraded.failed, degraded.total) == (2, 2)
+
+
+# ---------------------------------------------------------------------------
+# The cache (Qodo PR-1775 finding 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cache_replays_an_identical_window(monkeypatch):
+    """The cache still IS a cache: an identical repeat does not re-run the model."""
+    stub = _StubCrossEncoder({"doc-a": -8.0, "doc-b": 9.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config())
+    rows = [("a", 0.9, "doc-a"), ("b", 0.5, "doc-b")]
+
+    first = await reranker.rerank("q", _rows(*rows))
+    second = await reranker.rerank("q", _rows(*rows))
+
+    assert len(stub.calls) == 1, "the second identical call re-ran the model"
+    assert [r.id for r in second.results] == [r.id for r in first.results] == ["b", "a"]
+    assert [r.score for r in second.results] == [r.score for r in first.results]
+    assert (second.failed, second.total) == (0, 2)
+
+
+@pytest.mark.asyncio
+async def test_cache_does_not_misassign_scores_to_a_reordered_window(monkeypatch):
+    """The SAME ids in a DIFFERENT order must not inherit the first order's scores.
+
+    The cached values are positional -- ``_apply_scores`` zips them onto the
+    rows it is handed -- so a key that ignores order hands row 0's score to
+    whatever happens to be sitting at index 0 the second time. Here the model
+    says ``doc-b`` wins by a mile; a retrieval that returns (b, a) instead of
+    (a, b) must still put b first, not inherit a's low score.
+    """
+    stub = _StubCrossEncoder({"doc-a": -8.0, "doc-b": 9.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config())
+
+    first = await reranker.rerank("q", _rows(("a", 0.9, "doc-a"), ("b", 0.5, "doc-b")))
+    assert [r.id for r in first.results] == ["b", "a"]
+
+    # Same query, same ids, same documents -- the retrieval returned them in
+    # the other order (a re-search, a different fusion, a changed tie-break).
+    second = await reranker.rerank("q", _rows(("b", 0.5, "doc-b"), ("a", 0.9, "doc-a")))
+
+    assert [r.id for r in second.results] == ["b", "a"], (
+        "the reordered window was scored with the FIRST window's positional "
+        "scores: b (the model's clear winner) was demoted because it moved to "
+        "index 0"
+    )
+    assert len(stub.calls) == 2, (
+        "a differently-ordered window is a different scoring problem; it must "
+        "miss the cache rather than replay positions"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cache_does_not_blend_stale_retrieval_scores(monkeypatch):
+    """`combine_original_score` must blend against THIS call's retrieval scores.
+
+    The cached `RerankingResult`s carry the first call's ``original_score``.
+    The default config blends 30% of it into the final score, so replaying
+    them scores the second search with the first search's retrieval numbers.
+    """
+    stub = _StubCrossEncoder({"doc-a": 0.0, "doc-b": 10.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config())
+    assert reranker.config.combine_original_score is True
+    assert reranker.config.original_score_weight == 0.3
+
+    await reranker.rerank("q", _rows(("a", 0.9, "doc-a"), ("b", 0.1, "doc-b")))
+
+    # Same query, same ids, same documents, same order -- but retrieval now
+    # scores both rows at 0.0 (a different index, a different search mode).
+    second = await reranker.rerank("q", _rows(("a", 0.0, "doc-a"), ("b", 0.0, "doc-b")))
+
+    by_id = {r.id: r.score for r in second.results}
+    # a: 0.3 * 0.0 + 0.7 * 0.0 (normalised min) == 0.0, not 0.3 * 0.9 == 0.27.
+    assert by_id["a"] == pytest.approx(0.0), (
+        f"row a blended a stale retrieval score: {by_id['a']!r}"
+    )
+    # b: 0.3 * 0.0 + 0.7 * 1.0 (normalised max) == 0.7, not 0.73.
+    assert by_id["b"] == pytest.approx(0.7)
+
+
+@pytest.mark.asyncio
+async def test_cache_keys_on_the_document_text(monkeypatch):
+    """An id whose text changed is a different scoring problem, not a hit."""
+    stub = _StubCrossEncoder({"doc-a": 1.0, "doc-a-rewritten": 9.0, "doc-b": 5.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config())
+
+    await reranker.rerank("q", _rows(("a", 0.5, "doc-a"), ("b", 0.5, "doc-b")))
+    second = await reranker.rerank(
+        "q", _rows(("a", 0.5, "doc-a-rewritten"), ("b", 0.5, "doc-b"))
+    )
+
+    assert len(stub.calls) == 2
+    assert [r.id for r in second.results] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_does_not_mutate_the_cached_entry(monkeypatch):
+    """A replay must not hand `_apply_scores` the cache's own objects to rewrite."""
+    stub = _StubCrossEncoder({"doc-a": -8.0, "doc-b": 9.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config())
+    rows = [("a", 0.9, "doc-a"), ("b", 0.5, "doc-b")]
+
+    await reranker.rerank("q", _rows(*rows))
+    cached = list(reranker._cache.values())[0]
+    ranks_before = [(r.original_rank, r.new_rank) for r in cached]
+
+    await reranker.rerank("q", _rows(*rows))
+
+    assert [(r.original_rank, r.new_rank) for r in cached] == ranks_before
+
+
+@pytest.mark.asyncio
+async def test_cache_can_be_switched_off(monkeypatch):
+    """`cache_results=False` means every call reaches the model."""
+    stub = _StubCrossEncoder({"doc-a": 1.0, "doc-b": 2.0})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config(cache_results=False))
+    rows = [("a", 0.9, "doc-a"), ("b", 0.5, "doc-b")]
+    await reranker.rerank("q", _rows(*rows))
+    await reranker.rerank("q", _rows(*rows))
+
+    assert len(stub.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Honoured config (Qodo PR-1775 findings 7 and 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_size_reaches_the_model(monkeypatch):
+    """`RerankingConfig.batch_size` is forwarded, not left to the model's 32."""
+    stub = _StubCrossEncoder({f"doc-{i}": float(i) for i in range(6)})
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config(batch_size=3))
+    await reranker.rerank(
+        "q", _rows(*[(f"r{i}", 0.5, f"doc-{i}") for i in range(6)])
+    )
+
+    assert stub.batch_sizes == [3]
+
+
+@pytest.mark.asyncio
+async def test_a_nonsense_batch_size_still_scores(monkeypatch):
+    """A zero/negative batch size floors to 1 rather than raising at the model."""
+    stub = _StubCrossEncoder({"doc-a": 1.0, "doc-b": 2.0})
+    _install(monkeypatch, stub)
+
+    outcome = await CrossEncoderReranker(_config(batch_size=0)).rerank(
+        "q", _rows(("a", 0.9, "doc-a"), ("b", 0.5, "doc-b"))
+    )
+
+    assert stub.batch_sizes == [1]
+    assert (outcome.failed, outcome.total) == (0, 2)
+
+
+@pytest.mark.asyncio
+async def test_timeout_seconds_bounds_the_model_call(monkeypatch):
+    """A model that overruns `timeout_seconds` degrades; it never holds a search.
+
+    The executor thread cannot be cancelled -- it runs to completion and its
+    result is discarded -- but the AWAIT is bounded, which is the part a
+    search's latency depends on.
+    """
+    stub = _StubCrossEncoder({"doc-a": 1.0, "doc-b": 9.0}, sleep_s=0.4)
+    _install(monkeypatch, stub)
+
+    reranker = CrossEncoderReranker(_config(timeout_seconds=0.02))
+    started = time.perf_counter()
+    outcome = await reranker.rerank(
+        "q", _rows(("a", 0.9, "doc-a"), ("b", 0.5, "doc-b"))
+    )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.35, f"the await was not bounded by the timeout ({elapsed:.3f}s)"
+    assert (outcome.failed, outcome.total) == (2, 2)
+    assert outcome.degraded is True
+    assert [r.id for r in outcome.results] == ["a", "b"]
+    # note-b: a timed-out row was never scored, so it may not claim it was.
+    assert all("rerank_score" not in r.metadata for r in outcome.results)
+    # A timeout is transient: it must not be cached as a result.
+    assert reranker._cache == {}
+
+
+@pytest.mark.asyncio
+async def test_a_generous_timeout_does_not_interfere(monkeypatch):
+    """The bound is a bound, not a throttle."""
+    stub = _StubCrossEncoder({"doc-a": 1.0, "doc-b": 9.0}, sleep_s=0.02)
+    _install(monkeypatch, stub)
+
+    outcome = await CrossEncoderReranker(_config(timeout_seconds=30.0)).rerank(
+        "q", _rows(("a", 0.9, "doc-a"), ("b", 0.5, "doc-b"))
+    )
+
+    assert (outcome.failed, outcome.total) == (0, 2)
+    assert [r.id for r in outcome.results] == ["b", "a"]
+
+
+# ---------------------------------------------------------------------------
+# Model resolution and loading (Qodo PR-1775 findings 2, 3 and 6)
+# ---------------------------------------------------------------------------
+
+
+def test_a_local_model_path_is_not_replaced_by_the_default(tmp_path):
+    """An existing filesystem path is a path, whatever it is named.
+
+    The resolver's contract says local paths are used verbatim. A bare
+    directory (`/tmp/x/my-reranker`, or a relative `models`) contains no
+    forward slash after `partition`, and a Windows path contains none at
+    all, so the chat-model heuristic would have swallowed both.
+    """
+    from tldw_chatbook.RAG_Search.reranker import _resolve_cross_encoder_model_name
+
+    local_dir = tmp_path / "my-reranker"
+    local_dir.mkdir()
+
+    assert _resolve_cross_encoder_model_name(str(local_dir)) == str(local_dir)
+    # ...including one whose basename has no separator at all once resolved.
+    assert (
+        _resolve_cross_encoder_model_name(r"C:\models\bge-base")
+        == r"C:\models\bge-base"
+    ), "a Windows path was silently replaced with the default artifact"
+    assert _resolve_cross_encoder_model_name("./models/local") == "./models/local"
+    assert _resolve_cross_encoder_model_name("~/models/local") == "~/models/local"
+
+    # The chat-model fallback still fires for names that are not paths.
+    assert _resolve_cross_encoder_model_name("gpt-4o-mini") == DEFAULT_CROSS_ENCODER_MODEL
+    assert _resolve_cross_encoder_model_name("openai/gpt-4o") == DEFAULT_CROSS_ENCODER_MODEL
+    assert (
+        _resolve_cross_encoder_model_name("BAAI/bge-reranker-base")
+        == "BAAI/bge-reranker-base"
+    )
+
+
+def test_the_model_is_loaded_offline_only(monkeypatch):
+    """Production must not reach a model hub: the docs promise no network."""
+    from tldw_chatbook.RAG_Search.reranker import _load_cross_encoder
+
+    recorded: list[tuple[tuple, dict]] = []
+
+    class _Recorder:
+        def __init__(self, *args, **kwargs):
+            recorded.append((args, kwargs))
+
+    monkeypatch.setattr(reranker_module, "_CROSS_ENCODER_MODELS", {})
+    monkeypatch.setattr(
+        reranker_module, "_import_cross_encoder_class", lambda: _Recorder
+    )
+
+    _load_cross_encoder("stub-org/stub-cross-encoder")
+
+    assert len(recorded) == 1
+    args, kwargs = recorded[0]
+    assert args == ("stub-org/stub-cross-encoder",)
+    assert kwargs.get("local_files_only") is True, (
+        "an uncached first use would silently fetch from the hub"
+    )
+
+
+def test_the_optional_import_is_guarded_by_optional_deps(monkeypatch):
+    """`sentence_transformers` is an `embeddings_rag` extra, not a hard import."""
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.setattr(reranker_module, "_import_cross_encoder_class", _REAL_IMPORTER)
+    monkeypatch.setattr(optional_deps, "check_dependency", lambda *a, **k: False)
+
+    with pytest.raises(ImportError) as excinfo:
+        reranker_module._import_cross_encoder_class()
+
+    assert "embeddings_rag" in str(excinfo.value)
