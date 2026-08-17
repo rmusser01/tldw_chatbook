@@ -30,14 +30,40 @@ import json
 import threading
 
 from tldw_chatbook.Agents.agent_models import (
+    FENCE_TOOL_RESULT_PREFIX,
     MAX_STEERING_CHARS,
+    RUN_CANCELLED,
     RUN_DONE,
+    RUN_STUCK,
+    STEP_ERROR,
+    STEP_MODEL,
     STEP_STEERING,
+    STEP_TOOL_CALL,
+    STEP_TOOL_RESULT,
     STEERING_SOURCE_SUPERVISOR,
     STEERING_SOURCE_USER,
+    AgentConfig,
+    ContinuationEventContext,
+    FinalContinuation,
+    ModelTurn,
+    RunBudget,
+    ToolBatchReady,
+    ToolCall,
+    ToolCallExecuting,
+    ToolCallFinished,
+    ToolResult,
+    ToolSchema,
     format_steering_message,
 )
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationCall,
+    ContinuationRestoreTarget,
+    ContinuationResult,
+    ContinuationRound,
+    ProviderContinuationCheckpoint,
+)
 
 
 # -- the one formatter (agent_models, pure) -------------------------------
@@ -194,3 +220,633 @@ def test_red_f_concurrent_post_and_drain_lose_and_duplicate_nothing():
     )
     assert sorted(text for _source, text in drained) == expected
     assert c.get(h.handle_id).queued_steering == 0
+
+
+# -- the protocol-coherent drain (agent_runtime, pure) --------------------
+#
+# Runtime-level reds (a)-(e), (g). These fake the mailbox with a plain
+# list (the coordinator's own contract is pinned above); (g) uses the real
+# coordinator because "leaves entries queued" is a claim ABOUT the
+# coordinator's mailbox.
+
+CALC = ToolSchema(
+    id="builtin:calculator",
+    name="calculator",
+    description="math",
+    parameters={"type": "object"},
+)
+STEER_CFG = AgentConfig(
+    model="test-model", system_prompt="s", allowed_tools=("calculator",)
+)
+
+
+def fence(name, args):
+    return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+def _snapshot(messages):
+    """Deep-enough copy of a payload the loop hands its (live) list to."""
+    return [dict(message) for message in messages]
+
+
+def make_deps(call_model, *, invoke=None, cancel=None, drain=None, on_record=None):
+    return LoopDeps(
+        call_model=call_model,
+        invoke_tool=invoke or (lambda call: ToolResult(ok=True, content="42")),
+        spawn=lambda task: ToolResult(ok=True, content="sub done"),
+        find_tools=lambda query: [],
+        load_schemas=lambda ids: [CALC],
+        should_cancel=cancel or (lambda: False),
+        clock=lambda: 0.0,
+        drain_mailbox=drain,
+        on_record=on_record,
+    )
+
+
+def _list_mailbox():
+    """A fake mailbox: (post, drain) over one shared list, single-threaded."""
+    entries: list[tuple[str, str]] = []
+
+    def post(source: str, text: str) -> None:
+        entries.append((source, text))
+
+    def drain() -> list[tuple[str, str]]:
+        got = list(entries)
+        entries.clear()
+        return got
+
+    return post, drain
+
+
+def _raw_call(call: ToolCall) -> dict:
+    return {
+        "id": call.call_id,
+        "type": "function",
+        "function": {
+            "name": call.name,
+            "arguments": json.dumps(call.args, separators=(",", ":")),
+        },
+    }
+
+
+def _assert_batch_pairing_unbroken(payload):
+    """No injected message may sit inside an assistant/tool-result batch.
+
+    Every ``role:"tool"`` message must directly follow either its
+    ``tool_calls`` assistant message or another ``role:"tool"`` result --
+    the pairing native providers reject when broken.
+    """
+    for index, message in enumerate(payload):
+        if message.get("role") != "tool":
+            continue
+        previous = payload[index - 1]
+        assert previous.get("role") == "tool" or (
+            previous.get("role") == "assistant" and previous.get("tool_calls")
+        ), (
+            f"message {index} (role=tool) follows a "
+            f"{previous.get('role')!r} message: an injected message split "
+            f"a native batch in {payload!r}"
+        )
+
+
+def test_red_a_fence_mid_batch_post_delivers_only_at_the_next_boundary():
+    """Red (a), fence protocol: exact ``messages`` sequence asserted."""
+    post, drain = _list_mailbox()
+    fence_text = fence("calculator", {"expression": "6*7"})
+    script = [ModelTurn(text=fence_text), ModelTurn(text="It is 42.")]
+    seen = []
+
+    def call_model(messages, active):
+        seen.append(_snapshot(messages))
+        return script.pop(0)
+
+    def invoke(call):
+        # Mid-batch: the entry lands while the tool is executing.
+        post(STEERING_SOURCE_SUPERVISOR, "focus on X")
+        return ToolResult(ok=True, content="42")
+
+    records = []
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            call_model,
+            invoke=invoke,
+            drain=drain,
+            on_record=lambda kind, payload: records.append((kind, dict(payload))),
+        ),
+    )
+
+    assert out.status == RUN_DONE and out.final_text == "It is 42."
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "focus on X")
+    assert labeled == "[Steering from supervisor] focus on X"
+    assert seen[0] == [{"role": "user", "content": "hi"}]
+    # THE boundary: after every pending tool result of the previous
+    # assistant message, before the next assistant message.
+    assert seen[1] == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": fence_text},
+        {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}calculator: 42"},
+        {"role": "user", "content": labeled},
+    ]
+    # The step log shows WHEN the entry reached the model.
+    assert [step.kind for step in out.steps] == [
+        STEP_MODEL,
+        STEP_TOOL_CALL,
+        STEP_TOOL_RESULT,
+        STEP_STEERING,
+        STEP_MODEL,
+    ]
+    assert out.steps[3].summary == labeled
+    # The run log records the delivery with the source as status.
+    steering_records = [payload for kind, payload in records if kind == "steering"]
+    assert steering_records == [
+        {
+            "content": labeled,
+            "tool": "",
+            "status": STEERING_SOURCE_SUPERVISOR,
+            "call_id": "",
+        }
+    ]
+
+
+def test_red_a_native_mid_batch_post_delivers_only_at_the_next_boundary():
+    """Red (a), native protocol: exact ``messages`` sequence asserted."""
+    post, drain = _list_mailbox()
+    call_one = ToolCall("calculator", {"expression": "1"}, "c1", '{"expression":"1"}')
+    call_two = ToolCall("calculator", {"expression": "2"}, "c2", '{"expression":"2"}')
+    echo = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [_raw_call(call_one), _raw_call(call_two)],
+    }
+    script = [
+        ModelTurn(tool_calls=(call_one, call_two), assistant_message=echo),
+        ModelTurn(text="done"),
+    ]
+    seen = []
+
+    def call_model(messages, active):
+        seen.append(_snapshot(messages))
+        return script.pop(0)
+
+    def invoke(call):
+        if call.call_id == "c1":
+            # Posted BETWEEN the batch's dispatches.
+            post(STEERING_SOURCE_USER, "change course")
+        return ToolResult(ok=True, content=f"r-{call.call_id}")
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(call_model, invoke=invoke, drain=drain),
+    )
+
+    assert out.status == RUN_DONE
+    labeled = format_steering_message(STEERING_SOURCE_USER, "change course")
+    assert seen[1] == [
+        {"role": "user", "content": "hi"},
+        echo,
+        {"role": "tool", "tool_call_id": "c1", "content": "r-c1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "r-c2"},
+        {"role": "user", "content": labeled},
+    ]
+    for payload in seen:
+        _assert_batch_pairing_unbroken(payload)
+
+
+def test_red_b_two_native_batches_never_interleave_steering_among_tool_results():
+    """Red (b): consecutive multi-call batches, posts between dispatches.
+
+    The injected message must never sit between a ``tool_calls`` assistant
+    echo and its ``role:"tool"`` results, nor between two results of one
+    batch -- in ANY payload the model ever sees.
+    """
+    post, drain = _list_mailbox()
+    batch_one = (
+        ToolCall("calculator", {"expression": "1"}, "c1", '{"expression":"1"}'),
+        ToolCall("calculator", {"expression": "2"}, "c2", '{"expression":"2"}'),
+    )
+    batch_two = (
+        ToolCall("calculator", {"expression": "3"}, "c3", '{"expression":"3"}'),
+        ToolCall("calculator", {"expression": "4"}, "c4", '{"expression":"4"}'),
+    )
+    echo_one = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [_raw_call(call) for call in batch_one],
+    }
+    echo_two = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [_raw_call(call) for call in batch_two],
+    }
+    script = [
+        ModelTurn(tool_calls=batch_one, assistant_message=echo_one),
+        ModelTurn(tool_calls=batch_two, assistant_message=echo_two),
+        ModelTurn(text="done"),
+    ]
+    seen = []
+
+    def call_model(messages, active):
+        seen.append(_snapshot(messages))
+        return script.pop(0)
+
+    def invoke(call):
+        if call.call_id in ("c1", "c3"):
+            post(STEERING_SOURCE_SUPERVISOR, f"steer after {call.call_id}")
+        return ToolResult(ok=True, content=f"r-{call.call_id}")
+
+    out = run_agent_loop(
+        # Two 2-call batches spend 11 steps before the final turn; the
+        # default max_steps=8 would end this RUN_STUCK before turn 3.
+        AgentConfig(
+            model="test-model",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_steps=40, max_model_turns=40),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(call_model, invoke=invoke, drain=drain),
+    )
+
+    assert out.status == RUN_DONE
+    steer_one = format_steering_message(STEERING_SOURCE_SUPERVISOR, "steer after c1")
+    steer_two = format_steering_message(STEERING_SOURCE_SUPERVISOR, "steer after c3")
+    assert seen[2] == [
+        {"role": "user", "content": "hi"},
+        echo_one,
+        {"role": "tool", "tool_call_id": "c1", "content": "r-c1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "r-c2"},
+        {"role": "user", "content": steer_one},
+        echo_two,
+        {"role": "tool", "tool_call_id": "c3", "content": "r-c3"},
+        {"role": "tool", "tool_call_id": "c4", "content": "r-c4"},
+        {"role": "user", "content": steer_two},
+    ]
+    for payload in seen:
+        _assert_batch_pairing_unbroken(payload)
+
+
+# -- continuation fixtures (the deepseek shape the 4a/4c suites pin) ------
+
+
+def _checkpoint(
+    *calls: ContinuationCall,
+    revision: int = 1,
+    state: str = "active",
+    assistant_content: str = "",
+    reasoning: tuple[str, ...] = ("private",),
+) -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=revision,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state=state,  # type: ignore[arg-type]
+        rounds=(
+            ContinuationRound(
+                assistant_content=assistant_content,
+                reasoning_blocks=reasoning,
+                calls=tuple(calls),
+            ),
+        ),
+    )
+
+
+def _pending_call(call_id: str = "call-1") -> ContinuationCall:
+    return ContinuationCall(
+        call_id=call_id,
+        name="calculator",
+        arguments=json.dumps({"expression": "2+2"}, separators=(",", ":")),
+        state="pending",
+    )
+
+
+_RESTORE_TARGET = ContinuationRestoreTarget(
+    "deepseek", "deepseek-v4-flash", "responses", "https://api.deepseek.com/v1"
+)
+_CONTEXT = ContinuationEventContext(
+    owner_message_id="assistant-owner",
+    run_id="run-1",
+    agent_kind="primary",
+    durability="persistent",
+)
+
+
+def _final_checkpoint() -> ProviderContinuationCheckpoint:
+    return _checkpoint(
+        ContinuationCall(
+            call_id="call-1",
+            name="calculator",
+            arguments=json.dumps({"expression": "2+2"}, separators=(",", ":")),
+            state="completed",
+            result=ContinuationResult("4"),
+        ),
+        revision=4,
+        state="complete",
+    )
+
+
+def test_red_c_restore_batch_path_never_drains():
+    """Red (c): an entry posted before a resume survives to the
+    post-restore turn -- the restoring branch itself never drains (a drain
+    there would be wiped by ``expand_restore_history``'s slice-rewrite)."""
+    order = []
+    mailbox = [(STEERING_SOURCE_USER, "posted before resume")]
+
+    def drain():
+        order.append("drain")
+        got = list(mailbox)
+        mailbox.clear()
+        return got
+
+    def invoke(call):
+        order.append("invoke")
+        return ToolResult(ok=True, content="4")
+
+    seen = []
+
+    def call_model(messages, active):
+        order.append("model")
+        seen.append(_snapshot(messages))
+        return ModelTurn(text="final", provider_continuation=_final_checkpoint())
+
+    def expand(actual):
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": call.result.value if call.result else "…pending…",
+            }
+            for round_ in actual.rounds
+            for call in round_.calls
+        ]
+
+    deps = make_deps(call_model, invoke=invoke, drain=drain)
+    deps.continuation_context = _CONTEXT
+    deps.persist_provider_continuation = lambda event: None
+    deps.expand_provider_continuation = expand
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "go"}],
+        [CALC],
+        deps,
+        restore_provider_continuation=_checkpoint(_pending_call()),
+        restore_provider_target=_RESTORE_TARGET,
+        resume_provider_continuation=True,
+    )
+
+    assert out.status == RUN_DONE and out.final_text == "final"
+    # The restored batch executed FIRST, undrained; the one drain happened
+    # at the next (non-restoring) boundary, before the model call.
+    assert order == ["invoke", "drain", "model"]
+    labeled = format_steering_message(STEERING_SOURCE_USER, "posted before resume")
+    assert seen == [
+        [
+            {"role": "user", "content": "go"},
+            {"role": "tool", "tool_call_id": "call-1", "content": "4"},
+            {"role": "user", "content": labeled},
+        ]
+    ]
+
+
+def test_red_d_drain_under_an_active_checkpoint_produces_no_continuation_error():
+    """Red (d): the full 4a barrier cycle with a mid-batch post stays
+    RUN_DONE -- the injected user message never trips a continuation
+    barrier, because no barrier validates ``messages``."""
+    post, drain = _list_mailbox()
+    call = ToolCall(
+        "calculator", {"expression": "2+2"}, "call-1", '{"expression":"2+2"}'
+    )
+    events = []
+    script = [
+        ModelTurn(
+            tool_calls=(call,),
+            assistant_message={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [_raw_call(call)],
+            },
+            provider_continuation=_checkpoint(_pending_call()),
+        ),
+        ModelTurn(text="4", provider_continuation=_final_checkpoint()),
+    ]
+    seen = []
+
+    def call_model(messages, active):
+        seen.append(_snapshot(messages))
+        return script.pop(0)
+
+    def invoke(actual):
+        post(STEERING_SOURCE_SUPERVISOR, "keep it brief")
+        return ToolResult(ok=True, content="4")
+
+    deps = make_deps(call_model, invoke=invoke, drain=drain)
+    deps.continuation_context = _CONTEXT
+    deps.persist_provider_continuation = lambda event: events.append(type(event))
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "2+2?"}],
+        [CALC],
+        deps,
+    )
+
+    assert out.status == RUN_DONE and out.final_text == "4"
+    assert not [step for step in out.steps if step.kind == STEP_ERROR]
+    # The full barrier sequence ran -- no barrier was skipped or repeated.
+    assert events == [
+        ToolBatchReady,
+        ToolCallExecuting,
+        ToolCallFinished,
+        FinalContinuation,
+    ]
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "keep it brief")
+    # Delivered under the ACTIVE checkpoint, at the coherent boundary.
+    assert seen[1][-2:] == [
+        {"role": "tool", "tool_call_id": "call-1", "content": "4"},
+        {"role": "user", "content": labeled},
+    ]
+
+
+def test_red_e_a_raising_drain_does_not_abort_the_run():
+    """Red (e): the on_step containment rule -- a broken drain callable
+    costs the delivery, never the run."""
+    drain_calls = []
+
+    def drain():
+        drain_calls.append(True)
+        raise RuntimeError("mailbox exploded")
+
+    script = [
+        ModelTurn(text=fence("calculator", {"expression": "6*7"})),
+        ModelTurn(text="recovered"),
+    ]
+    seen = []
+
+    def call_model(messages, active):
+        seen.append(_snapshot(messages))
+        return script.pop(0)
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(call_model, drain=drain),
+    )
+
+    assert out.status == RUN_DONE and out.final_text == "recovered"
+    assert len(drain_calls) == 2  # tried at every boundary, kept failing
+    assert not [step for step in out.steps if step.kind == STEP_ERROR]
+    for payload in seen:
+        assert not [
+            message
+            for message in payload
+            if "[Steering from" in str(message.get("content", ""))
+        ]
+
+
+# -- red (g): a dead run never consumes a mailbox -------------------------
+
+
+def _coordinator_drain(coordinator, handle_id, drain_calls):
+    def drain():
+        drain_calls.append(True)
+        return coordinator.drain_steering(handle_id)
+
+    return drain
+
+
+def test_red_g_a_cancelled_run_leaves_entries_queued():
+    coordinator = _coord()
+    handle = coordinator.reserve(task="child", agent=None)
+    coordinator.post_steering(
+        handle.handle_id, STEERING_SOURCE_USER, "still queued"
+    )
+    drain_calls = []
+
+    def call_model(messages, active):
+        raise AssertionError("a cancelled run must never call the model")
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            call_model,
+            cancel=lambda: True,
+            drain=_coordinator_drain(coordinator, handle.handle_id, drain_calls),
+        ),
+    )
+
+    assert out.status == RUN_CANCELLED
+    assert drain_calls == []
+    assert coordinator.get(handle.handle_id).queued_steering == 1
+    assert coordinator.drain_steering(handle.handle_id) == [
+        (STEERING_SOURCE_USER, "still queued")
+    ]
+
+
+def test_red_g_a_mid_batch_cancel_leaves_a_late_post_queued():
+    """A Stop landing DURING a model turn kills the batch before dispatch
+    (:1068-1069); an entry posted after that turn's drain stays queued."""
+    coordinator = _coord()
+    handle = coordinator.reserve(task="child", agent=None)
+    drain_calls = []
+    cancelled = []
+
+    def call_model(messages, active):
+        coordinator.post_steering(
+            handle.handle_id, STEERING_SOURCE_SUPERVISOR, "too late"
+        )
+        cancelled.append(True)
+        return ModelTurn(text=fence("calculator", {"expression": "6*7"}))
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            call_model,
+            invoke=lambda call: (_ for _ in ()).throw(
+                AssertionError("cancel must precede dispatch")
+            ),
+            cancel=lambda: bool(cancelled),
+            drain=_coordinator_drain(coordinator, handle.handle_id, drain_calls),
+        ),
+    )
+
+    assert out.status == RUN_CANCELLED
+    assert len(drain_calls) == 1  # the one boundary before the model call
+    assert coordinator.get(handle.handle_id).queued_steering == 1
+
+
+def test_red_g_a_budget_exhausted_run_leaves_entries_queued():
+    coordinator = _coord()
+    handle = coordinator.reserve(task="child", agent=None)
+    coordinator.post_steering(
+        handle.handle_id, STEERING_SOURCE_SUPERVISOR, "never consumed"
+    )
+    drain_calls = []
+
+    def call_model(messages, active):
+        raise AssertionError("an exhausted run must never call the model")
+
+    out = run_agent_loop(
+        AgentConfig(
+            model="test-model",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(max_model_turns=0),
+        ),
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            call_model,
+            drain=_coordinator_drain(coordinator, handle.handle_id, drain_calls),
+        ),
+    )
+
+    assert out.status == RUN_STUCK
+    assert "model-turn budget exhausted" in out.steps[-1].summary
+    assert drain_calls == []
+    assert coordinator.get(handle.handle_id).queued_steering == 1
+
+
+def test_red_g_a_cycle_stuck_run_leaves_a_late_post_queued():
+    coordinator = _coord()
+    handle = coordinator.reserve(task="child", agent=None)
+    drain_calls = []
+    turns = []
+
+    def call_model(messages, active):
+        turns.append(True)
+        if len(turns) == 3:
+            # After this turn's drain; the cycle detector kills the run
+            # before any further boundary exists.
+            coordinator.post_steering(
+                handle.handle_id, STEERING_SOURCE_USER, "posted at the end"
+            )
+        return ModelTurn(text=fence("calculator", {"expression": "9"}))
+
+    out = run_agent_loop(
+        STEER_CFG,
+        [{"role": "user", "content": "hi"}],
+        [CALC],
+        make_deps(
+            call_model,
+            drain=_coordinator_drain(coordinator, handle.handle_id, drain_calls),
+        ),
+    )
+
+    assert out.status == RUN_STUCK
+    assert "calculator" in out.steps[-1].summary
+    assert len(drain_calls) == 3  # one per boundary, all before the post
+    assert coordinator.get(handle.handle_id).queued_steering == 1
