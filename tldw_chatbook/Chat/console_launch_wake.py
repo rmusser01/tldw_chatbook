@@ -191,12 +191,22 @@ def _ensure_launch_runtime(app: Any) -> Any:
     """
     runtime = ensure_console_runtime(app)
     app_config = getattr(app, "app_config", {}) or {}
-    console_config = app_config.get("console", {})
-    if not isinstance(console_config, dict):
-        console_config = {}
 
     def _gate(name: str) -> bool:
-        value = console_config.get(name, True)
+        """One `[console]` boolean gate, read FRESH.
+
+        Re-reads `app.app_config` per call rather than closing over a
+        snapshot: `native_tools_enabled` is stored by the bridge and called
+        much later, and `ChatScreen`'s own factory
+        (`_console_native_tool_calls_enabled`) re-reads too. A launch-built
+        bridge that never sees a Console mount would otherwise hold the
+        boot-time answer for the whole run.
+        """
+        config = getattr(app, "app_config", {}) or {}
+        section = config.get("console", {})
+        if not isinstance(section, dict):
+            section = {}
+        value = section.get(name, True)
         return bool(value) if isinstance(value, (bool, int)) else True
 
     store = runtime.ensure_chat_store()

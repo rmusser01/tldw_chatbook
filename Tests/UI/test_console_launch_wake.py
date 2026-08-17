@@ -52,6 +52,7 @@ from Tests.UI.test_console_native_chat_flow import (
 from Tests.UI.test_console_store_continuity import (
     _StallingWakeGateway,
     _db_chain,
+    _navigate,
     _seed_console,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -425,6 +426,60 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
             "the wake landed in a tab the user was not viewing, so the ◈ mark "
             "must survive to point them at it"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_launch_built_controller_is_not_sticky_when_console_opens(tmp_path):
+    """The hazard this task introduces, pinned.
+
+    `ConsoleRuntime.ensure_chat_controller` is idempotent and IGNORES its
+    parameters after the first call. A launch now makes that first call --
+    with config defaults, because there is no control bar to read -- so if
+    `ChatScreen` did not re-apply its own selection on every
+    `_ensure_console_chat_controller()`, a user whose launch happened to
+    wake a supervisor would run the whole session on the launch's guesses.
+
+    Executed rather than read: the config's model is CHANGED between the
+    launch and the Console mount, and the controller must end up on the new
+    one.
+    """
+    conversation_id, _run_id, _rows = await _seed_a_finished_background_job(tmp_path)
+    app, _marks, gateway = _launch_app(tmp_path, real_service=True)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        assert await _settle(pilot, lambda: bool(gateway.payloads)), (
+            "precondition: the launch must have built the controller"
+        )
+        controller = app.console_runtime.chat_controller
+        assert controller is not None
+        _assert_console_never_mounted(app)
+
+        # The user changes their model in Settings, then opens Console.
+        # `configured_model` is derived from `[api_settings.<provider>]`,
+        # not `[chat_defaults]` -- the first draft changed the wrong key and
+        # the test's own vacuity guard caught it.
+        app.app_config["api_settings"]["llama_cpp"]["model"] = "mounted-model"
+        chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
+        assert isinstance(chat, ChatScreen)
+        await pilot.pause()
+        assert controller is app.console_runtime.chat_controller, (
+            "harness precondition: the mount must REUSE the launch-built "
+            "controller, or this test is not about stickiness at all"
+        )
+        expected = chat._build_console_provider_selection()
+        assert await _settle(
+            pilot,
+            lambda: controller.configured_model == expected.configured_model,
+        ), (
+            "the launch-built controller kept the launch's model after Console "
+            f"opened: controller={controller.configured_model!r} "
+            f"screen={expected.configured_model!r}"
+        )
+        assert expected.configured_model == "mounted-model", (
+            "the fixture never changed anything, so the comparison above is "
+            f"vacuous: {expected.configured_model!r}"
+        )
+        del conversation_id
 
 
 # ---------------------------------------------------------------------------
