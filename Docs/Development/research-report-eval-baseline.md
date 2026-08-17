@@ -392,6 +392,36 @@ chunk's source text and marks it not-generated, so evidence stays real; the cost
 is a wasted call and summarization quality on exactly the large evidence pools
 multi-hop produces.
 
+### The shipped default that came out of this (task-17371)
+
+Local research runs are **multi-hop by default** as of this measurement:
+`DEFAULT_MAX_ITERATIONS = 2` in `local_research_engine.py`, overridable per
+install via `[SearchSettings] research_max_iterations` and per run via
+`limits_json.max_iterations`.
+
+Chosen from the numbers above rather than from caution: the second round is the
+half of decomposition that changed retrieval, and on the one question whose
+synthesis path was intact it held the gate's pass rate while taking resolved
+markers 24 -> 39 and citation density 0.77 -> 0.95. Fan-out stays OFF by
+default, because it measured flat (0.42 -> 0.38) and on this lane it cannot
+change retrieval at all while task-17372 stands.
+
+The cost is real and multiplicative: one extra search per gap, each with its own
+per-result relevance and summarization calls, plus another synthesis and gap
+analysis per round -- the measured arm went 3 -> 12 search calls over three
+questions and roughly tripled wall-clock. Recorded baselines are unaffected
+because the recorder passes `max_iterations` explicitly (default 1), which is
+the property that keeps them reproducible byte-for-byte.
+
+Two known interactions worth stating, since this default increases exposure to
+both: multi-hop enlarges the evidence pool, and (a) each new source needs its
+own summarization call, which cannot complete inside the shipped 30s timeout on
+a local model (task-17382 chain), and (b) larger pools are what trigger
+map-reduce chunking, where chunk summarization still fails against a local
+endpoint (task-17384). Both degrade to real source text rather than to
+nonsense, so the default is safe -- but a local-model install will feel it as
+latency, not as better summaries.
+
 ### Reading gate_pass_rate
 
 It is a ratio, and multi-hop adds to its denominator. Pulling in more marginal

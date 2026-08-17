@@ -42,6 +42,40 @@ _PROGRESS_COLLECTING = 45.0
 _PROGRESS_SYNTHESIZING = 75.0
 _PROGRESS_PACKAGING = 95.0
 
+#: Rounds a run performs when its limits say nothing (task-17371). Deep
+#: research defaults to multi-hop: round 1 researches the question, every later
+#: round researches the gaps the previous synthesis left open. Measured on the
+#: repositories lane (task-17370): a second round held the relevance gate's
+#: pass rate while taking resolved citation markers from 24 to 39 and citation
+#: density from 0.77 to 0.95. It is NOT free -- one extra search per gap, each
+#: with its own per-result gate and summarization calls, plus another synthesis
+#: and gap analysis per round; the measured arm went from 3 to 12 search calls
+#: over three questions. Operators can move it, and an explicit
+#: limits_json.max_iterations always wins (which is how recorded baselines stay
+#: single-pass).
+DEFAULT_MAX_ITERATIONS = 2
+
+
+def _configured_max_iterations() -> int:
+    """The configured default round count, or DEFAULT_MAX_ITERATIONS.
+
+    Returns:
+        A positive round count. Unreadable or non-positive configuration falls
+        back to the shipped default rather than disabling the mechanism.
+    """
+    try:
+        from ..config import get_cli_setting
+
+        configured = int(
+            get_cli_setting(
+                "SearchSettings", "research_max_iterations", DEFAULT_MAX_ITERATIONS
+            )
+        )
+    except Exception:  # noqa: BLE001 - configuration must never break a run
+        return DEFAULT_MAX_ITERATIONS
+    return configured if configured >= 1 else DEFAULT_MAX_ITERATIONS
+
+
 SearchFn = Callable[[str, dict[str, Any]], Any]
 AnalyzeFn = Callable[..., Awaitable[Any]]
 GapFn = Callable[[dict[str, Any]], Awaitable[list[str]]]
@@ -528,13 +562,17 @@ class LocalResearchEngine:
         # task-16324: collect, synthesize, then let gap analysis decide
         # whether another bounded iteration is worth spending. Iteration 1
         # researches the question; every later round researches the gaps the
-        # previous synthesis left open. max_iterations (limits_json,
-        # default 1) is the hard bound; the budget ledger bounds spend
-        # within it.
+        # previous synthesis left open. max_iterations (limits_json) is the
+        # hard bound; the budget ledger bounds spend within it.
+        # task-17371: when the run says nothing, deep research is multi-hop by
+        # default -- see DEFAULT_MAX_ITERATIONS for the measurement and the
+        # cost. An explicit value always wins, so a caller that wants one pass
+        # (the baseline recorder does) still gets exactly one.
+        default_iterations = _configured_max_iterations()
         try:
-            max_iterations = int(limits.get("max_iterations", 1) or 1)
+            max_iterations = int(limits.get("max_iterations", default_iterations) or default_iterations)
         except (TypeError, ValueError):
-            max_iterations = 1
+            max_iterations = default_iterations
         max_iterations = max(1, max_iterations)
 
         merged_results: list[dict[str, Any]] = []
