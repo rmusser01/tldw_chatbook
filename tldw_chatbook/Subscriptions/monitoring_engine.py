@@ -15,6 +15,7 @@ import json
 import re
 import textwrap
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
@@ -253,24 +254,47 @@ class ContentExtractor:
 
     @staticmethod
     def calculate_change_percentage(old_content: str, new_content: str) -> float:
-        """
-        Calculate percentage of change between two texts.
+        """Estimate how much of a page's text changed, as a 0.0-1.0 ratio.
+
+        Computed over ``_segment_for_diff`` segments -- the same
+        sentence/line-sized units the stored diff body, ``diff_summary`` and
+        ``added_and_removed_text`` are built from -- so the ratio means "the
+        fraction of the page's diff segments that changed" and agrees in
+        granularity with everything else the reader sees about the change.
+        See ``_segment_change_ratio`` for the cost bounds.
+
+        TASK-16839. This was a character-level
+        ``SequenceMatcher(None, old, new).ratio()`` with default autojunk,
+        which had two entangled failure regimes over the unbounded inputs the
+        10 MB fetch cap admits: for large Latin pages autojunk junks the
+        entire alphabet and the value degenerates (a 5%-edited ~128 KB page
+        measured pct=0.47 -- the 15764 review measured a full 1.0 -- while
+        taking ~39 s), and for large character repertoires (CJK) nothing is
+        junked and ``ratio()`` is quadratic (4x per doubling; ~7 minutes at
+        the fetch cap, on a GIL-holding worker thread). Its consumers -- the
+        ``change_threshold`` withhold comparison (default 0.0), the withheld
+        disposition, and the reader's ``f"{pct:.0f}% changed"`` headline --
+        all need a coarse, monotonic-ish magnitude, not char-exact ratios.
 
         Args:
-            old_content: Previous content
-            new_content: New content
+            old_content: Previous extracted text.
+            new_content: New extracted text.
 
         Returns:
-            Change percentage (0.0 to 1.0)
+            Change ratio, 0.0 (identical) to 1.0 (nothing in common).
+            Identical texts return 0.0; a whitespace-only difference also
+            returns 0.0 (segmentation normalizes whitespace, deliberately
+            agreeing with the "no textual change after normalization" path
+            of ``build_change_diff``); one side empty returns 1.0.
         """
         if not old_content and not new_content:
             return 0.0
         if not old_content or not new_content:
             return 1.0
 
-        matcher = SequenceMatcher(None, old_content, new_content)
-        similarity = matcher.ratio()
-        return 1.0 - similarity
+        return _segment_change_ratio(
+            _segment_for_diff(old_content), _segment_for_diff(new_content)
+        )
 
 
 ########################################################################################################################
@@ -310,11 +334,31 @@ _HEADER_LINES = 2
 # `_segment_for_diff`, which splits on real line breaks when the text has any
 # and on sentence boundaries when it does not (sentences stay aligned under a
 # local edit in a way fixed-width chunking does not).
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+#
+# The second alternative splits AFTER a CJK sentence ender with no whitespace
+# requirement (TASK-16839): CJK prose ends sentences with 。！？ and contains
+# no spaces at all, so under the Latin-only rule an entire CJK page was ONE
+# unit that fell to fixed-width wrapping -- every boundary after an edit
+# shifted, which made the diff (and the change percentage now computed on the
+# same segments) treat half the page as changed for a one-sentence edit.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+|(?<=[。．！？])")
 
 # A segment longer than this is wrapped at word boundaries, so no single diff
 # line is wider than the narrow reader pane can show without wrapping mid-word.
 _MAX_DIFF_SEGMENT_CHARS = 110
+
+# `textwrap.wrap` is quadratic in the length of a single unbreakable run:
+# `_handle_long_word` re-slices the whole remainder once per emitted line, so
+# one 3.4M-char spaceless unit (a 10 MB CJK page without sentence enders)
+# costs minutes (TASK-16839). A unit containing any whitespace-free run longer
+# than this is fixed-sliced to `_MAX_DIFF_SEGMENT_CHARS` instead -- O(n), and
+# for a fully unbreakable unit the slices are exactly what `break_long_words`
+# would have produced anyway. (Hyphens sometimes let textwrap break a
+# spaceless run cheaply, but only between word characters -- whitespace is
+# the only breaker this guard can trust.) Runs at or under this bound keep
+# textwrap's word-boundary aesthetics at a bounded cost: each run re-slices
+# at most ~1000 chars per emitted line.
+_UNWRAPPABLE_RUN = re.compile(r"\S{1001,}")
 
 # Bounds on the stored diff. The body goes into a TEXT column and into a pane
 # roughly nine rows tall, and the full page it was computed from is already
@@ -354,8 +398,12 @@ def _segment_for_diff(text: str) -> List[str]:
     Splits on real line breaks when ``text`` contains any, and on sentence
     boundaries when it does not -- which is the case for a whole page captured
     through ``extract_text_from_html``, since that collapses everything onto
-    one line. Segments longer than ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped
-    at word boundaries, and blank segments are dropped.
+    one line. Sentence boundaries include CJK enders with no trailing
+    whitespace (see ``_SENTENCE_BOUNDARY``). Segments longer than
+    ``_MAX_DIFF_SEGMENT_CHARS`` are then wrapped at word boundaries -- or
+    fixed-sliced when they contain a run textwrap could only break
+    quadratically (see ``_UNWRAPPABLE_RUN``) -- and blank segments are
+    dropped.
 
     (Fix round 1, Minor #4: this used to be described in terms of the
     subscription's ``extraction_method``, which it never reads -- the only
@@ -380,8 +428,83 @@ def _segment_for_diff(text: str) -> List[str]:
         if len(stripped) <= _MAX_DIFF_SEGMENT_CHARS:
             segments.append(stripped)
             continue
+        if _UNWRAPPABLE_RUN.search(stripped):
+            # Bounded fixed-width slicing for units textwrap cannot break at
+            # word boundaries anyway -- see `_UNWRAPPABLE_RUN` for why wrap
+            # is quadratic on these.
+            segments.extend(
+                piece
+                for start in range(0, len(stripped), _MAX_DIFF_SEGMENT_CHARS)
+                if (piece := stripped[start : start + _MAX_DIFF_SEGMENT_CHARS].strip())
+            )
+            continue
         segments.extend(textwrap.wrap(stripped, _MAX_DIFF_SEGMENT_CHARS) or [stripped])
     return segments
+
+
+# Cost bounds for `_segment_change_ratio`'s alignment tier (TASK-16839), both
+# chosen from adversarial measurements (worst shapes, M-series laptop):
+#
+# - `_ALIGNMENT_MAX_TOTAL_SEGMENTS`: `SequenceMatcher.get_matching_blocks`
+#   over two segment lists is quadratic-ish when small edits are scattered
+#   densely (an edit every 2nd segment measured 134 ms at 2,000 segments per
+#   side and 4x that at 4,000 per side). 4,000 total segments (~2,000 per
+#   side, roughly 200+ KB of extracted text per side) keeps that worst case
+#   near 100 ms while covering ordinary pages by a wide margin.
+# - `_ALIGNMENT_MAX_SEGMENT_COLLISIONS`: with repeated segments the matcher's
+#   inner loop walks every position of the element in the other side, so its
+#   per-sweep cost is the number of equal-segment pairs (sum over distinct
+#   segments of count_a * count_b) -- e.g. two sides of 2,000 identical
+#   segments are 4M pairs in a single sweep. 200K pairs measured ~40 ms.
+#
+# Past either bound the multiset tier takes over: O(n), order-insensitive.
+_ALIGNMENT_MAX_TOTAL_SEGMENTS = 4_000
+_ALIGNMENT_MAX_SEGMENT_COLLISIONS = 200_000
+
+
+def _segment_change_ratio(old_segments: List[str], new_segments: List[str]) -> float:
+    """Change ratio between two segment lists, with bounded worst-case cost.
+
+    Two tiers (TASK-16839):
+
+    * **Alignment** (ordinary pages): ``SequenceMatcher`` over the segment
+      lists with ``autojunk=False``. Segments are near-unique in real pages,
+      so this is effectively linear; autojunk is OFF because popularity
+      junking is exactly the mechanism that made the old character-level
+      ratio degenerate, and a repetitive page (few distinct segments) would
+      reproduce it one level up.
+    * **Multiset** (past the bounds above): the fraction of segments present
+      on both sides counting multiplicity -- ``2*matches/total``, the
+      ``quick_ratio`` formula over segments. O(n) and order-INSENSITIVE: a
+      huge page that merely reorders its segments reports ~0 change, which is
+      the honest coarse answer for a noise-threshold consumer.
+
+    Args:
+        old_segments: Previous text through ``_segment_for_diff``.
+        new_segments: Current text likewise.
+
+    Returns:
+        0.0 (identical) .. 1.0 (disjoint). Both sides empty is 0.0; exactly
+        one side empty is 1.0.
+    """
+    total = len(old_segments) + len(new_segments)
+    if not old_segments or not new_segments:
+        return 0.0 if total == 0 else 1.0
+
+    old_counts = Counter(old_segments)
+    new_counts = Counter(new_segments)
+    if total <= _ALIGNMENT_MAX_TOTAL_SEGMENTS:
+        collisions = sum(
+            count * new_counts.get(segment, 0) for segment, count in old_counts.items()
+        )
+        if collisions <= _ALIGNMENT_MAX_SEGMENT_COLLISIONS:
+            matcher = SequenceMatcher(None, old_segments, new_segments, autojunk=False)
+            return 1.0 - matcher.ratio()
+
+    matches = sum(
+        min(count, new_counts.get(segment, 0)) for segment, count in old_counts.items()
+    )
+    return 1.0 - (2.0 * matches / total)
 
 
 def build_change_diff(

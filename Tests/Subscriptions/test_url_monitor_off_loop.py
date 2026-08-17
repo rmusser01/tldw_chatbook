@@ -247,9 +247,14 @@ async def test_the_diff_work_runs_off_the_event_loop_thread(tmp_path, monkeypatc
     assert set(threads) == expected, (
         f"every difflib call must have happened (saw {sorted(threads)})"
     )
-    assert len(threads["_segment_for_diff"]) == 2, (
-        "each side is segmented once and shared (the Qodo segment-once rule) "
-        "-- a third call means the sharing broke in the move"
+    # 4 = 2 in the change-percentage hop (TASK-16839 rebased the percentage
+    # onto the same segment basis as the diff) + 2 in the details hop, where
+    # the Qodo segment-once rule still holds: `build_change_diff` and
+    # `added_and_removed_text` share one segmentation per side. A 5th call
+    # means that sharing broke.
+    assert len(threads["_segment_for_diff"]) == 4, (
+        "each hop segments each side exactly once (percentage hop + details "
+        "hop) -- an extra call means the segment-once sharing broke"
     )
     loop_thread = threading.get_ident()
     for name, idents in threads.items():
