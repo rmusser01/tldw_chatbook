@@ -838,6 +838,8 @@ def test_window_engine_start_passes_configured_pipeline_params(monkeypatch):
 
 
 def test_rounds_control_defaults_to_the_engine_default(monkeypatch):
+    """The control must show the engine's own default, not a second one that
+    could drift from what a run would actually use."""
     from tldw_chatbook.Research_Interop import local_research_engine as engine_module
 
     monkeypatch.setattr(engine_module, "_configured_max_iterations", lambda: 2)
@@ -849,6 +851,7 @@ def test_rounds_control_defaults_to_the_engine_default(monkeypatch):
 
 
 def test_rounds_choice_survives_a_state_round_trip():
+    """A chosen round count is remembered, not reset on the next visit."""
     app = SimpleNamespace(
         research_scope_service=FakeResearchScopeService(), local_research_service=None
     )
@@ -939,3 +942,93 @@ def test_rounds_control_mounts_and_reports_its_choice():
             )
 
     asyncio.run(_drive())
+
+
+def test_rounds_control_mounts_when_the_configured_default_exceeds_the_options():
+    """Qodo (PR 1769): the Select offered 1-4 with allow_blank=False, so an
+    install configuring more rounds -- or restoring such a state -- raised
+    InvalidSelectValueError and the whole window failed to mount."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Select
+    from tldw_chatbook.Research_Interop import local_research_engine as engine_module
+    import pytest as _pytest
+
+    class _Harness(App):
+        def __init__(self):
+            super().__init__()
+            self.research_scope_service = FakeResearchScopeService()
+            self.local_research_service = None
+            self.window = None
+
+        def compose(self) -> ComposeResult:
+            self.window = ResearchWindow(app_instance=self)
+            yield self.window
+
+    async def _drive(monkeypatched_default: int):
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            select = app.window.query_one("#research-rounds-select", Select)
+            assert select.value == monkeypatched_default, select.value
+
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(engine_module, "_configured_max_iterations", lambda: 6)
+        asyncio.run(_drive(6))
+
+
+def test_restoring_a_high_rounds_state_does_not_crash_the_mounted_control():
+    """Same failure mode reached through restore_state rather than config."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Select
+
+    class _Harness(App):
+        def __init__(self):
+            super().__init__()
+            self.research_scope_service = FakeResearchScopeService()
+            self.local_research_service = None
+            self.window = None
+
+        def compose(self) -> ComposeResult:
+            self.window = ResearchWindow(app_instance=self)
+            yield self.window
+
+    async def _drive():
+        app = _Harness()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.window.restore_state({"source": "local", "rounds": 7})
+            await pilot.pause()
+            select = app.window.query_one("#research-rounds-select", Select)
+            assert app.window.iteration_rounds == 7
+            assert select.value == 7, select.value
+
+    asyncio.run(_drive())
+
+
+def test_typed_max_iterations_wins_whatever_its_casing():
+    """Qodo (PR 1769): _parse_limits_text preserves key casing, so a typed
+    "Max_Iterations=1" was invisible to the presence check -- the control
+    injected its own value and the engine, which reads the canonical lowercase
+    key, silently used that instead of what the user asked for."""
+    captured = {}
+
+    class _Controller:
+        async def create_run(self, source, payload):
+            captured.update(payload)
+            return {"id": "run-1"}
+
+    app = SimpleNamespace(
+        research_scope_service=FakeResearchScopeService(), local_research_service=None
+    )
+    window = ResearchWindow(app_instance=app)
+    window.controller = _Controller()
+    window.iteration_rounds = 3
+    window.limits_text = "Max_Iterations=1, max_searches=5"
+    window._start_local_engine = lambda run_id: None
+
+    asyncio.run(window.create_run({"query": "q"}))
+
+    limits = captured["limits_json"]
+    assert limits["max_iterations"] == 1, limits
+    assert [k for k in limits if k.lower() == "max_iterations"] == ["max_iterations"], limits
+    assert limits["max_searches"] == 5
