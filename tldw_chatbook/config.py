@@ -3949,8 +3949,21 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_enable_subquery = false
 # search_default_max_queries = 5
 # search_result_max = 10
-# relevance_llm_timeout_s = 30
+# relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured
+#   (task-17370): per-result summarization against a local 27B took 42-131s, so
+#   30 guarantees the fallback-to-source-text path on local models. Raise it if
+#   you want summarized evidence rather than raw page text.
 # relevance_scrape_timeout_s = 30
+# research_max_iterations = 2   # rounds a local research RUN performs when it
+#   does not set its own limit: round 1 researches the question, later rounds
+#   research the gaps the previous synthesis left open (task-16324). 2 is the
+#   shipped default because a second round measurably improved evidence --
+#   resolved citation markers 24 -> 39, citation density 0.77 -> 0.95
+#   (task-17370). It costs one extra search per gap, each with its own
+#   per-result relevance and summarization calls, plus another synthesis and gap
+#   analysis per round: the measured arm went from 3 to 12 search calls across
+#   three questions and roughly tripled wall-clock. Set to 1 for single-pass
+#   runs; a run's own limits always override this.
 # deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
 
 [webfetch]

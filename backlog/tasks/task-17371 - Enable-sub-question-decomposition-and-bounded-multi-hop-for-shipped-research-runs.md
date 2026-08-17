@@ -1,7 +1,7 @@
 ---
 id: TASK-17371
 title: Enable sub-question decomposition and bounded multi-hop for shipped research runs
-status: To Do
+status: In Progress
 assignee:
   - '@robert'
 created_date: '2026-08-17 07:30'
@@ -21,10 +21,10 @@ Sub-question fan-out and gap-driven replanning both ship but are off by default:
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The shipped default for research-run decomposition is set from the task-17370 measurement, and the choice is recorded with the numbers that justify it.
+- [x] #1 The shipped default for research-run decomposition is set from the task-17370 measurement, and the choice is recorded with the numbers that justify it.
 - [ ] #2 A user can see and change the decomposition settings for a run before launching it, and the setting persists.
-- [ ] #3 The expected spend implication of the chosen default is documented where a user meets it, since fan-out multiplies gate LLM calls per run and iterations multiply rounds on top.
-- [ ] #4 Existing runs, artifacts and tests that assume single-pass behaviour continue to pass or are updated with the reason recorded.
+- [x] #3 The expected spend implication of the chosen default is documented where a user meets it, since fan-out multiplies gate LLM calls per run and iterations multiply rounds on top.
+- [x] #4 Existing runs, artifacts and tests that assume single-pass behaviour continue to pass or are updated with the reason recorded.
 <!-- AC:END -->
 
 ## Measured evidence for the defaults decision (task-17370)
@@ -70,3 +70,41 @@ working (task-17382 chain), so these numbers describe a pipeline synthesizing
 from raw source text. A defaults decision that turns on multi-hop multiplies
 the number of sources that each need summarizing, so re-measure the cost once
 summarization completes.
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Multi-hop is on by default for local research runs:
+`DEFAULT_MAX_ITERATIONS = 2` resolved through `_configured_max_iterations()`,
+which reads `[SearchSettings] research_max_iterations` and falls back to the
+shipped value if the setting is missing, unreadable or non-positive. An explicit
+`limits_json.max_iterations` still wins, so a caller asking for one pass gets
+exactly one.
+
+Fan-out is deliberately NOT enabled: it measured flat on the gate
+(0.42 -> 0.38) and cannot change retrieval on this lane while task-17372
+stands. The decision for each mechanism is recorded with its numbers in the
+"Measured evidence" section above and in the eval baseline doc.
+
+AC #3: the spend implication is documented on the config key itself -- the
+place a user meets this setting -- quoting the measured multiplier (3 -> 12
+search calls across three questions, roughly tripled wall-clock) rather than a
+general warning. `/research` has no user-guide page to update; the Research
+window's limits input already accepts a per-run override.
+
+AC #4: 382 tests across the research, window, recorder, tools and pipeline
+suites pass unchanged. The only single-pass assumptions left are in the
+baseline recorder's tests, which pin that it passes `max_iterations`
+EXPLICITLY (default 1) -- the property that keeps recorded baselines
+reproducible byte-for-byte under a changed shipped default.
+
+AC #2 remains open: a user can override per run today only by typing limits
+into the Research window's existing input. A real control that shows the
+current setting and persists it is still to do, and is the part that matters
+more than the default itself.
+
+Modified: `tldw_chatbook/Research_Interop/local_research_engine.py`,
+`tldw_chatbook/config.py`,
+`Tests/Research/test_local_research_engine.py`,
+`Docs/Development/research-report-eval-baseline.md`.
+<!-- SECTION:NOTES:END -->
