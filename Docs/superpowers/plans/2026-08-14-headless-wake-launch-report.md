@@ -504,7 +504,20 @@ counts are below.
 
 | Re-run | Result |
 |---|---|
-| **Branch, final tree** — same invocation, run alone | *(filled in below)* |
+| **Branch, final tree** (all 11 new tests, after the dev merge in §10.3), same invocation, run alone | **20 failed, 3395 passed** (3499.6s, 0:58:19) |
+
+`20 + 3395 = 3415` — exactly the collected count, so every one of the
+eleven new tests executed in that single process.
+
+**Against the `ed49499b8` baseline: `comm -23` is EMPTY again.** Zero
+failures unique to the branch; the baseline has **three** the branch does
+not (`test_console_background_effects::…renders_frame`,
+`test_console_rewind_restore::test_summarize_choice_guards_against_changed
+_active_session`, `…::test_summarize_up_to_choice_dispatches_console_run_
+worker_without_mutation`), all order/timing-sensitive reds that did not
+fire this time. Net across the whole population: **+14 passed,
+−3 failed**, and nothing to attribute to the dev merge either, since the
+branch's failure set is a strict subset of a baseline measured before it.
 
 ### 10.3 A concurrent session merged `origin/dev` into this branch mid-task
 
