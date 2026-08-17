@@ -1,7 +1,7 @@
 ---
 id: TASK-17380
 title: Research window runs never reach the deep-search pipeline
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-08-17 07:45'
@@ -20,7 +20,7 @@ Every research run launched from the Research window fails immediately without s
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A run launched from the Research window reaches the search phase instead of failing on missing pipeline parameters
+- [x] #1 A run launched from the Research window reaches the search phase instead of failing on missing pipeline parameters
 - [x] #2 A window-launched run can perform gap-driven replanning, i.e. its synthesis LLM is configured like the Console command's
 - [x] #3 When the pipeline settings cannot be assembled, the window reports that in place of launching a run that cannot succeed
 - [x] #4 A run that reaches the real pipeline without usable parameters fails naming the missing keys and their configuration source, not with the pipeline's opaque message
@@ -69,11 +69,26 @@ Second defect closed by the same fix: `_default_gap_fn` reads
 unset, so gap-driven replanning (task-16324) was permanently inert for window
 runs regardless of `max_iterations`.
 
-AC #1 is deliberately left open: the assembly and the pre-flight are unit
-verified, but a window run actually reaching the search phase needs a live
-run against a configured LLM endpoint, and the local Qwen endpoint used for
-every other live verification in this stream is down. It stays open rather
-than being claimed from unit evidence.
+AC #1 is live-verified, not inferred. A harness mounted the real
+`ResearchWindow` in a Textual app so its worker actually ran, created the run
+the way the window's own flow does (through the service default, which is
+`checkpointed`), and called `_start_local_engine` with NO search_params of its
+own -- so an unfixed window would have failed exactly as before. Against the
+live llama.cpp endpoint:
+
+    created run 8cbadb9a-... autonomy=checkpointed
+    phase=planning control_state=awaiting_plan_review status=running
+    pending checkpoint: plan_review
+    phase=collecting status=running message=Awaiting sources_review (chk-3182549f-...)
+    RESULT: PASS -- window-launched run reached the search phase
+
+Worth recording for anyone verifying this path again: a window-created run is
+CHECKPOINTED (the scope service does not pass `autonomy_mode`, so the
+service default applies), so it parks at `plan_review` before any search and
+the checkpoint must be approved before `collecting` is reachable. The
+pre-flight added here runs at `execute_run` entry, i.e. BEFORE that park, so a
+misconfigured run now fails before a user is asked to review a plan it could
+never execute.
 
 Modified: `tldw_chatbook/UI/Research_Window.py`,
 `tldw_chatbook/Research_Interop/local_research_engine.py`,
