@@ -415,7 +415,7 @@ class LocalResearchEngine:
         try:
             if self._uses_default_search_fn:
                 self._require_pipeline_params(run_params)
-            return await self._execute_phases(run, ledger)
+            return await self._execute_phases(run, ledger, limits)
         except _RunAwaitingReview as awaiting:
             logger.info(f"Research run {run_id} awaiting checkpoint review")
             return awaiting.run
@@ -516,11 +516,24 @@ class LocalResearchEngine:
         )
 
     async def _execute_phases(
-        self, run: dict[str, Any], ledger: BudgetLedger
+        self, run: dict[str, Any], ledger: BudgetLedger, limits: dict[str, Any]
     ) -> dict[str, Any]:
+        """Run the phase machine.
+
+        Args:
+            run: The run record being executed.
+            ledger: Budget ledger built from the SAME limits passed here.
+            limits: The run's effective limits, i.e. its stored limits with any
+                approved plan-review patch already merged over them. Qodo
+                (PR 1766): this used to be re-read from the run record here,
+                which silently dropped the patch -- the ledger honoured a
+                plan-review edit while the iteration bound did not, so a run
+                patched to a single pass could still perform a second round
+                (and, once multi-hop became the default, spend more than the
+                user had just asked for).
+        """
         run_id = run["id"]
         question = str(run.get("query") or "")
-        limits = run.get("limits") if isinstance(run.get("limits"), dict) else {}
         ledger.check_runtime()  # zero/degenerate runtime budgets stop here
 
         # Draft runs (window "Create Run" flow) normalize to running here.
