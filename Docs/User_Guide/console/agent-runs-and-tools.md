@@ -528,11 +528,21 @@ wake-delivery stamp in the run database (`agent_runs.wake_delivered_at`
 — the ledger). One wake bundles *all* of a conversation's undelivered
 completions; each delivered run is stamped only after the wake turn was
 actually accepted, and a run whose stamp is set is never announced
-again. That is why a restart between a wake being accepted and the app
-exiting does not re-announce anything at the next launch, and why a
-sub-agent that finishes *during* a wake turn simply rides the next one.
-The `◈` mark is only the trigger and indicator; the ledger is what
-defines which completions are still owed.
+again. That is why a restart after a wake has been delivered does not
+re-announce anything at the next launch, and why a sub-agent that
+finishes *during* a wake turn simply rides the next one. The `◈` mark is
+only the trigger and indicator; the ledger is what defines which
+completions are still owed.
+
+There is one narrow gap, and it is a deliberate trade rather than an
+oversight: the stamp is written *just after* the wake turn is accepted,
+so an app that is killed in the instant between those two — or a wake
+turn that is still running when you quit — leaves a completion the
+ledger still shows as owed. The next launch announces that completion
+once more. You may therefore see the same sub-agent result reported
+twice; you will never see it lost, and it cannot repeat beyond that one
+extra time, because the second delivery does stamp. (Measured on
+2026-08-17, both in a test and in a live run.)
 
 **You always win ties.**
 
@@ -586,24 +596,45 @@ your signal that it did.
 a woken turn reaches a tool that requires your approval, a toast names it
 on whatever screen you're on ("Agent in “…” needs approval to use a tool.
 Open Console to review — nothing runs until you answer."), the session
-picks up its usual approval badge, and the card is waiting, already
-mounted, the moment you open Console. The tool does not run until you
-answer it. Nothing auto-approves: navigating away from Console again
-denies the request (the same rule as any card you leave unanswered), and
-so does quitting the app. If you have set a positive `[mcp]
-approval_timeout_seconds`, it still expires the request on schedule —
-being away does not buy the request extra time. The shipped default is
-`0`, which means no deadline: the request waits for you. One limitation:
-if a woken turn arms two approval rounds for the same conversation, only
-the most recent one has a card to mount; the older one still has to be
-answered, and until it is, it keeps the badge lit (task-15661).
+picks up its usual approval badge, and the round waits for you rather
+than expiring. The tool does not run until you answer it. Nothing
+auto-approves: navigating away from Console again denies the request (the
+same rule as any card you leave unanswered), and so does quitting the
+app. If you have set a positive `[mcp] approval_timeout_seconds`, it
+still expires the request on schedule — being away does not buy the
+request extra time. The shipped default is `0`, which means no deadline:
+the request waits for you.
+
+**Known bug — the card opens empty; click the session tab to see it.**
+As shipped on 2026-08-17, opening Console in response to that toast shows
+an approval card with its "Approval required" title and *nothing else*:
+no tool name, no arguments, no Approve/Deny buttons. The round is fine —
+**clicking that conversation's session tab re-renders the card complete
+and answerable.** Until you do, the run stays blocked, and because only
+one wake is delivered at a time app-wide, other conversations' finished
+sub-agents wait behind it as well. Answering (or denying) the round
+releases them immediately. Tracked as task-17500; found by driving the
+real app, not by a test.
+
+One further limitation: if a woken turn arms two approval rounds for the
+same conversation, only the most recent one has a card to mount; the
+older one still has to be answered, and until it is, it keeps the badge
+lit (task-15661).
 
 **Turning the wake off.** Set `[agents] autowake_enabled = false` in
-`config.toml` (default `true`; no Settings UI switch). OFF loses
-nothing: completions are still recorded and the toast, `◈` marker, and
-ledger still work — the wake turn just never fires. Flip it back ON and
-the next trigger (a later completion, or the next Console mount)
-delivers everything OFF recorded.
+`config.toml` (default `true`; no Settings UI switch) and restart —
+`config.toml` is read once at startup, so an edit does not take effect in
+an app that is already running. OFF loses nothing: completions are still
+recorded and the toast, `◈` marker, and ledger still work — the wake turn
+just never fires. Turn it back on and the next trigger (a later
+completion, the next Console mount, or the next launch) delivers
+everything OFF recorded.
+
+**What the marker looks like after a wake has run.** The `◈` is the
+lowest-priority of the session markers, so once a woken turn has finished
+in a conversation you were not watching, that session's tab shows the
+finished-and-unvisited `✓` instead. Both mean "there is something here
+you haven't seen"; viewing the conversation clears either.
 
 ### Skills
 
@@ -948,3 +979,35 @@ advances to `· 5s` on the next poll
 live-walked in a terminal — the states and the elapsed are covered by that
 suite plus mutation testing; the rest of this page's content is unchanged
 from the prior stamp.*
+
+*Headless-wake sections (auto-wake off-screen, wake at launch, headless
+approval, the kill switch) re-verified against dev @ 524194c15 —
+2026-08-17, task-15860 close-out. **Driven live in tmux** against a real
+Anthropic model (`claude-sonnet-5`) on an isolated scratch profile, with
+every claim below checked against the app's own ChaChaNotes and
+`agent_runs` databases rather than the pane alone:*
+
+- *a sub-agent finishing while a **different Console session** was
+  displayed woke its supervisor there — app-wide toast, `◈` mark set on
+  the unwatched conversation, a machine-origin SYSTEM notice and a reply
+  that used the child's result, and no USER row;*
+- *a sub-agent finishing while the user sat on **Library** delivered a
+  full supervisor turn with Console unmounted; the `◈` mark survived the
+  delivery and cleared only on return, where the delivered turn was
+  already in the transcript;*
+- *a completion owed from a previous process was delivered **at the next
+  launch with Console never opened** (landing tab Library, no composer
+  ever constructed), stamped the ledger, and a second relaunch watched for
+  60s re-announced nothing;*
+- *`autowake_enabled = false` recorded the mark, the toast and the ledger
+  row and fired no wake turn; turning it back on delivered exactly what
+  OFF had recorded.*
+
+*Two things this pass could NOT confirm and which the text above now
+states honestly: the headless approval card mounts empty until you click
+the session tab (task-17500), and the live activity line's `⚙ <tool> ·
+Ns` state was not observable in a real run — every tool call in the
+session started and finished inside the same second (per the app's own
+Trajectory view), while the one long wait, an approval, renders
+`Thinking… · Ns`. The advancing elapsed itself was seen live
+(`Generating…` → `Thinking… · 1s` … `· 18s`).*
