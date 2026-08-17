@@ -143,6 +143,28 @@ JSON parsing now raises `AcademicProviderError` so one bad payload
 degrades that provider only. The script also gained
 `--question-set {default,biomedical}`.
 
+## Gate source-type re-measurement (2026-08-17, task-17066 follow-up)
+
+The repositories lane re-run with the source-type-aware gate note (same
+runner/config/questions as the recorded 0.29 baseline):
+
+| Metric | Before (strict prompt) | After (source-type note) |
+|---|---|---|
+| `gate_pass_rate` | 0.29 | **0.42 (+45% relative)** |
+| `citation_accuracy` | 1.00 (73/73) | **1.00 (72/72)** — integrity held |
+| `claim_support_rate` | 0.97 | **1.00** |
+| `cited_sentence_ratio` | 0.52 | **0.75** |
+| `quote_grounding` | 0.00 | 0.33 (one run quoted; all verified) |
+
+Honest read: the note meaningfully improves admission of repository records
+without costing verification integrity — but repositories still pass at less
+than half the paper rate (0.93). That residual is partly genuine: many
+repository records ARE marginal evidence for general-purpose questions
+(a dataset about topic X is supporting material, not an answer). Fully
+closing the gap would need either a per-kind relevance threshold or
+category-tuned question sets — recorded as the follow-up lever, with the
+fallback (top-3 flagged) still covering the remainder.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,
