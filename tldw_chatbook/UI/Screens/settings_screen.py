@@ -9207,17 +9207,16 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return ""
 
-    def _refresh_provider_picker(self, query: str | None = None) -> None:
-        try:
-            picker = self.query_one("#settings-provider-picker", OptionList)
-            status = self.query_one("#settings-provider-search-status", Static)
-        except QueryError:
-            return
-        search_query = self._provider_picker_query() if query is None else query
-        groups = self._provider_picker_groups(search_query)
-        picker.clear_options()
-        picker.add_options(self._provider_picker_options(groups))
+    def _apply_provider_picker_highlight(self, picker: OptionList) -> None:
+        """Highlight the current provider's option, else the first selectable.
 
+        task-16480: factored out of ``_refresh_provider_picker`` so the
+        COMPOSE-time picker can carry the right highlight too -- the
+        ``call_after_refresh`` refresh added in a1405b154 fires before the
+        category body (and the picker) is mounted, its QueryError is
+        swallowed, and the fresh picker used to keep the compose default
+        (first selectable) instead of the configured provider.
+        """
         current_provider = str(
             self._provider_display_setting_values().get("provider") or ""
         )
@@ -9238,6 +9237,18 @@ class SettingsScreen(BaseAppScreen):
         picker.highlighted = (
             selected_index if selected_index is not None else first_selectable
         )
+
+    def _refresh_provider_picker(self, query: str | None = None) -> None:
+        try:
+            picker = self.query_one("#settings-provider-picker", OptionList)
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            return
+        search_query = self._provider_picker_query() if query is None else query
+        groups = self._provider_picker_groups(search_query)
+        picker.clear_options()
+        picker.add_options(self._provider_picker_options(groups))
+        self._apply_provider_picker_highlight(picker)
 
         normalized_query = search_query.strip()
         if normalized_query and not self._provider_picker_has_catalog_matches(groups):
@@ -9567,7 +9578,18 @@ class SettingsScreen(BaseAppScreen):
                 # staged the new provider's env var against the old
                 # provider's original.
                 with credential_input.prevent(Input.Changed):
-                    credential_input.value = self._provider_credential_env_var(provider)
+                    credential_value = self._provider_credential_env_var(provider)
+                    # task-16480: prevent() silences only THIS write. The
+                    # widget-lifecycle (recompose/category-return) echo
+                    # re-populates the input un-prevented, so the queue must
+                    # be armed the same way the endpoint sync arms its own --
+                    # route-echo regression: navigation-applied credentials
+                    # stopped being suppressible across recompose.
+                    if credential_input.value != credential_value:
+                        self._provider_credential_env_var_suppress_queue.append(
+                            credential_value
+                        )
+                    credential_input.value = credential_value
                 credential_input.placeholder = self._provider_credential_placeholder(
                     provider
                 )
@@ -11764,11 +11786,17 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-search",
                     placeholder="Search providers by name or ID",
                 )
-                yield OptionList(
+                picker = OptionList(
                     *self._provider_picker_options(self._provider_picker_groups()),
                     id="settings-provider-picker",
                     compact=True,
                 )
+                # task-16480: compose-time highlight so the configured
+                # provider is selected on the very first paint; the
+                # post-refresh highlight arrives too early (pre-mount) to
+                # serve as the only source.
+                self._apply_provider_picker_highlight(picker)
+                yield picker
                 yield Static(
                     "Choose a provider or enter a provider ID.",
                     id="settings-provider-search-status",

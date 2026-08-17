@@ -27985,6 +27985,13 @@ class LibraryScreen(BaseAppScreen):
             await self._discard_new_library_note_claimed(create_token)
         finally:
             self._library_notes_mutation_in_flight = False
+            # task-16480: the claimed coroutine's list reconcile runs while
+            # the interlock is still held, so the rebuilt canvas freezes
+            # operation_running=True into the browse action toolbar
+            # (permanently disabled New/Sort/Select -- keyboard AND mouse).
+            # Re-sync after releasing the lock, the same way
+            # ``_execute_library_notes_tree_mutation``'s finally does.
+            LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     async def _discard_new_library_note_claimed(self, create_token: str) -> None:
         """Delete one untouched create through typed destructive admission."""
