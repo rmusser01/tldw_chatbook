@@ -291,7 +291,42 @@ class ConsoleSelectionMenu(Vertical):
                 _spike_log_line(f"Button.press id={btn_self.id!r}")
                 return _original_press(btn_self)
 
-            Button.press = _spike_press  # type: ignore[method-assign]        # Capture the pre-mount focus holder BEFORE focusing a menu button:
+            Button.press = _spike_press  # type: ignore[method-assign]
+
+            # App-level mouse trace: the raw event stream + click-synthesis
+            # inputs exactly as App.on_event sees them (menu-side logs only
+            # see post-forwarding state).
+            from textual.app import App
+            from textual.events import MouseEvent
+
+            _original_on_event = App.on_event
+
+            async def _spike_on_event(app_self, event):
+                if (
+                    isinstance(event, MouseEvent)
+                    and not event.is_forwarded
+                    and (
+                        type(event).__name__ != "MouseMove" or event.button != 0
+                    )
+                ):
+                    _spike_log_line(
+                        f"App.on_event {type(event).__name__} x={event.x} y={event.y} "
+                        f"sx={event.screen_x} sy={event.screen_y} btn={event.button} "
+                        f"down_widget_in={app_self._mouse_down_widget!r}"
+                    )
+                try:
+                    await _original_on_event(app_self, event)
+                finally:
+                    if (
+                        isinstance(event, MouseEvent)
+                        and not event.is_forwarded
+                        and type(event).__name__ == "MouseUp"
+                    ):
+                        _spike_log_line(
+                            f"App.after MouseUp down_widget={app_self._mouse_down_widget!r}"
+                        )
+
+            App.on_event = _spike_on_event  # type: ignore[method-assign]        # Capture the pre-mount focus holder BEFORE focusing a menu button:
         # a drag that started from a focused transcript must return focus
         # there on dismissal, not be pulled into the composer (final review).
         try:
