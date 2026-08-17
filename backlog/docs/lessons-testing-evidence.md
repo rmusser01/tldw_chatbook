@@ -4805,3 +4805,26 @@ Two guards in depth meant no single observation covered both mutations;
 the four together did. Corollary: a no-work pin also needs a control that
 runs the same probes WITH work present and watches every one flip,
 otherwise a hook that never runs at all satisfies it perfectly.
+
+## A migration test that pins the current version number breaks on every later migration
+
+**The trap.** A migration test asserts what a *fresh* database looks like — and pins
+the schema version (or a table-set delta) as an exact literal. The assertion is true
+the day it is written and false the day the NEXT migration lands, in a test file
+nobody touches when they add their own migration.
+
+**What happened.** Task-17169's v39→v40 bump found three such tests **already red on
+dev**: the v37→v38 trajectory tests asserted a fresh DB is `== 38`, and
+`test_current_schema_version_is_39` had been left behind — the v38→v39 landing had
+broken them and shipped anyway (nobody runs another feature's migration tests when
+adding a schema version). The v40 bump then broke the visual-identity contract the
+same way twice over: its `== 39` pin, and an *exact-equality* table-set delta
+(`tables_after - tables_before == VISUAL_IDENTITY_TABLES`) — an upgrade from v38 runs
+*every* later migration, so v40's new table legitimately appeared in the delta.
+
+**The rule.** In a migration test, a version literal is only correct at the seeded
+*starting* point. Everything asserted about the *end state* must be version-relative:
+fresh/upgraded DBs assert `== CharactersRAGDB._CURRENT_SCHEMA_VERSION`, and a
+"migration X added tables T" claim is a superset check (`T <= delta`), never
+equality. If you are bumping the schema, run `Tests/DB/` and `Tests/ChaChaNotesDB/`
+in full — the tests your bump breaks are not in your feature's test files.
