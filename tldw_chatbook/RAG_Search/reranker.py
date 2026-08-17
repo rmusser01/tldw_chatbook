@@ -6,6 +6,7 @@ to evaluate and reorder search results based on their relevance to the query.
 """
 
 import asyncio
+import functools
 from typing import List, Optional, Union, Literal, Tuple
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
@@ -22,7 +23,6 @@ except ImportError:
     np = None
 
 from ..Chat.Chat_Functions import chat_api_call
-from ..config import load_settings
 from ..Metrics.metrics_logger import log_counter, log_histogram, timeit
 from tldw_chatbook.Internal_Prompts import get_internal_prompt, safe_substitute
 from .simplified.vector_store import SearchResult, SearchResultWithCitations
@@ -125,7 +125,6 @@ class BaseReranker(ABC):
     def __init__(self, config: RerankingConfig):
         self.config = config
         self._cache = {} if config.cache_results else None
-        self._settings = load_settings()
         # NOTE (TASK-3502 AC#4): a reranker carries NO per-call state. How
         # many scoring attempts failed is part of `rerank()`'s RETURN value
         # (`RerankOutcome`), because the service holds this object as a
@@ -183,28 +182,20 @@ class BaseReranker(ABC):
     async def _call_llm_impl(
         self, prompt: str, system_prompt: Optional[str] = None
     ) -> str:
-        """Implementation of LLM call."""
-        # Get API key from settings
-        api_key = None
-        if self.config.model_provider == "openai":
-            api_key = self._settings.get("API", {}).get("openai_api_key")
-        elif self.config.model_provider == "anthropic":
-            api_key = self._settings.get("API", {}).get("anthropic_api_key")
-        elif self.config.model_provider == "groq":
-            api_key = self._settings.get("API", {}).get("groq_api_key")
-        elif self.config.model_provider == "deepseek":
-            api_key = (
-                self._settings.get("api_settings", {})
-                .get("deepseek", {})
-                .get("api_key")
-            )
-        # Add other providers as needed
+        """Implementation of LLM call.
 
-        if not api_key:
-            raise ValueError(
-                f"No API key found for provider: {self.config.model_provider}"
-            )
-
+        The reranker resolves NO credential of its own (TASK-17065). Each
+        ``chat_with_<provider>`` handler behind ``chat_api_call`` resolves
+        its own key when the caller passes none -- through the normalised
+        config path, with the precedence CLAUDE.md documents and
+        ``resolve_provider_api_key``'s validity check applied -- and the
+        keyless local providers (``ollama``/``llama_cpp``/``vllm``/
+        ``koboldcpp``/``mlx_lm``/...) need none at all. This module used to
+        hand-roll an ``if/elif`` over ``self._settings["API"]``, a table
+        ``load_settings()`` never builds, and then reject every provider it
+        did not name; that is how reranking reached 0 of the 29 providers
+        the picker offers. Credential resolution is not this module's job.
+        """
         # Prepare messages
         messages_payload = []
         if system_prompt or self.config.system_prompt:
@@ -221,19 +212,35 @@ class BaseReranker(ABC):
 
         # Call using chat_api_call
         try:
-            # Run in executor since chat_api_call is sync
-            import asyncio
-
+            # Run in executor since chat_api_call is sync. KEYWORDS, through
+            # a partial: `run_in_executor` forwards only positionals, and a
+            # positional list at this signature is exactly what used to route
+            # the credential into `api_endpoint` -- the "Unsupported API
+            # endpoint: <key>" failure, and the key-in-a-log-line disclosure
+            # TASK-17165 had to redact downstream.
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
-                chat_api_call,
-                api_key,  # api_key
-                messages_payload,  # messages_payload
-                self.config.model_provider,  # provider
-                self.config.model_name,  # model
-                self.config.temperature,  # temp
-                self.config.max_tokens,  # maxp
+                functools.partial(
+                    chat_api_call,
+                    api_endpoint=self.config.model_provider,
+                    messages_payload=messages_payload,
+                    model=self.config.model_name,
+                    temp=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    # STATED, not inherited. Every handler currently
+                    # DECLARES `streaming=False`, so the config is never
+                    # consulted -- but the shipped `CONFIG_TOML_CONTENT`
+                    # sets `streaming = true` for 18 of the 29 providers
+                    # (every keyless local among them), and one handler
+                    # declaring `streaming: bool | None = None` would hand
+                    # this function a generator. Nothing here would raise:
+                    # `str(<generator>)` parses as no JSON, every row comes
+                    # back `scored=False`, and the search is billed in full
+                    # for an entirely unscored rerank. Pinned by
+                    # Tests/RAG_Search/test_reranker_degraded_paths.py.
+                    streaming=False,
+                ),
             )
 
             # Extract the text response

@@ -1336,3 +1336,21 @@ def test_reranker_provider_default_constant_matches_rerankingconfig_default():
     )
 
     assert DEFAULT_RERANKER_PROVIDER == RerankingConfig().model_provider
+
+
+def test_reranker_attempts_constant_matches_rerankingconfig_retries():
+    """The cost disclosure's retry multiplier is the same hardcode trade.
+
+    `BaseReranker._call_llm` retries EVERY exception (not only transient
+    ones) `max_retries` times, so one candidate can cost `1 + max_retries`
+    provider calls and the fold's honest ceiling is `top_k` x that. If the
+    dataclass default moves, the disclosed number must move with it
+    (TASK-17065 final review F1).
+    """
+    from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
+        RERANKER_ATTEMPTS_PER_CANDIDATE,
+    )
+
+    cfg = RerankingConfig()
+    assert cfg.retry_on_failure is True
+    assert RERANKER_ATTEMPTS_PER_CANDIDATE == 1 + cfg.max_retries

@@ -44,6 +44,51 @@ and this project adheres to Some kind of Versioning
   `CodeRepoCopyPasteWindow` is unaffected.
 
 ### Changed
+- **Behaviour change — reranking now really calls the provider, and really spends
+  (TASK-17065).** Reranking has silently no-opped since the feature existed: the
+  reranker resolved credentials from a `settings["API"]` table `load_settings()`
+  never builds, and dispatched `chat_api_call` with a positional argument list that
+  did not match its signature, so it could complete a scoring call for **none** of
+  the 29 chat providers the picker offers. It now calls `chat_api_call` the way every
+  other caller in this app does — by keyword, resolving no credential of its own and
+  letting each provider handler apply the documented precedence. **A profile that
+  carries a reranker config therefore begins issuing real provider calls on its next
+  search, where it previously failed and skipped.** Nothing else has to be turned on
+  for the spend to start.
+
+  *What one search costs* (measured against the real reranker with the provider seam
+  faked, not estimated): **pointwise** — the strategy the "Enable reranking" toggle
+  creates — issues one call per candidate up to the configured "Rerank results", **and
+  retries every failure twice** (`max_retries = 2`, on *any* exception, a bad
+  credential included), so the honest ceiling is `top-k × 3`: 3 candidates against a
+  failing provider issued 9 calls, 20 issued 60. **listwise** issues exactly **1** call
+  per search (10 documents max) — but the same retry rule applies, so a failing
+  provider costs **3**. **pairwise** is a merge sort, so it issues `≈ n·log₂n`
+  *comparisons*, not `n` scorings — **40–69** calls at top-k 20, ~200 with retries; no
+  built-in preset uses it.
+
+  *Who is spending* — the tick is not the only door. Reranking is on for any profile
+  that carries a reranker config, and three read-only built-ins ship with one:
+  **Hybrid Full** (pointwise, 15), **High Accuracy** (pointwise, 15) and **Research
+  Papers** (listwise, 10), all billing `openai` by default. Making one of them active
+  is a spend decision with no checkbox in it. The out-of-the-box active profile,
+  Hybrid Basic, carries none — so a fresh install still spends nothing until you pick
+  or configure otherwise. Untick "Enable reranking" on your own profile to opt out;
+  clone a built-in and untick it there.
+
+  This lands on top of TASK-3502's disclosure surfaces, which are what make the spend
+  visible: the cost line under the Reranking toggle in Settings ▸ RAG ("Reranking
+  scores each result with a separate `<provider>` call — up to `<n>` calls per search,
+  or `<n×3>` if calls fail and are retried, billed at that provider's rates"), and the
+  skipped/degraded sentence on the Library results screen. Three further consequences
+  worth naming: the old broken call put the token cap into the `streaming` slot, so any
+  scoring call that *had* resolved a credential would have STREAMED — scoring calls now
+  pass `streaming=False` explicitly rather than inheriting a handler default; the
+  reranker's configured `max_tokens` (default 100) and `temperature` (default 0.0) now
+  reach providers for the first time; and `High Accuracy` and `Research Papers` no
+  longer ask for a free-form `reasoning` field under that 100-token cap — nothing
+  outside the reranker ever read it, and truncating it turned a billed call into an
+  unscored row (listwise: a wholly failed rerank).
 - Unsupported direct imports of `get_user_database_path`, `USER_DB_DIR`, and
   `USER_DB_PATH` have been removed.
 - Textual 8.x is now required (`>=8.0.0,<9`). This corrects the previously
