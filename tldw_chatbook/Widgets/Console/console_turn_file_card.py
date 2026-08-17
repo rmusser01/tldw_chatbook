@@ -16,12 +16,15 @@ from typing import Any, Callable
 
 from loguru import logger
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import (
+    DiffHunk,
     TurnFileEntry,
+    hunk_excerpt,
+    split_unified_diff,
     turn_file_entries,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
@@ -54,6 +57,13 @@ class ConsoleTurnFileCard(Vertical):
         overflow-y: auto;
         overflow-x: hidden;
         scrollbar-size: 1 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk {
+        height: auto;
+        margin-bottom: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-actions {
+        height: auto;
     }
     """
     # Selection styling (parity with `.console-transcript-message-selected`)
@@ -90,7 +100,12 @@ class ConsoleTurnFileCard(Vertical):
         self._selected = selected
         self._entries: list[TurnFileEntry] = []
         self._row_for_entry: dict[int, dict] = {}
-        self._diff_cache: dict[int, str] = {}
+        #: Segmented hunks per row index, over the FULL diff text (never a
+        #: display-truncated slice -- see ``split_unified_diff``). Replaces
+        #: the old joined-string cache: styling and the per-hunk display cap
+        #: are applied at MOUNT time, from these raw hunks, so re-expanding
+        #: a collapsed row never re-derives anything from a lossy cache.
+        self._hunk_cache: dict[int, list[DiffHunk]] = {}
 
     @property
     def marker_text(self) -> str:
@@ -266,12 +281,12 @@ class ConsoleTurnFileCard(Vertical):
                 f"{entry.label}  +{entry.adds} −{entry.dels}"
             )
             return
-        if idx not in self._diff_cache:
+        if idx not in self._hunk_cache:
             snapshot_row = self._row_for_entry.get(idx)
             if snapshot_row is None:
                 return
-            # Provider construction, the cap read, the off-thread diff read,
-            # and the mount all live in one try/except -- a transient
+            # Provider construction, the off-thread diff read + segmentation,
+            # and the mounts all live in one try/except -- a transient
             # provider-construction failure on first expand must degrade the
             # row (stay collapsed) rather than raise out of this `on_*`
             # handler, which Textual would otherwise propagate to
@@ -280,24 +295,48 @@ class ConsoleTurnFileCard(Vertical):
                 provider = self._provider_factory()
                 if provider is None:
                     return
-                text = await asyncio.to_thread(
-                    provider.diff_text, snapshot_row, entry.path
-                )
-                cap = int(getattr(provider, "diff_display_max_lines", 2000))
-                lines = text.splitlines()
-                if len(lines) > cap:
-                    hidden = len(lines) - cap
-                    lines = lines[:cap] + [f"… {hidden} more lines (diff capped)"]
-                self._diff_cache[idx] = "\n".join(lines)
+
+                def _read() -> list[DiffHunk]:
+                    # Segmentation always runs on the FULL diff text (spec
+                    # §2) -- never a display-truncated slice -- so hunk
+                    # indices stay stable regardless of the per-hunk display
+                    # cap applied below at mount time.
+                    text = provider.diff_text(snapshot_row, entry.path)
+                    return split_unified_diff(text)
+
+                hunks = await asyncio.to_thread(_read)
+                self._hunk_cache[idx] = hunks
                 if not body.is_mounted:
                     return
-                await body.mount(
-                    Static(
-                        self._styled_diff(self._diff_cache[idx]),
-                        classes="console-turn-file-diff-text",
-                        markup=False,
+                cap = int(getattr(provider, "diff_display_max_lines", 2000))
+                # Per-hunk display cap (ruling): every hunk gets its own
+                # block even when its body is elided, so hunks past the old
+                # single-Static's global cap are still present (and,
+                # later, annotatable) -- floor-guarded so a diff with more
+                # hunks than cap lines still shows at least 1 body line
+                # each.
+                per_hunk_cap = max(1, cap // max(1, len(hunks)))
+                for hunk_idx, hunk in enumerate(hunks):
+                    await body.mount(
+                        Static(
+                            self._styled_diff(
+                                self._hunk_display_text(
+                                    hunk,
+                                    per_hunk_cap,
+                                    include_prelude=hunk_idx == 0,
+                                )
+                            ),
+                            classes="console-turn-file-hunk",
+                            markup=False,
+                        )
                     )
-                )
+                    # Task 4 populates this row with the `✎ note` affordance
+                    # and any existing notes; mounted empty here so the
+                    # per-hunk block/action-row pairing is in place ahead of
+                    # that task.
+                    await body.mount(
+                        Horizontal(classes="console-turn-file-hunk-actions")
+                    )
             except Exception:
                 logger.opt(exception=True).warning(
                     "Turn file card diff load failed for {}", entry.label
@@ -308,6 +347,32 @@ class ConsoleTurnFileCard(Vertical):
             f"{resolve_glyph(_CHEVRON_OPEN)} {entry.status}  "
             f"{entry.label}  +{entry.adds} −{entry.dels}"
         )
+
+    @staticmethod
+    def _hunk_display_text(hunk: DiffHunk, cap: int, *, include_prelude: bool) -> str:
+        """Render one hunk's display text: prelude (first hunk only) plus
+        its header and a per-hunk-capped, honestly-elided body.
+
+        Reuses ``hunk_excerpt``'s own elision convention (the "... N more
+        lines" tail) so the card and the note-delivery block (Task 5) never
+        drift on how a capped hunk reads.
+
+        Args:
+            hunk: The hunk to render.
+            cap: Maximum number of body lines to show before eliding.
+            include_prelude: Whether to prepend ``hunk.file_prelude`` (only
+                the first hunk of a file carries it in the UI -- every
+                hunk's own copy is identical, see ``DiffHunk``'s docstring).
+
+        Returns:
+            The combined prelude/header/body text, ready for
+            ``_styled_diff``.
+        """
+        parts: list[str] = []
+        if include_prelude and hunk.file_prelude:
+            parts.append(hunk.file_prelude)
+        parts.append(hunk_excerpt(hunk, cap=cap))
+        return "\n".join(parts)
 
     @staticmethod
     def _styled_diff(text: str):

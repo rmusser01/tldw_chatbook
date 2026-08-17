@@ -45,6 +45,48 @@ class _FakeProvider:
         return "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-old line\n+new line\n"
 
 
+def _multi_hunk_diff_text(n_hunks: int, body_lines_per_hunk: int) -> str:
+    """Build a synthetic unified diff with ``n_hunks`` hunks, each carrying
+    a unique marker in its header and body so segmentation can be asserted
+    independent of any single hunk's content.
+    """
+    lines = ["--- a/big.py", "+++ b/big.py"]
+    for hunk_idx in range(n_hunks):
+        start = hunk_idx * 10 + 1
+        lines.append(
+            f"@@ -{start},{body_lines_per_hunk} +{start},{body_lines_per_hunk} "
+            f"@@ hunk_{hunk_idx}_marker"
+        )
+        for line_idx in range(body_lines_per_hunk):
+            lines.append(f"+hunk{hunk_idx}_body_line{line_idx}")
+    return "\n".join(lines) + "\n"
+
+
+class _MultiHunkProvider(_FakeProvider):
+    """Fake provider whose ``diff_text`` returns a multi-hunk synthetic
+    diff, with a configurable display cap and a call counter -- used to
+    assert per-hunk segmentation/elision and that collapse/re-expand reuses
+    the cache instead of re-fetching.
+    """
+
+    def __init__(
+        self,
+        *,
+        n_hunks: int = 3,
+        body_lines_per_hunk: int = 5,
+        diff_display_max_lines: int = 2000,
+    ):
+        super().__init__()
+        self.diff_display_max_lines = diff_display_max_lines
+        self._n_hunks = n_hunks
+        self._body_lines_per_hunk = body_lines_per_hunk
+        self.diff_text_calls = 0
+
+    def diff_text(self, row, path):
+        self.diff_text_calls += 1
+        return _multi_hunk_diff_text(self._n_hunks, self._body_lines_per_hunk)
+
+
 class _Host(App):
     CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
 
@@ -93,8 +135,8 @@ async def test_expand_shows_capped_scrolling_diff():
         assert body is not None, "diff body never displayed"
         # `body` is the VerticalScroll container -- its own render() is a
         # Blank placeholder (containers paint children, not self-content).
-        # The diff text lives on the mounted Static child.
-        diff_text_widget = body.query_one(".console-turn-file-diff-text")
+        # The diff text lives on the mounted per-hunk Static child(ren).
+        diff_text_widget = body.query_one(".console-turn-file-hunk")
         assert "+new line" in str(diff_text_widget.render())
         assert str(body.styles.overflow_y) == "auto"
         assert body.styles.max_height is not None
@@ -103,6 +145,117 @@ async def test_expand_shows_capped_scrolling_diff():
         await pilot.press("enter")
         await pilot.pause()
         assert not body.display and body.is_mounted
+
+
+async def _expand_first_row(pilot, card):
+    """Press the first row open and return its diff body once displayed."""
+    row = card.query(".console-turn-file-row").first()
+    row.focus()
+    await pilot.press("enter")
+    for _ in range(60):
+        bodies = card.query(".console-turn-file-diff")
+        if bodies and bodies.first().display:
+            return bodies.first()
+        await pilot.pause(0.02)
+    raise AssertionError("diff body never displayed")
+
+
+@pytest.mark.asyncio
+async def test_expand_multi_hunk_diff_mounts_one_block_per_hunk():
+    """Expanding a row whose diff has 3 hunks mounts exactly 3
+    ``.console-turn-file-hunk`` statics and 3 ``.console-turn-file-hunk-
+    actions`` rows inside that row's diff body -- one pair per hunk.
+    """
+    provider = _MultiHunkProvider(n_hunks=3, body_lines_per_hunk=5)
+
+    class _MultiHunkHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _MultiHunkHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        hunks = list(body.query(".console-turn-file-hunk"))
+        actions = list(body.query(".console-turn-file-hunk-actions"))
+        assert len(hunks) == 3
+        assert len(actions) == 3
+        for hunk_idx in range(3):
+            assert f"hunk_{hunk_idx}_marker" in str(hunks[hunk_idx].render())
+
+
+@pytest.mark.asyncio
+async def test_expand_hunk_past_old_cap_still_present():
+    """A diff longer than ``diff_display_max_lines`` still yields ONE BLOCK
+    PER HUNK, with per-hunk elision -- hunks past where the OLD flat-Static
+    global cap would have cut off the whole diff are still present (and,
+    later, annotatable).
+
+    Pre-fix (flat ``.console-turn-file-diff-text`` Static) this is RED: the
+    old code capped the WHOLE joined diff text at ``diff_display_max_lines``
+    lines, so with a small cap the THIRD hunk's header never appeared in the
+    rendered output at all -- it fell past the global cutoff before its
+    line was ever reached. The per-hunk display cap (``max(1,
+    diff_display_max_lines // len(hunks))``) guarantees every hunk gets its
+    own block, each with its own honest "... N more lines" elision,
+    regardless of how many hunks precede it.
+    """
+    # 3 hunks x 5 body lines + prelude(2) + 3 headers = 20 lines total.
+    # diff_display_max_lines=4: the OLD global cap only ever showed the
+    # prelude + hunk 0's header + one body line -- hunks 1 and 2 (including
+    # their headers) never rendered at all.
+    provider = _MultiHunkProvider(
+        n_hunks=3, body_lines_per_hunk=5, diff_display_max_lines=4
+    )
+
+    class _CappedHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _CappedHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        hunks = list(body.query(".console-turn-file-hunk"))
+        assert len(hunks) == 3, (
+            "every hunk must get its own block, even past the old global cap"
+        )
+        combined = "\n".join(str(hunk.render()) for hunk in hunks)
+        assert "hunk_2_marker" in combined, (
+            "third hunk's header must survive segmentation past the old "
+            "global line cap"
+        )
+        # Per-hunk elision: cap=4 // 3 == 1 body line kept per hunk, so
+        # each hunk's block carries an honest "more lines" tail rather than
+        # silently vanishing.
+        assert "more lines" in str(hunks[0].render())
+
+
+@pytest.mark.asyncio
+async def test_expand_collapse_reexpand_reuses_cache_single_diff_text_call():
+    """Collapsing and re-expanding a row reuses the cached hunks -- the
+    provider's ``diff_text`` is called exactly once, not once per expand.
+    """
+    provider = _MultiHunkProvider(n_hunks=1, body_lines_per_hunk=2)
+
+    class _CountingHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _CountingHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        await _expand_first_row(pilot, card)  # expand (cache miss)
+        row = card.query(".console-turn-file-row").first()
+        row.focus()
+        await pilot.press("enter")  # collapse
+        await pilot.pause()
+        await pilot.press("enter")  # re-expand (cache hit)
+        await pilot.pause(0.3)
+        assert provider.diff_text_calls == 1
 
 
 @pytest.mark.asyncio
@@ -284,7 +437,7 @@ async def test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs(tm
                     break
                 await pilot.pause(0.02)
             assert body is not None, f"diff body {index} never displayed"
-            return str(body.query_one(".console-turn-file-diff-text").render())
+            return str(body.query_one(".console-turn-file-hunk").render())
 
         turn_diff = await _expand(0)
         assert "ALPHA_TURN_MARKER" in turn_diff
