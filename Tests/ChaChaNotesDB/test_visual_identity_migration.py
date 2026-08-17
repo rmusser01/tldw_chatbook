@@ -162,7 +162,7 @@ def _assert_schema_contract(connection: sqlite3.Connection) -> None:
         name for name in _tables(connection) if name.startswith("visual_identity_")
     }
     assert visual_tables == VISUAL_IDENTITY_TABLES
-    assert _version(connection) == 39
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
     for table, expected in EXPECTED_COLUMNS.items():
         actual = {
@@ -315,7 +315,10 @@ def test_visual_identity_schema_is_installed_by_migration_and_fresh_construction
         _assert_required_version_and_active_binding_uniqueness(connection)
 
         if tables_before is not None:
-            assert _tables(connection) - tables_before == VISUAL_IDENTITY_TABLES
+            # Superset, not equality: upgrading from v38 runs EVERY later
+            # migration, so tables added after v39 (e.g. v40's
+            # transcript_annotations) legitimately appear in the delta.
+            assert VISUAL_IDENTITY_TABLES <= _tables(connection) - tables_before
             assert (
                 _table_sql(connection, "character_expression_images")
                 == expression_table_before
