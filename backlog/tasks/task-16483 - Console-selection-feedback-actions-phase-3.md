@@ -4,7 +4,7 @@ title: Console selection feedback actions phase 3
 status: Done
 assignee: []
 created_date: '2026-08-16 05:27'
-updated_date: '2026-08-17 03:29'
+updated_date: '2026-08-17 05:33'
 labels: []
 dependencies: []
 priority: high
@@ -35,11 +35,9 @@ Per Docs/superpowers/plans/2026-08-15-console-selection-feedback-phase3.md (task
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-LIVE SPIKE ADDENDUM (2026-08-16, user-verified in a real terminal): four live rounds on feat/console-selection-feedback hardened the geometry and surfaced one pre-existing phase-1 layout bug, all fixed with RED->GREEN regression tests (233 selection/feedback tests green at tip 8ff227c15):
+DEAD-BUTTON / MESSAGE-SELECTION FOLLOW-UPS (2026-08-16, all user-verified in a real terminal, tip 8c6819606):
 
-- 01fe56883: menu clamps within the OWNING TRANSCRIPT's box, never the bare screen (a bottom release painted it over the composer).
-- e2dc272e4: compact single-row buttons + shrink guard (feedback menu 24 -> 9 rows; base 11 -> 5; fits boxes down to 6 rows by dropping border+hint).
-- 2567e9a1e: ANSI-color mode keeps disabled feedback buttons borderless with labels (per-ID specificity over textual's ansi disabled rule).
-- 395fd6882 + ee5a5dd9c: on bottom overflow the menu hops entirely above the selected row (then touching) so the reverse-video highlight stays visible; stale selection_top clamped to the owner box.
-- d2b4d2630 (the 'black bar under the composer'): the screen-mounted menu consumed its own height from the screen's 1fr budget (textual 8.2.8 feeds position:absolute children's heights into the fr denominator) -> overlay:screen added; ADR-068 Amendment 3 records the rule (screen-mounted overlays need position:absolute AND overlay:screen). Root-caused via a temporary F12 whole-screen-children layout dump, removed in 8ff227c15. Lessons recorded in backlog/docs/lessons-live-verification.md.
+- 78cd9aeba: the drag-release Click reached the transcript's on_click with just_finished already consumed (row guard's or-chain skipped consume_release_click and did not stop the event) -> _remove_selection_menu() wiped the selection before menu actions read it ('buttons only work once'; queue-race dependent, first menu of a session usually won). Both row guards now consume BOTH tokens and stop the artifact; the transcript's on_click checks suppression before any dismissal cleanup. Regression: two consecutive drag->ask-side-chat rounds via raw driver-shaped events.
+- 86f5807c9: plain clicks' synthesized Click routes to the mouse CAPTURER (the drag-arm captures on press; release happens after the Click was forwarded), so the row never saw clicks and mouse click-to-select never toggled in real terminals (pilot clicks bypass capture). The transcript's on_click re-dispatches capture-routed clicks to the targeted row (event.control walk) with the suppression guard. Regression: real-shaped plain click toggles then untoggles a message.
+- 8c6819606: spike instrumentation (mouse event logs, Button.press/App.on_event wraps) removed; lessons recorded in backlog/docs/lessons-live-verification.md (capture reroute + one-shot-token consumption + widget-level event dumps).
 <!-- SECTION:NOTES:END -->
