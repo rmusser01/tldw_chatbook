@@ -554,12 +554,15 @@ It now says:
    signal until the user opens Console.
 2. **The woken conversation becomes the active session** (§11). Worth an
    owner eyeball before this reaches users.
-3. **The launch fires once, at startup.** A completion that lands while
-   the app is running but Console has never been opened in that process
-   still has no fire point: the fan-out consumer that records it lives on
-   the agent bridge, which nothing built. That is not a regression (it was
-   unreachable before too — with no Console there is no bridge to run a
-   sub-agent from), but it means "wake at launch" is exactly what it says.
+3. **The launch fires once, at startup — and that is the whole extent of
+   it.** With no marks nothing is built, so no sub-agent can run and
+   nothing can land: the absence of a later fire point is a definition,
+   not a gap. With marks, the launch DOES build the bridge and its
+   fan-out, so a survivor spawned by the launch wake's own turn settles
+   into a live consumer and delivers headlessly through the fires
+   landing's path. The one thing that never happens is a *second* mark
+   sweep later in the same run; a mark set after startup waits for the
+   next Console visit or the next launch, exactly as before.
 4. **The stale-mark clearing is a durable delete.** It is narrowed three
    ways (§8) and uncertainty always keeps the mark, but it is the only
    write in this slice that destroys user-visible state.
