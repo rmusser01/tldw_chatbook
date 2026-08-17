@@ -3646,6 +3646,12 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
+        # task-17169 slice 2: review-note previews keyed by NATIVE message id
+        # (the transcript marker's input), plus the conversation the map was
+        # last loaded for -- reloads happen only on conversation change; live
+        # Comment writes update the map in place.
+        self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
+        self._console_annotation_loaded_conversation: str | None = None
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
@@ -15302,6 +15308,70 @@ class ChatScreen(BaseAppScreen):
             repository,
         )
 
+    def _sync_console_annotation_discovery(self, store: Any) -> None:
+        """Load persisted review annotations when the active conversation changes.
+
+        task-17169 slice 2 (the restore half of the inline marker): the map is
+        keyed by NATIVE message id, so a reload maps each stored row's
+        persisted message id back through the store's messages. Annotations
+        are local-only and written solely through this screen, so a reload is
+        needed only when the conversation changes -- live writes keep the map
+        current in between. The DB read runs off-thread (repo lesson: never
+        sqlite on the UI loop's sync tick) with exit_on_error=False.
+        """
+        session = getattr(store, "_sessions", {}).get(
+            getattr(store, "active_session_id", None)
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            if self._console_annotation_loaded_conversation is not None:
+                self._console_annotation_loaded_conversation = None
+                self._console_annotation_previews = {}
+            return
+        conversation_id = str(conversation_id)
+        if conversation_id == self._console_annotation_loaded_conversation:
+            return
+        self._console_annotation_loaded_conversation = conversation_id
+        self._console_annotation_previews = {}
+        database = getattr(getattr(store, "persistence", None), "db", None)
+        if database is None:
+            return
+        self.run_worker(
+            self._load_console_annotation_previews(database, store, conversation_id),
+            exclusive=True,
+            group="console-annotation-previews",
+            exit_on_error=False,
+        )
+
+    async def _load_console_annotation_previews(
+        self, database: Any, store: Any, conversation_id: str
+    ) -> None:
+        """Worker body: read annotation rows and re-key them to native ids."""
+        try:
+            rows = await asyncio.to_thread(
+                database.get_transcript_annotations, conversation_id
+            )
+        except Exception:
+            logger.warning(
+                f"Console annotations: load failed for {conversation_id!r}",
+                exc_info=True,
+            )
+            return
+        if self._console_annotation_loaded_conversation != conversation_id:
+            return  # conversation switched while the read was in flight
+        native_by_persisted = {
+            message.persisted_message_id: message.id
+            for message in self._native_console_messages()
+            if message.persisted_message_id is not None
+        }
+        previews: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            native_id = native_by_persisted.get(row.get("message_id"))
+            if native_id is None:
+                continue
+            previews[native_id] = previews.get(native_id, ()) + (row["comment"],)
+        self._console_annotation_previews = previews
+
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
@@ -15589,6 +15659,8 @@ class ChatScreen(BaseAppScreen):
             # only -- the banner shows above the boundary message when it is on
             # the rendered path, and disappears (inert) otherwise.
             store = self._ensure_console_chat_store()
+            self._sync_console_annotation_discovery(store)
+            transcript.set_annotation_previews(self._console_annotation_previews)
             summary_boundary_id: str | None = None
             if store.active_session_id is not None:
                 _summary, summary_boundary_id = store.session_context_summary(
@@ -19389,12 +19461,21 @@ class ChatScreen(BaseAppScreen):
             # empty submit has nothing to mark the row with). Inside the same
             # never-raises guard: neither durable write may cost the dispatch.
             if action == ConsoleSelectionFeedbackRequested.ACTION_COMMENT and comment:
-                controller.store.record_feedback_annotation(
+                annotation_id = controller.store.record_feedback_annotation(
                     session_id,
                     anchor_message_id=anchor_message_id,
                     quote=quote,
                     comment=comment,
                 )
+                if annotation_id:
+                    # The inline marker updates immediately; the next sync
+                    # tick pushes the map to the mounted transcript.
+                    existing = self._console_annotation_previews.get(
+                        anchor_message_id, ()
+                    )
+                    self._console_annotation_previews[anchor_message_id] = (
+                        existing + (comment,)
+                    )
         except Exception:
             logger.warning(
                 "Console selection feedback: audit record failed for anchor "

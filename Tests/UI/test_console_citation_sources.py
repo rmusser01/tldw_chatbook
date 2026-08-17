@@ -476,6 +476,8 @@ def _bare_screen(
     screen = ChatScreen.__new__(ChatScreen)
     screen._console_chat_store = _FakeStore(messages)
     screen._console_citation_counts = {}
+    screen._console_annotation_previews = {}
+    screen._console_annotation_loaded_conversation = None
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
     screen._console_citation_repository_token = None
@@ -1005,8 +1007,10 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     transcript = SimpleNamespace(
         pending_selection_id=None,
         set_presentation_context=Mock(),
+        set_change_review_provider_factory=Mock(),
         set_messages=Mock(),
         set_citation_counts=Mock(),
+        set_annotation_previews=Mock(),
         set_original_attempt_previews=Mock(),
         set_summary_boundary=Mock(),
         sync_jump_indicator=Mock(),

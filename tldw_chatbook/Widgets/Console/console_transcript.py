@@ -756,6 +756,23 @@ def _message_body_render_text(
     return Content.assemble(*body_segments)
 
 
+def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
+    """One marker row's content: a dim header plus each note, first line only.
+
+    The marker is the transcript-side viewer for persisted Comment
+    annotations (task-17169): compact enough to sit inline, complete enough
+    that the note is readable without leaving the transcript.
+    """
+    header = "Review note" if len(notes) == 1 else f"Review notes ({len(notes)})"
+    segments: list = [(f"✎ {header}", "dim")]
+    for note in notes:
+        first_line = note.splitlines()[0] if note else ""
+        if len(first_line) > 200:
+            first_line = first_line[:199] + "…"
+        segments.extend(("\n", first_line))
+    return Content.assemble(*segments)
+
+
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
@@ -765,6 +782,7 @@ class _TranscriptRow:
         "message",
         "diff",
         "citations",
+        "annotations",
         "original-attempt",
         "image",
         "generation-card",
@@ -2382,6 +2400,9 @@ class ConsoleTranscript(VerticalScroll):
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        # task-17169: screen-owned review-note previews keyed by native
+        # message id -- a message with entries gains an inline marker row.
+        self._annotation_previews: dict[str, tuple[str, ...]] = {}
         self._speech_states: dict[str, ConsoleSpeechPresentationState] = {}
         #: TASK-1860: ids of TOOL markers currently showing their FULL result.
         #: Pure view state, owned here: expansion never touches the store, is
@@ -3594,6 +3615,22 @@ class ConsoleTranscript(VerticalScroll):
             and message_id
             and type(count) is int
             and count > 0
+        }
+
+    def set_annotation_previews(
+        self, previews: Mapping[str, tuple[str, ...]]
+    ) -> None:
+        """Replace screen-owned review-note previews keyed by native message ID.
+
+        task-17169 slice 2: the screen's sync loop pushes this every tick
+        (the citation-counts pattern); entries without an id or without at
+        least one note are dropped so the row derivation below can treat
+        presence as "render a marker".
+        """
+        self._annotation_previews = {
+            message_id: notes
+            for message_id, notes in previews.items()
+            if isinstance(message_id, str) and message_id and notes
         }
 
     def set_change_review_provider_factory(
@@ -4963,6 +5000,20 @@ class ConsoleTranscript(VerticalScroll):
                         renderable=f"Sources ({citation_count})",
                     )
                 )
+            annotation_notes = self._annotation_previews.get(message.id)
+            if annotation_notes:
+                # task-17169: inline review-note marker under the annotated
+                # message. The notes ride the signature so an added or edited
+                # note re-renders the mounted marker instead of going stale.
+                rows.append(
+                    _TranscriptRow(
+                        key=f"annotations:{message.id}",
+                        kind="annotations",
+                        signature=("annotations", message.id, annotation_notes),
+                        message=message,
+                        renderable=_annotation_marker_content(annotation_notes),
+                    )
+                )
             original_attempt = self._original_attempt_previews.get(message.id)
             if original_attempt is not None:
                 rows.append(
@@ -5276,6 +5327,12 @@ class ConsoleTranscript(VerticalScroll):
             and row.message.tool_diff is not None
         ):
             return ConsoleToolDiffRow(row.message.id, row.message.tool_diff)
+        if row.kind == "annotations" and row.message is not None:
+            return Static(
+                row.renderable,
+                id=f"console-annotations-{row.message.id}",
+                classes="console-transcript-annotations",
+            )
         if row.kind == "citations" and row.message is not None:
             button = Button(
                 row.renderable,
