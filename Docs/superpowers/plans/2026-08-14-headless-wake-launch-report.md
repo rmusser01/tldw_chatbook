@@ -88,10 +88,11 @@ Two genuinely separate `TldwCli` processes over one `tmp_path`:
   never constructs a `ChatScreen` at all — asserted as a precondition in
   every test in the file, not assumed.
 
-**BEFORE** (at `ed49499b8`, zero bytes of this branch, the finished file
-copied into the detached baseline worktree — measured twice: **6 failed,
-3 passed** against the first draft and **8 failed, 3 passed** against the
-final ten-test file):
+**BEFORE** (at `ed49499b8`, zero bytes of this branch, the file copied
+into the detached baseline worktree — re-measured against every version
+rather than quoted from the first: **6 failed, 3 passed** (9 tests),
+**8 failed, 3 passed** (10 tests), **9 failed, 3 passed** (the final 11,
+155.4s)):
 
 ```
 FAILED …::test_a_launch_delivers_a_wake_owed_from_a_previous_process
@@ -100,6 +101,7 @@ E   AssertionError: a background sub-agent finished before this process
     launch delivered no wake turn at all
 FAILED …::test_a_second_launch_does_not_re_announce_a_delivered_wake
 FAILED …::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+FAILED …::test_a_launch_built_controller_is_not_sticky_when_console_opens
 FAILED …::test_a_launch_with_no_marks_constructs_nothing_and_reads_once
 E   AssertionError: a launch with no marks must cost exactly one indexed
     mark listing; got []
@@ -107,7 +109,7 @@ FAILED …::test_the_startup_cost_pin_is_not_vacuous
 FAILED …::test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing
 FAILED …::test_an_unresolvable_ephemeral_mark_is_cleared_at_launch
 FAILED …::test_a_launch_hydrates_only_the_conversations_that_are_owed
-8 failed, 3 passed, 3 warnings in 138.82s
+9 failed, 3 passed, 3 warnings in 155.42s
 ```
 
 The file COLLECTS cleanly at the merge-base — every symbol it imports
@@ -452,7 +454,7 @@ summary line.**
 | Gate | Baseline @ merge-base `ed49499b8` | Branch | Delta |
 |---|---|---|---|
 | **The specified battery** — `test_console_headless_wake_fires` (1), `test_console_headless_approval` (14), `test_console_sync_outlives_screen` (5), `test_console_store_continuity` (4), `test_console_viewless_hooks` (12), `test_console_runtime_lifetime` (14), `test_console_runtime_ownership` (7), `test_screen_residency` (7), `test_console_headless_wake_invariants` (13), the 16-file wake glob (109), probe (1) | **187 passed, 0 failed** (216.4s) | **198 passed, 0 failed** (280.0s), same files **plus** the two new suites | **+11** = the 9 launch tests and 2 hydration tests that existed when it ran (the launch file later grew to 11) |
-| **The new suites** — `test_console_launch_wake` (11) + `test_console_conversation_hydration` (2) | **8 failed, 3 passed** (the launch file only, at the merge-base; the hydration file cannot COLLECT there — its subject does not exist — so it is reported separately rather than folded in) | **13 passed** | — |
+| **The new suites** — `test_console_launch_wake` (11) + `test_console_conversation_hydration` (2) | **9 failed, 3 passed** (the launch file + probe only, at the merge-base; the hydration file cannot COLLECT there — its subject does not exist — so it is reported separately rather than folded in) | **13 passed** (+ probe) | — |
 | **The resume-owning suites** — `test_console_resume_active_path`, `test_console_workspace_controller`, `test_console_session_settings`, `test_console_generation_store`, `test_console_video_message`, probe | **286 passed, 0 failed** (133.5s) | **286 passed, 0 failed** (128.8s) | **0** |
 | `Tests/Agents/` + probe | not measured — a green final cannot hide a regression | **1459 passed, 0 failed** (43.0s) | — |
 | **The whole Console population in ONE process** — every `Tests/UI/test_console_*.py` + `test_screen_residency` + probe (166 files branch / 165 base) | see §10.2 | see §10.2 | — |
@@ -489,6 +491,13 @@ Order dependence is therefore ruled out as well as timing flakiness.
 - **A launch wake's approval round was not driven end to end.** The app
   handle it needs is asserted (§7, M9); the behaviour is owned by the
   approval landing's suite. Naming it rather than implying coverage.
+- **TWO owed conversations at one launch is not tested here.** The launch
+  hydrates both and `retry_soon` delivers them one at a time under
+  `_delivering` — but that serialization is the coordinator's, already
+  pinned by the wake suites, and the Console mount claim can seed several
+  conversations too, so the shape is not new to this slice. The launch
+  suite covers one owed + one unowed
+  (`test_a_launch_hydrates_only_the_conversations_that_are_owed`).
 - **The launch-hydrated session becomes the store's ACTIVE session**,
   because at launch there is no other. A user who opens Console after a
   launch wake therefore lands in the woken conversation rather than a
