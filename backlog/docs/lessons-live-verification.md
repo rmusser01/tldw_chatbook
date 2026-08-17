@@ -905,3 +905,31 @@ tooltip mechanism, where region/paint/clip agree) -- never `dock` plus
 `styles.offset`, whose paint and hit regions diverge. Interaction suppression
 meant for a synthesized follow-up event needs its own one-shot token, not a
 shared flag that other handlers consume.
+
+## `position: absolute` still eats 1fr budget in textual 8.2.8 — screen-mounted overlays need `overlay: screen` (console "black bar" spike, 2026-08-16)
+
+The user's screenshots of the Console all showed a black bar of dead rows under
+the composer whenever a selection was active. Three vision passes analyzed the
+selection menu (my most recent work) and called it correct — which it was; the
+menu was also the *cause*. Textual 8.2.8's vertical layout excludes
+`position: absolute` children from sibling stacking
+(`layouts/vertical.py`: `if not overlay and not absolute: y = next_y`) but
+still passes **every** child's height into `resolve_box_models`, the fr
+denominator — so the 9-row menu mounted on the screen silently subtracted 9
+rows from `#screen-content`'s `1fr`, floating the composer above dead rows.
+`overlay: screen` is the style that removes an overlay from the container's
+flow math entirely; `absolute + overlay: screen` keeps the anchor and frees
+the budget. Fixed in d2b4d2630.
+
+Two process failures made this cost hours: (1) every reproduction attempt
+measured layouts **without the menu open**, because the harness flows that
+mount the menu didn't have a 1fr sibling for it to rob — the defect's
+precondition (screen-mounted overlay + 1fr sibling) never existed in one
+place until the real app was booted with the menu mounted; the "Your own
+library may not contain the precondition" lesson above is the same trap.
+(2) I analyzed what I had most recently changed instead of what the user was
+pointing at. A temporary keybinding that dumps the live geometry of the whole
+bottom chain (F12 → regions/display/dock/height of every screen child) turned
+one angry screenshot into an exact attribution — screen-children dumps beat
+fixed-widget dumps because they can name a consumer you didn't think to ask
+about.
