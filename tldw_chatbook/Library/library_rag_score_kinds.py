@@ -47,12 +47,14 @@ LIBRARY_RAG_SCORE_KINDS = frozenset(
 
 #: ``RAGService._fuse_hybrid_results``' per-leg provenance block.
 HYBRID_FUSION_METADATA_KEY = "hybrid_fusion"
-#: What a REAL reranked row carries. ``PointwiseReranker._apply_scores``
+#: What a REAL reranked row carries. ``BaseReranker._apply_scores``
 #: (``RAG_Search/reranker.py``) is the only reranking path that REPLACES a
-#: row's score -- with the LLM's relevance score, or by default a weighted
-#: blend of it and the original similarity -- and it stamps this key while
-#: doing so. It is therefore the production signal that "this score is no
-#: longer a similarity".
+#: row's score -- with the scoring model's relevance score, or by default a
+#: weighted blend of it and the original similarity -- and it stamps this key
+#: while doing so. It is therefore the production signal that "this score is
+#: no longer a similarity". Two strategies take that path: ``pointwise``
+#: (an LLM's 0-1 score) and ``cross_encoder`` (a local cross-encoder's
+#: logits, min-max normalised into ``score_scale``; TASK-16965).
 #:
 #: It matters that this is keyed on score REPLACEMENT rather than on "a
 #: reranker ran": ``PairwiseReranker`` and ``ListwiseReranker`` only
