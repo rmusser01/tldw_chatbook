@@ -569,9 +569,15 @@ async def test_the_activity_line_never_pushes_the_row_past_the_screen():
         )
         await pilot.pause()
         screen_width = app.screen.size.width
+        screen_height = app.screen.size.height
+        transcript_right = transcript.content_region.right
         for row_id in ("u1", "a1"):
             row = transcript.query_one(f"#console-message-{row_id}")
             assert row.region.x + row.region.width <= screen_width, (
+                row_id,
+                row.region,
+            )
+            assert row.region.x + row.region.width <= transcript_right, (
                 row_id,
                 row.region,
             )
@@ -580,6 +586,12 @@ async def test_the_activity_line_never_pushes_the_row_past_the_screen():
                     row_id,
                     child.region,
                 )
+        # The other half of the hazard: a `1fr` element in a laid-out row
+        # pushes its NEIGHBOURS off, so the earlier row must still be on
+        # screen and the in-flight row must stay a couple of lines tall.
+        user_row = transcript.query_one("#console-message-u1")
+        assert 0 <= user_row.region.y < screen_height, user_row.region
+        assert transcript.query_one("#console-message-a1").region.height <= 4
 
 
 @pytest.mark.asyncio
