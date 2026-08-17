@@ -209,7 +209,12 @@ async def main_async(args: argparse.Namespace) -> int:
             service, search_params=search_params, paper_search_fn=paper_search_fn
         )
 
-        question_set = QUESTION_SETS[args.question_set]
+        from tldw_chatbook.Utils.input_validation import validate_text_input
+
+        question_set_name = str(args.question_set)
+        if not validate_text_input(question_set_name, max_length=100):
+            raise SystemExit(f"[args] invalid --question-set value: {question_set_name!r}")
+        question_set = QUESTION_SETS[question_set_name]
         print(f"question set: {args.question_set}")
         payloads = []
         for question in question_set[: args.questions]:

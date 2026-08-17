@@ -604,7 +604,7 @@ def search_crossref(
                 http, "GET", f"{CROSSREF_API_BASE}/works",
                 timeout=timeout, max_retries=max_retries, params=params,
             )
-            data = _json_or_error(response, "openalex")
+            data = _json_or_error(response, "crossref")
 
     message = data.get("message") or {}
     items: list[dict[str, Any]] = []
@@ -677,7 +677,7 @@ def search_zenodo(
                 http, "GET", ZENODO_API_BASE,
                 timeout=timeout, max_retries=max_retries, params=params,
             )
-            data = _json_or_error(response, "openalex")
+            data = _json_or_error(response, "zenodo")
 
     hits = (data.get("hits") or {})
     items: list[dict[str, Any]] = []
@@ -750,7 +750,7 @@ def search_figshare(
                 http, "POST", FIGSHARE_API_BASE, timeout=timeout,
                 max_retries=max_retries, body=body,
             )
-            data = _json_or_error(response, "openalex")
+            data = _json_or_error(response, "figshare")
 
     items: list[dict[str, Any]] = []
     for raw in data if isinstance(data, list) else []:
@@ -925,13 +925,13 @@ def search_biorxiv(
         response = _request_with_retries(
             client, "GET", url, timeout=timeout, max_retries=max_retries
         )
-        data = _json_or_error(response, "_validate_date")
+        data = _json_or_error(response, "biorxiv")
     else:
         with httpx.Client() as http:
             response = _request_with_retries(
                 http, "GET", url, timeout=timeout, max_retries=max_retries
             )
-            data = _json_or_error(response, "openalex")
+            data = _json_or_error(response, "biorxiv")
 
     total = 0
     messages = data.get("messages") or []
