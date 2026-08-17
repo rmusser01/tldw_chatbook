@@ -19344,12 +19344,53 @@ class ChatScreen(BaseAppScreen):
             return
         action, quote = event.action, event.quote
         self.run_worker(
-            self._console_selection_feedback_flow(action, quote),
+            self._console_selection_feedback_flow(
+                action, quote, event.anchor_message_id
+            ),
             group="console-selection-feedback",
         )
 
+    def _record_console_feedback_event(
+        self, action: str, quote: str, comment: str, anchor_message_id: str | None
+    ) -> None:
+        """Write the durable audit record for one dispatched feedback event.
+
+        task-17169 (phase 4): the feedback itself is ephemeral -- composed
+        into the next user message and gone. This lands it in the ADR-066
+        trajectory sidecar as an ``user_feedback`` event keyed to the
+        quoted row, so a run's review history survives a restart.
+
+        Called only for feedback that is actually dispatched (a cancelled
+        modal abandons the whole thing, so there is nothing to audit), and
+        only when the originating row supplied an anchor -- without one
+        there is no message to key the row to. It NEVER raises: the store
+        seam already swallows its own failures, and this guard covers the
+        lookup path too, because losing an audit record must not cost the
+        user the feedback they actually wrote.
+        """
+        if not anchor_message_id:
+            return
+        try:
+            controller = self._ensure_console_chat_controller()
+            session_id = controller.store.active_session_id
+            if not session_id:
+                return
+            controller.store.record_feedback_event(
+                session_id,
+                anchor_message_id=anchor_message_id,
+                action=action,
+                quote=quote,
+                comment=comment or None,
+            )
+        except Exception:
+            logger.warning(
+                "Console selection feedback: audit record failed for anchor "
+                f"{anchor_message_id!r}; the feedback itself was dispatched.",
+                exc_info=True,
+            )
+
     async def _console_selection_feedback_flow(
-        self, action: str, quote: str
+        self, action: str, quote: str, anchor_message_id: str | None = None
     ) -> None:
         """Comment modal, then compose and dispatch the feedback message.
 
@@ -19369,6 +19410,10 @@ class ChatScreen(BaseAppScreen):
         lines.extend(f"> {line}" if line.strip() else ">" for line in quote.splitlines())
         if comment:
             lines.append(comment)
+        # Audit BEFORE the dispatch: the queue may block behind an active
+        # run, and the record is about what the user said, not about when
+        # the send drained.
+        self._record_console_feedback_event(action, quote, comment, anchor_message_id)
         await self._prompt_queue.dispatch("\n".join(lines))
 
     def _recover_stuck_console_send_stash(

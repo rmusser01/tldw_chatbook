@@ -789,6 +789,21 @@ async def test_comment_posts_selection_feedback_requested_and_cleans_up():
         assert not app.screen.query(ConsoleSelectionMenu)
 
 
+@pytest.mark.asyncio
+async def test_feedback_event_carries_the_quoted_row_as_its_anchor():
+    """task-17169: durable feedback has to say WHAT it was about. The quote
+    alone cannot survive a re-render or a re-run -- the anchor is the row's
+    message id, which the sidecar row is keyed to."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="idle")
+    async with app.run_test(size=(80, 40)) as pilot:
+        row = await _drag_select_first_row(pilot, app)
+
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+
+        assert app.feedback_events[0].anchor_message_id == row.message_id
+
+
 # ---------------------------------------------------------------------------
 # Selection feedback routing (phase 3, task 5)
 # ---------------------------------------------------------------------------
@@ -827,7 +842,7 @@ def _stub_comment_modal(screen, comment: str | None) -> list:
 
 
 async def _run_feedback_request(
-    pilot, *, action: str, quote: str, comment: str | None
+    pilot, *, action: str, quote: str, comment: str | None, anchor_message_id=None
 ):
     """Post one feedback request on the real console screen, stubbed seams.
 
@@ -842,7 +857,11 @@ async def _run_feedback_request(
     composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
     composer.insert_text("in-progress user draft")
     draft_before = composer.draft_text()
-    screen.post_message(ConsoleSelectionFeedbackRequested(action=action, quote=quote))
+    screen.post_message(
+        ConsoleSelectionFeedbackRequested(
+            action=action, quote=quote, anchor_message_id=anchor_message_id
+        )
+    )
     await pilot.pause()
     await pilot.pause()
     return queue, pushed, composer, draft_before
@@ -1113,3 +1132,116 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
             "second selection's menu action must still carry the quote "
             "(drag-release click wiped it before the action read it)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Durable feedback audit record (task-17169, phase 4)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingStore:
+    """Captures record_feedback_event calls; returns a configurable result."""
+
+    def __init__(self, result=True, boom=False):
+        self.calls: list[dict] = []
+        self._result = result
+        self._boom = boom
+
+    def record_feedback_event(self, session_id, **kwargs):
+        self.calls.append({"session_id": session_id, **kwargs})
+        if self._boom:
+            raise RuntimeError("store exploded")
+        return self._result
+
+
+def _stub_feedback_store(screen, store):
+    controller = screen._ensure_console_chat_controller()
+    controller.store.record_feedback_event = store.record_feedback_event  # type: ignore[method-assign]
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_dispatched_feedback_is_recorded_against_its_anchor():
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        controller = _stub_feedback_store(screen, store)
+
+        await _run_feedback_request(
+            pilot,
+            action="request-changes",
+            quote="fix the retry loop",
+            comment="tighten error paths",
+            anchor_message_id="msg-42",
+        )
+
+        assert store.calls == [
+            {
+                "session_id": controller.store.active_session_id,
+                "anchor_message_id": "msg-42",
+                "action": "request-changes",
+                "quote": "fix the retry loop",
+                "comment": "tighten error paths",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_abandoned_feedback_records_nothing():
+    """Escape/Cancel abandons the whole feedback -- there is no event to
+    audit, so the ledger must not gain a row for it."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        queue, _pushed, _composer, _draft = await _run_feedback_request(
+            pilot,
+            action="lgm",
+            quote="ship it",
+            comment=None,
+            anchor_message_id="msg-42",
+        )
+
+        assert queue.dispatched == []
+        assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_feedback_without_an_anchor_still_dispatches():
+    """No origin row means no audit anchor -- but the user's feedback is the
+    point, and losing it over a missing audit record would be backwards."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        queue, *_ = await _run_feedback_request(
+            pilot,
+            action="lgm",
+            quote="ship it",
+            comment="",
+            anchor_message_id=None,
+        )
+
+        assert queue.dispatched == ["[LGTM]\n> ship it"]
+        assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_audit_write_never_costs_the_user_their_feedback():
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore(boom=True)
+        _stub_feedback_store(screen, store)
+
+        queue, *_ = await _run_feedback_request(
+            pilot,
+            action="lgm",
+            quote="ship it",
+            comment="",
+            anchor_message_id="msg-42",
+        )
+
+        assert len(store.calls) == 1
+        assert queue.dispatched == ["[LGTM]\n> ship it"]

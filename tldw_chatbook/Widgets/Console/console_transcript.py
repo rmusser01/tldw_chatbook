@@ -4646,7 +4646,9 @@ class ConsoleTranscript(VerticalScroll):
         if row is not None:
             self.post_message(
                 ConsoleSelectionFeedbackRequested(
-                    action=action, quote=cap_quote(row.get_selection_text())
+                    action=action,
+                    quote=cap_quote(row.get_selection_text()),
+                    anchor_message_id=getattr(row, "message_id", None),
                 )
             )
             row.clear_selection()

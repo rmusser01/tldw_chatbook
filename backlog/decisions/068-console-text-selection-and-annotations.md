@@ -174,3 +174,43 @@ must set both `position: absolute` and `overlay: screen`. Regression test
 a screen-shaped app. Attributed via a temporary F12 layout dump that listed
 every direct screen child -- the screen-children view is what named the
 consumer; the fixed-chain view could not.
+
+### Amendment 4 (2026-08-17, task-17169): feedback persists to BOTH the trajectory sidecar and an annotations table
+
+Phase 3 shipped the feedback actions (Request changes / LGTM / Comment) as
+pure dispatch: the composed message went to the prompt queue and nothing
+remained. **Maintainer decision (2026-08-17): both candidate homes, not
+either one** — every feedback action writes a `user_feedback` event to the
+ADR-066 trajectory sidecar (chronological audit, per run), and Comment
+actions additionally persist a `transcript_annotations` row (this ADR's §
+persistence sketch) rendered as an inline marker on the anchored row. The
+two serve different needs and barely overlap: the ledger answers "what did
+the operator say about this run, in order"; the annotation answers "which
+rows carry review notes" while reading the transcript.
+
+One earlier claim is corrected here rather than repeated: an annotations
+table is NOT inherently a synced surface. Sync triggers in ChaChaNotes are
+opt-in per table, so `transcript_annotations` ships local-only exactly like
+the sidecar unless triggers are deliberately added later.
+
+Sidecar half — two load-bearing details, both found by tests:
+
+1. **A feedback row is keyed to the message it critiques, so it must NEST
+   rather than be treated as that message's own sidecar row.** The
+   projection buckets rows by message id (`message_rows[mid] = row`), so a
+   `user_feedback` row landing in that bucket would *displace* the anchor's
+   real `assistant` row and take its timing and turn attribution with it.
+   Feedback joins `_NESTED_KINDS` alongside the tool kinds and renders at
+   depth 1 under its anchor, ordered by ledger seq — which also means
+   repeated feedback on one message accumulates instead of overwriting
+   (`seq=None` auto-assign keeps the `(message_id, event_kind, seq)` primary
+   key distinct).
+2. **The audit record is never allowed to cost the user their feedback.**
+   The write happens after the comment modal resolves (a cancelled modal
+   abandons the whole feedback, so there is nothing to audit) and before the
+   queue dispatch, and both the store seam and the screen hook swallow their
+   own failures. A missing anchor — a feedback request with no origin row —
+   skips the record and still dispatches.
+
+The annotations half (migration, `row_key` spike, badge/popover UI) is the
+second slice of task-17169; its details land here as they are built.

@@ -88,10 +88,19 @@ class ConsoleSelectionFeedbackRequested(Message):
     ACTION_LGM = "lgm"
     ACTION_COMMENT = "comment"
 
-    def __init__(self, action: str, quote: str) -> None:
+    def __init__(
+        self, action: str, quote: str, anchor_message_id: str | None = None
+    ) -> None:
         super().__init__()
         self.action = action
         self.quote = quote
+        # task-17169: the id of the row the selection came from. Durable
+        # feedback needs an anchor the quote cannot provide -- quoted text
+        # does not survive a re-render or identify WHICH message it came
+        # from when the same text appears twice. None for callers that
+        # have no origin row (the feedback is still dispatched; only the
+        # audit record is skipped).
+        self.anchor_message_id = anchor_message_id
 
 
 class ConsoleSelectionMenu(Vertical):
