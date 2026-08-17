@@ -42,9 +42,18 @@ a second stateless boundary nested inside `BriefingDetailRegion` that holds
 just the script detail `Static` and the Synthesize/Play/Stop toolbar;
 `watch_selected_script` additionally patches the scripts table's highlight
 in place, mirroring `watch_selected_briefing`'s treatment of the briefings
-table. `scripts`/`scripts_with_audio`/`citations` are unchanged: they still
-rebuild the WHOLE detail region, because they change what the scripts (or
-citations) table itself must show.
+table. `scripts`/`citations` are unchanged: they still rebuild the WHOLE
+detail region, because they change what the scripts (or citations) table
+itself must show -- a genuine row-SET change. `scripts_with_audio` was
+INITIALLY left on that same wide path too, on the same "changes what the
+table must show" reasoning -- but review caught that the reasoning does not
+actually hold for it: it never adds or removes a script row, only a row's
+existing Audio-column cell, and a first synthesis for the selected script
+(the pane's own primary action on a script, right after the very selection
+this task made survive) was reopening the destroy-rebuild defect on its own
+happy path. `watch_scripts_with_audio` now patches every row's cells in
+place instead (`_restyle_script_row`, the same helper `watch_selected_
+script` already uses), and never touches the table's mounted identity.
 
 The body is markdown an LLM wrote from remote feed content, so it is
 rendered with `hyperlinks=False` -- see `_MARKDOWN_HYPERLINKS` below.
@@ -854,8 +863,15 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
     #: (see `_AUDIO_FAILED_MARK` above), which the old presence-only
     #: shape could not do: a failed synthesis rendered visually identical
     #: to a successful one. Screen-supplied, resolved alongside `scripts`
-    #: inside `_load_briefings`. Selection-derived: `recompose=False`,
-    #: watcher refreshes the detail region only (task-15779).
+    #: inside `_load_briefings`. Selection-derived: `recompose=False`.
+    #: Task-16852 review fix: `watch_scripts_with_audio` patches the
+    #: scripts table's Audio cells in place (`_restyle_script_row`) --
+    #: NOT a whole-region rebuild. Unlike `scripts` above (a real row-SET
+    #: change), a synthesis never adds or removes a script row, only an
+    #: existing row's Audio cell -- and a first synthesis for the SELECTED
+    #: script is the pane's own primary action on a script, so tearing the
+    #: table down for it would reopen this task's own defect on the
+    #: feature's happy path (caught in review, not in the original pass).
     scripts_with_audio = reactive[dict[int, str]](dict)
     #: Task 5 (phase 3): whether the WHOLE watchlist -- not merely the
     #: selected script -- has at least one export-ready audio episode
@@ -2047,10 +2063,11 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
 
         No `is_mounted` guard needed beyond `_refresh_detail_region`'s own:
         an unmounted pane has no region to find, so the query simply
-        misses. The same applies to the two watchers below. Unlike
-        `selected_script`/`script_audio` (task-16852), a new `scripts`
-        list changes what the scripts table itself must show, so it stays
-        scoped to the WHOLE detail region.
+        misses. The same applies to `watch_citations` below. Unlike
+        `selected_script`/`script_audio`/`scripts_with_audio` (task-16852),
+        a new `scripts` list is a real row-SET change -- it changes what
+        the scripts table itself must show, so it stays scoped to the
+        WHOLE detail region.
         """
         self._refresh_detail_region()
 
@@ -2062,7 +2079,48 @@ class ArtifactsPane(RecomposeCaptureGuard, Vertical):
         self._refresh_script_detail_region()
 
     def watch_scripts_with_audio(self) -> None:
-        self._refresh_detail_region()
+        """Review fix, task-16852: patch the scripts table's Audio column
+        in place -- do NOT tear down the whole detail region.
+
+        Unlike `scripts`/`citations` (real row-SET changes: rows are added
+        or removed, so the table genuinely needs rebuilding), `scripts_
+        with_audio` never adds or removes a script row -- it is only ever
+        consulted inside `_script_row_cells` for the Audio column's own
+        cell (`self.scripts_with_audio.get(row.get("id"))`), a per-CELL
+        change on rows the table already has. A first synthesis for the
+        selected script is exactly the pane's own primary action on a
+        script, landing right after a selection this task already made
+        survive -- so tearing the table down here would silently reopen
+        the destroy-rebuild defect this task exists to close, on the
+        feature's own happy path (found in review).
+
+        Repaints EVERY row (not just the ones whose status literally
+        changed): `_restyle_script_row` already recomputes each row's
+        cells from current state, so repainting every row costs one cheap
+        `update_cell` call per cell and cannot drift from a rebuild --
+        cheaper and simpler than diffing which ids `scripts_with_audio`
+        actually touched, and provably identical output either way, since
+        both paths share `_script_row_cells`.
+
+        The Synthesize/Play/Stop toolbar is NOT touched here: it renders
+        from `script_audio` (the SELECTED script's own newest render),
+        never from `scripts_with_audio` (every script's newest STATUS,
+        table-only) -- `compose_script_detail`/`_script_detail_renderable`
+        never read `scripts_with_audio` at all. `watch_script_audio`
+        already refreshes `ScriptDetailRegion` on its own, independently,
+        whenever a synthesis lands new playback state.
+        """
+        try:
+            table = self.query_one("#artifacts-scripts-table", DataTable)
+        except NoMatches:
+            return
+        selected_key = (
+            str(self.selected_script.get("id")) if self.selected_script else None
+        )
+        for row in self.scripts:
+            row_key = str(row.get("id"))
+            style = self._SELECTED_ROW_STYLE if row_key == selected_key else ""
+            self._restyle_script_row(table, row_key, style)
 
     def watch_citations(self) -> None:
         self._refresh_detail_region()

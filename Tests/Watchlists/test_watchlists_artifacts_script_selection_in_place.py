@@ -44,6 +44,7 @@ from Tests.Watchlists.test_watchlists_artifacts_selection_in_place import (
     _table_plains,
 )
 from tldw_chatbook.Subscriptions.briefing_cast import dump_roster
+from tldw_chatbook.Subscriptions.briefing_service import STATUS_COMPLETE
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import ArtifactsPane
 
 # Same reason as the sibling files' own mark: the unit CI job selects
@@ -287,4 +288,72 @@ async def test_the_script_detail_updates_while_the_scripts_table_content_stands_
         assert rows[1]["preset_name"] in plain, (
             "the script detail must render the newly selected script's own "
             "preset name"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_scripts_with_audio_change_patches_the_audio_cell_without_rebuilding_the_table():
+    """Review fix, task-16852: a first synthesis for the SELECTED script is
+    the pane's own primary action on a script -- `scripts_with_audio`
+    changing (exactly what `_apply_briefing_state_to_pane` does once a
+    Synthesize worker's `finally` reloads, `watchlists_collections_screen.
+    py:8897-8904` -> `_load_briefings`) must patch the scripts table's
+    Audio column in place, not tear the table down.
+
+    Born-red: at the pre-review-fix commit, `watch_scripts_with_audio`
+    called `_refresh_detail_region()` -- the WHOLE `BriefingDetailRegion`,
+    scripts table included -- reopening the exact destroy-rebuild defect
+    this task exists to close, on the feature's own happy path (synthesis
+    right after the selection this task already made survive).
+
+    Mutates `pane.scripts_with_audio` directly, the same reactive
+    assignment `_apply_briefing_state_to_pane` performs post-synthesis --
+    this test is about what THAT assignment does to the mounted table, not
+    about the real Synthesize worker/TTS path (covered elsewhere, e.g.
+    `test_watchlists_artifacts_pane.py::test_synthesizing_a_complete_
+    script_writes_an_audio_row_and_the_detail_shows_it`).
+    """
+    app = _build_test_app()
+    watchlist_id = _seed_watchlist(app)
+    briefing_id = _seed_briefing_with_scripts(app, watchlist_id, count=3)
+
+    async with _open_artifacts(app, watchlist_id) as (screen, pilot, host):
+        pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
+        await _select_briefing_and_settle(pane, pilot, host, briefing_id)
+
+        table = pane.query_one("#artifacts-scripts-table", DataTable)
+        rows = _script_rows(app, briefing_id)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await _settle(pilot, host)
+
+        selected = pane.selected_script
+        assert selected is not None and selected["id"] == rows[1]["id"], (
+            "precondition: a script must be selected before synthesis"
+        )
+        assert pane.scripts_with_audio == {}, "precondition: no audio yet"
+
+        # The exact assignment `_apply_briefing_state_to_pane` makes once a
+        # synthesis worker's reload lands a status for the newly-synthesized
+        # script.
+        pane.scripts_with_audio = {selected["id"]: STATUS_COMPLETE}
+        await _settle(pilot, host)
+
+        assert pane.query_one("#artifacts-scripts-table", DataTable) is table, (
+            "a scripts_with_audio change is a per-CELL update (the Audio "
+            "column), never a row-set change -- it must not rebuild the "
+            "scripts table any more than a script selection may"
+        )
+        assert table.has_focus, (
+            "and the table the user is navigating must still hold focus"
+        )
+
+        audio_cell = table.get_row_at(1)[3]
+        audio_text = (
+            audio_cell.plain if hasattr(audio_cell, "plain") else str(audio_cell)
+        )
+        assert ArtifactsPane._AUDIO_GLYPH in audio_text, (
+            "the newly-synthesized script's row must show the audio glyph "
+            f"in place -- got {audio_text!r}"
         )

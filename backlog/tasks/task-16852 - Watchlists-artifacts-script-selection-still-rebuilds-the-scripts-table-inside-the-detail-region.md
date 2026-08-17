@@ -105,11 +105,29 @@ highlight via `_move_script_row_highlight`/`_restyle_script_row` (mirroring
 discipline as `_briefing_row_cells`) and then calls a new
 `_refresh_script_detail_region()`, which recomposes only `#artifacts-script-detail-region`
 by id/type query. `watch_script_audio` moved to the same narrower call — it only affects
-the script detail/Play button, never the scripts table (only `scripts_with_audio` does,
-which stays on the wider `_refresh_detail_region()` path, unchanged). `watch_scripts`,
-`watch_scripts_with_audio`, `watch_citations` and `selected_briefing`'s own watcher are
-untouched: they still rebuild the whole `BriefingDetailRegion`, since a new `scripts`
-list (or citations) changes what the SCRIPTS table itself must show.
+the script detail/Play button, never the scripts table. `watch_scripts`/`watch_citations`
+and `selected_briefing`'s own watcher are untouched: they still rebuild the whole
+`BriefingDetailRegion`, since a new `scripts` list (or citations) is a genuine row-SET
+change to the SCRIPTS (or citations) table.
+
+**Review round.** Initial pass left `watch_scripts_with_audio` on the same wide
+`_refresh_detail_region()` path, on the same "changes what the table must show"
+reasoning applied to `scripts`/`citations` above — review caught that the reasoning does
+not actually hold for it: `scripts_with_audio` never adds or removes a script row, it
+only changes an EXISTING row's Audio-column cell (`_script_row_cells` is the only reader,
+via `self.scripts_with_audio.get(row.get("id"))`). Concretely, a first Synthesize for the
+SELECTED script — the pane's own primary action on a script, and the single most natural
+next step after the very selection this task just fixed — lands its status through
+exactly this reactive (`_synthesize_audio`'s `finally` unconditionally reloads via
+`_load_briefings` → `_apply_briefing_state_to_pane` → `pane.scripts_with_audio = ...`),
+so the WHOLE-region rebuild was reopening the destroy-rebuild defect on the feature's own
+happy path. Fixed by patching every row's cells in place instead
+(`watch_scripts_with_audio` now loops `self.scripts` and calls `_restyle_script_row` per
+row, the same helper `watch_selected_script` already uses) — the scripts table's mounted
+identity is never touched by an audio-status change. The Synthesize/Play/Stop toolbar
+needs no extra wiring for this: it renders from `script_audio` (the selected script's own
+newest render), never from `scripts_with_audio`, and `watch_script_audio` already
+refreshes `ScriptDetailRegion` independently.
 
 **CSS.** New `#artifacts-script-detail-region` rule (`_watchlists.tcss`): `height: 1fr;
 min-height: 1;` — the exact slot `#artifacts-script-detail` held directly as a sibling of
@@ -128,18 +146,39 @@ regenerated with `build_css.py`; `check_bundle_sync.py` clean.
   (`test_a_script_selection_never_recomposes_the_briefing_detail_region`) counts
   `Widget.recompose` calls directly: a script selection now costs `ArtifactsPane`==0,
   `BriefingDetailRegion`==0, `ScriptDetailRegion`==1. Verified red at pre-fix HEAD too —
-  there it fails at COLLECTION (`ImportError: cannot import name 'ScriptDetailRegion'`),
-  since the class did not exist yet; a stronger signal than a graceful assertion
-  failure, not a weaker one.
+  **correction (review round): the failure mode is a normal runtime
+  `AssertionError: assert 1 == 0` on the `BriefingDetailRegion` recompose count** (a
+  script selection recomposed that region once, pre-fix), not the `ImportError` the first
+  pass of these notes claimed. `ScriptDetailRegion` is never imported as a Python name in
+  that test file — it only appears as a string dict key for the `Counter`-based
+  `_RebuildCounter`, so a missing class could never raise `ImportError` there even in
+  principle; `Counter.__getitem__` on an absent key returns `0` instead. Reproduced
+  directly (a disposable `git worktree add --detach 094748b3e`) before writing this
+  correction. Still genuinely born-red, and arguably a *more* legible failure than the
+  originally-claimed one (it names the exact "must never rebuild the WHOLE detail region"
+  violation) — only the originally-written mechanism was wrong.
+- A 7th pin, `test_a_scripts_with_audio_change_patches_the_audio_cell_without_rebuilding_
+  the_table` (added to `test_watchlists_artifacts_script_selection_in_place.py` in the
+  review round): selects a script, focuses the table, then assigns `pane.scripts_with_
+  audio = {selected_id: STATUS_COMPLETE}` — the exact reactive write `_apply_briefing_
+  state_to_pane` performs once a Synthesize worker's reload lands. Verified red at the
+  pre-review-fix commit (`dc0a05e42`, disposable worktree): `AssertionError` on the
+  table's `is`-identity, same shape as the other six. Green post-fix, and the Audio
+  cell for the synthesized row shows `ArtifactsPane._AUDIO_GLYPH` in place.
 - Suites green post-fix: combined `-m ui` run of `test_watchlists_artifacts_pane.py` +
   `test_watchlists_artifacts_selection_in_place.py` (15779's 5 pins) +
-  `test_watchlists_artifacts_script_selection_in_place.py` (this task's 5) +
-  `test_watchlists_cold_read_swap.py` (15778's pins) = 141 passed, 15 deselected (no
-  `ui` marker on that file's non-UI-only cases), 0 failed. `test_watchlists_scoped_
-  rebuilds.py` 18/18 (15461/15779's 17 + this task's 1 new). `Tests/UI/test_watchlists_
-  destination_shell.py` 80/80 (15779's own geometry/shell baseline, unchanged). Collect-
-  only sweep of `Tests/Watchlists`: 700 tests, no import breakage (694 baseline + 6 new).
-- ruff check clean on all touched files (`artifacts_pane.py`, both test files).
+  `test_watchlists_artifacts_script_selection_in_place.py` (this task's 6, after the
+  review round's 7th pin) + `test_watchlists_cold_read_swap.py` (15778's pins) = **142
+  passed**, 15 deselected (no `ui` marker on that file's non-UI-only cases), 0 failed.
+  `test_watchlists_scoped_rebuilds.py` is `pytest.mark.asyncio`, NOT `ui` (a `-m ui`
+  filter deselects it silently — run it unmarked): **18/18** (15461/15779's 17 + this
+  task's 1 new). `Tests/UI/test_watchlists_destination_shell.py`: **80/80** (15779's own
+  geometry/shell baseline, unchanged). `check_bundle_sync.py`: 5/5 clean (no CSS touched
+  in the review round). Collect-only sweep of `Tests/Watchlists`: 700 tests at the initial
+  pass, no import breakage (694 baseline + 6 new); +1 more test added in the review round
+  (the 7th pin), no further breakage.
+- ruff check clean on all touched files (`artifacts_pane.py`, both test files), both
+  passes.
 
 **Files.** `tldw_chatbook/UI/Watchlists_Modules/artifacts_pane.py` (nested region +
 watchers + in-place patching; module/reactive docstrings updated),
