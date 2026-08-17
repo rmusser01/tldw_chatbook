@@ -161,12 +161,22 @@ async def test_a_held_tool_call_names_the_tool_in_the_rendered_assistant_row(
         assert in_flight, "the turn must own an in-flight assistant row"
         assert in_flight[-1].content == "", "the row is empty while the tool runs"
 
+        # The bridge stamped a real reading off this process's monotonic
+        # clock, taken as the tool was dispatched -- not a constant, and not
+        # a poll-quantised approximation.
+        started_at = snapshot.steps[-1].started_at
+        assert started_at is not None
+        assert 0.0 <= observed_at - started_at < 20.0, (observed_at, started_at)
+
         app = _ActivityHarness()
         async with app.run_test(size=(80, 24)) as pilot:
             transcript = app.query_one(ConsoleTranscript)
 
+            # Both ticks are driven off that production reading, so the
+            # assertions below cannot flake on how long this test's own
+            # setup happened to take.
             row_id = in_flight[-1].id
-            first = console_turn_activity_text(snapshot, now=observed_at)
+            first = console_turn_activity_text(snapshot, now=started_at + 0.2)
             early = await _paint(transcript, messages, first, row_id)
             await pilot.pause()
 
@@ -175,7 +185,7 @@ async def test_a_held_tool_call_names_the_tool_in_the_rendered_assistant_row(
             assert "<1s" in early, early
 
             # A later poll tick, same held call: only the elapsed moves.
-            later_text = console_turn_activity_text(snapshot, now=observed_at + 5.0)
+            later_text = console_turn_activity_text(snapshot, now=started_at + 5.0)
             later = await _paint(transcript, messages, later_text, row_id)
             await pilot.pause()
 
