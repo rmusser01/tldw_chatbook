@@ -307,6 +307,69 @@ something it did not. **The decomposition-on arm is not yet measured** — it
 needs the same judge model as the recorded arms (local Qwen3.8-27B) for the
 comparison to mean anything.
 
+## What decomposition is worth: the verdict (2026-08-17, task-17370)
+
+The question this whole arm answered: the recorded repositories residual was
+read as "partly genuine" -- repository records simply ARE marginal evidence for
+a broad question -- and the counter-claim was that this is precisely what
+sub-question generation and multi-hop exist to fix. Both mechanisms had been
+off in every recorded baseline. They are now measured separately, because they
+do different things and only one of them helped.
+
+| Arm | Config | Q1 gate / markers | Q2 gate / markers | Q3 gate / markers |
+|---|---|---|---|---|
+| recorded | 1 query, 1 round | 0.42 mean over 3 (0.29 pre-note) | | |
+| B | 3 queries, 1 round | 0.54 / 33 | 0.40 / 24 | 0.20 / 13 |
+| C | 3 queries, 2 rounds | 0.71 / **0** | 0.37 / **39** | 0.07 / 1 |
+| D | as C, guard fixed | 0.59 / 23 | -- | -- |
+| E | as C, endpoint fixed | 0.63 / 17 | -- | -- |
+
+**Fan-out (gate context): no measurable benefit.** The relevance prompt takes
+`sub_questions` as a required placeholder, so the recorded arms rendered an
+empty list and Arm B rendered real facets -- a genuine change in what the judge
+was asked. Mean `gate_pass_rate` went 0.42 -> 0.38, i.e. flat within this
+model's run-to-run variance. On this lane fan-out cannot change retrieval
+either, because the paper providers only ever see round 1's `[question]`
+(task-17372).
+
+**Multi-hop (retrieval): positive where the pipeline let it through.** Gap
+analysis produced real follow-up queries, round-2 queries DO reach the paper
+providers, and search calls went 3 -> 12. On Q2 -- the one question whose
+synthesis path was unaffected by task-17382 -- it held the gate rate while
+taking markers from 24 to 39 and citation density from 0.77 to 0.95. On Q1
+every 2-round arm (0.71 / 0.59 / 0.63) beat the 1-round arm (0.54).
+
+**What had been hiding it was the synthesis path, not the gate.** Q1 retrieved
+the most evidence of any run and cited NOTHING, because it was the only
+question large enough to trigger map-reduce chunking, and under task-17382
+every chunk summary was a provider error string the caller failed to recognize.
+Fixing that took Q1 from 0/0 markers to 23/23. A negative result on the
+strongest-retrieval run was an artifact.
+
+So the reading of the residual is amended: it is not established that
+repository evidence is genuinely marginal. The gate half of the argument does
+not hold; the retrieval half does, and the measurement that appeared to refute
+it was measuring a bug.
+
+### The caveat that outlives this arm
+
+No baseline in this document has EVER measured the pipeline with per-result
+summarization working. It failed in about a millisecond (wrong config section),
+then with a 404 (base URL posted raw), then with an unparseable payload
+(OpenAI endpoint, native shape parsed), and once all three were fixed it timed
+out at exactly the shipped 30s per call on a local 27B. Each time the pipeline
+fell back to raw source content -- correct degradation, and invisible in the
+metrics, because a report built from source text still resolves markers and
+verifies quotes. Every number above therefore describes source-text evidence.
+`--llm-timeout-s` now exists so that is measurable rather than assumed.
+
+### Reading gate_pass_rate
+
+It is a ratio, and multi-hop adds to its denominator. Pulling in more marginal
+repository records lowers the rate even when more good evidence is admitted --
+Q1's 0.71 with zero citations and Q2's 39 markers are the same mechanism seen
+from opposite ends. Read it beside the marker count, never alone.
+
 ## Recording a (fresh) live baseline
 
 1. Configure `[SearchSettings]` (`relevance_analysis_llm`,
