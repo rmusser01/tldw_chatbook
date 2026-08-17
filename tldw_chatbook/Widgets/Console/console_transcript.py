@@ -4065,6 +4065,32 @@ class ConsoleTranscript(VerticalScroll):
         ):
             event.stop()
             return
+        # Capture-routed row clicks (live spike 2026-08-16: 'can't select
+        # messages via mouse'): the drag-arm on press captures the mouse,
+        # and the synthesized Click is routed to THIS capturer -- the
+        # capture only releases when the MouseUp is processed, which lands
+        # after the Click was already forwarded. The row the pointer
+        # actually targeted never sees the click, so its toggle (and the
+        # row-level drag-release suppression) must run here instead.
+        row_node: Widget | None = control
+        while row_node is not None and not isinstance(
+            row_node,
+            (ConsoleMarkdownMessage, ConsoleTranscriptMessage, ConsoleToolDiffRow),
+        ):
+            row_node = row_node.parent
+        if row_node is not None:
+            event.stop()
+            manager = self.selection_manager
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
+                manager.consume_just_finished()
+                manager.consume_release_click()
+                return
+            self.toggle_message_selection(row_node.message_id)
+            return
         if control is self:
             self.action_clear_selection()
             event.stop()

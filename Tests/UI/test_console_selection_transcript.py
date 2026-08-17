@@ -698,3 +698,56 @@ async def test_real_terminal_press_without_control_arms_drag():
 
         assert len(app.query(ConsoleSelectionMenu)) == 1
         assert row.get_selection_text() != ""
+
+
+@pytest.mark.asyncio
+async def test_real_shaped_plain_click_toggles_message_selection():
+    """Live spike 2026-08-16 ('can't select messages via mouse').
+
+    A real terminal's plain click is drag-armed on press (the transcript
+    captures the mouse), and the synthesized Click is routed to the
+    CAPTURING transcript -- the capture only releases when the transcript
+    processes the MouseUp, which lands after the Click was already
+    forwarded. The row never sees the click, so message selection never
+    toggled in real terminals (pilot clicks deliver directly to the widget
+    under the pointer, masking this). The transcript's on_click must
+    re-dispatch capture-routed clicks to the row the pointer actually
+    targeted.
+    """
+    from textual.events import MouseDown, MouseUp
+
+    def raw(event_cls, x, y, button=1):
+        return event_cls(
+            widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
+            shift=False, meta=False, ctrl=False,
+        )
+
+    app = _SelectionTranscriptApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        body = _body_static(row)
+        br = body.region
+        cx, cy = br.x + 3, br.y
+
+        pilot.app.post_message(raw(MouseDown, cx, cy))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseUp, cx, cy))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transcript.selected_message_id == row.message_id
+
+        # The selected row grows its action row and the body Static's
+        # cached region goes stale mid-refresh; aim at the ROW's last cell
+        # (the body is its bottom line), which is always current.
+        await pilot.pause(0.3)
+        rr = row.region
+        cx, cy = rr.x + 3, rr.bottom - 1
+        pilot.app.post_message(raw(MouseDown, cx, cy))
+        await pilot.pause()
+        pilot.app.post_message(raw(MouseUp, cx, cy))
+        await pilot.pause()
+        await pilot.pause()
+
+        assert transcript.selected_message_id is None  # second click untoggles
