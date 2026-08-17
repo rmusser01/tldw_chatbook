@@ -292,6 +292,18 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             "mark -- the user has no way to learn the supervisor turn ever ran"
         )
 
+        # The app handle the launch-built controller needs. Deliberately not
+        # a view-hook slot (it is the APP, which outlives every view), and
+        # nothing else here would notice it missing: it is what carries a
+        # headless approval round's app-wide toast and its
+        # `call_from_thread` bridge (the headless-approval landing). A
+        # wiring assertion, labelled as one -- the consequence itself is
+        # owned by `Tests/UI/test_console_headless_approval.py`.
+        assert app.console_runtime.chat_controller.app is app, (
+            "the launch-built controller has no app handle, so a headless "
+            "approval round in a launch wake could surface nothing"
+        )
+
 
 @pytest.mark.asyncio
 async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
@@ -626,7 +638,17 @@ async def test_a_mark_with_nothing_owed_is_left_alone_at_launch(tmp_path):
     app0.chachanotes_db.add_conversation({"id": "conv-seen-later", "title": "Delivered"})
     marks0.set_mark("conv-seen-later", FLEET_UNSEEN)
 
-    app, marks, gateway = _launch_app(tmp_path)
+    app, marks, gateway = _launch_app(
+        tmp_path,
+        tree={
+            "conv-seen-later": {
+                "conversation": {"id": "conv-seen-later", "title": "Delivered"},
+                "root_threads": [
+                    {"id": "m1", "sender": "user", "content": "earlier work"}
+                ],
+            }
+        },
+    )
     async with app.run_test(size=(120, 40)) as pilot:
         assert await _quiet(pilot, lambda: bool(gateway.payloads), seconds=4.0), (
             f"a launch delivered a wake for a conversation owing none: {gateway.payloads!r}"
@@ -635,3 +657,50 @@ async def test_a_mark_with_nothing_owed_is_left_alone_at_launch(tmp_path):
             "the launch cleared a delivered-but-unseen ◈ badge -- the user "
             "loses the only pointer they had to a result they never saw"
         )
+        store = app.console_runtime.chat_store
+        opened = [] if store is None else [
+            s.persisted_conversation_id for s in store.sessions()
+        ]
+        assert "conv-seen-later" not in opened, (
+            "the launch hydrated a session for a conversation owing nothing -- "
+            "the user opens Console to an unexplained tab, and the work was "
+            f"pointless: {opened}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_launch_hydrates_only_the_conversations_that_are_owed(tmp_path):
+    """Two marks, one owed. The owed one is hydrated and delivered; the
+    other is not opened at all.
+
+    This is the case that makes the per-conversation `has_pending` guard
+    load-bearing rather than decorative: with a SINGLE unowed mark the
+    launch returns before the loop, so removing that guard changes nothing
+    observable.
+    """
+    conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
+    app0 = _build_test_app("library")
+    marks0 = _attach_real_dbs(app0, tmp_path)
+    app0.chachanotes_db.add_conversation({"id": "conv-quiet", "title": "Quiet"})
+    marks0.set_mark("conv-quiet", FLEET_UNSEEN)
+
+    tree = _fixture_tree(conversation_id, rows)
+    tree["conv-quiet"] = {
+        "conversation": {"id": "conv-quiet", "title": "Quiet"},
+        "root_threads": [{"id": "q1", "sender": "user", "content": "quiet work"}],
+    }
+    app, marks, gateway = _launch_app(tmp_path, tree=tree)
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _settle(pilot, lambda: bool(gateway.payloads)), (
+            "precondition: the OWED conversation must still be delivered"
+        )
+        opened = [
+            s.persisted_conversation_id
+            for s in app.console_runtime.chat_store.sessions()
+        ]
+        assert conversation_id in opened, opened
+        assert "conv-quiet" not in opened, (
+            "a marked-but-unowed conversation was hydrated alongside an owed "
+            f"one: {opened}"
+        )
+        assert marks.has_mark("conv-quiet", FLEET_UNSEEN)
