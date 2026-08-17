@@ -203,6 +203,18 @@ exists to remove, in a new costume.
   path before its first token) still renders bare. Out of scope here: the
   fix would be to widen the `Generating…` placeholder's own status gate,
   which is a separate behaviour change to a separate path.
+- `AgentLiveSnapshot.steps` is bounded to the last five. If a run's five most
+  recent steps are ALL sub-agent steps, the line falls back to `Generating…`
+  mid-turn rather than naming what the primary is doing. Narrow: a child's
+  step only lands in the primary's feed at all through the "no run
+  attributed" (empty run id) fallback, so five consecutive ones after the
+  primary's last step is unlikely — but it is not impossible, and the
+  fallback copy would read as pre-first-token when it is not. Pinned as
+  current behaviour by `test_a_turn_with_only_subagent_steps_falls_back_to_
+  generating` so a future change to it is deliberate.
+- The first model round of a turn says `Generating…` while every later one
+  says `Thinking…`. That follows the brief (pre-first-token keeps today's
+  copy) but is a wording seam an owner may want to collapse.
 - `AgentLiveStep.text` for a tool-call step *is* the tool name, by
   construction (`agent_runtime` adds every `STEP_TOOL_CALL` with `tool_name=`
   and no `summary`/`result`, and `_summarize`'s precedence lands on it). If a
