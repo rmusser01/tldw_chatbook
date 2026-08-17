@@ -349,7 +349,7 @@ async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_resu
     assert len(baseline_order) == 2
 
     async def _always_fail_scoring(query, result, original_rank):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     service.reranker._score_result = _always_fail_scoring
 
@@ -393,7 +393,7 @@ async def test_pairwise_reranker_counts_failed_comparisons():
     reranker = PairwiseReranker(cfg)
 
     async def _always_raise(prompt, system_prompt=None):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     reranker._call_llm = _always_raise
 
@@ -419,7 +419,7 @@ async def test_listwise_reranker_counts_total_failure():
     reranker = ListwiseReranker(cfg)
 
     async def _always_raise(prompt, system_prompt=None):
-        raise ValueError("No API key found for provider: openai")
+        raise ValueError("provider call failed (fake)")
 
     reranker._call_llm = _always_raise
 

@@ -4,9 +4,11 @@ title: >-
   Reranker credential and dispatch path can call NONE of the 29 offered
   providers -- a settings table that is never built, plus swapped chat_api_call
   arguments
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-16'
+updated_date: '2026-08-17 05:41'
 labels:
   - rag
   - settings
@@ -184,7 +186,6 @@ explicit invalid row.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 A decision is implemented, either arm acceptable: the reranker resolves credentials through the normalised config path for every provider it offers, OR the Settings provider Select is bounded to the providers the reranker can actually call
 - [ ] #2 The reranker's credential read targets a table `load_settings()` actually builds -- `self._settings["API"]` is gone, and a configured openai/anthropic/groq credential is found rather than silently read as `None`
@@ -198,14 +199,14 @@ explicit invalid row.
 - [ ] #10 The spend consequence is handled deliberately: the change lands on a build carrying TASK-3502's cost disclosure and skipped/degraded notice, and the release note states that reranking-enabled profiles begin spending real provider calls
 <!-- AC:END -->
 
-**Seam guard added by TASK-3502's Qodo round (PR #1751, finding 3):**
-`Tests/RAG_Search/test_reranker_degraded_paths.py::
-test_reranker_dispatch_binding_against_the_real_chat_api_call_signature`
-binds the caller's positional sequence against the REAL `chat_api_call`
-signature and asserts where each argument LANDS today
-(`api_endpoint`←the key, `api_key`←the provider, `temp`←the model,
-`system_message`←the temperature, `streaming`←max_tokens; `model`/`maxp`
-never reached at all). It is deliberately RED-ON-REPAIR: fixing the
-caller here MUST break it, and the repair includes rewriting it to assert
-the correct binding. Every other fake at this seam copies the caller's
-wrong order, which is why a green suite never caught this.
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Grep and list every reranker-seam chat_api_call fake under Tests/.
+2. RED: rewrite test_reranker_dispatch_binding_against_the_real_chat_api_call_signature so it OBSERVES the real caller through a signature-binding fake and asserts api_endpoint<-model_provider, model<-model_name, temp<-temperature, no credential argument. Must fail against today's caller.
+3. RED: assert the reranker no longer reads a settings table (no _settings; load_settings not called during __init__).
+4. RED: per-provider parametrised test (keyless local ollama + remote openai + anthropic/groq/deepseek) - _call_llm_impl completes, fake records api_endpoint == the provider, no 'No API key found for provider:'.
+5. Implement: delete the if/elif credential block and the load_settings() read; call chat_api_call with KEYWORDS (functools.partial in run_in_executor): api_endpoint, messages_payload, model, temp, max_tokens. Pass NO api_key. Remove dead imports.
+6. GREEN all; correct every seam fake found in step 1 to bind via inspect.signature(chat_api_call).bind; batteries: Tests/RAG_Search + Tests/Chat/test_chat_functions.py + the redaction file; ruff.
+7. Gate (RAG_EVAL=1 Tests/RAG_Eval/) with the vacuity caveat; commit + push.
+<!-- SECTION:PLAN:END -->

@@ -269,13 +269,13 @@ def library_rag_reranker_providers() -> tuple[str, ...]:
     deliberately light (see ``load_direct_library_tools``), and
     ``Chat_Functions`` is not.
 
-    This enumerates what ``chat_api_call`` can ROUTE, which is not the same
-    as what the reranker can currently CALL: its credential lookup
-    (``_call_llm_impl``) covers far fewer providers than the table has
-    rows, so most picks fail at run time -- disclosed on the results screen
-    ("Reranking was skipped (No API key found for provider: X)") rather
-    than silently. TASK-17065 owns closing that gap, and until it does the
-    honest reading of this list is "offered", not "guaranteed callable".
+    This enumerates what ``chat_api_call`` can ROUTE, and since TASK-17065
+    that is also what the reranker can CALL: it resolves no credential of
+    its own any more and dispatches by keyword, so each row reaches its
+    registered handler and each handler resolves its own key (the keyless
+    local providers need none). Whether a given provider then ANSWERS is
+    that provider's business -- a refusal is disclosed on the results
+    screen ("Reranking was skipped (...)") rather than silently.
 
     Returns:
         Every registered chat provider name, ``DEFAULT_RERANKER_PROVIDER``
