@@ -198,10 +198,12 @@ generalizes:
   as an empty list and this one rendered real facets. That is a genuine
   change in what the judge was asked.
 - **Not tested:** retrieval. The web lane returned zero results throughout
-  (the DuckDuckGo bot challenge this doc notes elsewhere), and the academic
-  lane only searches round 1's `[question]` (task-17372), so the repository
-  records under judgment were the SAME set as the 0.42 arm. Fan-out changed
-  how they were judged, not which ones existed.
+  (the DuckDuckGo bot challenge this doc notes elsewhere), and at the time the
+  academic lane only searched round 1's `[question]`, so the repository records
+  under judgment were the SAME set as the 0.42 arm. Fan-out changed how they
+  were judged, not which ones existed. task-17372 has since made the lane
+  search the generated facets, so a re-run of this arm now exercises retrieval
+  as well -- the number above does not.
 
 So the case for decomposition on this lane now rests on retrieval rather than
 on gate context: multi-hop rounds >= 2 do drive retrieval (measured
@@ -323,6 +325,14 @@ do different things and only one of them helped.
 | C | 3 queries, 2 rounds | 0.71 / **0** | 0.37 / **39** | 0.07 / 1 |
 | D | as C, guard fixed | 0.59 / 23 | -- | -- |
 | E | as C, endpoint fixed | 0.63 / 17 | -- | -- |
+
+> **Scope note (task-17372).** Every fan-out number below was measured while
+> generated sub-questions could not reach the paper providers, so it measures
+> the GATE-CONTEXT half of fan-out only. That limitation is now fixed -- the
+> academic lane searches the facets too, bounded by the same query cap and the
+> search ledger -- so fan-out's retrieval value is untested rather than
+> disproven, and needs its own arm before the "no measurable benefit" reading
+> can be extended to it.
 
 **Fan-out (gate context): no measurable benefit.** The relevance prompt takes
 `sub_questions` as a required placeholder, so the recorded arms rendered an

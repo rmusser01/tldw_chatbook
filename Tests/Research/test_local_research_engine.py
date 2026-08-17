@@ -1227,3 +1227,144 @@ def test_plan_review_patch_bounds_the_iterations():
     # Without the fix this is ["q", "gap one"]: the ledger honoured the patch
     # while the iteration bound fell back to the shipped default of 2.
     assert rounds == ["q"], rounds
+
+
+# --- fan-out reaches the academic lane (task-17372) ---------------------------
+# Sub-question generation lives inside the WEB pipeline, so generated
+# sub-questions only ever drove web searches: the academic lane looped
+# round_queries, which is [question] in round 1. Fan-out therefore changed how
+# academic evidence was JUDGED (the sub-questions reach the gate) while leaving
+# what was RETRIEVED untouched -- which is why task-17370 measured it as flat on
+# the repositories lane and could say nothing about retrieval.
+
+
+def _fanout_pipeline(question: str, sub_questions: list[str]):
+    """search_fn returning generated sub-questions, plus a recording paper_fn."""
+    paper_queries: list[str] = []
+
+    def search_fn(q, params):
+        return (
+            {"results": [{"title": "web", "url": "https://w.example/1"}], "warnings": []},
+            {"sub_questions": list(sub_questions), "main_goal": question},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {
+                "text": "Answer citing [1].",
+                "evidence": [{"id": 1, "url": "https://w.example/1", "title": "web"}],
+                "confidence": 0.5,
+                "chunks": [],
+            },
+            "relevant_results": {"0": {"url": "https://w.example/1"}},
+        }
+
+    def paper_search_fn(query):
+        paper_queries.append(query)
+        return [
+            {
+                "title": f"paper for {query}",
+                "url": f"https://p.example/{len(paper_queries)}",
+                "metadata": {"doi": f"10.1/{len(paper_queries)}"},
+            }
+        ]
+
+    async def gap_fn(context):
+        return []
+
+    return search_fn, analyze_fn, paper_search_fn, gap_fn, paper_queries
+
+
+def test_generated_sub_questions_reach_the_paper_providers():
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one", "facet two"], paper_queries
+
+
+def test_academic_fan_out_respects_the_query_cap():
+    """The lane must obey the same total-queries cap the web lane does."""
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two", "facet three"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 2},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries
+
+
+def test_academic_fan_out_cannot_spend_past_the_search_budget():
+    """Extra academic searches are ledger-counted, so a tight max_searches
+    cannot be exceeded by the lane fanning out."""
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two", "facet three"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    # The web call settles 1 + len(sub_questions) = 4 searches, so a budget of 5
+    # leaves room for exactly one extra academic query.
+    run = service.launch_run(
+        query="q",
+        autonomy_mode="autonomous",
+        limits_json={"max_iterations": 1, "max_searches": 5},
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries
+
+
+def test_a_sub_question_equal_to_the_question_is_not_searched_twice():
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["  Q  ", "facet one"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries

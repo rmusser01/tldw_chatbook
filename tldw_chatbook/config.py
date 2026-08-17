@@ -3967,7 +3967,15 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_provider_default = "google"
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
-# search_enable_subquery = false
+# search_enable_subquery = false   # generate sub-questions from the query and
+#   search those too. Costs one LLM call plus up to search_default_max_queries-1
+#   extra searches, each carrying its own per-result relevance calls. Since
+#   task-17372 the generated facets ALSO drive academic-provider searches, so
+#   enabling this changes both what evidence is retrieved and how it is judged
+#   (the facets reach the relevance prompt either way). Before that fix it
+#   changed only the judging, which is why the recorded gate measurement for
+#   fan-out says nothing about retrieval -- see
+#   Docs/Development/research-report-eval-baseline.md.
 # search_default_max_queries = 5
 # search_result_max = 10
 # relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured

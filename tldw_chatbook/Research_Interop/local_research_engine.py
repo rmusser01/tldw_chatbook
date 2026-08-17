@@ -507,6 +507,67 @@ class LocalResearchEngine:
                 ledger.release_searches(reserved_for_call - executed_searches)
         return collected, sub_questions, warnings
 
+    def _academic_queries(
+        self,
+        round_queries: list[str],
+        round_sub_questions: list[str],
+        params: dict[str, Any],
+        ledger: BudgetLedger,
+    ) -> list[str]:
+        """Queries the academic lane searches this round (task-17372).
+
+        Sub-question generation lives inside the WEB pipeline, so generated
+        facets used to drive web searches only: this lane looped
+        ``round_queries``, which is ``[question]`` in round 1. Fan-out therefore
+        changed how academic evidence was JUDGED -- the facets do reach the
+        relevance gate through the merged sub-question list -- while leaving
+        what was RETRIEVED untouched, which is why task-17370 measured fan-out
+        as flat on the repositories lane and could say nothing about retrieval.
+        The lane now searches the facets too, so enabling fan-out changes both.
+
+        The generated facets are bounded twice over. The total is capped by the
+        same ``search_default_max_queries`` the web lane obeys, and each EXTRA
+        query is reserved against the search ledger, so a tight ``max_searches``
+        cannot be exceeded by this lane. The base ``round_queries`` keep today's
+        accounting (uncounted) deliberately: counting them would shrink every
+        existing run's web budget, which is a separate decision from this one.
+
+        Args:
+            round_queries: This round's primary queries.
+            round_sub_questions: Facets the web pipeline generated this round.
+            params: Resolved search params, read for the query cap.
+            ledger: Budget ledger; extra queries are reserved against it.
+
+        Returns:
+            The queries to search, in order, deduplicated case-insensitively.
+        """
+        queries: list[str] = []
+        seen: set[str] = set()
+        for query in round_queries:
+            key = str(query).strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                queries.append(query)
+        try:
+            cap = int(params.get("search_default_max_queries", 5) or 5)
+        except (TypeError, ValueError):
+            cap = 5
+        cap = max(1, cap)
+        for facet in round_sub_questions:
+            if len(queries) >= cap:
+                break
+            key = str(facet).strip().casefold()
+            if not key or key in seen:
+                continue
+            remaining = ledger.remaining_searches()
+            if remaining is not None and remaining < 1:
+                break
+            ledger.reserve_searches(1)
+            ledger.settle_searches(1)
+            seen.add(key)
+            queries.append(str(facet).strip())
+        return queries
+
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
         self.service.save_artifact(
             run_id,
@@ -632,7 +693,15 @@ class LocalResearchEngine:
                 # run failure -- the other lane already collected.
                 providers_filter = self._active_academic_providers
                 accepts_providers = self._paper_fn_accepts_providers()
-                for query in round_queries:
+                for query in self._academic_queries(
+                    round_queries,
+                    round_sub_questions,
+                    # The same resolved params the web lane collected with, so
+                    # a per-run result_count/engine override cannot leave the
+                    # two lanes reading different caps.
+                    self._active_run_params or search_params,
+                    ledger,
+                ):
                     try:
                         if providers_filter is not None and accepts_providers:
                             papers = await self._maybe_await(
