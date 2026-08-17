@@ -87,12 +87,26 @@ async def _quiet(pilot, predicate, seconds: float = 2.0) -> bool:
     return not predicate()
 
 
-def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY):
+def _launch_app(
+    tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False
+):
     """A SECOND process over the same durable state, Console never opened.
 
     `default_tab="library"` is what keeps Console out of it: the real
     routing builds the Library screen and nothing ever constructs a
     `ChatScreen`.
+
+    Args:
+        tree: Trees for a `StaticConversationTreeService` double.
+        real_service: Re-run the app's own
+            `_wire_chat_conversation_services()` instead, so the tree comes
+            from the PRODUCTION `ChatConversationService` reading the real
+            on-disk rows. `_build_test_app` patches
+            `get_chachanotes_db_lazy` to `None`, so that wiring ran at
+            `__init__` with no DB and left the local service `None` — which
+            is why every resume test in this suite otherwise injects a
+            double. Used by the headline e2e so its "the payload carried
+            real prior history" claim is not a claim about a fixture.
     """
     app = _build_test_app("library")
     marks = _attach_real_dbs(app, tmp_path)
@@ -100,7 +114,12 @@ def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY):
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     gateway = _StallingWakeGateway(reply=gateway_reply)
     app.console_provider_gateway_factory = lambda: gateway
-    if tree is not None:
+    if real_service:
+        app._wire_chat_conversation_services()
+        assert app.local_chat_conversation_service is not None, (
+            "harness precondition: the real conversation service must be wired"
+        )
+    elif tree is not None:
         app.chat_conversation_scope_service = StaticConversationTreeService(tree)
     return app, marks, gateway
 
@@ -195,9 +214,9 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
        watched it.
     """
     conversation_id, run_id, rows = await _seed_a_finished_background_job(tmp_path)
-    app, marks, gateway = _launch_app(
-        tmp_path, tree=_fixture_tree(conversation_id, rows)
-    )
+    # The PRODUCTION tree loader, not a double: this test's history claim
+    # must be about the real persisted rows, not about a fixture.
+    app, marks, gateway = _launch_app(tmp_path, real_service=True)
 
     async with app.run_test(size=(120, 40)) as pilot:
         delivered = await _settle(pilot, lambda: bool(gateway.payloads))
@@ -316,10 +335,9 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
     SECOND run in the same conversation IS delivered by a third launch, and
     its notice names the second child, never the first.
     """
-    conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
-    tree = _fixture_tree(conversation_id, rows)
+    conversation_id, _run_id, _rows = await _seed_a_finished_background_job(tmp_path)
 
-    app1, marks1, gateway1 = _launch_app(tmp_path, tree=tree)
+    app1, marks1, gateway1 = _launch_app(tmp_path, real_service=True)
     async with app1.run_test(size=(120, 40)) as pilot:
         assert await _settle(pilot, lambda: bool(gateway1.payloads)), (
             "precondition: the first launch must deliver"
@@ -329,7 +347,7 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         "exactly what makes the second launch a real test"
     )
 
-    app2, _marks2, gateway2 = _launch_app(tmp_path, tree=tree)
+    app2, _marks2, gateway2 = _launch_app(tmp_path, real_service=True)
     async with app2.run_test(size=(120, 40)) as pilot:
         assert await _quiet(pilot, lambda: bool(gateway2.payloads), seconds=6.0), (
             "a second launch re-announced a wake the first launch already "
@@ -344,7 +362,7 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
     runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="seed-2")
     _terminal_subagent_run(runs_db, conversation_id, result="second child result")
     runs_db.close()
-    app3, _marks3, gateway3 = _launch_app(tmp_path, tree=tree)
+    app3, _marks3, gateway3 = _launch_app(tmp_path, real_service=True)
     async with app3.run_test(size=(120, 40)) as pilot:
         assert await _settle(pilot, lambda: bool(gateway3.payloads)), (
             "the exactly-once drop is too wide: a genuinely undelivered "
@@ -379,9 +397,7 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     gateway = _StallingWakeGateway(reply=LAUNCH_REPLY)
     app.console_provider_gateway_factory = lambda: gateway
-    app.chat_conversation_scope_service = StaticConversationTreeService(
-        _fixture_tree(conversation_id, rows)
-    )
+    app._wire_chat_conversation_services()
 
     async with app.run_test(size=(160, 48)) as pilot:
         assert await _settle(
@@ -597,11 +613,10 @@ async def test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing(
     durable: the ◈ mark and the owed ledger row are both still there
     afterwards -- and a later launch with the switch back ON delivers
     exactly what OFF recorded."""
-    conversation_id, run_id, rows = await _seed_a_finished_background_job(tmp_path)
-    tree = _fixture_tree(conversation_id, rows)
+    conversation_id, run_id, _rows = await _seed_a_finished_background_job(tmp_path)
 
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
-    app_off, marks_off, gateway_off = _launch_app(tmp_path, tree=tree)
+    app_off, marks_off, gateway_off = _launch_app(tmp_path, real_service=True)
     async with app_off.run_test(size=(120, 40)) as pilot:
         assert await _quiet(pilot, lambda: bool(gateway_off.payloads), seconds=5.0), (
             "the kill switch is OFF and a launch still woke the supervisor: "
@@ -620,7 +635,7 @@ async def test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing(
     off_runs.close()
 
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
-    app_on, _marks_on, gateway_on = _launch_app(tmp_path, tree=tree)
+    app_on, _marks_on, gateway_on = _launch_app(tmp_path, real_service=True)
     async with app_on.run_test(size=(120, 40)) as pilot:
         assert await _settle(pilot, lambda: bool(gateway_on.payloads)), (
             "flipping the kill switch back on did not deliver the wake that "

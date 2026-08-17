@@ -64,6 +64,43 @@ async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     assert reached, "the app never reached _schedule_deferred_startup_work"
 
 
+@pytest.mark.asyncio
+async def test_probe_p4_the_real_conversation_service_can_be_wired_after_the_db(
+    tmp_path,
+):
+    """Can a launch test use the PRODUCTION tree loader instead of a double?
+
+    `_build_test_app` patches `get_chachanotes_db_lazy` to None, so
+    `_wire_chat_conversation_services` runs at `__init__` with no DB and
+    leaves `local_chat_conversation_service` None -- which is why every
+    resume test in the suite injects a `StaticConversationTreeService`.
+    Re-running the wiring after `_attach_real_dbs` should give the real one.
+    """
+    from tldw_chatbook.Chat.console_conversation_hydration import (
+        load_console_conversation_tree,
+    )
+
+    app = _build_test_app("library")
+    _attach_real_dbs(app, tmp_path)
+    print(f"\nPROBE P4 before rewire: {app.local_chat_conversation_service!r}")
+    app._wire_chat_conversation_services()
+    print(f"PROBE P4 after rewire: {app.local_chat_conversation_service!r}")
+    app.chachanotes_db.add_conversation({"id": "conv-real", "title": "Real"})
+    app.chachanotes_db.add_message(
+        {
+            "id": "msg-real",
+            "conversation_id": "conv-real",
+            "sender": "user",
+            "content": "a real persisted message",
+        }
+    )
+    tree = await load_console_conversation_tree(app, "conv-real")
+    print(f"PROBE P4 tree keys: {sorted(tree) if tree else tree!r}")
+    if tree:
+        print(f"PROBE P4 root_threads: {tree.get('root_threads')!r}")
+    assert tree is not None, "the real service could not load a real conversation"
+
+
 def test_probe_p3a_an_unsaved_session_is_keyed_by_its_own_session_id(tmp_path):
     """The PRODUCTION source of an unresolvable mark, executed.
 
