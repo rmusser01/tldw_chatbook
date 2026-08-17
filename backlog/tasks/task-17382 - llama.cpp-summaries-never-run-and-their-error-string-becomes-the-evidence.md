@@ -1,7 +1,7 @@
 ---
 id: TASK-17382
 title: llama.cpp summaries never run and their error string becomes the evidence
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-17 08:20'
 labels:
@@ -22,17 +22,42 @@ The consequence is that on a llama.cpp run the synthesis prompt is built from ti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A llama.cpp summarization request reaches the server instead of failing on a configuration lookup
-- [ ] #2 The deep-search caller treats a provider's error-string return as a failure regardless of which provider produced it, falling back to the source content
-- [ ] #3 No provider error text can be stored as a result's content
-- [ ] #4 The sibling local summarizers are checked for the same wrong-section-name defect and fixed or cleared
-- [ ] #5 Tests cover the configuration lookup and the caller's error-string detection for a non-"Error:" prefix
-- [ ] #6 The eval baseline doc records which recorded metrics this bounds, and which it does not
+- [x] #1 A llama.cpp summarization request reaches the server instead of failing on a configuration lookup
+- [x] #2 The deep-search caller treats a provider's error-string return as a failure regardless of which provider produced it, falling back to the source content
+- [x] #3 No provider error text can be stored as a result's content
+- [x] #4 The sibling local summarizers are checked for the same wrong-section-name defect and fixed or cleared
+- [x] #5 Tests cover the configuration lookup and the caller's error-string detection for a non-"Error:" prefix
+- [x] #6 The eval baseline doc records which recorded metrics this bounds, and which it does not
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Fixed in two halves. The summarizer resolves `llama_cpp_api` once,
+defensively, and prefers `api_settings.llama_cpp.api_url` (what the chat
+handler reads and what a run priming a local endpoint sets) over the legacy
+`api_ip`, so summaries go where the run's model is. The deep-search caller
+replaces its `startswith("Error:")` test with `_is_summary_failure`, matching
+the markers the summarizers actually emit anchored to the leading clause
+(optionally after a provider prefix), applied at BOTH guard sites -- the
+per-result summary and the map-reduce chunk summary.
+
+AC #4: checked and NOT clean -- probing the loaded config shows `api_keys`,
+`local_api_ip` and `models` are absent too, so the Kobold and TabbyAPI
+summarizers fail identically. Filed as task-17383 rather than fixed here; the
+caller-side detector already protects the evidence for every provider.
+
+AC #6: the eval baseline doc records the bound in the task-17370 arm section --
+`gate_pass_rate` is unaffected (the gate judges scraped content before
+summarization), while `cited_sentence_ratio`, `claim_support_rate` and
+`quote_grounding` in every recorded table were graded on reports written
+without source bodies.
+
+Modified: `tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py`,
+`tldw_chatbook/Web_Scraping/WebSearch_APIs.py`,
+`Tests/LLM_Calls/test_llama_summarizer_config.py` (new),
+`Tests/Web_Scraping/test_deep_search_pipeline.py`.
+
 Evidence gathered when the defect surfaced during the task-17370 fan-out arm
 (2026-08-17), before any fix:
 
