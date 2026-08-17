@@ -29,12 +29,20 @@ from __future__ import annotations
 import json
 import threading
 
+import pytest
+
+from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service, make_inline_service
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
     MAX_STEERING_CHARS,
     RUN_CANCELLED,
     RUN_DONE,
+    RUN_RUNNING,
     RUN_STUCK,
+    SPAWN_TOOL_NAME,
+    WAIT_AGENTS_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
     STEP_STEERING,
@@ -57,6 +65,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -850,3 +859,144 @@ def test_red_g_a_cycle_stuck_run_leaves_a_late_post_queued():
     assert "calculator" in out.steps[-1].summary
     assert len(drain_calls) == 3  # one per boundary, all before the post
     assert coordinator.get(handle.handle_id).queued_steering == 1
+
+
+# -- service threading (agent_service: _run_one + spawn's fleet branch) ---
+#
+# The impure seam: a THREADED fleet child's LoopDeps.drain_mailbox is the
+# service-built closure over that child's own coordinator mailbox;
+# primaries and inline children stay unwired (None).
+
+
+@pytest.fixture()
+def db(tmp_path):
+    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+
+
+def test_fleet_child_drain_is_wired_to_its_own_coordinator_mailbox(db):
+    """End-to-end: a post to the child's handle reaches the child's NEXT
+    provider payload as the labeled user-role message, at the boundary."""
+    holder = {}
+
+    def steer_then_call():
+        [handle] = [
+            h for h in holder["coordinator"].snapshot() if h.status == RUN_RUNNING
+        ]
+        assert holder["coordinator"].post_steering(
+            handle.handle_id, STEERING_SOURCE_SUPERVISOR, "wrap up quickly"
+        )
+        holder["handle_id"] = handle.handle_id
+        return fence("calculator", {"expression": "6*7"})
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "combined answer",
+        ],
+        {"task one": [steer_then_call, "child answer"]},
+    )
+    holder["coordinator"] = coordinator
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "wrap up quickly")
+    second_payload = chat.child_calls["task one"][1]["messages_payload"]
+    # Delivered at the coherent boundary: after the batch's tool result,
+    # as the final message before the child's next assistant turn.
+    assert second_payload[-1] == {"role": "user", "content": labeled}
+    assert str(second_payload[-2]["content"]).startswith(
+        f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
+    )
+    # Consumed from THAT child's mailbox, not merely copied.
+    assert coordinator.drain_steering(holder["handle_id"]) == []
+    # The PRIMARY's payloads never carry the steering message -- the wiring
+    # is per-child, not per-service.
+    for call in chat.parent_calls:
+        assert not [
+            message
+            for message in call["messages_payload"]
+            if labeled in str(message.get("content", ""))
+        ]
+
+
+def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
+    """The primary's LoopDeps.drain_mailbox is None; the fleet child's is
+    the service-built closure."""
+    recorded = []
+    real_loop = agent_service.run_agent_loop
+
+    def spy(config, messages, active, deps, **kwargs):
+        recorded.append((config.system_prompt, deps.drain_mailbox))
+        return real_loop(config, messages, active, deps, **kwargs)
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", spy)
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "task one"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "combined answer",
+        ],
+        {"task one": ["child answer"]},
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    primary_drains = [
+        drain
+        for prompt, drain in recorded
+        if not prompt.startswith(SUBAGENT_PROMPT_PREFIX)
+    ]
+    child_drains = [
+        drain
+        for prompt, drain in recorded
+        if prompt.startswith(SUBAGENT_PROMPT_PREFIX)
+    ]
+    assert primary_drains == [None]
+    assert len(child_drains) == 1 and child_drains[0] is not None
+
+
+def test_inline_children_and_their_primary_stay_unwired(db, monkeypatch):
+    """CHARACTERIZATION PIN (not a red -- current behavior is already
+    correct): the inline path has no handle and so no mailbox; wiring a
+    drain there would be the regression this test exists to catch."""
+    recorded = []
+    real_loop = agent_service.run_agent_loop
+
+    def spy(config, messages, active, deps, **kwargs):
+        recorded.append(deps.drain_mailbox)
+        return real_loop(config, messages, active, deps, **kwargs)
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", spy)
+    service, _chat = make_inline_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inline task"}),
+            "inline child answer",
+            "final answer",
+        ],
+        monkeypatch,
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE and outcome.final_text == "final answer"
+    assert len(recorded) == 2  # primary + one inline child
+    assert recorded == [None, None]
