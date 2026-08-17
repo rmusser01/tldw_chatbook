@@ -605,16 +605,30 @@ still expires the request on schedule — being away does not buy the
 request extra time. The shipped default is `0`, which means no deadline:
 the request waits for you.
 
-**Known bug — the card opens empty; click the session tab to see it.**
-As shipped on 2026-08-17, opening Console in response to that toast shows
-an approval card with its "Approval required" title and *nothing else*:
-no tool name, no arguments, no Approve/Deny buttons. The round is fine —
-**clicking that conversation's session tab re-renders the card complete
-and answerable.** Until you do, the run stays blocked, and because only
-one wake is delivered at a time app-wide, other conversations' finished
-sub-agents wait behind it as well. Answering (or denying) the round
-releases them immediately. Tracked as task-17500; found by driving the
-real app, not by a test.
+**The card is rendered and answerable the first time you open Console —
+no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
+shipped, opening Console in response to that toast showed the card's
+"Approval required" title and *nothing else* — no tool row, no arguments,
+no Approve/Deny buttons — until you clicked that conversation's session
+tab. The cause was an ordering race inside the card itself: its initial
+"hide the batch body" step was deferred mount work, and on a real
+terminal the fresh Console screen's first paint delivered that hide
+*after* the mount-time sync had rendered the round, unrendering it. The
+hide is now construction state, so it cannot land on top of a rendered
+card.
+
+**While an approval waits, other conversations' owed wakes wait behind
+it — by design.** Wake deliveries are serialized app-wide (one delivery
+at a time for the whole app), so a pending approval round in one
+conversation holds every other conversation's owed wake until you answer
+it. Nothing is lost while it waits: the other conversations' `◈` marks
+and ledger rows are already durable, and answering (or denying) the
+round releases them immediately — observed live as a stalled
+conversation delivering the instant a blocked round was denied. This is
+the deliberate trade of the app-wide serialization invariant (one
+`_delivering` per runtime; see the headless-wake close-out report). With
+the card rendering correctly the hold is always answerable, so it lasts
+exactly as long as you leave the question open.
 
 One further limitation: if a woken turn arms two approval rounds for the
 same conversation, only the most recent one has a card to mount; the
@@ -1003,11 +1017,25 @@ every claim below checked against the app's own ChaChaNotes and
   row and fired no wake turn; turning it back on delivered exactly what
   OFF had recorded.*
 
-*Two things this pass could NOT confirm and which the text above now
-states honestly: the headless approval card mounts empty until you click
-the session tab (task-17500), and the live activity line's `⚙ <tool> ·
-Ns` state was not observable in a real run — every tool call in the
-session started and finished inside the same second (per the app's own
-Trajectory view), while the one long wait, an approval, renders
-`Thinking… · Ns`. The advancing elapsed itself was seen live
-(`Generating…` → `Thinking… · 1s` … `· 18s`).*
+*Two things that pass could NOT confirm: the headless approval card
+mounted empty until you clicked the session tab (filed then as
+task-17500, **since fixed — see the re-verification stamp below**), and
+the live activity line's `⚙ <tool> · Ns` state was not observable in a
+real run — every tool call in the session started and finished inside
+the same second (per the app's own Trajectory view), while the one long
+wait, an approval, renders `Thinking… · Ns`. The advancing elapsed
+itself was seen live (`Generating…` → `Thinking… · 1s` … `· 18s`).*
+
+*Headless-approval card re-verified against dev @ ee6c3d709 +
+fix/task-17500 — 2026-08-17. **Driven live in tmux** on an isolated
+scratch profile with a real Anthropic model, repeating the close-out's
+failing scenario: a risk-tagged `write_file` in a wake turn armed with
+the user on Library; the app-wide toast fired there; opening Console
+painted the FULL card the first time — `Built-in · write_file (high
+risk)`, the arguments, `Approve once / Deny` and the bulk buttons — with
+no session switch, and it stayed complete for the whole observation
+window (minutes, vs. the pre-fix pane that was title-only and stable
+that way). Answering through the rendered control is pinned by the
+automated first-open suite (a press on the painted button resolves the
+round); in the tmux rig the round was ended through the documented
+quit-denies path, and nothing was written to disk while it waited.*
