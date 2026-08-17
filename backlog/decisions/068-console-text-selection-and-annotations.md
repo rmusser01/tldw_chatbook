@@ -156,3 +156,21 @@ user-run spike rounds found and fixed defects invisible to synthetic events:
 5. **Idle Speak lives in the selected-message action row** (swaps to
    speak-stop while that message is speaking); the header hosts only
    active-playback lifecycle status.
+
+### Amendment 3 (2026-08-16, live "black bar" spike): screen-mounted overlays must also carry `overlay: screen`
+
+The phase-1 screen-mount mechanism (Amendment 2, item 3) had a hidden cost:
+textual 8.2.8's vertical layout excludes `position: absolute` children from
+sibling stacking but still feeds their height into the fr denominator, so the
+menu silently subtracted its own height from `#screen-content`'s `1fr` --
+with a selection menu open, the composer floated above dead rows between it
+and the docked footer (the user-reported "black bar under the composer").
+The fix adds `overlay: screen` to the menu's CSS: the style that removes an
+overlay from the container's flow math entirely, while `position: absolute` +
+`absolute_offset` continue to own anchoring, paint, and hit-testing. General
+rule for this codebase: any widget mounted directly on a screen as an overlay
+must set both `position: absolute` and `overlay: screen`. Regression test
+`test_screen_mounted_menu_steals_no_flow_height` pins the 1fr budget against
+a screen-shaped app. Attributed via a temporary F12 layout dump that listed
+every direct screen child -- the screen-children view is what named the
+consumer; the fixed-chain view could not.

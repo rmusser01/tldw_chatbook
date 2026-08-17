@@ -1753,14 +1753,6 @@ class ChatScreen(BaseAppScreen):
         Binding("tab", "focus_next", "Focus Next", show=False),
         Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
         Binding("f1", "show_workbench_help", "Help", show=True),
-        # TEMPORARY layout diagnostics (live spike 2026-08-16: unexplained
-        # dead rows between the composer and the footer in serve sessions).
-        # Dumps every bottom-chain widget's live region to the log; remove
-        # once the void is root-caused.
-        Binding("f12", "dump_console_layout", "Dump layout", show=False),
-        # F12 opens browser devtools in serve sessions, so the same action
-        # also rides ctrl+alt+d there.
-        Binding("ctrl+alt+d", "dump_console_layout", "Dump layout", show=False),
         Binding(
             "f6", "focus_next_workbench_pane", "Next pane", show=True, priority=True
         ),
@@ -2843,86 +2835,6 @@ class ChatScreen(BaseAppScreen):
             await self._open_console_provider_recovery()
         elif action_id == CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION:
             self._apply_detected_local_server()
-
-    def action_dump_console_layout(self) -> None:
-        """TEMPORARY layout diagnostics for the live-void spike (F12).
-
-        Logs the live region of every widget in the bottom layout chain
-        (nav bar -> screen-content -> console shell -> grid/transcript ->
-        chips/queue -> composer -> footer) plus screen and driver sizes, so
-        a reproducible void can be attributed to the exact widget that
-        stopped filling. Remove once the void is root-caused.
-        """
-        from textual.geometry import Region
-
-        def _desc(widget_id: str) -> str:
-            try:
-                node = self.query_one(widget_id)
-            except Exception:
-                return f"{widget_id}: <missing>"
-            region = node.region or Region(0, 0, 0, 0)
-            styles = node.styles
-            return (
-                f"{widget_id}: region=({region.x},{region.y},{region.width},"
-                f"{region.height}) display={node.display!s} "
-                f"h={styles.height!r} min_h={styles.min_height!r} "
-                f"offset={styles.offset!r} classes={','.join(node.classes)[:80]}"
-            )
-
-        chain = [
-            "MainNavigationBar",
-            "#screen-content",
-            "#screen-footer-status",
-            "#console-shell",
-            "#console-workbench-header",
-            "#console-control-bar",
-            "#console-workspace-grid",
-            "#console-transcript-region",
-            "#console-native-transcript",
-            "#console-status-chips",
-            "#console-staged-evidence-strip",
-            "#console-prompt-queue",
-            "#console-native-composer",
-        ]
-        # Every DIRECT screen child: a live session showed 9 rows vanishing
-        # between #screen-content's 1fr box and the docked footer, which the
-        # fixed chain above cannot attribute -- an extra runtime-mounted
-        # child would.
-        children_desc = []
-        for child in self.children:
-            region = child.region or Region(0, 0, 0, 0)
-            children_desc.append(
-                f"CHILD {type(child).__name__}#{child.id} "
-                f"region=({region.x},{region.y},{region.width},{region.height}) "
-                f"display={child.display!s} dock={child.styles.dock!r} "
-                f"h={child.styles.height!r} "
-                f"offset={child.styles.offset!r}"
-            )
-        driver_size = None
-        try:
-            driver = self.app._driver
-            driver_size = getattr(driver, "size", None)
-        except Exception:
-            driver_size = "<unavailable>"
-        dump_line = (
-            f"console_layout_dump screen_size={self.size} "
-            f"driver_size={driver_size} | "
-            + " | ".join(_desc(w) for w in chain)
-            + " || "
-            + " || ".join(children_desc)
-        )
-        logger.info(dump_line)
-        # The persistent log sink only admits metadata-tagged diagnostics
-        # records, so the dump also lands in a plain scratch file the spike
-        # can read back without touching the app's logging posture.
-        try:
-            from datetime import datetime
-
-            with open("/tmp/console_layout_dump.txt", "a") as fh:
-                fh.write(f"{datetime.now().isoformat()} {dump_line}\n")
-        except Exception:
-            pass
-        self.notify("Layout dumped (/tmp/console_layout_dump.txt)")
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
