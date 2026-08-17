@@ -219,6 +219,22 @@ class LocalResearchEngine:
         missing = [
             key for key in GENERATE_AND_SEARCH_REQUIRED_PARAMS if key not in params
         ]
+        # Qodo (PR 1764): the search keys alone let a run spend its phase-1
+        # searches and only then fail in relevance/synthesis for want of an LLM.
+        # The shipped tool path already refuses both cases before phase 1
+        # (web_tool_impls "[deep-search-failed] relevance/synthesis: no ...
+        # configured"), and the baseline recorder refuses at startup, so the
+        # engine matches that contract for every default-pipeline caller rather
+        # than each launch site checking for itself. Note this makes
+        # analyze_and_aggregate's "evidence summaries only" degraded mode
+        # unreachable for research RUNS specifically -- a run persists an
+        # artifact, and an unsynthesized one nobody asked for is worse than a
+        # legible refusal.
+        missing += [
+            key
+            for key in ("relevance_analysis_llm", "final_answer_llm")
+            if not str(params.get(key) or "").strip()
+        ]
         if not missing:
             return
         raise ValueError(
