@@ -19382,6 +19382,19 @@ class ChatScreen(BaseAppScreen):
                 quote=quote,
                 comment=comment or None,
             )
+            # Slice 2 of the both-homes decision (task-17169): a Comment with
+            # an actual note ALSO persists as a row-anchored annotation for
+            # the inline marker. Only Comment -- the spec's "Comment ...
+            # additionally persists an annotation" -- and only with text (an
+            # empty submit has nothing to mark the row with). Inside the same
+            # never-raises guard: neither durable write may cost the dispatch.
+            if action == ConsoleSelectionFeedbackRequested.ACTION_COMMENT and comment:
+                controller.store.record_feedback_annotation(
+                    session_id,
+                    anchor_message_id=anchor_message_id,
+                    quote=quote,
+                    comment=comment,
+                )
         except Exception:
             logger.warning(
                 "Console selection feedback: audit record failed for anchor "

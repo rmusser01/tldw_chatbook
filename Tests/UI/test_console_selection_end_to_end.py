@@ -1141,12 +1141,14 @@ async def test_drag_release_click_never_wipes_selection_for_menu_actions():
 
 
 class _RecordingStore:
-    """Captures record_feedback_event calls; returns a configurable result."""
+    """Captures record_feedback_event / record_feedback_annotation calls."""
 
-    def __init__(self, result=True, boom=False):
+    def __init__(self, result=True, boom=False, boom_annotation=False):
         self.calls: list[dict] = []
+        self.annotation_calls: list[dict] = []
         self._result = result
         self._boom = boom
+        self._boom_annotation = boom_annotation
 
     def record_feedback_event(self, session_id, **kwargs):
         self.calls.append({"session_id": session_id, **kwargs})
@@ -1154,10 +1156,17 @@ class _RecordingStore:
             raise RuntimeError("store exploded")
         return self._result
 
+    def record_feedback_annotation(self, session_id, **kwargs):
+        self.annotation_calls.append({"session_id": session_id, **kwargs})
+        if self._boom or self._boom_annotation:
+            raise RuntimeError("store exploded")
+        return "anno-1" if self._result else None
+
 
 def _stub_feedback_store(screen, store):
     controller = screen._ensure_console_chat_controller()
     controller.store.record_feedback_event = store.record_feedback_event  # type: ignore[method-assign]
+    controller.store.record_feedback_annotation = store.record_feedback_annotation  # type: ignore[method-assign]
     return controller
 
 
@@ -1313,5 +1322,149 @@ async def test_feedback_reaches_the_real_database_unmocked(tmp_path):
             payload = json.loads(rows[0].payload_json)
             assert payload["action"] == "request-changes"
             assert payload["comment"] == "needs a retry bound"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_comment_with_text_also_records_an_annotation():
+    """Slice 2 of the both-homes decision: Comment persists an annotation in
+    addition to its sidecar event. Only Comment -- the spec's "Comment ...
+    additionally persists an annotation" -- and only with an actual note
+    (an empty submit has nothing to mark the row with)."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        controller = _stub_feedback_store(screen, store)
+
+        await _run_feedback_request(
+            pilot,
+            action="comment",
+            quote="the retry loop",
+            comment="tighten error paths",
+            anchor_message_id="msg-42",
+        )
+
+        assert store.annotation_calls == [
+            {
+                "session_id": controller.store.active_session_id,
+                "anchor_message_id": "msg-42",
+                "quote": "the retry loop",
+                "comment": "tighten error paths",
+            }
+        ]
+        # The sidecar audit event still fires alongside it.
+        assert len(store.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["request-changes", "lgm"])
+async def test_non_comment_actions_record_no_annotation(action):
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        await _run_feedback_request(
+            pilot,
+            action=action,
+            quote="q",
+            comment="a note",
+            anchor_message_id="msg-42",
+        )
+
+        assert store.annotation_calls == []
+        assert len(store.calls) == 1  # sidecar audit still recorded
+
+
+@pytest.mark.asyncio
+async def test_empty_comment_records_no_annotation():
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        queue, *_ = await _run_feedback_request(
+            pilot,
+            action="comment",
+            quote="q",
+            comment="",
+            anchor_message_id="msg-42",
+        )
+
+        assert store.annotation_calls == []
+        assert queue.dispatched == ["[Comment]\n> q"]
+
+
+@pytest.mark.asyncio
+async def test_failing_annotation_write_never_blocks_the_dispatch():
+    """boom_annotation only: the sidecar write succeeds, the annotation write
+    explodes -- the shared guard still lets the dispatch through."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        store = _RecordingStore(boom_annotation=True)
+        _stub_feedback_store(screen, store)
+
+        queue, *_ = await _run_feedback_request(
+            pilot,
+            action="comment",
+            quote="q",
+            comment="note",
+            anchor_message_id="msg-42",
+        )
+
+        assert len(store.annotation_calls) == 1
+        assert queue.dispatched == ["[Comment]\n> q\nnote"]
+
+
+@pytest.mark.asyncio
+async def test_comment_annotation_reaches_the_real_database_unmocked(tmp_path):
+    """Same mock-gap closure as the sidecar's unmocked test, for slice 2:
+    a Comment's annotation row read back out of real SQLite."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "anno_e2e")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            screen._prompt_queue = _RecordingPromptQueue()
+            _stub_comment_modal(screen, "tighten error paths")
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Annotation e2e")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="the retry loop",
+                persist=True,
+            )
+
+            screen.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action="comment",
+                    quote="the retry loop",
+                    anchor_message_id=assistant.id,
+                )
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+            rows = db.get_transcript_annotations(conversation_id)
+            assert len(rows) == 1, "no annotation row reached the database"
+            assert rows[0]["row_key"] == f"message:{assistant.persisted_message_id}"
+            assert rows[0]["comment"] == "tighten error paths"
+            # And the sidecar audit event landed alongside it.
+            feedback_rows = [
+                row
+                for row in db.get_trajectory_rows(conversation_id)
+                if row.event_kind == "user_feedback"
+            ]
+            assert len(feedback_rows) == 1
     finally:
         db.close()

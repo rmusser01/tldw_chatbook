@@ -4561,6 +4561,64 @@ class ConsoleChatStore:
             ).warning("feedback_event_write_failed")
             return False
 
+    def record_feedback_annotation(
+        self,
+        session_id: str,
+        *,
+        anchor_message_id: str,
+        quote: str,
+        comment: str,
+    ) -> str | None:
+        """Persist one Comment as a transcript annotation (task-17169 slice 2).
+
+        The second half of the both-homes decision: alongside the
+        ``user_feedback`` sidecar event (``record_feedback_event``), a
+        Comment on a selected span persists as a row-anchored annotation so
+        the transcript can carry an inline marker. ``row_key`` follows the
+        spike's rule -- ``message:<persisted_message_id>`` -- so only
+        anchors with a durable identity persist; TOOL markers, diff rows
+        and ephemeral messages have none and are skipped (the spec's
+        "excluded from annotation" case).
+
+        Returns the annotation id, or ``None`` for every skip (unknown or
+        unpersisted anchor, unpersisted session, no DB). Never raises: the
+        caller is the same UI dispatch path as the sidecar write, and a
+        lost marker must never cost the user their feedback message.
+        """
+        try:
+            database = getattr(self.persistence, "db", None) if self.persistence else None
+            if database is None:
+                return None
+            try:
+                message = self._message_or_raise(anchor_message_id)
+            except KeyError:
+                logger.bind(
+                    session_id=session_id, anchor_message_id=anchor_message_id
+                ).warning("feedback_annotation_unknown_anchor")
+                return None
+            if message.persisted_message_id is None:
+                return None
+            session = self._sessions.get(session_id) if session_id else None
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is None:
+                return None
+            return database.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{message.persisted_message_id}",
+                message_id=message.persisted_message_id,
+                quote_text=quote,
+                comment=comment,
+            )
+        except Exception as exc:
+            logger.bind(
+                session_id=session_id,
+                anchor_message_id=anchor_message_id,
+                error=repr(exc),
+            ).warning("feedback_annotation_write_failed")
+            return None
+
     def _write_trajectory_row_for_message(self, message: ConsoleChatMessage) -> None:
         """Write one persisted message's sidecar row (and any stashed tool rows).
 
