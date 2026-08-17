@@ -506,6 +506,33 @@ counts are below.
 |---|---|
 | **Branch, final tree** — same invocation, run alone | *(filled in below)* |
 
+### 10.3 A concurrent session merged `origin/dev` into this branch mid-task
+
+Recorded because it moves the attribution baseline and someone will
+otherwise re-derive it. At 21:48, while the population runs were in
+flight, commit `8b44176c8` — *"Merge remote-tracking branch 'origin/dev'
+into feat/task-15860-launch-wake"*, authored by the repo's git identity,
+not by this task — appeared on the branch, bringing dev up to
+`1dcace324`. This checkout is shared; the standing rule about concurrent
+sessions mutating it applies.
+
+Checked rather than assumed:
+
+- `git diff --name-only c4d043952 8b44176c8` matches **none** of this
+  branch's files (`console_launch_wake.py`,
+  `console_conversation_hydration.py`, `console_session_settings.py`, the
+  three `Console_Modules`, `app.py`, the new tests, the User Guide page);
+- `git diff c4d043952 HEAD` over those same paths is **empty** — every
+  byte of this work is intact.
+
+The consequence for attribution: the branch now contains dev's commits
+between `ed49499b8` and `1dcace324`, so a failure introduced by *those*
+would show up on the branch side of a comparison against the
+`ed49499b8` baseline. That is handled by exception rather than by a
+second hour-long baseline: the branch's post-merge failure set is checked
+to be a subset of the `ed49499b8` baseline's, and anything outside it
+would be run at `1dcace324` before being called this branch's.
+
 ---
 
 ## 11. Deliberately not done
