@@ -197,6 +197,55 @@ sitting on a row that stays in flight after its run dies without a terminal
 publish — frozen at its last elapsed, which is the exact defect this feature
 exists to remove, in a new costume.
 
+## Gate
+
+Every number below was READ, and every baseline was measured on a real
+pre-change worktree at the merge base (`.worktrees/turn-activity-base` @
+`feea06193`) — never inferred from "it looks unrelated".
+
+| suite | base | branch |
+|---|---|---|
+| `Tests/UI/test_console_turn_activity_line.py` (new) | n/a | **27 passed** |
+| transcript + agent-rail + agent-controller + agent-bridge + ratchet | 4 failed, 329 passed | 4 failed, 375 passed (same 4) |
+| `Tests/Agents/` | 1458 passed | 1458 passed |
+| **48-file blast radius, ONE process** | 16 failed, 1324 passed | **15 failed, 1352 passed** |
+
+The 48-file population is every `Tests/UI`/`Tests/Chat` file that touches
+`ConsoleTranscript` or `_sync_native_console_transcript`, plus the agent
+bridge/controller/rail cluster and the size ratchet — the true blast radius
+of this change. In one process it surfaced **six failures that no per-file
+run showed** (markdown-widget, css-class-coverage, moved-seam-guard,
+keyboard-trust, workbench-contract, parallel-runs), all present at base.
+
+Failure-set diff, branch vs base: **no new failures**, and one base failure
+absent — `test_the_coalesced_request_still_actually_runs_the_sync`. That is
+**not a fix and is not claimed as one**: it fails on `assert 5 == 3` because
+a spy accumulates sync calls from other tests' leaked screens, it passes 3/3
+in isolation on the base tree, and this change adds no sync dispatch (only a
+call *inside* the existing one). It is a pre-existing order-dependent flake
+that the branch run happened not to trip. Passed delta 1352 − 1324 = 28 = 27
+new tests + that one flake.
+
+The four failures that persist everywhere are all dev's at the merge base:
+the `chat_screen.py` size ratchet (measured 20,359 lines / 672 methods
+against a budget of 17,727/593 — over before this work started; this change
+adds 8 lines and no method), three speech action-row tests, and (in the
+one-process run) the citation-sources double, which lacks
+`set_change_review_provider_factory` — a call this change did not add.
+
+**What I could not afford.** The full 281-file Console population in one
+process, on both trees. It was attempted: the baseline ran ~60 minutes,
+reached 91%, and was killed by infrastructure before printing a summary; a
+narrowed 98-file retry was pacing at ~200 minutes. Two *foreign* full-suite
+`pytest` processes from other sessions were saturating the machine
+throughout (one 14 hours old). The 48-file blast radius above is what
+completed on both trees — it covers every file that touches the changed
+code, but not the whole Console population. Also not done: a live tmux
+walkthrough with a real provider. The environment rules forbid writing the
+user's live config, and a real tool-calling turn additionally needs a
+`[tools]` gate enabled; the mounted-real-screen test is the closest
+substitute and is genuinely a real `ChatScreen` with a real transcript.
+
 ## Known limits
 
 - A `pending` assistant row with **no agent run at all** (the direct-provider
