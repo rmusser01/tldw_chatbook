@@ -3795,3 +3795,66 @@ async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to
         assert "does not cite available staged evidence" in caution_text
         # The clean-answer note must never also render alongside a caution.
         assert not screen.query("#library-rag-answer-citation-note")
+
+
+# --- TASK-3502 note-(a): the reranker's disclosure tags get their first UI
+# consumer -- the Evidence region's existing one quiet note line. ---
+
+
+def test_reranking_disclosure_tags_render_one_evidence_notice_line() -> None:
+    """A tagged outcome (either tag) puts ONE quiet line under the Evidence
+    heading naming what failed and what it means for the order below; an
+    untagged outcome renders nothing extra. Same Static, same
+    `library-rag-quiet-line` styling as every other coverage/routing
+    disclosure -- one note channel, never two competing ones."""
+    from tldw_chatbook.Library.library_rag_state import LibraryRagPanelState
+    from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+    def _panel(**provenance) -> LibraryRagPanelState:
+        row = LibraryRagResultRow.from_result(
+            {
+                "title": "Note doc",
+                "score": 0.6,
+                "source_id": "note-1",
+                "provenance": {"source_type": "notes", **provenance},
+            }
+        )
+        return LibraryRagPanelState.from_values(
+            source_counts={"notes": 1, "media": 1},
+            query="cake",
+            mode="rag",
+            results=(row,),
+        )
+
+    def _notice_lines(state: LibraryRagPanelState) -> list[str]:
+        return [
+            str(child.renderable)
+            for child in library_rag_results_body_children(state)
+            if getattr(child, "id", None) == "library-rag-coverage-note"
+        ]
+
+    skipped = _notice_lines(_panel(reranking_skipped="No API key found for openai"))
+    assert skipped == [
+        "Reranking was skipped (No API key found for openai) — these "
+        "results are in their original retrieval order."
+    ]
+
+    degraded = _notice_lines(_panel(reranking_degraded="14/15 scorings failed"))
+    assert degraded == [
+        "Reranking was degraded (14/15 scorings failed) — these results are "
+        "in their original retrieval order."
+    ]
+
+    # Control: reranking off, or on and working -> the line is absent
+    # entirely (no widget mounted, not an empty one).
+    assert _notice_lines(_panel()) == []
+
+    tagged_children = library_rag_results_body_children(
+        _panel(reranking_degraded="14/15 scorings failed")
+    )
+    notice = next(
+        child
+        for child in tagged_children
+        if getattr(child, "id", None) == "library-rag-coverage-note"
+    )
+    assert notice.has_class("library-rag-quiet-line")

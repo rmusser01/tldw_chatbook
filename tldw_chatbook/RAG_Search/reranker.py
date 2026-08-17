@@ -37,11 +37,54 @@ class RerankingResult:
     original_score: float
     rerank_score: float
     reasoning: Optional[str] = None
+    #: Did a model actually score this row? ``False`` when the scoring call
+    #: failed (or its response could not be parsed) and ``rerank_score`` is
+    #: merely the original retrieval score carried forward unchanged.
+    #: ``_apply_scores`` keys the ``rerank_score`` metadata stamp off this --
+    #: that stamp is the production "this score is no longer a similarity"
+    #: marker (``Library/library_rag_score_kinds.py``), so stamping it on a
+    #: row whose scoring call failed rendered " | reranked" over a row no
+    #: model ever looked at: a 14/15-failed rerank claimed fourteen rows it
+    #: never rescored (TASK-3502 note-b).
+    scored: bool = True
 
     @property
     def rank_change(self) -> int:
         """Calculate rank change (negative means improved)."""
         return self.new_rank - self.original_rank
+
+
+@dataclass(frozen=True)
+class RerankOutcome:
+    """What ONE ``rerank()`` call did: the reordered results, plus how many of
+    that call's scoring attempts failed (per-result for pointwise/listwise,
+    per-comparison for pairwise).
+
+    The counts are RETURNED rather than recorded on the reranker because the
+    RAG service holds a reranker as a singleton across concurrent
+    ``search()`` calls. They used to live in
+    ``BaseReranker.last_rerank_failures``/``last_rerank_total``, which the
+    disclosure site read AFTER ``rerank()`` had returned -- a window in which
+    a concurrent search could overwrite them, so one search's degradation
+    tag could describe another search's failures. Scoping the counts to the
+    call REMOVES that shared state rather than guarding a diagnostic path
+    with a lock (TASK-3502 AC#4).
+
+    ``failed`` is the only way a caller can tell "rerank() returned normally
+    but silently scored nothing" -- e.g. every provider call exhausting
+    retries under a missing credential -- from "nothing needed reranking":
+    both look identical, an unchanged ordering with no exception raised
+    (task-3170 P0 review finding).
+    """
+
+    results: List[Union[SearchResult, SearchResultWithCitations]]
+    failed: int
+    total: int
+
+    @property
+    def degraded(self) -> bool:
+        """True when at least one scoring attempt in this call failed."""
+        return self.failed > 0
 
 
 @dataclass
@@ -83,28 +126,11 @@ class BaseReranker(ABC):
         self.config = config
         self._cache = {} if config.cache_results else None
         self._settings = load_settings()
-        # Per-rerank() call outcome: how many of the `total` per-result (or
-        # per-comparison) scoring attempts failed during the MOST RECENT
-        # `rerank()` invocation. A raising `rerank()` is handled by the
-        # caller's try/except (EnhancedRAGServiceV2.search); this is the
-        # separate, silent failure mode where `rerank()` returns normally
-        # but the underlying per-result LLM calls mostly/entirely failed
-        # (e.g. every call exhausting retries under a missing provider
-        # credential) and the result is an unchanged ordering that looks
-        # identical to "nothing needed reranking" (task-3170 P0 review
-        # finding). Every `rerank()` return path must call
-        # `_record_rerank_outcome` so a caller reading these right after
-        # `await reranker.rerank(...)` never sees a stale value from a
-        # previous call.
-        self.last_rerank_failures: int = 0
-        self.last_rerank_total: int = 0
-
-    def _record_rerank_outcome(self, failed: int, total: int) -> None:
-        """Record how many of `total` scoring attempts failed in the rerank()
-        call that just completed. See `last_rerank_failures` for why this
-        exists."""
-        self.last_rerank_failures = failed
-        self.last_rerank_total = total
+        # NOTE (TASK-3502 AC#4): a reranker carries NO per-call state. How
+        # many scoring attempts failed is part of `rerank()`'s RETURN value
+        # (`RerankOutcome`), because the service holds this object as a
+        # singleton across concurrent searches -- see `RerankOutcome` for the
+        # misattribution this closes.
 
     @abstractmethod
     async def rerank(
@@ -112,8 +138,8 @@ class BaseReranker(ABC):
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
         **kwargs,
-    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
-        """Rerank search results based on relevance to query."""
+    ) -> RerankOutcome:
+        """Rerank search results, returning them with this call's outcome."""
         pass
 
     def _get_cache_key(self, query: str, result_ids: List[str]) -> str:
@@ -253,11 +279,10 @@ class PointwiseReranker(BaseReranker):
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
         **kwargs,
-    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
+    ) -> RerankOutcome:
         """Rerank results using pointwise scoring."""
         if not results:
-            self._record_rerank_outcome(0, 0)
-            return results
+            return RerankOutcome(results=results, failed=0, total=0)
 
         # Limit to top K results
         results_to_rerank = results[: self.config.top_k_to_rerank]
@@ -270,10 +295,14 @@ class PointwiseReranker(BaseReranker):
             if cache_key in self._cache:
                 log_counter("reranker_cache_hit", labels={"strategy": "pointwise"})
                 cached_scores = self._cache[cache_key]
-                self._record_rerank_outcome(0, len(results_to_rerank))
-                return (
-                    self._apply_scores(results_to_rerank, cached_scores)
-                    + remaining_results
+                # The cached `RerankingResult`s carry each row's `scored`
+                # flag, so a cache HIT re-applies the same partial-failure
+                # honesty the original call produced.
+                return RerankOutcome(
+                    results=self._apply_scores(results_to_rerank, cached_scores)
+                    + remaining_results,
+                    failed=sum(1 for r in cached_scores if not r.scored),
+                    total=len(results_to_rerank),
                 )
 
         log_counter("reranker_cache_miss", labels={"strategy": "pointwise"})
@@ -298,23 +327,20 @@ class PointwiseReranker(BaseReranker):
             if isinstance(score_result, Exception):
                 failed_count += 1
                 logger.error(f"Failed to score result {i}: {score_result}")
-                # Keep original score on failure
+                # Keep original score on failure -- and, because no model
+                # scored this row, do NOT let it claim the reranked kind
+                # (`scored=False`; TASK-3502 note-b).
                 reranking_results.append(
                     RerankingResult(
                         original_rank=i,
                         new_rank=i,
                         original_score=results_to_rerank[i].score,
                         rerank_score=results_to_rerank[i].score,
+                        scored=False,
                     )
                 )
             else:
                 reranking_results.append(score_result)
-
-        # This is the ONLY place a caller can tell "rerank() returned
-        # normally but silently scored nothing" apart from "rerank()
-        # returned normally because everything genuinely scored" -- both
-        # look identical (an unchanged/near-unchanged ordering) without it.
-        self._record_rerank_outcome(failed_count, len(results_to_rerank))
 
         # Cache results if enabled
         if self._cache is not None and cache_key:
@@ -326,7 +352,15 @@ class PointwiseReranker(BaseReranker):
         # Log metrics
         self._log_reranking_metrics(reranking_results)
 
-        return reranked + remaining_results
+        # `failed_count` is the ONLY thing distinguishing "returned normally
+        # but silently scored nothing" from "returned normally because
+        # everything genuinely scored" -- both look identical (an
+        # unchanged/near-unchanged ordering) without it.
+        return RerankOutcome(
+            results=reranked + remaining_results,
+            failed=failed_count,
+            total=len(results_to_rerank),
+        )
 
     async def _score_result(
         self,
@@ -345,7 +379,10 @@ class PointwiseReranker(BaseReranker):
         )
         prompt = safe_substitute(
             self.config.scoring_prompt_template,
-            query=query, title=title, content=content, reasoning=reasoning_part,
+            query=query,
+            title=title,
+            content=content,
+            reasoning=reasoning_part,
         )
 
         try:
@@ -376,12 +413,14 @@ class PointwiseReranker(BaseReranker):
             logger.error(
                 f"Failed to parse LLM response: {e}, Response: {response[:200]}"
             )
-            # Return original score on parse error
+            # Return original score on parse error, unstamped: nothing
+            # usable came back, so this row was not rescored (note-b).
             return RerankingResult(
                 original_rank=original_rank,
                 new_rank=original_rank,
                 original_score=result.score,
                 rerank_score=result.score,
+                scored=False,
             )
 
     def _apply_scores(
@@ -393,25 +432,38 @@ class PointwiseReranker(BaseReranker):
         # Calculate final scores
         scored_results = []
         for result, rerank_result in zip(results, reranking_results):
-            if self.config.combine_original_score:
-                # Weighted combination
-                final_score = (
-                    self.config.original_score_weight * rerank_result.original_score
-                    + (1 - self.config.original_score_weight)
-                    * rerank_result.rerank_score
-                )
+            if not rerank_result.scored:
+                # This row's scoring call failed: it keeps the score it
+                # arrived with, and -- crucially -- is NOT stamped with
+                # `rerank_score`. That stamp is what the Library reads as
+                # "this number is no longer a similarity, render
+                # ' | reranked'"; claiming it here made a partly-failed run
+                # over-claim on every row it never rescored (TASK-3502
+                # note-b). Conservative in both directions: no fabricated
+                # score, and no fabricated provenance.
+                final_score = result.score
+                metadata = {**result.metadata}
             else:
-                final_score = rerank_result.rerank_score
+                if self.config.combine_original_score:
+                    # Weighted combination
+                    final_score = (
+                        self.config.original_score_weight * rerank_result.original_score
+                        + (1 - self.config.original_score_weight)
+                        * rerank_result.rerank_score
+                    )
+                else:
+                    final_score = rerank_result.rerank_score
+                metadata = {
+                    **result.metadata,
+                    "rerank_score": rerank_result.rerank_score,
+                }
 
             # Create a copy of the result with new score
             result_copy = type(result)(
                 id=result.id,
                 score=final_score,
                 document=result.document,
-                metadata={
-                    **result.metadata,
-                    "rerank_score": rerank_result.rerank_score,
-                },
+                metadata=metadata,
             )
 
             # Preserve citations if present
@@ -455,6 +507,21 @@ class PointwiseReranker(BaseReranker):
         log_counter("reranker_significant_changes", value=significant_changes)
 
 
+@dataclass
+class _ComparisonTally:
+    """Pairwise comparison counters for ONE ``rerank()`` call.
+
+    Passed down the merge-sort recursion rather than kept on the reranker:
+    the instance is shared across concurrent searches, so instance counters
+    let one search's comparisons land in another's disclosure (TASK-3502
+    AC#4). A "failure" is a comparison whose LLM call raised and fell back
+    to comparing the original retrieval scores.
+    """
+
+    failed: int = 0
+    total: int = 0
+
+
 class PairwiseReranker(BaseReranker):
     """Reranks by comparing pairs of results."""
 
@@ -470,15 +537,6 @@ class PairwiseReranker(BaseReranker):
             self.config.scoring_prompt_template = get_internal_prompt(
                 "rag_reranker.pairwise_template"
             )
-        # Per-comparison counters for the CURRENT rerank() call, read by
-        # _compare_pair() during the merge-sort recursion and rolled up into
-        # last_rerank_failures/last_rerank_total (see BaseReranker) once
-        # rerank() returns. There's no single "per-result" score here
-        # (pairwise reranking is comparison-based), so a "failure" is a
-        # comparison whose LLM call raised and fell back to the original
-        # scores instead.
-        self._pairwise_comparisons_failed = 0
-        self._pairwise_comparisons_total = 0
 
     @timeit("reranker_pairwise")
     async def rerank(
@@ -486,34 +544,35 @@ class PairwiseReranker(BaseReranker):
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
         **kwargs,
-    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
+    ) -> RerankOutcome:
         """Rerank using pairwise comparisons with tournament-style ranking."""
         if len(results) <= 1:
-            self._record_rerank_outcome(0, 0)
-            return results
+            return RerankOutcome(results=results, failed=0, total=0)
 
         # Limit to top K
         results_to_rerank = results[: self.config.top_k_to_rerank]
         remaining_results = results[self.config.top_k_to_rerank :]
 
-        self._pairwise_comparisons_failed = 0
-        self._pairwise_comparisons_total = 0
+        tally = _ComparisonTally()
 
         # Perform tournament-style comparisons
-        reranked = await self._tournament_rank(query, results_to_rerank)
-
-        self._record_rerank_outcome(
-            self._pairwise_comparisons_failed, self._pairwise_comparisons_total
-        )
+        reranked = await self._tournament_rank(query, results_to_rerank, tally)
 
         log_counter(
             "reranker_pairwise_complete", labels={"results": len(results_to_rerank)}
         )
 
-        return reranked + remaining_results
+        return RerankOutcome(
+            results=reranked + remaining_results,
+            failed=tally.failed,
+            total=tally.total,
+        )
 
     async def _tournament_rank(
-        self, query: str, results: List[Union[SearchResult, SearchResultWithCitations]]
+        self,
+        query: str,
+        results: List[Union[SearchResult, SearchResultWithCitations]],
+        tally: _ComparisonTally,
     ) -> List[Union[SearchResult, SearchResultWithCitations]]:
         """Use tournament-style ranking with pairwise comparisons."""
         # Implementation of merge sort with async comparisons
@@ -525,14 +584,16 @@ class PairwiseReranker(BaseReranker):
         right_half = results[mid:]
 
         # Recursively sort both halves
-        left_sorted = await self._tournament_rank(query, left_half)
-        right_sorted = await self._tournament_rank(query, right_half)
+        left_sorted = await self._tournament_rank(query, left_half, tally)
+        right_sorted = await self._tournament_rank(query, right_half, tally)
 
         # Merge with pairwise comparisons
-        return await self._merge_with_comparisons(query, left_sorted, right_sorted)
+        return await self._merge_with_comparisons(
+            query, left_sorted, right_sorted, tally
+        )
 
     async def _merge_with_comparisons(
-        self, query: str, left: List, right: List
+        self, query: str, left: List, right: List, tally: _ComparisonTally
     ) -> List:
         """Merge two sorted lists using pairwise comparisons."""
         result = []
@@ -540,7 +601,7 @@ class PairwiseReranker(BaseReranker):
 
         while i < len(left) and j < len(right):
             # Compare current elements
-            is_left_better = await self._compare_pair(query, left[i], right[j])
+            is_left_better = await self._compare_pair(query, left[i], right[j], tally)
 
             if is_left_better:
                 result.append(left[i])
@@ -560,6 +621,7 @@ class PairwiseReranker(BaseReranker):
         query: str,
         result1: Union[SearchResult, SearchResultWithCitations],
         result2: Union[SearchResult, SearchResultWithCitations],
+        tally: _ComparisonTally,
     ) -> bool:
         """Compare two results and return True if result1 is better."""
         # Format prompt
@@ -576,7 +638,7 @@ class PairwiseReranker(BaseReranker):
             reasoning=reasoning_part,
         )
 
-        self._pairwise_comparisons_total += 1
+        tally.total += 1
         try:
             response = await self._call_llm(prompt)
             result_json = json.loads(response)
@@ -588,7 +650,7 @@ class PairwiseReranker(BaseReranker):
 
         except Exception as e:
             logger.error(f"Pairwise comparison failed: {e}")
-            self._pairwise_comparisons_failed += 1
+            tally.failed += 1
             # Fall back to original scores
             return result1.score > result2.score
 
@@ -615,11 +677,10 @@ class ListwiseReranker(BaseReranker):
         query: str,
         results: List[Union[SearchResult, SearchResultWithCitations]],
         **kwargs,
-    ) -> List[Union[SearchResult, SearchResultWithCitations]]:
+    ) -> RerankOutcome:
         """Rerank all results together."""
         if len(results) <= 1:
-            self._record_rerank_outcome(0, 0)
-            return results
+            return RerankOutcome(results=results, failed=0, total=0)
 
         # Limit to top K
         results_to_rerank = results[
@@ -642,7 +703,9 @@ class ListwiseReranker(BaseReranker):
         )
         prompt = safe_substitute(
             self.config.scoring_prompt_template,
-            query=query, results_list=results_list, reasoning=reasoning_part,
+            query=query,
+            results_list=results_list,
+            reasoning=reasoning_part,
         )
 
         try:
@@ -657,24 +720,30 @@ class ListwiseReranker(BaseReranker):
                 # discarded), so this counts as a total failure -- same
                 # "returned normally but scored nothing" shape as the except
                 # branch below.
-                self._record_rerank_outcome(
-                    len(results_to_rerank), len(results_to_rerank)
+                return RerankOutcome(
+                    results=results,
+                    failed=len(results_to_rerank),
+                    total=len(results_to_rerank),
                 )
-                return results
 
             # Reorder results
             reranked = [results_to_rerank[i] for i in ranking]
 
             log_counter("reranker_listwise_complete")
 
-            self._record_rerank_outcome(0, len(results_to_rerank))
-
-            return reranked + remaining_results
+            return RerankOutcome(
+                results=reranked + remaining_results,
+                failed=0,
+                total=len(results_to_rerank),
+            )
 
         except Exception as e:
             logger.error(f"Listwise reranking failed: {e}")
-            self._record_rerank_outcome(len(results_to_rerank), len(results_to_rerank))
-            return results
+            return RerankOutcome(
+                results=results,
+                failed=len(results_to_rerank),
+                total=len(results_to_rerank),
+            )
 
     def _validate_ranking(self, ranking: List[int], expected_length: int) -> bool:
         """Validate that ranking contains all indices exactly once."""
@@ -721,7 +790,12 @@ async def rerank_results(
     results: List[Union[SearchResult, SearchResultWithCitations]],
     strategy: str = "pointwise",
     **kwargs,
-) -> List[Union[SearchResult, SearchResultWithCitations]]:
-    """Convenience function to rerank results without creating a reranker instance."""
+) -> RerankOutcome:
+    """Rerank without creating a reranker instance.
+
+    Returns the full ``RerankOutcome`` (not just the results) so a one-shot
+    caller cannot silently drop the degradation counts -- the same reason
+    ``rerank()`` itself returns one.
+    """
     reranker = create_reranker(strategy, **kwargs)
     return await reranker.rerank(query, results, **kwargs)

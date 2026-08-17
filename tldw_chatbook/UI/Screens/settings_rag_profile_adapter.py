@@ -133,6 +133,11 @@ def _defaults_from_profile(profile: ProfileConfig) -> SettingsLibraryRagDefaults
         # `rag_config.search.enable_reranking`, which apply_defaults_to_profile
         # only mirrors for display/consistency.
         enable_reranking=rr is not None,
+        # Blank-means-default, exactly like `reranker_model` below
+        # (TASK-3502 AC#1): no reranking_config means there is no provider
+        # to report, and the fold's Select renders its explicit
+        # "(default)" row for that case rather than inventing a value.
+        reranker_provider=str(rr.model_provider) if rr is not None else "",
         reranker_model=str(rr.model_name) if rr is not None else "",
         # When the profile has no reranking_config yet, fall back to the
         # SAME default SettingsLibraryRagDefaults itself uses (sourced from
@@ -191,6 +196,8 @@ def apply_defaults_to_profile(
         if profile.reranking_config is None:
             from tldw_chatbook.RAG_Search.reranker import RerankingConfig
             profile.reranking_config = RerankingConfig()
+        if values.reranker_provider:
+            profile.reranking_config.model_provider = values.reranker_provider
         if values.reranker_model:
             profile.reranking_config.model_name = values.reranker_model
         profile.reranking_config.top_k_to_rerank = int(values.reranker_top_k)
