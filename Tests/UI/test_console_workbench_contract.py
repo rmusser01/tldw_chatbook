@@ -546,11 +546,19 @@ async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -
 
 @pytest.mark.asyncio
 async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
-    """Task-400: staged sources render in the Inspector, not the left rail."""
+    """Task-400: staged sources render in the Inspector, not the left rail.
+
+    task-16480: widened from 120x40 to 140x42 -- 6476d84f0 (compact rail
+    focus) made the width-aware rail reveal deliberately close the left
+    rail at 120 columns (its own resize-reflow tests encode that), so the
+    rail-contract assertions now run at a width where the rail is present.
+    The contract itself (rail keeps Conversations; staged context lives in
+    the Inspector) is unchanged.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(120, 40)) as pilot:
+    async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 

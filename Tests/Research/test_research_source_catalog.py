@@ -70,3 +70,41 @@ def test_paper_provider_constants_in_sync_with_catalog():
     assert set(LOCAL_SUPPORTED_PAPER_PROVIDERS) <= catalog_ids
     # Every catalog source is runnable by the lane (full parity, not a subset).
     assert set(LOCAL_SUPPORTED_PAPER_PROVIDERS) == catalog_ids
+
+
+# --- source-kind classification (task-17066) ---------------------------------------
+
+def test_source_kind_for_provider_maps_categories():
+    from tldw_chatbook.Research_Interop.research_source_catalog import (
+        source_kind_for_provider,
+    )
+
+    assert source_kind_for_provider("zenodo") == "repository"
+    assert source_kind_for_provider("figshare") == "repository"
+    assert source_kind_for_provider("osf") == "repository"
+    assert source_kind_for_provider("openalex") == "metadata"
+    assert source_kind_for_provider("crossref") == "metadata"
+    # Papers/preprints stay strict; graph members (which include
+    # semantic_scholar/openalex by catalog category) take the metadata note.
+    assert source_kind_for_provider("arxiv") == "paper"
+    assert source_kind_for_provider("pubmed") == "paper"
+    assert source_kind_for_provider("biorxiv") == "paper"
+    assert source_kind_for_provider("semantic_scholar") == "metadata"
+
+
+def test_source_kind_unknown_and_missing_default_to_paper():
+    from tldw_chatbook.Research_Interop.research_source_catalog import (
+        source_kind_for_provider,
+    )
+
+    assert source_kind_for_provider("not_a_provider") == "paper"
+    assert source_kind_for_provider("") == "paper"
+    assert source_kind_for_provider(None) == "paper"
+
+
+def test_source_kind_classifier_is_cached():
+    from tldw_chatbook.Research_Interop import research_source_catalog as rsc
+
+    first = rsc._entries_by_id()
+    second = rsc._entries_by_id()
+    assert first is second  # memoized, not rebuilt per call
