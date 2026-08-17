@@ -630,6 +630,38 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert db.count_subagent_runs("c") == 1
 
 
+def test_spawn_propagates_workspace_note_to_child_prompt(db):
+    """A non-default workspace note rides the parent config onto the child's
+    config, so a spawned sub-agent -- which operates on the same workspace
+    roots -- sees it too. Appended last (in call_model), so the sub-agent
+    identity prefix still leads the child's system prompt."""
+    chat = FleetChat(
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "compute 6*7"}),  # parent turn 1
+            "The sub-agent says 42.",  # parent turn 2
+        ],
+        {"compute 6*7": ["sub answer: 42"]},  # CHILD turn 1
+    )
+    service = _service_with(db, chat)
+    cfg = AgentConfig(
+        model="test-model",
+        system_prompt="You are helpful.",
+        allowed_tools=("calculator", "get_current_datetime", SPAWN_TOOL_NAME),
+        workspace_context_note="CHILD_WS_NOTE",
+    )
+    service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "delegate this"}],
+        config=cfg,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+
+    child_system = chat.child_calls["compute 6*7"][0]["messages_payload"][0]["content"]
+    assert "CHILD_WS_NOTE" in child_system
+    assert child_system.startswith(SUBAGENT_SYSTEM_PROMPT.split(".")[0])
+
+
 def test_run_turn_records_assistant_message_id_on_primary_only(db):
     """The primary run records the assistant_message_id it is handed; a
     spawned sub-agent run records None (it produces no transcript reply)."""

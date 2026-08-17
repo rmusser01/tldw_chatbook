@@ -461,6 +461,12 @@ class AgentConfig:
         budget: This run's caps (see ``RunBudget``).
         native_tools: Whether to use provider-native tool-calling when the
             endpoint supports it; ``False`` forces the fence protocol.
+        workspace_context_note: Optional environment note appended to the
+            system prompt each turn when the run is bound to a NON-default
+            workspace (built by ``workspace_file_roots.workspace_context_note``
+            with launch-relative, never absolute, paths). Empty for the default
+            workspace, so the common case adds nothing. Carried on the config
+            so it propagates verbatim onto spawned sub-agents' configs.
     """
 
     model: str
@@ -468,6 +474,7 @@ class AgentConfig:
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
+    workspace_context_note: str = ""
 
 
 @dataclass

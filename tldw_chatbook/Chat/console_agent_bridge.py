@@ -63,6 +63,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
     intersect_skill_tools,
 )
+from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -2659,6 +2660,19 @@ class ConsoleAgentBridge:
         # pass `builtin_gate` see no behavior change at all).
         registry = self._registry
         allowed_tools = self._allowed_tools
+        # Resolve the RUNNING session's workspace once, up front. It feeds both
+        # the tool registry composition (fresh-build branch below) AND the
+        # workspace-context note appended to the agent's system prompt -- so
+        # the note is present even on the fast path that never enters that
+        # branch. Fail-safe: `self._store` is None in construction-only tests
+        # and `session_id` could name a closed session; either degrades to
+        # None (no note), never raising -- matching allowed_file_roots' posture.
+        run_workspace_id: str | None = None
+        if self._store is not None:
+            try:
+                run_workspace_id = self._store.session_workspace_id(session_id)
+            except KeyError:
+                run_workspace_id = None
         skill_runner = None
         # TASK-1366: this run's UI-side diff channel. When this run takes
         # the fresh-build branch below, the provider's strip seam
@@ -2703,23 +2717,15 @@ class ConsoleAgentBridge:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
                 context = asyncio.run(self._skills_service.get_context(mode="local"))
-            # task-6: `self._store` is `None` in some bridge-construction-only
-            # tests, and `session_id` could in principle name an already-
-            # closed session -- either degrades to `None`, never raises,
-            # matching `allowed_file_roots`'s own fail-safe posture.
-            run_workspace_id: str | None = None
-            # final-review F4: same fail-safe pattern as `run_workspace_id`
-            # immediately above, mirrored for the session's `ephemeral`
-            # flag. An unresolvable session degrades to `False` (not
-            # temporary) rather than raising -- consistent with every
-            # other lookup on this path, and the worst case is a normal
-            # run behaving normally, not a run crashing.
+            # `run_workspace_id` is resolved up front (see run_reply's opening
+            # lines); reused here so the tool registry and the workspace note
+            # agree on one value. `run_is_ephemeral` follows the same fail-safe
+            # pattern: an unresolvable session degrades to `False` (not
+            # temporary) rather than raising -- consistent with every other
+            # lookup on this path, and the worst case is a normal run behaving
+            # normally, not a run crashing.
             run_is_ephemeral = False
             if self._store is not None:
-                try:
-                    run_workspace_id = self._store.session_workspace_id(session_id)
-                except KeyError:
-                    run_workspace_id = None
                 try:
                     run_is_ephemeral = self._store.session_is_ephemeral(session_id)
                 except KeyError:
@@ -3004,6 +3010,10 @@ class ConsoleAgentBridge:
             allowed_tools=allowed_tools,
             budget=CONSOLE_RUN_BUDGET,
             native_tools=native_tools,
+            # Non-default workspace: tell the agent (and, via config
+            # propagation, its sub-agents) which workspace it is in and that
+            # the launch directory differs. Empty for the default workspace.
+            workspace_context_note=workspace_context_note(run_workspace_id),
         )
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,

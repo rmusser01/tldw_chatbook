@@ -873,6 +873,15 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            if config.workspace_context_note:
+                # Non-default workspace: append the environment note LAST, as a
+                # stable per-turn suffix (cache-friendly, like the sections
+                # above). Appended after ``config.system_prompt``, so a
+                # sub-agent's identity prefix -- which ``_is_subagent`` matches
+                # against the stored ``config.system_prompt`` -- is untouched.
+                system_content = (
+                    f"{system_content}\n\n{config.workspace_context_note}"
+                )
             # TASK-1272 (Phase 3): bound the SEND payload, never
             # `run_agent_loop`'s own `messages` -- that list is untouched,
             # see `bound_history_for_send`'s docstring. A no-op (returns
@@ -1850,6 +1859,11 @@ class AgentService:
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
+                # A sub-agent operates on the same workspace roots as its
+                # parent, so it inherits the same environment note verbatim
+                # (appended to its own prompt in call_model, after its identity
+                # prefix). Empty for the default workspace, so no change there.
+                workspace_context_note=config.workspace_context_note,
             )
             # C1: snapshot/restore whatever review_state_scope owns (see
             # __init__'s own comment) around the ENTIRE nested run -- the

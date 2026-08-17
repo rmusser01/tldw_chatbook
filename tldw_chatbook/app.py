@@ -12587,6 +12587,14 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Record the launch directory at the earliest point in the process, before
+    # anything can chdir. The workspace-context note appended to agent prompts
+    # expresses workspace roots relative to this (never as absolute host
+    # paths). Set-once: harmless if another entry path already recorded it.
+    from tldw_chatbook.Tools.workspace_file_roots import set_launch_cwd
+
+    set_launch_cwd()
+
     # Configure logging to suppress verbose debug messages early
     import logging
     import os
