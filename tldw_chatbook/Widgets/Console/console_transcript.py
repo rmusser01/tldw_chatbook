@@ -3796,6 +3796,11 @@ class ConsoleTranscript(VerticalScroll):
 
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
+        # Hoisted: which row (if any) carries this tick's activity line is a
+        # property of the message list, not of any one row.
+        activity_target_id = (
+            self._turn_activity_target_id() if self._turn_activity else None
+        )
         for message in self._messages:
             if (
                 message.id in self._pruned_message_ids
@@ -3807,7 +3812,7 @@ class ConsoleTranscript(VerticalScroll):
                 # on the other boundary.
                 continue
             message = self._with_expanded_tool_output(message)
-            message = self._with_turn_activity(message)
+            message = self._with_turn_activity(message, activity_target_id)
             selected = message.id == self.selected_message_id
             rows.append(
                 _TranscriptRow(
@@ -4408,10 +4413,16 @@ class ConsoleTranscript(VerticalScroll):
             The line that will actually render, or ``""``.
         """
         effective = activity if activity and self._turn_activity_target_id() else ""
+        # Unconditional, including the empty case: found by mutation, a row
+        # that stays in flight after its run dies (no terminal publish) is
+        # exactly where a retained line would sit forever, frozen at its
+        # last elapsed -- the frozen look this feature exists to remove.
         self._turn_activity = effective
         return effective
 
-    def _with_turn_activity(self, message: ConsoleChatMessage) -> ConsoleChatMessage:
+    def _with_turn_activity(
+        self, message: ConsoleChatMessage, target_id: str | None
+    ) -> ConsoleChatMessage:
         """Return ``message`` carrying this tick's activity line, when it owns it.
 
         Applied at the ONE walk that plans rows -- the same seam, and for the
@@ -4420,17 +4431,27 @@ class ConsoleTranscript(VerticalScroll):
         message, or a row would render one thing while its signature claimed
         another and never repaint.
 
+        **Exactly one row, deliberately.** Found by mutation: stamping every
+        message instead of just the in-flight one is invisible to every
+        display assertion (a row with content never renders the line, and
+        only assistant rows can) yet puts ``live_activity`` into EVERY row's
+        signature -- so the whole transcript re-derives and re-syncs once a
+        second for the entire turn.
+
         Returns ``message`` UNCHANGED (same object) when there is nothing to
         show, so a transcript with no live turn is byte-for-byte what it was
         before this feature existed.
 
         Args:
             message: The transcript message about to be rendered.
+            target_id: The row that owns the line this pass, hoisted out of
+                the loop by the caller (``_turn_activity_target_id``), or
+                ``None`` when no row does.
 
         Returns:
             ``message``, or a render-only copy carrying ``live_activity``.
         """
-        if not self._turn_activity or message.id != self._turn_activity_target_id():
+        if target_id is None or message.id != target_id:
             return message
         return replace(message, live_activity=self._turn_activity)
 
@@ -4509,6 +4530,16 @@ class ConsoleTranscript(VerticalScroll):
             message.status,
             selected,
             variants_signature,
+            # Found by mutation: a MARKDOWN row (the default assistant
+            # renderer) carries the activity line in its HEADER, which this
+            # signature never renders -- it renders the PLAIN row. So with
+            # this field absent the elapsed still ticked, but only as a side
+            # effect of `_message_render_text` happening to embed the same
+            # text; disabling the plain renderer's activity branch froze the
+            # markdown row's elapsed at the first value it painted, with
+            # every display test still green. Named explicitly here so the
+            # two renderers cannot silently depend on each other again.
+            message.live_activity,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )

@@ -274,6 +274,121 @@ async def test_a_finished_turn_drops_the_activity_line_from_the_row():
         assert "It is 42." in after, after
 
 
+@pytest.mark.asyncio
+async def test_only_the_elapsed_changing_repaints_the_default_markdown_row():
+    """The markdown row's header must tick on its OWN signature input.
+
+    Found by mutation. A markdown row carries the line in its HEADER, which
+    `_message_row_signature` never renders -- it renders the PLAIN row. With
+    `live_activity` absent from that signature the elapsed still advanced,
+    but only because the plain renderer happened to embed the same text; the
+    two renderers were silently coupled. This paints two ticks that differ
+    in NOTHING but the elapsed and checks the row updates in place.
+    """
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = [_user(), _in_flight_assistant()]
+        row_key = "message:a1"
+
+        first = await _paint(transcript, messages, "⚙ read_file · 4s")
+        await pilot.pause()
+        assert isinstance(transcript.query_one("#console-message-a1"), ConsoleMarkdownMessage)
+        assert "4s" in first, first
+        builds = transcript.row_build_counts().get(row_key, 0)
+
+        second = await _paint(transcript, messages, "⚙ read_file · 5s")
+        await pilot.pause()
+        assert "5s" in second, second
+        assert "4s" not in second, second
+        assert transcript.row_build_counts().get(row_key, 0) == builds, (
+            "the row must update in place, not be rebuilt"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_row_still_in_flight_loses_its_line_when_the_run_goes_quiet():
+    """An empty line CLEARS the last one -- it never leaves it hanging.
+
+    Found by mutation. The row that stays ``pending`` after its run dies
+    without a terminal publish is exactly the row a stale line would sit on
+    forever, frozen at whatever elapsed it last painted -- the "looks
+    frozen" defect this feature exists to remove, in a new costume. The
+    caller's ``""`` must therefore be applied, not skipped.
+    """
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = [_user(), _in_flight_assistant()]
+        during = await _paint(transcript, messages, "⚙ read_file · 4s")
+        await pilot.pause()
+        assert "read_file" in during, during
+
+        after = await _paint(transcript, messages, "")
+        await pilot.pause()
+        assert "read_file" not in after, after
+
+
+@pytest.mark.asyncio
+async def test_a_ticking_line_repaints_only_its_own_row():
+    """The line is scoped to ONE row -- every other row must be untouched.
+
+    Found by mutation, and invisible to every display assertion: stamping
+    `live_activity` on every message instead of just the in-flight one
+    changes nothing a reader can SEE (a row with content never renders the
+    line, and only assistant rows can), but it puts `live_activity` into
+    every row's signature -- so the whole transcript re-derives and re-syncs
+    once a second for the entire turn. This measures the blast radius
+    instead of the pixels.
+    """
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        history = [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER, content="earlier", id="u0"
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT, content="a reply", id="a0"
+            ),
+            _user(),
+            _in_flight_assistant(),
+        ]
+        await _paint(transcript, history, "⚙ read_file · 4s")
+        await pilot.pause()
+        before_signatures = transcript.row_render_signatures()
+        before_computes = transcript.message_signature_compute_counts()
+
+        await _paint(transcript, history, "⚙ read_file · 5s")
+        await pilot.pause()
+        after_signatures = transcript.row_render_signatures()
+        after_computes = transcript.message_signature_compute_counts()
+
+        moved = {
+            key
+            for key in before_signatures
+            if before_signatures[key] != after_signatures.get(key)
+        }
+        assert moved == {"message:a1"}, moved
+        for message_id in ("u0", "a0", "u1"):
+            assert after_computes[message_id] == before_computes[message_id], message_id
+        assert after_computes["a1"] > before_computes["a1"]
+
+
+@pytest.mark.asyncio
+async def test_a_partially_streamed_reply_is_never_replaced_by_the_line():
+    """Once real text exists it owns the row -- the line is for empty rows."""
+    app = _ActivityHarness()
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = [_user(), _in_flight_assistant(content="Once upon", status="streaming")]
+        assert transcript.apply_turn_activity("⚙ read_file · 4s") == ""
+        text = await _paint(transcript, messages, "⚙ read_file · 4s")
+        await pilot.pause()
+        assert "Once upon" in text, text
+        assert "read_file" not in text, text
+
+
 # --------------------------------------------------------------------------
 # Sub-agent isolation
 # --------------------------------------------------------------------------
@@ -386,8 +501,39 @@ async def test_the_plain_renderer_shows_the_activity_line_too():
         await pilot.pause()
         assert "read_file" in text, text
         assert "4s" in text, text
-        # The placeholder already implies streaming; no doubled status line.
         assert "Streaming…" not in text, text
+
+
+@pytest.mark.asyncio
+async def test_a_streaming_empty_row_shows_the_line_dim_and_without_a_status_line():
+    """The line must not double up with "Streaming…", and must read as dim.
+
+    Found by mutation: with the placeholder predicate blind to the activity
+    line, a plain row that is STREAMING with empty content -- reachable on a
+    fence-gated tool turn, where `reset_stream_buffer` discards leaked prose
+    and leaves the row streaming-and-empty -- rendered the line as ordinary
+    assistant content with a "Streaming…" status line stacked under it.
+    """
+    app = _ActivityHarness()
+    app.app_config = {"chat_defaults": {"assistant_markdown": False}}
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = [_user(), _in_flight_assistant(status="streaming")]
+        text = await _paint(transcript, messages, "⚙ read_file · 4s")
+        await pilot.pause()
+        assert "⚙ read_file · 4s" in text, text
+        assert "Streaming…" not in text, text
+
+        body = transcript.query_one("#console-message-a1").query_one(
+            ".console-transcript-message-body", Static
+        )
+        content = body.renderable
+        dimmed = "".join(
+            content.plain[span.start : span.end]
+            for span in content.spans
+            if "dim" in str(span.style)
+        )
+        assert "⚙ read_file · 4s" in dimmed, (content.plain, content.spans)
 
 
 # --------------------------------------------------------------------------
