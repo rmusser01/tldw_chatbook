@@ -38,6 +38,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.UI.Console_Modules.agent import (
+    CONSOLE_TURN_ACTIVITY_SEPARATOR,
     CONSOLE_TURN_ACTIVITY_THINKING,
     ConsoleAgentController,
     console_turn_activity_text,
@@ -226,10 +227,9 @@ async def test_before_the_first_step_the_row_keeps_the_generating_copy():
         await pilot.pause()
         assert CONSOLE_GENERATING_PLACEHOLDER in text, text
         # No elapsed: there is no per-step base to time from, and inventing
-        # one would be a lie (`_format_fleet_elapsed`'s own rule).
-        assert "s" not in text.replace("Assistant", "").replace(
-            CONSOLE_GENERATING_PLACEHOLDER, ""
-        ), text
+        # one would be a lie (`_format_fleet_elapsed`'s own rule). The
+        # separator is the only thing an elapsed segment can arrive behind.
+        assert CONSOLE_TURN_ACTIVITY_SEPARATOR not in text, text
 
 
 @pytest.mark.asyncio
