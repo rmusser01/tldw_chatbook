@@ -35,6 +35,11 @@ REPO = Path(__file__).resolve().parents[4]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+# E402 is unavoidable and deliberate: this script lives under `Docs/`, not on
+# the import path, so the repo root must be on `sys.path` BEFORE any first-party
+# import can resolve. This is the file's only module-scope local import -- every
+# other one is deferred into `main`, in a single contiguous group, so the pure
+# helpers stay importable (and testable) without building a retrieval stack.
 from Tests.RAG_Eval.harness.canonicalize import canonical_source_type  # noqa: E402
 
 CHUNK_SIZE = 384          # hybrid_basic profile, the harness's own
