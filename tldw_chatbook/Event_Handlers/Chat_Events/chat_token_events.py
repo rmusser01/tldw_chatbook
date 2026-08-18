@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
 from loguru import logger
-from textual.app import ScreenStackError
 from textual.widgets import Input, Select
 from textual.css.query import QueryError
 
@@ -168,35 +167,15 @@ async def update_chat_token_counter(app: "TldwCli") -> None:
             custom_limit = 0
         display_limit = _resolve_token_display_limit(total_limit, custom_limit)
 
-        # Update the display in footer
-        try:
-            # Check if in screen navigation mode
-            if hasattr(app, "_use_screen_navigation") and app._use_screen_navigation:
-                # In screen mode, footer might not exist or be in a different place
-                logger.debug(
-                    f"Token count in screen mode: {used_tokens}/{display_limit}"
-                )
-                # Store for potential screen usage
-                app.current_token_count = (used_tokens, display_limit)
-            else:
-                # Legacy tab mode - update the active screen's footer directly.
-                # Resolved via `app.screen` rather than `app.query_one`
-                # because BaseAppScreen mounts a per-screen AppFooterStatus
-                # (task-264): the default screen's instance is occluded once
-                # any screen is pushed, and App.query_one only ever searches
-                # the default screen. ScreenStackError is caught alongside
-                # QueryError: this can run from interval timers that fire
-                # during shutdown, after the screen stack is drained.
-                footer = app.screen.query_one("AppFooterStatus")
-                from ...Utils.token_counter import format_token_display
-
-                display_text = format_token_display(used_tokens, display_limit)
-                footer.update_token_count(display_text)
-                logger.debug(
-                    f"Token count updated: {used_tokens}/{display_limit} (model limit: {total_limit})"
-                )
-        except (QueryError, ScreenStackError) as e:
-            logger.debug(f"Footer widget not found (may be in screen mode): {e}")
+        # task-17653: the footer token counter is retired — the Console cost
+        # chip owns token/cost display — and screen navigation is the only
+        # mode, so the legacy tab-mode footer write and the reader-less
+        # `app.current_token_count` stash are gone with it. The computation
+        # above still feeds the cached estimator this module exposes.
+        logger.debug(
+            f"Token count computed: {used_tokens}/{display_limit} "
+            f"(model limit: {total_limit})"
+        )
 
     except Exception as e:
         logger.opt(exception=True).error(f"Error updating chat token counter: {e}")
@@ -290,30 +269,12 @@ async def update_chat_token_counter_with_pending(
             custom_limit = 0
         display_limit = _resolve_token_display_limit(total_limit, custom_limit)
 
-        # Update the display in footer with a pending indicator
-        try:
-            # Check if in screen navigation mode
-            if hasattr(app, "_use_screen_navigation") and app._use_screen_navigation:
-                # In screen mode, store for potential screen usage
-                logger.debug(
-                    f"Pending token count in screen mode: {used_tokens}/{display_limit}"
-                )
-                app.current_token_count = (used_tokens, display_limit)
-                app.token_count_pending = bool(pending_text)
-            else:
-                # Legacy tab mode - update the active screen's footer directly
-                # (see the analogous comment in update_chat_token_counter above;
-                # same task-264 active-screen resolution + shutdown guard).
-                footer = app.screen.query_one("AppFooterStatus")
-                from ...Utils.token_counter import format_token_display
-
-                display_text = format_token_display(used_tokens, display_limit)
-                # Add pending indicator
-                if pending_text:
-                    display_text = display_text.replace("Tokens:", "Tokens (typing):")
-                footer.update_token_count(display_text)
-        except (QueryError, ScreenStackError):
-            logger.debug("Footer widget not found (may be in screen mode)")
+        # task-17653: same retirement as update_chat_token_counter above —
+        # no footer write, no reader-less stash.
+        logger.debug(
+            f"Pending token count computed: {used_tokens}/{display_limit} "
+            f"(pending={bool(pending_text)})"
+        )
 
     except Exception as e:
         logger.error(f"Error updating chat token counter with pending: {e}")

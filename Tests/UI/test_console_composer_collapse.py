@@ -888,20 +888,17 @@ async def test_console_bottom_stack_single_separator_contract():
             transcript.region.y + transcript.region.height
             == region.region.y + region.region.height
         )
-        # Below the grid's closing border: chips, 1-row composer, then ONE
-        # deliberate blank row (task-17657: owner-requested breathing room —
-        # the composer groups with the conversation, not the footer), footer.
+        # Below the grid's closing border: chips, then ONE deliberate blank
+        # row on each side of the 1-row composer (task-17657/17659: the bar
+        # floats clear of the status row above and the footer below), footer.
         assert chips.region.y == grid.region.y + grid.region.height
-        assert composer.region.y == chips.region.y + chips.region.height
+        assert composer.region.y == chips.region.y + chips.region.height + 1
         assert composer.region.height == 1
         assert footer.region.y == composer.region.y + composer.region.height + 1
-        gap_row = "".join(
-            seg.text
-            for seg in host.screen._compositor.render_strips()[
-                composer.region.y + composer.region.height
-            ]
-        )
-        assert not gap_row.strip(), repr(gap_row[:20])
+        strips = host.screen._compositor.render_strips()
+        for gap_y in (composer.region.y - 1, composer.region.y + composer.region.height):
+            gap_row = "".join(seg.text for seg in strips[gap_y])
+            assert not gap_row.strip(), (gap_y, repr(gap_row[:20]))
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,9 @@
 ---
 id: TASK-17655
 title: 'Console: design pass — inline REPL prompt (north star)'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
 labels:
   - console
@@ -29,3 +30,9 @@ This is a structural change that must find a new home for every current composer
 - [ ] #2 The owner has explicitly approved the spec before any implementation task is filed
 - [ ] #3 Implementation tasks exist only after approval and reference the approved spec
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Spec drafted at `Docs/superpowers/specs/2026-08-17-console-inline-repl-design.md` and presented to the owner 2026-08-17. Recommendation: DEFER — the de-clutter programme already captured the measurable benefit; the inline prompt's residual value is the conversational feel, with structural risk at the transcript-windowing seams. The spec also carries the full tail-mounted design, affordance rehoming table, and a spike-first migration strategy in case the owner approves instead. Waiting at the AC#2 approval gate.
+<!-- SECTION:PLAN:END -->
