@@ -156,9 +156,9 @@ its first character selected and a hint line showing the active keys.
 | Enter | Open the action menu on the selection |
 | Esc | Leave selection mode (your message selection survives) |
 
-On a diff row only `j`/`k`/`o` apply (diffs select whole lines); the hint
-line always shows exactly the keys that work on the row you're in. A second
-**Esc** clears the message selection as before.
+Diff rows are **not** keyboard-selectable — drag with the mouse for
+hunk-level selection. A second **Esc** clears the message selection as
+before.
 
 Inside the menu itself:
 
@@ -186,12 +186,14 @@ Inside the menu itself:
 - **Request changes / LGTM look broken with no run.** They're disabled on
   purpose — hover for the hint, or use **Comment**.
 - **Keyboard selection always starts at the text's beginning.** Use `o` to
-  swap ends when you want a span that starts mid-text. Diff rows are
-  keyboard-selectable only via their owning message; drag with the mouse
-  for hunk-level precision.
+  swap ends when you want a span that starts mid-text (note: after `o`,
+  forward motions stop one unit short of the other end rather than
+  crossing it, unlike vim).
+- **Diff rows are mouse-only for text selection.** `s` on a tool message
+  selects its marker text, not the diff hunks.
 - **Side-chat replies can't be recovered** after the modal closes. Copy
   anything you want to keep before dismissing it.
 
 —
 *Verified against feat/console-keyboard-selection @ a4286a199 — 2026-08-18
-(shipped tests; live verification pending below)*
+(shipped tests + live tmux verification: s→motions→Enter→menu→Create note→real DB row; two-stage Esc)*

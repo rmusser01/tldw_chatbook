@@ -718,7 +718,7 @@ class _GeometryOwnerApp(App[None]):
     """Short owner box for direct clamp-geometry tests (no transcript).
 
     The owner is a plain 10-row Vertical at the screen top; the base menu
-    (no feedback entries) measures 5 rows. Placement inputs are exact:
+    (no feedback entries) measures 6 rows. Placement inputs are exact:
     ``selection_top`` and the anchor, so the above-row placement branches
     are exercised without transcript scroll choreography.
     """

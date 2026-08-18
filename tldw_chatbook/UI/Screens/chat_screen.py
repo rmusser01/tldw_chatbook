@@ -19510,7 +19510,11 @@ class ChatScreen(BaseAppScreen):
             )
             self.notify("Could not create the note.", severity="warning")
             return
-        self.notify(f"Note created: {title}")
+        # Selection text is untrusted markup: Textual's toast silently EATS
+        # bracketed spans ("[INFO] server up" loses its tag; "[x for x in y]"
+        # erases the whole title) -- and this toast is the only confirmation
+        # the user gets.
+        self.notify(f"Note created: {escape_markup(title)}")
 
     @on(ConsoleSelectionFeedbackRequested)
     def on_console_selection_feedback_requested(

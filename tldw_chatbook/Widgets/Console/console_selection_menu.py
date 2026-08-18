@@ -160,12 +160,13 @@ class ConsoleSelectionMenu(Vertical):
        specificity decides -- and re-grew tall borders on the run-gated
        pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
        rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
-       to ALL six action IDs, not just the two gated ones: any action may
+       to ALL seven action IDs, not just the two gated ones: any action may
        end up disabled, and every action must stay one row in every state
        and color mode. */
     ConsoleSelectionMenu #console-selection-add-to-chat,
     ConsoleSelectionMenu #console-selection-more-details,
     ConsoleSelectionMenu #console-selection-ask-side-chat,
+    ConsoleSelectionMenu #console-selection-create-note,
     ConsoleSelectionMenu #console-selection-request-changes,
     ConsoleSelectionMenu #console-selection-lgm,
     ConsoleSelectionMenu #console-selection-comment {
