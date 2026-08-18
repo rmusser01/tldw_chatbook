@@ -834,6 +834,36 @@ def safe_endpoint_for_display(api_endpoint: Any) -> str:
     return f"<unrecognised endpoint, {len(text)} chars, redacted>"
 
 
+#: The one label an unrecognised endpoint may contribute to metrics.
+UNRECOGNISED_ENDPOINT_LABEL = "<unrecognised>"
+
+
+def safe_endpoint_for_metrics(api_endpoint: Any) -> str:
+    """Return a BOUNDED label for the endpoint dimension.
+
+    TASK-17165 redacted the endpoint's VALUE from logs, labels and errors,
+    and Qodo (PR #1759) caught what that left behind: the redaction marker
+    embeds ``{len(text)} chars``, so N unrecognised endpoints of N different
+    lengths still mint N distinct metric series. Redacting the value is not
+    the same as bounding the cardinality, and this label lands in exported
+    metrics where unbounded series cost memory and scrape size.
+
+    So metrics and diagnostics diverge deliberately: a registered endpoint
+    labels itself (a closed set, one series each), and everything else
+    collapses to a single constant. The length stays in the LOG line, where
+    it tells an operator what shape of value arrived and costs nothing.
+
+    Args:
+        api_endpoint: The raw endpoint argument, of any type.
+
+    Returns:
+        The lowercased endpoint when registered, else
+        ``UNRECOGNISED_ENDPOINT_LABEL``.
+    """
+    lowered = str(api_endpoint or "").lower()
+    return lowered if lowered in API_CALL_HANDLERS else UNRECOGNISED_ENDPOINT_LABEL
+
+
 def chat_api_call(
     api_endpoint: str,
     messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
@@ -955,7 +985,12 @@ def chat_api_call(
     # metrics (where it is also an unbounded-cardinality hazard).
     endpoint_display = safe_endpoint_for_display(api_endpoint)
     logger.info(f"Chat API Call - Routing to endpoint: {endpoint_display}")
-    log_counter("chat_api_call_attempt", labels={"api_endpoint": endpoint_display})
+    # The LABEL is bounded (Qodo PR-1759); the log line above keeps the
+    # length. Redacting a value and bounding a dimension are different jobs.
+    log_counter(
+        "chat_api_call_attempt",
+        labels={"api_endpoint": safe_endpoint_for_metrics(api_endpoint)},
+    )
     start_time = time.time()
 
     handler = API_CALL_HANDLERS.get(endpoint_lower)

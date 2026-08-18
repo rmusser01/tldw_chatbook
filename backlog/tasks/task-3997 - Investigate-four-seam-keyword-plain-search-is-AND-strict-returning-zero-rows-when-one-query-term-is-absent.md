@@ -54,7 +54,7 @@ set — on the current instrument the effect is two thirds of the query set.
 | `and_then_prefix` (the engine's shape) | **0.423** | 25 |
 
 The naive fix is **measurably worse**: OR rescues every zero-row query and
-halves ranking quality, because 20–30 loosely-matching rows on a 172-document
+cuts ranking quality by a THIRD (0.396 -> 0.261, a 34% reduction), because 20–30 loosely-matching rows on a 172-document
 corpus bury the answers AND was getting right. `and_then_prefix` beats both,
 and its shape is why — the 21 queries whose primary already returns a row are
 untouched by construction, so it can only change queries that currently return
