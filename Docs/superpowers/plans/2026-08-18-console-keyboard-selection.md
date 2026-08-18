@@ -246,7 +246,7 @@ async def test_mode_keys_do_not_leak_to_bindings(...):
 ```
 
 - [ ] **Step 2: FAIL.**
-- [ ] **Step 3: Implement** in the `on_key` mode branch (before Textual binding dispatch, `event.stop()`+`prevent_default()` for EVERY key while in mode except keys the mode explicitly ignores? NO — stop only handled keys plus the action letters c/e/r/o/v… simplest ruling: while in mode, stop ALL printable single chars and enter/escape; unknown ones are inert. Arrow/page keys fall through for scrolling.):
+- [ ] **Step 3: Implement** in the `on_key` mode branch (before Textual binding dispatch, `event.stop()`+`prevent_default()` — ruling (corrected after Task 2's review found the fall-through desync): while in mode, stop ALL printable single characters, enter, escape, AND up/down (up/down alias the j/k selection-nav BINDINGS — they do not scroll; letting them through desyncs mode from message selection). Unknown consumed keys are inert. Page-up/page-down and mouse wheel fall through for scrolling. Task 2's no-op consumption of {j,k,down,up,enter} is replaced here by real motions/finish.):
 
 ```python
 _KB_CHAR_MOTIONS = {"h", "l", "w", "b", "0", "$"}
