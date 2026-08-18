@@ -257,8 +257,12 @@ your message as extra context under a "Diff feedback from the user"
 heading, and once the reply is produced a TOOL-role row appears in the
 transcript disclosing exactly what was attached, e.g. `📝 Diff feedback
 attached — a.py @@ -1,4 +1,6 @@: "use the cached value here"` (one line
-per note). Once delivered, a note's row swaps its **✕** for a `sent`
-marker and becomes read-only — it's now part of the record.
+per note). A live card is reused in place across transcript syncs and
+never reloads its own notes, so on the still-open card the **✕** stays
+put even after delivery — pressing it can no longer delete a delivered
+note, though. The row only shows the **✕**→`sent` swap the next time the
+card is rebuilt from scratch (conversation resume or reopen); at that
+point the note is read-only and part of the record.
 
 A note stays pending — and is never silently dropped — whenever it
 can't actually reach the model: the run fails before producing a reply

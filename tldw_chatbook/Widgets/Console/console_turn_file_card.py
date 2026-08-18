@@ -540,12 +540,22 @@ class ConsoleTurnFileCard(Vertical):
                 # "-active" flash.
                 note_btn.active_effect_duration = 0
                 await actions_row.mount(note_btn)
+                # (root, path) alone is not a unique key: a run can hold
+                # TWO rows on the same root+path (a turn's own window and
+                # its post-turn window, `turn_file_entries`'s docstring) --
+                # each producing its OWN entry with its OWN diff. Matching
+                # by hunk_index alone let a note saved on one window's
+                # hunk N bleed into the OTHER window's same-index hunk N,
+                # rendering under the wrong diff there (final-review fix
+                # wave). The hunk's header text is what actually
+                # disambiguates which window's hunk a note anchors to.
                 existing_notes = [
                     note
                     for note in self._notes_by_key.get(
                         (entry.root, entry.path), []
                     )
                     if int(note.get("hunk_index", -1)) == hunk_idx
+                    and note.get("hunk_header") == hunk.header
                 ]
                 for note in existing_notes:
                     await notes_box.mount(self._build_note_row(note))
@@ -719,7 +729,7 @@ class ConsoleTurnFileCard(Vertical):
             )
 
     async def on_key(self, event: Key) -> None:
-        """Reclaim Enter/Escape from a focused note input's ancestors.
+        """Reclaim Enter/Escape/Up/Down from a focused note input's ancestors.
 
         A BINDINGS-only approach here (the first cut of this feature) is
         provably wrong once this card is mounted inside a real
@@ -754,6 +764,18 @@ class ConsoleTurnFileCard(Vertical):
         Enter keypress no longer reaches it -- this handler saves
         directly.
 
+        Up/Down get the same bubble-race treatment for the same root
+        cause (final-review fix wave): ``ConsoleTranscript.on_key`` also
+        binds ``"up"``/``"down"`` to row navigation
+        (``action_select_previous``/``action_select_next``), so a user
+        typing into a focused note input who happens to press an arrow
+        key -- cursor movement is not even meaningful inside a
+        single-line ``Input`` here, there is nothing above/below to move
+        to -- would otherwise silently move the transcript's row
+        selection out from under them mid-edit. Swallowed here with no
+        action of its own: an ``Input`` has no built-in use for either
+        key, so this is a pure no-op reclaim, not a redirect.
+
         Args:
             event: The bubbling key event.
         """
@@ -771,6 +793,9 @@ class ConsoleTurnFileCard(Vertical):
                 event.stop()
                 event.prevent_default()
                 await self.action_cancel_note_input()
+            elif event.key in ("up", "down"):
+                event.stop()
+                event.prevent_default()
         except Exception:
             logger.opt(exception=True).warning(
                 "Turn file card note-input key handling failed."
@@ -901,6 +926,11 @@ class ConsoleTurnFileCard(Vertical):
                 "root": entry.root,
                 "path": entry.path,
                 "hunk_index": hunk_idx,
+                # Mirrors the DB row's own column (see `notes_for_run`) --
+                # needed so an in-session note cached here matches
+                # `_mount_hunk_blocks`'s hunk_header-qualified filter the
+                # same way a reloaded-from-DB note record does.
+                "hunk_header": hunk.header,
             }
             self._notes_by_key.setdefault(
                 (entry.root, entry.path), []
@@ -936,6 +966,17 @@ class ConsoleTurnFileCard(Vertical):
 
             deleted = await asyncio.to_thread(_delete)
             if not deleted:
+                # A live card is reused in place across transcript syncs and
+                # never reloads its own notes (final-review fix wave) -- so
+                # a note delivered while this card stayed open still shows
+                # its stale ✕ button. `delete_change_note` correctly refuses
+                # (``delivered_at IS NOT NULL``), but a silent no-op here
+                # would look like a bug to the user. Surface it instead of
+                # leaving the press unexplained.
+                self.notify(
+                    "Note already sent — no longer deletable",
+                    severity="warning",
+                )
                 return
             for notes in self._notes_by_key.values():
                 notes[:] = [

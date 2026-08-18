@@ -252,12 +252,17 @@ def _expected_entry(note: dict) -> str:
     """Independently reproduce spec §4's per-note entry format (heading
     excluded) -- duplicated here rather than imported from the module
     under test, so an exact-format test can't be satisfied by a change to
-    the implementation's own formatting helper."""
+    the implementation's own formatting helper.
+
+    Fenced with FOUR backticks (final-review fix wave): a three-backtick
+    fence breaks when the excerpt itself contains a triple-backtick line
+    (a markdown-file diff), so the implementation escapes one level up.
+    """
     short_id = note["run_id"][:8]
     return (
         f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
         f"> {note['note']}\n"
-        f"```\n{note['hunk_excerpt']}\n```"
+        f"````\n{note['hunk_excerpt']}\n````"
     )
 
 
@@ -279,12 +284,41 @@ def test_render_diff_feedback_block_exact_format_for_one_note():
         "## Diff feedback from the user (on your earlier file changes)\n"
         "### a.py — @@ -1,4 +1,6 @@   [run 12345678]\n"
         "> use the cached value here\n"
-        "```\n"
+        "````\n"
         "some excerpt\n"
-        "```"
+        "````"
     )
     assert block == expected
     assert included_ids == [7]
+
+
+def test_render_diff_feedback_block_four_backtick_fence_survives_triple_backtick_excerpt():
+    """A hunk excerpt containing its OWN triple-backtick line (a diff of a
+    markdown file with a fenced code block) must not break out of the
+    entry's own fence -- the fence must be four backticks precisely so a
+    three-backtick line inside the excerpt stays inert content rather than
+    closing the fence early.
+    """
+    excerpt = "+```python\n+def foo():\n+    pass\n+```"
+    note = _note(
+        id=9,
+        path="README.md",
+        hunk_header="@@ -1,2 +1,4 @@",
+        hunk_excerpt=excerpt,
+        note="fenced code block added here",
+    )
+    block, included_ids = render_diff_feedback_block([note])
+    assert included_ids == [9]
+    expected_entry = _expected_entry(note)
+    assert f"````\n{excerpt}\n````" in block
+    assert block == (
+        "## Diff feedback from the user (on your earlier file changes)\n"
+        + expected_entry
+    )
+    # The excerpt's own ``` lines must survive verbatim, unescaped, inside
+    # the four-backtick fence -- not stripped, not escaped.
+    assert "+```python" in block
+    assert "+```" in block.splitlines()[-2]
 
 
 def test_render_diff_feedback_block_short_id_is_first_8_chars_of_run_id():
@@ -308,9 +342,11 @@ def test_render_diff_feedback_block_includes_multiple_notes_oldest_first_under_c
 def _equal_length_note(i: int) -> dict:
     """A `_note` whose rendered entry is the SAME byte length for every
     `i` (same-length path/header/note/excerpt) -- lets a test hand-derive
-    exact block byte counts (137 / 213 / 289 bytes for 1 / 2 / 3 such
-    notes, +76 bytes per note) without depending on `render_diff_feedback_
-    block` to compute its own expected values."""
+    exact block byte counts (139 / 217 / 295 bytes for 1 / 2 / 3 such
+    notes, +78 bytes per note -- 76 bytes of text plus the 2 extra fence
+    backticks the final-review fix wave added per entry) without
+    depending on `render_diff_feedback_block` to compute its own expected
+    values."""
     return _note(
         id=i,
         run_id="12345678-abcd-4a4a-9a9a-abcdefabcdef",
@@ -327,22 +363,24 @@ def test_render_diff_feedback_block_holdover_line_bytes_are_included_in_cap():
     final block exceed the cap (reviewer reproduced 441 bytes against a
     398-byte cap on the pre-fix version).
 
-    Byte arithmetic (independent of the function under test, computed by
-    hand from `_equal_length_note`'s fixed entry size): 1/2/3-note blocks
-    (no holdover) are 137 / 213 / 289 bytes; the holdover suffix
-    "\\n\\n… N more notes held for the next message" is 44 bytes for any
-    single-digit N. At cap_bytes=214, two notes fit on their own (213 <
-    214) -- the PRE-FIX code stopped there and appended the 44-byte
-    holdover unconditionally, producing a 257-byte block that blows the
-    214-byte cap. The fix must instead notice 213 + 44 > 214, evict the
-    second note, and land on the one-note-plus-holdover block (137 + 44 =
-    181 bytes), which fits.
+    Byte arithmetic (independent of the function under test, re-derived by
+    hand from `_equal_length_note`'s fixed entry size after the
+    final-review fix wave's four-backtick fence): 1/2/3-note blocks (no
+    holdover) are 139 / 217 / 295 bytes; the holdover suffix "\\n\\n… N
+    more notes held for the next message" is 44 bytes for any
+    single-digit N (unaffected by the fence change -- it carries no
+    backticks). At cap_bytes=218, two notes fit on their own (217 <
+    218) -- the PRE-FIX (pre-holdover-fix) code would have stopped there
+    and appended the 44-byte holdover unconditionally, producing a
+    261-byte block that blows the 218-byte cap. The fix must instead
+    notice 217 + 44 > 218, evict the second note, and land on the
+    one-note-plus-holdover block (139 + 44 = 183 bytes), which fits.
     """
     notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
 
-    block, included_ids = render_diff_feedback_block(notes, cap_bytes=214)
+    block, included_ids = render_diff_feedback_block(notes, cap_bytes=218)
 
-    assert len(block.encode("utf-8")) <= 214, (
+    assert len(block.encode("utf-8")) <= 218, (
         "the rendered block, holdover line included, must never exceed cap_bytes"
     )
     assert included_ids == [1]
@@ -353,7 +391,7 @@ def test_render_diff_feedback_block_holdover_line_bytes_are_included_in_cap():
         + "\n\n… 2 more notes held for the next message"
     )
     assert block == expected
-    assert len(expected.encode("utf-8")) == 181
+    assert len(expected.encode("utf-8")) == 183
 
 
 def test_render_diff_feedback_block_holdover_never_exceeds_cap_across_boundary_caps():
@@ -362,7 +400,7 @@ def test_render_diff_feedback_block_holdover_never_exceeds_cap_across_boundary_c
     (holdover line included) must stay within cap_bytes, and included_ids
     must remain an oldest-first prefix."""
     notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
-    for cap in range(150, 290, 7):
+    for cap in range(145, 300, 7):
         block, included_ids = render_diff_feedback_block(notes, cap_bytes=cap)
         assert len(block.encode("utf-8")) <= cap or included_ids == [], (
             f"cap={cap} block exceeded cap_bytes with a non-empty inclusion set"
@@ -380,11 +418,11 @@ def test_render_diff_feedback_block_no_holdover_reserved_when_nothing_excluded()
     notes = [_equal_length_note(1), _equal_length_note(2), _equal_length_note(3)]
     full_block, full_ids = render_diff_feedback_block(notes, cap_bytes=1_000_000)
     full_bytes = len(full_block.encode("utf-8"))
-    assert full_bytes == 289
+    assert full_bytes == 295
 
     # One byte above the exact all-notes size: a naive "always reserve the
     # holdover budget" implementation would still evict the last note here
-    # (289 + 44 > 290); the correct implementation must not.
+    # (295 + 44 > 296); the correct implementation must not.
     block, included_ids = render_diff_feedback_block(notes, cap_bytes=full_bytes + 1)
 
     assert included_ids == [1, 2, 3]
@@ -410,7 +448,7 @@ def test_render_diff_feedback_block_embeds_real_hunk_excerpt(diff_fixture):
     note = _note(id=1, path="single.py", hunk_header=hunks[0].header, hunk_excerpt=excerpt, note="fix this")
     block, included_ids = render_diff_feedback_block([note])
     assert included_ids == [1]
-    assert f"```\n{excerpt}\n```" in block
+    assert f"````\n{excerpt}\n````" in block
 
 
 def test_format_diff_feedback_disclosure_exact_format_for_one_note():

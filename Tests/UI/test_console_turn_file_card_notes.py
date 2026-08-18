@@ -251,6 +251,66 @@ async def test_delete_removes_pending_note(notes_fixture):
 
 
 @pytest.mark.asyncio
+async def test_delete_press_on_note_delivered_behind_cards_back_notifies_instead_of_noop(
+    notes_fixture,
+):
+    """Doc-honesty fix (final-review fix wave): a live card is reused in
+    place across transcript syncs and never reloads its own notes, so a
+    note delivered elsewhere while this card stays open still shows its
+    stale ✕ button. `delete_change_note` correctly refuses to delete a
+    delivered note (returns False), but a silent no-op there would look
+    like a bug to the user -- pressing ✕ must now notify instead, and the
+    row must survive untouched.
+    """
+    db, service, provider, root, run_id = notes_fixture
+
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+
+        note_input = await _open_note_input(pilot, body)
+        note_input.value = "will be delivered behind this card's back"
+        note_input.focus()
+        await pilot.press("enter")
+
+        delete_btn = None
+        for _ in range(60):
+            buttons = body.query(".console-turn-file-note-delete")
+            if buttons:
+                delete_btn = buttons.first()
+                break
+            await pilot.pause(0.02)
+        assert delete_btn is not None, "delete button never rendered"
+        note_id = db.notes_for_run(run_id)[0]["id"]
+
+        # Delivered BEHIND the card's back -- the card is never told and
+        # keeps rendering the pending ✕, exactly the documented live-card
+        # scenario (Docs/User_Guide/console/agent-runs-and-tools.md).
+        db.mark_notes_delivered([note_id])
+
+        notify_calls: list[tuple[tuple, dict]] = []
+        pilot.app.notify = lambda *a, **kw: notify_calls.append((a, kw))
+
+        delete_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        assert notify_calls, (
+            "pressing delete on an already-delivered note must notify "
+            "the user, not silently no-op"
+        )
+        message = notify_calls[0][0][0]
+        assert "already sent" in message.lower()
+        assert notify_calls[0][1].get("severity") == "warning"
+        # Nothing was actually deleted -- the row (and its ✕) survives.
+        assert body.query(".console-turn-file-note")
+        assert body.query(".console-turn-file-note-delete")
+        stored = db.notes_for_run(run_id)
+        assert len(stored) == 1
+        assert stored[0]["delivered_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_delivered_note_renders_sent_without_delete(notes_fixture):
     """A note stamped `delivered_at` (via `mark_notes_delivered` directly,
     per spec) renders a `sent` marker and carries no delete affordance --
@@ -641,3 +701,292 @@ async def test_degrade_provider_add_change_note_raises_no_crash(notes_fixture):
         assert surviving.first().value == "this will fail to save"
         assert not body.query(".console-turn-file-note")
         assert db.notes_for_run(run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header(
+    tmp_path,
+):
+    """Regression (final-review fix wave): a run's ``change_snapshots`` can
+    hold rows from TWO windows on the SAME root+path -- the turn's own
+    window and its surviving sub-agents' post-turn window
+    (``console_agent_bridge.py``'s ``_close_post_turn_change_window``,
+    same real-provider two-window pattern as
+    ``test_console_turn_file_card.py``'s
+    ``test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs``)
+    -- each producing its OWN ``TurnFileEntry`` with its OWN diff, even
+    when BOTH windows touch the exact same file.
+
+    Pre-fix, ``_mount_hunk_blocks`` matched existing notes to a hunk by
+    ``(root, path)`` + ``hunk_index`` alone: a note saved on one window's
+    hunk 0 would ALSO render under the other window's hunk 0 of the same
+    file -- wrong diff, wrong entry. The fix additionally requires
+    ``note["hunk_header"] == hunk.header``, which the two windows' hunks
+    never share (their diffs are against different baselines).
+
+    Real stack (``ChangeTurnTracker``/``ShadowRepoService``/
+    ``AgentRunsDB``/``AgentRunsChangeReviewProvider``) over a ``tmp_path``
+    FILE-backed DB -- required for the same reason as the sibling
+    two-window test: the card reads off ``asyncio.to_thread``, a
+    different OS thread than the one that wrote the rows, and
+    ``AgentRunsDB`` holds one connection PER THREAD.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    lines = [f"line{i}\n" for i in range(1, 11)]
+    (root / "shared.py").write_text("".join(lines))
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    def _mutate_turn() -> None:
+        edited = lines[:]
+        edited[1] = "line2-TURN\n"
+        (root / "shared.py").write_text("".join(edited))
+
+    def _mutate_post_turn() -> None:
+        edited = lines[:]
+        edited[1] = "line2-TURN\n"
+        edited[8] = "line9-POST\n"
+        (root / "shared.py").write_text("".join(edited))
+
+    # Window 1: the turn's own window -- recorded first, matching
+    # production's insertion order.
+    _record_window(CHANGE_KIND_TURN, _mutate_turn)
+    # Window 2: the post-turn window -- same root, same run_id, same
+    # FILE, recorded second, against window 1's end state as its baseline.
+    _record_window(CHANGE_KIND_SUBAGENT_POST_TURN, _mutate_post_turn)
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=CONV_ID
+    )
+
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows: list = []
+        for _ in range(120):
+            rows = list(card.query(".console-turn-file-row"))
+            if len(rows) >= 2:
+                break
+            await pilot.pause(0.02)
+        assert len(rows) == 2, "row count must equal one entry per window"
+        labels = [str(row.render()) for row in rows]
+        # Sanity: both entries really are the SAME file -- exactly the
+        # shape that collides under the pre-fix (root, path)+hunk_index
+        # filter.
+        assert "shared.py" in labels[0], labels
+        assert "shared.py" in labels[1], labels
+
+        async def _expand(index: int):
+            rows[index].focus()
+            await pilot.press("enter")
+            for _ in range(60):
+                bodies = list(card.query(".console-turn-file-diff"))
+                if bodies[index].display:
+                    return bodies[index]
+                await pilot.pause(0.02)
+            raise AssertionError(f"diff body {index} never displayed")
+
+        turn_body = await _expand(0)
+        turn_hunk_text = str(turn_body.query_one(".console-turn-file-hunk").render())
+        assert "line2-TURN" in turn_hunk_text
+        assert "line9-POST" not in turn_hunk_text
+
+        note_btn = turn_body.query_one(".console-turn-file-note-btn", Button)
+        note_btn.focus()
+        await pilot.press("enter")
+        note_input = None
+        for _ in range(60):
+            inputs = turn_body.query(".console-turn-file-note-input")
+            if inputs:
+                note_input = inputs.first()
+                break
+            await pilot.pause(0.02)
+        assert note_input is not None, "note input never opened on the turn window's hunk"
+        note_input.value = "belongs to the TURN window's hunk only"
+        note_input.focus()
+        await pilot.press("enter")
+        for _ in range(60):
+            if turn_body.query(".console-turn-file-note"):
+                break
+            await pilot.pause(0.02)
+        assert turn_body.query(".console-turn-file-note"), (
+            "note never rendered on the turn window's own entry"
+        )
+
+        post_turn_body = await _expand(1)
+        post_turn_hunk_text = str(
+            post_turn_body.query_one(".console-turn-file-hunk").render()
+        )
+        assert "line9-POST" in post_turn_hunk_text
+        assert "line2-TURN" not in post_turn_hunk_text
+        # Sanity: the two windows' hunk headers for this same file really
+        # do differ -- confirming this fixture exercises the collision
+        # shape and isn't accidentally passing because both hunks happen
+        # to share one header.
+        assert "@@" in turn_hunk_text and "@@" in post_turn_hunk_text
+        turn_header_line = next(
+            line for line in turn_hunk_text.splitlines() if line.startswith("@@")
+        )
+        post_turn_header_line = next(
+            line for line in post_turn_hunk_text.splitlines() if line.startswith("@@")
+        )
+        assert turn_header_line != post_turn_header_line
+
+        await pilot.pause(0.1)
+        post_turn_notes = list(post_turn_body.query(".console-turn-file-note"))
+        assert post_turn_notes == [], (
+            "a note saved on the turn window's hunk must not bleed into "
+            "the post-turn window's same-index hunk of the same file"
+        )
+
+        # Persisted exactly once, anchored to the turn window's own hunk
+        # header.
+        stored = db.notes_for_run(run_id)
+        assert len(stored) == 1
+        assert stored[0]["path"] == "shared.py"
+        assert stored[0]["hunk_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_note_input_swallows_up_down_arrow_keys_no_selection_move(
+    notes_fixture,
+):
+    """Regression (final-review fix wave): the card's ``on_key`` reclaimed
+    only enter/escape from a focused note input's ancestors; up/down
+    bubbled past it to ``ConsoleTranscript.on_key``, which moves ROW
+    SELECTION on those keys -- so a user typing a note who happened to
+    press an arrow key would silently move the transcript's selected row
+    mid-edit. An ``Input`` has no cursor-navigation use for either key on
+    a single-line field, so both must be pure no-op reclaims here.
+
+    Driven inside a REAL ``ConsoleTranscript`` host (not the standalone
+    ``_Host``) -- the bug is specifically about the bubble race with that
+    ancestor's own ``on_key``, matching this file's other
+    real-transcript-host tests
+    (``test_note_input_survives_sync_tick_and_selection_move``,
+    ``test_note_input_enter_submits_inside_real_transcript_not_select``).
+    """
+    from Tests.UI.test_console_native_transcript import MutableTranscriptHarness
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+    db, service, provider, root, run_id = notes_fixture
+
+    card_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content=MARKER,
+        id="m-card",
+        change_review_run_id=run_id,
+    )
+    other_message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", id="m-other"
+    )
+
+    app = MutableTranscriptHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_change_review_provider_factory(lambda: provider)
+        transcript.set_messages([card_message, other_message])
+        await transcript.refresh_messages()
+
+        card = transcript.query_one(
+            f"#console-turn-file-card-{card_message.id}", ConsoleTurnFileCard
+        )
+        for _ in range(60):
+            if card.query(".console-turn-file-row"):
+                break
+            await pilot.pause(0.02)
+        assert card.query(".console-turn-file-row"), "card rows never loaded"
+
+        transcript.scroll_home(animate=False)
+        await pilot.pause()
+
+        # Click, not focus+Enter -- `ConsoleTranscript` owns its own
+        # "enter" binding and can race a `Button.focus()` (same reasoning
+        # as this file's other real-transcript tests).
+        row = card.query(".console-turn-file-row").first()
+        await pilot.click(row)
+        body = None
+        for _ in range(60):
+            bodies = card.query(".console-turn-file-diff")
+            if bodies and bodies.first().display:
+                body = bodies.first()
+                break
+            await pilot.pause(0.02)
+        assert body is not None, "diff body never displayed"
+
+        note_btn = body.query_one(".console-turn-file-note-btn", Button)
+        await pilot.click(note_btn)
+        note_input = None
+        for _ in range(60):
+            inputs = body.query(".console-turn-file-note-input")
+            if inputs:
+                note_input = inputs.first()
+                break
+            await pilot.pause(0.02)
+        assert note_input is not None, "note input never opened"
+
+        for _ in range(120):
+            if pilot.app.focused is note_input:
+                break
+            await pilot.pause(0.02)
+        assert pilot.app.focused is note_input, (
+            "note input never actually gained focus after the click"
+        )
+
+        note_input.value = "typed before arrow keys"
+        assert transcript.selected_message_id is None, (
+            "baseline: nothing selected before the arrow-key presses"
+        )
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert transcript.selected_message_id is None, (
+            "down inside a focused note input must not move transcript "
+            "row selection"
+        )
+        assert pilot.app.focused is note_input, (
+            "down must not move focus off the note input"
+        )
+        assert note_input.value == "typed before arrow keys"
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert transcript.selected_message_id is None, (
+            "up inside a focused note input must not move transcript row "
+            "selection"
+        )
+        assert pilot.app.focused is note_input, (
+            "up must not move focus off the note input"
+        )
+        assert note_input.value == "typed before arrow keys"

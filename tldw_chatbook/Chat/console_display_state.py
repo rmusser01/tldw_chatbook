@@ -1303,12 +1303,23 @@ def hunk_excerpt(hunk: DiffHunk, cap: int = 40) -> str:
 
 
 def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
-    """Render one note's block entry (spec §4), sans the shared heading."""
+    """Render one note's block entry (spec §4), sans the shared heading.
+
+    The excerpt is fenced with FOUR backticks, not the usual three
+    (final-review fix wave): the excerpt is a verbatim hunk body, and a
+    hunk from a markdown-file diff can itself contain a triple-backtick
+    line -- with a three-backtick fence that would prematurely close the
+    fence mid-excerpt and corrupt the rest of the model payload. A bare
+    diff line can start with a literal backtick but a *fenced code block*
+    delimiter inside a diff of a markdown file is exactly the case this
+    guards; four backticks is the standard "fence one level up" escape
+    used for exactly this nesting problem.
+    """
     short_id = str(note["run_id"])[:8]
     return (
         f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
         f"> {note['note']}\n"
-        f"```\n{note['hunk_excerpt']}\n```"
+        f"````\n{note['hunk_excerpt']}\n````"
     )
 
 
