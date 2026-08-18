@@ -106,7 +106,18 @@ class PipelineLoader:
         kept: Dict[str, List[str]] = {}
         for phase, names in (declared or {}).items():
             if not isinstance(names, list):
-                kept[phase] = names
+                # Qodo PR-1795 finding 1: preserving a malformed value let it
+                # reach PipelineConfig unchecked. A phase is a LIST of names or
+                # it is not a phase; anything else is dropped loudly rather
+                # than carried. (Validating the whole file through a Pydantic
+                # model is the broader fix and is deliberately not attempted
+                # here -- this loader has never used one, and widening a
+                # remediation PR into a schema migration is how a small fix
+                # acquires an unmeasured blast radius.)
+                logger.warning(
+                    f"Pipeline {pipeline_id!r}: ignoring {phase} middleware -- "
+                    f"expected a list of names, got {type(names).__name__}"
+                )
                 continue
             permitted = allowed.get(phase)
             if permitted is None:

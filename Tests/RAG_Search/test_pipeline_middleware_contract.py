@@ -240,6 +240,9 @@ def test_unimplemented_middleware_is_dropped_from_a_user_config(tmp_path):
     TASK-17365 chose a floor over rewriting saved profiles: a loader may
     safely refuse to honour a name it cannot implement, but it should not
     silently rewrite a file the user owns.
+
+    Args:
+        tmp_path: Pytest-provided directory for the stale config fixture.
     """
     from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
 

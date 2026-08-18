@@ -110,6 +110,10 @@ def test_the_metrics_label_is_bounded_not_merely_redacted(monkeypatch):
 
     The label must therefore come from a BOUNDED set: a registered endpoint
     name, or one constant. Logs keep the length.
+
+    Args:
+        monkeypatch: Replaces `log_counter` so the emitted labels can be
+            captured without a metrics backend.
     """
     seen: list[str] = []
 
@@ -137,8 +141,14 @@ def test_the_metrics_label_is_bounded_not_merely_redacted(monkeypatch):
 
 
 def test_the_log_line_keeps_the_length_for_debugging(loguru_caplog):
-    """Bounding the LABEL must not blind the LOG: the length is the one
-    detail that tells an operator what shape of value arrived."""
+    """Bounding the LABEL must not blind the LOG.
+
+    The length is the one detail that tells an operator what shape of value
+    arrived, and it costs nothing in a log line.
+
+    Args:
+        loguru_caplog: The repo's loguru-to-caplog bridge fixture.
+    """
     with pytest.raises(Exception):
         chat_api_call("abcdefghij", [{"role": "user", "content": "q"}])
 

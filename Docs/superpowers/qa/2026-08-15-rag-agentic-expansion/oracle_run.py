@@ -80,7 +80,10 @@ QUESTIONS_PATH = HERE / "questions.toml"
 # message. Resolution order: an explicit env var, then the git-excluded
 # repo-root file located RELATIVE to this script.
 API_KEY_ENV = "ANTHROPIC_API_KEY"
-API_KEY_PATH = Path(__file__).resolve().parents[3] / "anthropic-api-key.txt"
+# parents[4], not [3]: this file sits at
+# Docs/superpowers/qa/<arc>/oracle_run.py, so [3] is Docs/ (Qodo PR-1795
+# finding 5 -- an off-by-one in this PR's own fix, caught by review).
+API_KEY_PATH = Path(__file__).resolve().parents[4] / "anthropic-api-key.txt"
 
 #: Cheapest capable model with native tool-calls. Pricing (Anthropic first-party,
 #: cached 2026-06-24): $1.00 / MTok input, $5.00 / MTok output; cache writes
