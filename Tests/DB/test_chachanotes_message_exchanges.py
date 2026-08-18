@@ -71,6 +71,11 @@ def test_no_sync_log_rows_written(db):
     mid = _seed_message(db)
     with db.transaction() as cursor:
         before = cursor.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
+    # Self-validating: seeding a conversation + message fires the
+    # conversations/messages sync_log triggers, so this must be nonzero --
+    # otherwise an `after == before` comparison could pass vacuously (e.g.
+    # if sync_log were broken/empty for an unrelated reason).
+    assert before > 0
     db.append_message_exchanges_local(mid, [
         {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
          "capture_blob": b"b", "created_at": "t"}])
@@ -95,3 +100,56 @@ def test_schema_version_is_41(db):
     # Mirrors the house sibling-version test pattern (a local `_version()`
     # helper against db_schema_version -- there is no public accessor).
     assert _version(db.get_connection()) == 41
+
+
+def test_migrate_from_v40_to_v41_requires_version_40(tmp_path):
+    # Mirrors the version pre-check idiom in
+    # test_chachanotes_default_assistant_enrichment_migration.py::
+    # test_migrate_from_v31_to_v32_requires_version_31: a fresh database
+    # lands on the current (41) schema, so calling the v40->v41 step
+    # directly against it must reject rather than silently re-run.
+    from tldw_chatbook.DB.ChaChaNotes_DB import SchemaError
+
+    db = CharactersRAGDB(tmp_path / "fresh.db", client_id="version-test")
+    conn = db.get_connection()
+    with pytest.raises(SchemaError):
+        db._migrate_from_v40_to_v41(conn)
+    db.close_connection()
+
+
+def test_upgrade_path_from_v40_recreates_the_table(tmp_path):
+    """A database stamped back to v40 (with message_exchanges dropped, so
+    the migration's CREATE TABLE genuinely has work to do rather than
+    no-op against an already-existing table) must, on reopen, re-run
+    _migrate_from_v40_to_v41 and land on v41 with the table back."""
+    db_path = tmp_path / "chachanotes.db"
+    db = CharactersRAGDB(db_path, client_id="upgrade-test")
+    connection = db.get_connection()
+    assert _version(connection) == 41
+
+    with db.transaction() as cursor:
+        cursor.execute("DROP TABLE message_exchanges")
+        cursor.execute(
+            "UPDATE db_schema_version SET version = 40 WHERE schema_name = ?",
+            (SCHEMA_NAME,),
+        )
+    db.close_connection()
+
+    reopened = CharactersRAGDB(db_path, client_id="upgrade-test-reopen")
+    reopened_connection = reopened.get_connection()
+    assert _version(reopened_connection) == 41
+    tables = {
+        row[0]
+        for row in reopened_connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "message_exchanges" in tables
+    # And the recreated table is genuinely usable, not left half-migrated.
+    mid = _seed_message(reopened)
+    assert reopened.append_message_exchanges_local(
+        mid,
+        [{"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
+          "capture_blob": b"b", "created_at": "t"}],
+    ) == 1
+    reopened.close_connection()
