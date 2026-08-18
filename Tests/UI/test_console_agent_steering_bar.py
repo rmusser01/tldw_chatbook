@@ -120,6 +120,15 @@ async def _drill_in(pilot, console, run_id: str) -> None:
     await pilot.pause()
 
 
+async def _drill_out(pilot, console) -> None:
+    """Back out of the drill-in exactly as the Back button's handler does
+    (`ChatScreen.on_button_pressed`, `console-agent-drilldown-back`)."""
+    console._console_agent_drilldown_run_id = None
+    await pilot.pause()
+    console._sync_console_agent_section()
+    await pilot.pause()
+
+
 # -- visibility: live drill-in ONLY -------------------------------------
 
 
@@ -214,6 +223,93 @@ async def test_submitting_steering_lands_an_exact_user_labeled_mailbox_entry():
         ]
         # The input cleared for the next message.
         assert console.query_one(_INPUT, Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_a_draft_typed_for_one_child_never_reaches_another():
+    """Qodo audit S3 (PR 1793): the draft belongs to the child it was
+    typed for.
+
+    `sync_state` on a target change cleared the refusal note but never
+    the `Input`'s value, and visibility toggles via `styles.display`, so
+    text typed while drilled into child A persisted across drill-out/
+    drill-in — and submit pairs the retained text with the LATEST
+    `target_id`. Drill into A, type, drill out, drill into B, press
+    Enter: B's mailbox got the steering typed for A.
+
+    RED before the fix at the first assertion: the input still held A's
+    draft after drilling into B.
+    """
+    coordinator = FleetCoordinator(max_live=4, clock=time.monotonic)
+    handle_a = coordinator.reserve("find pricing", "researcher")
+    coordinator.attach_run(handle_a.handle_id, "run-1")
+    handle_b = coordinator.reserve("check reviews", "researcher")
+    coordinator.attach_run(handle_b.handle_id, "run-2")
+    bridge = _SteeringFleetBridge(coordinator)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        await _drill_in(pilot, console, "run-1")
+        await _scroll_into_view(pilot, console, _BAR)
+
+        steer_input = console.query_one(_INPUT, Input)
+        steer_input.focus()
+        await pilot.pause()
+        steer_input.value = "text meant for child A"
+
+        # Abandon A's drill-in, enter B's.
+        await _drill_out(pilot, console)
+        await _drill_in(pilot, console, "run-2")
+        await _scroll_into_view(pilot, console, _BAR)
+
+        assert console.query_one(_INPUT, Input).value == "", (
+            "the draft typed for child A survived into child B's drill-in "
+            "-- Enter would steer B with A's text"
+        )
+
+        # And Enter now is inert: nothing typed FOR B yet.
+        steer_input = console.query_one(_INPUT, Input)
+        steer_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert bridge.steer_calls == []
+        assert coordinator.drain_steering(handle_b.handle_id) == []
+        assert coordinator.drain_steering(handle_a.handle_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_draft_survives_a_routine_sync_tick_for_the_same_target():
+    """The other direction, pinned: a sync for the SAME target (a queued-
+    count change, an elapsed-time repaint) must NOT eat a draft the user
+    is mid-typing. Only a target CHANGE clears the input."""
+    coordinator, handle_id = _fleet_with_live_child()
+    bridge = _SteeringFleetBridge(coordinator)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        await _drill_in(pilot, console, "run-1")
+        await _scroll_into_view(pilot, console, _BAR)
+
+        steer_input = console.query_one(_INPUT, Input)
+        steer_input.focus()
+        await pilot.pause()
+        steer_input.value = "half-typed steering dra"
+
+        # A routine payload change for the SAME drilled-in child: the
+        # supervisor posts steering of its own, the queued count moves,
+        # the section re-syncs.
+        assert coordinator.post_steering(handle_id, "supervisor", "from sup") is True
+        console._sync_console_agent_section()
+        await pilot.pause()
+
+        assert console.query_one(_INPUT, Input).value == "half-typed steering dra", (
+            "a same-target sync tick ate the user's mid-typed draft"
+        )
 
 
 # -- the honest queued state ---------------------------------------------
