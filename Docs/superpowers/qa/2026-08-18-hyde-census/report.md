@@ -157,7 +157,16 @@ them. Endpoint validation now fails at startup rather than surfacing later as
 "the generator returned nothing" — the failure mode this programme keeps
 misreading.
 
-Verdict unchanged on a full re-run: 2 gains, 0 losses, NULL.
+The census's bucketing was also extracted to a pure `classify` and pinned —
+it produced the "11 reachable" that licensed the probe, so an over-count
+would probe a population that does not exist and an under-count would kill a
+real candidate silently. **Mutation-verified**: disabling the prompt
+exclusion (prompts have no vector index, so no query-vector rewrite can reach
+them) reds `test_prompt_excluded_even_when_found_deeper`.
+
+**22 pins total.** Both scripts reproduce their numbers exactly after the
+refactor: census 15,820 rows / 0 errors / 11 reachable; probe 2 gains, 0
+losses, NULL.
 
 ## What would reopen this
 

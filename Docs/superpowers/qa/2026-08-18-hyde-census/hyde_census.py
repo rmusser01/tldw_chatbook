@@ -37,6 +37,45 @@ BAR = 5         # registered in the task before this file existed
 MODES = ("semantic", "hybrid")
 
 
+def classify(
+    has_target: bool,
+    category: str,
+    hit_at_k: bool,
+    hit_at_deep: bool,
+) -> str:
+    """Bucket one query for the HyDE-reachable population.
+
+    HyDE rewrites the query embedding, so it can only act on a query that
+    misses today AND whose target is in the vector index at all. Two
+    exclusions are structural and were registered in TASK-18514 before this
+    ran:
+
+    * `negative` queries have no target, so a miss is the CORRECT outcome —
+      it is not a rescuable failure; and
+    * `prompt` targets have no vector index (B2 gave prompts an FTS sub-leg
+      deliberately without one), so no change to the query vector reaches
+      them.
+
+    Args:
+        has_target: Whether the query has any ground-truth slug.
+        category: The golden-set category.
+        hit_at_k: Target retrieved at the gate's k.
+        hit_at_deep: Target retrieved at the deep probe depth.
+
+    Returns:
+        One of ``"hitting"``, ``"excluded_negative"``, ``"excluded_prompt"``,
+        ``"reachable"`` (misses now, present deeper — HyDE's case), or
+        ``"unfindable"`` (absent even at depth).
+    """
+    if hit_at_k:
+        return "hitting"
+    if not has_target:
+        return "excluded_negative"
+    if category == "prompt":
+        return "excluded_prompt"
+    return "reachable" if hit_at_deep else "unfindable"
+
+
 def main() -> int:
     """Run the census and print the reachable population against the bar.
 
@@ -120,18 +159,16 @@ def main() -> int:
     reachable: dict[str, list[str]] = {}
     for mode in MODES:
         excl_neg, excl_prompt, deep_only, unfindable, hitting = [], [], [], [], []
+        bucket = {
+            "hitting": hitting,
+            "excluded_negative": excl_neg,
+            "excluded_prompt": excl_prompt,
+            "reachable": deep_only,
+            "unfindable": unfindable,
+        }
         for qid, (h10, h200) in state[mode].items():
             q = by_id[qid]
-            if h10:
-                hitting.append(qid)
-            elif not q.relevant_slugs:
-                excl_neg.append(qid)
-            elif q.category == "prompt":
-                excl_prompt.append(qid)
-            elif h200:
-                deep_only.append(qid)      # in the index, ranked too low -> HyDE's case
-            else:
-                unfindable.append(qid)     # not retrieved even at k=200
+            bucket[classify(bool(q.relevant_slugs), q.category, h10, h200)].append(qid)
         reachable[mode] = deep_only
         print(f"\n  --- {mode} ---")
         print(f"    hitting at k={K}                      : {len(hitting)}")
