@@ -503,6 +503,81 @@ async def test_oversize_submit_refused_with_own_painted_copy():
         )
 
 
+class _RefusingBridge(_SteeringFleetBridge):
+    """A bridge whose steering path REFUSES (returns False) -- the shape of
+    an unknown/terminal target or a dead coordinator at submit time."""
+
+    def steer_subagent(self, conversation_id: str, row_id: str, text: str) -> bool:
+        self.steer_calls.append((conversation_id, row_id, text))
+        return False
+
+
+@pytest.mark.asyncio
+async def test_a_refused_submit_keeps_the_draft_in_the_input():
+    """Qodo audit minor batch: the input cleared at POST time, so a submit
+    the bridge then refused (unknown/terminal target, dead coordinator)
+    destroyed the user's text with nothing delivered and nothing shown.
+    The draft is now cleared only after the bridge actually queued it.
+    The success half stays pinned by
+    `test_submitting_steering_lands_an_exact_user_labeled_mailbox_entry`'s
+    own cleared-input assertion."""
+    coordinator, handle_id = _fleet_with_live_child()
+    bridge = _RefusingBridge(coordinator)
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _setup_console(pilot, host, bridge)
+        await _drill_in(pilot, console, "run-1")
+        await _scroll_into_view(pilot, console, _BAR)
+
+        steer_input = console.query_one(_INPUT, Input)
+        steer_input.focus()
+        await pilot.pause()
+        steer_input.value = "carefully worded steering"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        # The refusal really happened at the bridge...
+        assert bridge.steer_calls == [(CONV, handle_id, "carefully worded steering")]
+        assert coordinator.drain_steering(handle_id) == []
+        # ...and the draft survived it for retry.
+        assert console.query_one(_INPUT, Input).value == "carefully worded steering", (
+            "a refused submit destroyed the user's draft"
+        )
+
+
+def test_a_terminal_rows_secondary_drops_the_steering_queued_segment():
+    """Qodo audit minor batch: a finished child never drains its mailbox
+    again, so `steering queued (N)` on a terminal fleet row is a promise
+    the app can no longer keep -- the row builder gates the segment on a
+    live status. The coordinator copy genuinely still reports the queued
+    entry for a terminal handle (asserted as the precondition), which is
+    exactly why the gate must live in the row builder."""
+    from tldw_chatbook.UI.Console_Modules.agent import _fleet_row_from_handle
+
+    coordinator, handle_id = _fleet_with_live_child()
+    assert coordinator.post_steering(handle_id, "user", "too late") is True
+    coordinator.finish(handle_id, "done", result="42")
+    (handle,) = coordinator.snapshot()
+    assert handle.status == "done"
+    assert handle.queued_steering == 1, (
+        "harness precondition: the mailbox copy must still report the "
+        "entry, or this gate would be untestable"
+    )
+    row = _fleet_row_from_handle(handle, now=time.monotonic())
+    assert "steering queued" not in row.secondary_text, (
+        f"a terminal row still promises delivery: {row.secondary_text!r}"
+    )
+
+    # The live half, in the same breath: an honest queue stays visible.
+    coordinator2, handle_id2 = _fleet_with_live_child(run_id="run-9")
+    assert coordinator2.post_steering(handle_id2, "user", "in time") is True
+    (live,) = coordinator2.snapshot()
+    row_live = _fleet_row_from_handle(live, now=time.monotonic())
+    assert "steering queued (1)" in row_live.secondary_text
+
+
 @pytest.mark.asyncio
 async def test_at_cap_submit_is_accepted():
     """Exactly at the cap is legal — the refusal boundary is `>`type, not

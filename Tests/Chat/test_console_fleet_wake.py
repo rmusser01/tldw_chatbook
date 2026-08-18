@@ -1134,3 +1134,75 @@ def test_compose_wake_notice_splits_the_total_budget_evenly():
     )
     for i in range(5):
         assert f"[run-{i}]" in notice, "every child still appears"
+
+
+def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
+    """Qodo audit minor batch: `_attempt` set `_delivering`/`_delivering_
+    session` BEFORE `loop.create_task(...)`. If create_task raises (the
+    loop closing between the `is_closed()` check and the call is the live
+    shape), the flags stayed set forever: every later `_attempt` for the
+    whole process early-returned at `self._delivering is not None`, so no
+    wake could ever fire again. The flags must still be set before the
+    UI hook and the task (the poll-beat race the comment there pins), so
+    the fix is clear-on-failure, not set-after.
+    """
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "true")
+    session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
+    controller = SimpleNamespace(
+        _disposed=False,
+        store=SimpleNamespace(sessions=lambda: [session]),
+        send_refusal_copy=lambda session_id: None,
+    )
+    wake = ConsoleFleetWakeCoordinator(controller)
+
+    class _RaisingLoop:
+        def __init__(self):
+            self.calls = 0
+
+        def is_closed(self):
+            return False
+
+        def create_task(self, coro):
+            self.calls += 1
+            coro.close()
+            raise RuntimeError("Event loop is closed")
+
+    raising = _RaisingLoop()
+    wake._loop = raising
+    with wake._registry_lock:
+        wake._pending["conv-1"] = {"run-1": "done"}
+
+    wake._attempt("conv-1")
+    assert raising.calls == 1, (
+        "harness precondition: the attempt never reached create_task"
+    )
+    assert wake.delivering_conversation_id() is None, (
+        "a failed create_task left `_delivering` set forever -- every "
+        "future wake in the process is silently refused"
+    )
+    assert wake.delivering_session_id() is None
+
+    # The wake is deferred, not lost: a later attempt on a healthy loop
+    # schedules the delivery.
+    class _FakeTask:
+        def add_done_callback(self, cb):
+            return None
+
+    class _RecordingLoop:
+        def __init__(self):
+            self.tasks: list = []
+
+        def is_closed(self):
+            return False
+
+        def create_task(self, coro):
+            self.tasks.append(coro)
+            coro.close()
+            return _FakeTask()
+
+    healthy = _RecordingLoop()
+    wake._loop = healthy
+    wake._attempt("conv-1")
+    assert healthy.tasks, (
+        "the pending wake was lost after the failed attempt"
+    )

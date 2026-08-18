@@ -2176,7 +2176,10 @@ class ChatScreen(BaseAppScreen):
         controller routes to ``ConsoleAgentBridge.steer_subagent`` (which
         owns resolution + boundary validation), and a successful post
         requests one coalesced fleet-section resync so the queued-count
-        line reflects the new entry on the next tick.
+        line reflects the new entry on the next tick. The bar's draft is
+        cleared only on a QUEUED submit (Qodo audit minor batch) -- a
+        refusal keeps the user's text in the input for retry rather than
+        destroying it with nothing delivered.
         """
         message.stop()
         queued = self._agent._steer_console_agent_drilldown_child(
@@ -2184,6 +2187,10 @@ class ChatScreen(BaseAppScreen):
         )
         if queued:
             self._request_console_agent_fleet_sync()
+            try:
+                self.query_one(ConsoleAgentSteeringBar).clear_draft()
+            except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
+                pass
 
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:

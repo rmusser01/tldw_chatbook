@@ -212,6 +212,22 @@ class ConsoleAgentSteeringBar(Vertical):
         note.update(text)
         note.styles.display = "block" if text else "none"
 
+    def clear_draft(self) -> None:
+        """Clear the input after a submit the bridge actually QUEUED.
+
+        Qodo audit minor batch: the input used to clear at post time, so
+        a submit the bridge then refused (unknown/terminal target, dead
+        coordinator) destroyed the user's text with nothing delivered and
+        nothing shown. The screen's ``SteeringSubmitted`` handler calls
+        this only on a ``True`` return from the steering route; a refusal
+        keeps the draft in place for retry.
+        """
+        try:
+            steer_input = self.query_one(f"#{STEERING_INPUT_ID}", Input)
+        except Exception:
+            return
+        steer_input.value = ""
+
     @on(Input.Submitted, f"#{STEERING_INPUT_ID}")
     def _on_steering_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -236,5 +252,7 @@ class ConsoleAgentSteeringBar(Vertical):
             )
             return
         self._set_note("")
-        event.input.value = ""
+        # The draft is NOT cleared here: the screen handler clears it via
+        # `clear_draft()` only once the bridge reports the entry queued
+        # (see that method's docstring for the refusal case).
         self.post_message(self.SteeringSubmitted(self._state.target_id, text))
