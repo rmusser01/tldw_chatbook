@@ -607,3 +607,126 @@ async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
             assert results == [False, False]
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
+    """Rapid double marker-click / double-`n` on the same anchor, before the
+    first worker's off-thread DB read resolves, must not stack two
+    ConsoleReviewNotesModals with independent DB-bound closures -- the
+    handler's inflight latch (mirroring ``_console_selection_feedback_
+    inflight``) makes the second request a no-op, not a second flow."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_double")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes double")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="ok",
+                persist=True,
+            )
+            db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="ok",
+                comment="only note",
+            )
+
+            fetch_calls: list = []
+            real_get = db.get_transcript_annotations
+
+            def _counting_get(conv_id):
+                fetch_calls.append(conv_id)
+                return real_get(conv_id)
+
+            db.get_transcript_annotations = _counting_get  # type: ignore[method-assign]
+
+            pushed = _stub_review_notes_modal(screen, lambda _modal: False)
+
+            # Both posted before any pause: the second handler must observe
+            # the latch the first one set, entirely synchronously -- no
+            # thread-timing race required for this to be deterministic.
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: len(pushed) == 1)
+            # A few extra pauses: if the guard were absent, a second worker
+            # would still eventually reach push_screen_wait -- give it every
+            # chance to show up before asserting it didn't.
+            for _ in range(10):
+                await pilot.pause()
+
+            assert len(pushed) == 1
+            assert len(fetch_calls) == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
+    """A latched-forever flag would silently kill the feature after its
+    first use -- a request made once the first flow has fully finished
+    (modal dismissed) must open a fresh modal, not be swallowed."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_release")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes release")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="ok",
+                persist=True,
+            )
+            db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="ok",
+                comment="only note",
+            )
+
+            pushed = _stub_review_notes_modal(screen, lambda _modal: False)
+
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: len(pushed) == 1)
+            assert not screen._console_review_notes_inflight, (
+                "flag should be released once the first flow's finally runs"
+            )
+
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: len(pushed) == 2)
+
+            assert len(pushed) == 2
+    finally:
+        db.close()
