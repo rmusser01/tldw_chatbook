@@ -447,7 +447,13 @@ class LocalResearchEngine:
         plan_patch_limits = self._approved_patch(run_id, "plan_review").get("limits")
         if isinstance(plan_patch_limits, dict) and plan_patch_limits:
             limits = {**limits, **plan_patch_limits}
-        ledger = BudgetLedger.from_limits(limits)
+        # task-18060: a resumed run continues its budget rather than being
+        # granted it again. The snapshot is the ledger the previous executor
+        # wrote; its absence means this run has never executed.
+        previous_ledger = (
+            self.service.get_artifact(run_id, "budget_ledger.json") or {}
+        ).get("content")
+        ledger = BudgetLedger.from_snapshot(previous_ledger, limits)
         self._active_ledger = ledger
         # task-16791: per-run routing/overrides (server parity). The run's
         # provider_overrides merge OVER the engine's construction params.

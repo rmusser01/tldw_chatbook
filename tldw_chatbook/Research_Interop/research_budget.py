@@ -77,6 +77,47 @@ class BudgetLedger:
     def from_limits(cls, limits: Mapping[str, Any] | None) -> "BudgetLedger":
         return cls(limits)
 
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: Mapping[str, Any] | None,
+        limits: Mapping[str, Any] | None,
+    ) -> "BudgetLedger":
+        """Rebuild a ledger that has already spent part of its budget.
+
+        task-18060: ``execute_run`` used to rebuild from limits on every entry
+        while writing ``budget_ledger.json`` and never reading it back, so a
+        resumed run was granted its whole budget again. Resume is routine once
+        runs survive an app exit, which turns that into a leak.
+
+        Reservations are deliberately NOT restored. A reservation belongs to an
+        in-flight call that died with its executor; carrying it forward would
+        hold budget nothing is going to spend.
+
+        Args:
+            snapshot: A prior ``snapshot()`` payload, or None for a run that
+                has never executed.
+            limits: The run's limits, used when the snapshot carries none.
+
+        Returns:
+            A ledger whose used counters continue from the snapshot.
+        """
+        snapshot = snapshot or {}
+        ledger = cls(dict(snapshot.get("limits") or limits or {}))
+        ledger.searches_used = int(snapshot.get("searches_used") or 0)
+        ledger.searches_overshoot = int(snapshot.get("searches_overshoot") or 0)
+        ledger.docs_used = int(snapshot.get("docs_used") or 0)
+        ledger.tokens_settled = int(snapshot.get("tokens_settled") or 0)
+        # A snapshot records whether any settled usage was estimated rather than
+        # provider-reported, not the exact-token count itself; restoring the
+        # settled total as fully exact would erase that distinction, so an
+        # estimated snapshot restores as estimated.
+        if snapshot.get("tokens_estimated"):
+            ledger.tokens_settled_exact = 0
+        else:
+            ledger.tokens_settled_exact = ledger.tokens_settled
+        return ledger
+
     # -- searches ---------------------------------------------------------
 
     def remaining_searches(self) -> int | None:

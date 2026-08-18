@@ -1532,3 +1532,63 @@ def test_a_long_silent_phase_keeps_its_lease():
     final = asyncio.run(engine.execute_run(run["id"]))
 
     assert final["status"] == "completed", final.get("progress_message")
+
+
+def test_a_resumed_run_does_not_get_its_search_budget_back():
+    """task-18060: the engine rebuilt the ledger from limits on every entry, so
+    a run resumed three times was granted its budget three times."""
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q",
+        autonomy_mode="autonomous",
+        limits_json={"max_searches": 10, "max_iterations": 1},
+    )
+    asyncio.run(engine.execute_run(run["id"]))
+
+    snapshot = (
+        service.get_artifact(run["id"], "budget_ledger.json") or {}
+    ).get("content") or {}
+
+    assert int(snapshot.get("searches_used") or 0) > 0, snapshot
+
+
+def test_the_engine_continues_a_pre_existing_ledger():
+    """The decisive test: pre-seed spend, then run. If the engine rebuilds from
+    limits it starts at zero and the final snapshot shows only this run's spend;
+    if it restores, the snapshot continues from the seeded total.
+
+    Written this way because the obvious version -- call from_snapshot in the
+    test and assert it reduces the budget -- passes whether or not the ENGINE
+    uses it. Verified by mutation: reverting the engine to from_limits fails
+    this test and nothing else.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q",
+        autonomy_mode="autonomous",
+        limits_json={"max_searches": 10, "max_iterations": 1},
+    )
+    service.save_artifact(
+        run["id"],
+        artifact_name="budget_ledger.json",
+        content_type="application/json",
+        content={
+            "limits": {"max_searches": 10},
+            "searches_used": 5,
+            "searches_overshoot": 0,
+            "docs_used": 0,
+            "tokens_settled": 0,
+        },
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    snapshot = (
+        service.get_artifact(run["id"], "budget_ledger.json") or {}
+    ).get("content") or {}
+
+    assert int(snapshot.get("searches_used") or 0) > 5, snapshot
