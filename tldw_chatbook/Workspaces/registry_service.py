@@ -81,16 +81,12 @@ class BindingNotFound(WorkspaceRegistryServiceError):
         self.binding_id = binding_id
 
 
-def validate_folder_binding_path(
-    path: str | Path,
-    existing_locators: Sequence[str] = (),
-) -> Path:
-    """Resolve and vet a candidate folder-binding path (spec 2026-08-17 §4.2).
+def _validate_folder_path_rules(path: str | Path) -> Path:
+    """Validate filesystem and sensitive-path rules for a candidate folder.
 
-    Pure with respect to the registry: consults only the filesystem and the
-    sensitive-path denylist, so creation UIs can vet folders before any
-    workspace exists. Raises WorkspaceRegistryServiceError with the same
-    user-facing messages ``add_folder_binding`` raised before extraction.
+    Private helper; does not check existing bindings. Resolves and vets the
+    path itself: existence, root/home rejection, and sensitive-path denylist.
+    Raises WorkspaceRegistryServiceError on failure.
     """
     candidate = Path(path).expanduser()
     try:
@@ -128,6 +124,19 @@ def validate_folder_binding_path(
             f"not overlap this application's own data, configuration, "
             f"or credential directories."
         )
+    return resolved
+
+
+def _validate_folder_overlap(
+    resolved: Path,
+    existing_locators: Sequence[str],
+) -> None:
+    """Validate that a folder does not duplicate or nest existing bindings.
+
+    Private helper; assumes path has already passed filesystem/sensitive checks.
+    Raises WorkspaceRegistryServiceError if the path duplicates or nests
+    any existing binding, or if any existing binding nests within the path.
+    """
     for locator in existing_locators:
         existing_path = Path(locator)
         if resolved == existing_path:
@@ -144,6 +153,34 @@ def validate_folder_binding_path(
                 f"The already-bound folder {existing_path} is inside "
                 f"{resolved}; remove it first."
             )
+
+
+def validate_folder_binding_path(
+    path: str | Path,
+    existing_locators: Sequence[str] = (),
+) -> Path:
+    """Resolve and vet a candidate folder-binding path (spec 2026-08-17 §4.2).
+
+    Pure with respect to the registry: consults only the filesystem and the
+    sensitive-path denylist, so creation UIs can vet folders before any
+    workspace exists. Raises WorkspaceRegistryServiceError with the same
+    user-facing messages ``add_folder_binding`` raised before extraction.
+
+    Args:
+        path: Candidate folder path (str or Path; supports ~ expansion).
+        existing_locators: Already-bound folder paths to check against for
+            duplicates and nesting conflicts. Defaults to empty sequence.
+
+    Returns:
+        The resolved, canonical folder path as a Path object.
+
+    Raises:
+        WorkspaceRegistryServiceError: If the path does not exist, is not a
+            directory, is the filesystem root, is the home directory, overlaps
+            a sensitive path, or duplicates/nests any existing binding.
+    """
+    resolved = _validate_folder_path_rules(path)
+    _validate_folder_overlap(resolved, existing_locators)
     return resolved
 
 
@@ -759,8 +796,9 @@ class LocalWorkspaceRegistryService:
         (TASK-857). Default-workspace and unknown-workspace rejection is
         delegated to ``save_runtime_binding``.
         """
-        resolved = validate_folder_binding_path(
-            path,
+        resolved = _validate_folder_path_rules(path)
+        _validate_folder_overlap(
+            resolved,
             [b.locator for b in self.list_folder_bindings(workspace_id)],
         )
         binding = WorkspaceRuntimeBinding(

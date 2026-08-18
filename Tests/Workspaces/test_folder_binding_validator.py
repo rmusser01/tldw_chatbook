@@ -76,3 +76,19 @@ def test_add_folder_binding_still_enforces(tmp_path):
     assert binding.locator == str(project.resolve())
     with pytest.raises(WorkspaceRegistryServiceError, match="already bound"):
         service.add_folder_binding("workspace-local-1", project)
+
+
+def test_add_folder_binding_path_validation_before_db_lookup(tmp_path):
+    """Verify path validation happens before list_folder_bindings is called.
+
+    Regression test: ensures that add_folder_binding validates the path
+    before looking up existing bindings, preserving the original evaluation
+    order. If the order was wrong, an invalid path with an invalid workspace_id
+    would raise ValueError instead of WorkspaceRegistryServiceError.
+    """
+    db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
+    service = LocalWorkspaceRegistryService(db)
+    # Don't create the workspace - test that path validation happens first
+    bad_path = tmp_path / "does_not_exist"
+    with pytest.raises(WorkspaceRegistryServiceError, match="does not exist"):
+        service.add_folder_binding("invalid-workspace-id", bad_path)
