@@ -6951,3 +6951,61 @@ def test_inline_child_live_slots_are_bounded_with_the_fleet_switched_off(
         "the inline path leaked a rail slot per child: "
         f"{bridge._live['conv-inline-prune']}"
     )
+
+
+# --- PR3b Task 4: retention caps read beside max_live in the coordinator
+# factory ([agents] retained_transcripts / retained_transcript_max_chars),
+# applied to a NEW coordinator at construction and to an EXISTING one via
+# set_retention_caps (the set_max_live shape). ---
+
+
+def test_fleet_coordinator_factory_reads_the_retention_caps(tmp_path, monkeypatch):
+    from Tests.Agents.conftest import pin_agent_settings
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+
+    pin_agent_settings(
+        monkeypatch,
+        **{
+            agent_service_module.MAX_LIVE_SUBAGENTS_KEY: 3,
+            agent_service_module.RETAINED_TRANSCRIPTS_KEY: 2,
+            agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY: 1234,
+        },
+    )
+    bridge, _db, _store, _session, _aid = _bridge(tmp_path, [])
+    coordinator = bridge._conversation_fleet_coordinator("conv-caps")
+    assert coordinator is not None
+    assert coordinator.retained_transcripts == 2
+    assert coordinator.retained_transcript_max_chars == 1234
+
+
+def test_fleet_coordinator_factory_resizes_retention_caps_in_place(
+    tmp_path, monkeypatch
+):
+    from Tests.Agents.conftest import pin_agent_settings
+    from tldw_chatbook.Agents import agent_service as agent_service_module
+
+    pin_agent_settings(
+        monkeypatch,
+        **{
+            agent_service_module.MAX_LIVE_SUBAGENTS_KEY: 3,
+            agent_service_module.RETAINED_TRANSCRIPTS_KEY: 5,
+            agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY: 200_000,
+        },
+    )
+    bridge, _db, _store, _session, _aid = _bridge(tmp_path, [])
+    first = bridge._conversation_fleet_coordinator("conv-resize")
+    assert first is not None
+
+    pin_agent_settings(
+        monkeypatch,
+        **{
+            agent_service_module.RETAINED_TRANSCRIPTS_KEY: 1,
+            agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY: 99,
+        },
+    )
+    second = bridge._conversation_fleet_coordinator("conv-resize")
+    # Re-sized IN PLACE, never replaced: replacing would drop the retained
+    # transcripts along with every live handle (the set_max_live rule).
+    assert second is first
+    assert second.retained_transcripts == 1
+    assert second.retained_transcript_max_chars == 99

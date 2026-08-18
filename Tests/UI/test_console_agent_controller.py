@@ -399,3 +399,51 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
         db_path=str(tmp_path / "chacha.db")
     )
     assert screen._ensure_console_agent_bridge() is not None
+
+
+@pytest.mark.asyncio
+async def test_drilldown_header_names_the_resumed_from_run(tmp_path):
+    """PR3b Task 4: a resumed sub-agent's drill-in header carries its
+    lineage -- ``resumed from <id>`` -- read straight off the run row's
+    ``resumed_from_run_id`` column (SELECT * flows it here for free); a
+    row without one keeps the exact pre-existing header."""
+    db_path = tmp_path / "agent_runs.db"
+    _primary_id, sub_ids = _seed_done_primary_with_subagents(
+        db_path, tasks=("original attempt",)
+    )
+    original_sub = sub_ids[0]
+    db = AgentRunsDB(db_path, client_id="t")
+    resumed_sub = db.create_run(
+        conversation_id="conv-A",
+        agent_kind="subagent",
+        task="original attempt",
+        parent_run_id=_primary_id,
+        resumed_from_run_id=original_sub,
+    )
+    db.set_status(resumed_sub, "done", result="second pass")
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        console._console_agent_bridge = _bridge_over(db_path)
+        console._current_console_rail_conversation_id = lambda: "conv-A"
+        console._agent._console_agent_drilldown_conversation_id = "conv-A"
+
+        console._agent._drill_into_console_agent_subagent(resumed_sub)
+        await pilot.pause()
+        console._sync_console_agent_section()
+        status = _static_text(console, "#console-agent-section-status")
+        assert status.startswith("Sub-agent · done")
+        assert f"resumed from {original_sub}" in status
+
+        # A NON-resumed row's header is byte-identical to before.
+        console._agent._drill_into_console_agent_subagent(original_sub)
+        await pilot.pause()
+        console._sync_console_agent_section()
+        assert (
+            _static_text(console, "#console-agent-section-status")
+            == "Sub-agent · done (Back)"
+        )

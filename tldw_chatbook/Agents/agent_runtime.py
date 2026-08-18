@@ -752,6 +752,16 @@ def run_agent_loop(
     budget = config.budget
     steps: list[AgentStep] = []
     messages = list(initial_messages)
+    # PR3b Task 4: how much of `messages` is protocol-coherent -- i.e. up
+    # to the LAST drain boundary (the pre-model-call point where every
+    # previous batch's results are fully appended). Every terminal return
+    # captures `messages[:coherent_len]` onto the outcome as
+    # `final_messages`, so a mid-batch death (cancel `should_cancel`
+    # inside the `for call in calls:` body, cycle-stuck) slices the whole
+    # split batch away instead of retaining a half-answered native
+    # `tool_calls` pair. Initialized to the seed history so the pre-loop
+    # terminal paths (restore validation failures) are covered too.
+    coherent_len = len(messages)
     active = list(active_schemas)
     started = deps.clock()
     spawned = 0
@@ -777,8 +787,29 @@ def run_agent_loop(
     def _outcome(status: str, **kw) -> RunOutcome:
         # Reports run spend on every terminal path; reads enclosing steps/
         # spawned/total_tokens at call time (no nonlocal, like add()).
+        #
+        # PR3b Task 4: every terminal return also captures the coherent
+        # transcript -- `messages[:coherent_len]`, the last drain-boundary
+        # prefix. RUN_DONE additionally appends the final assistant text:
+        # the done-return fires BEFORE the loop's own assistant append
+        # (see the `if not calls:` return below), so without this the
+        # retained transcript would end on the user turn the model just
+        # answered. Only RUN_DONE gets it -- a cancel that lands mid-way
+        # through a streamed final turn (`final_text` set on
+        # RUN_CANCELLED) never delivered that text as a completed turn,
+        # and pretending otherwise would fabricate the child's memory.
+        final_messages = messages[:coherent_len]
+        if status == RUN_DONE:
+            final_messages = final_messages + [
+                {"role": "assistant", "content": kw.get("final_text", "")}
+            ]
         return RunOutcome(
-            status, steps, subagents_spawned=spawned, total_tokens=total_tokens, **kw
+            status,
+            steps,
+            subagents_spawned=spawned,
+            total_tokens=total_tokens,
+            final_messages=final_messages,
+            **kw,
         )
 
     def continuation_error() -> RunOutcome:
@@ -964,6 +995,17 @@ def run_agent_loop(
                         "drain_mailbox raised; steering delivery skipped "
                         "for this turn"
                     )
+            # PR3b Task 4: THE boundary. Everything appended so far --
+            # every previous batch's fully-paired results, and the
+            # steering messages just delivered above -- is exactly what
+            # this model call is about to see, so this is the largest
+            # prefix a retained transcript may ever carry. Set AFTER the
+            # drain so delivered steering is part of what a resumed child
+            # remembers (it saw it), and never updated in the restoring
+            # branch (whose slice-rewrite makes any mid-restore capture
+            # unsafe -- a terminal return there keeps the previous
+            # boundary instead).
+            coherent_len = len(messages)
             turn = (
                 deps.call_model_with_continuation(
                     messages,

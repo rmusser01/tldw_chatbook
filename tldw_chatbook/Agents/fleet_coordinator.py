@@ -8,14 +8,38 @@ agent_service. Thread-safe: every public method holds a Lock.
 from __future__ import annotations
 
 import dataclasses
+import json
 import threading
 import uuid
 from typing import Callable
 
-from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    RUN_ERROR,
+    RUN_STUCK,
+    TERMINAL_RUN_STATUSES,
+)
 
 FLEET_STARTED = "fleet_started"
 FLEET_FINISHED = "fleet_finished"
+
+#: PR3b Task 4 (spec SS6, finished-agent continuation). Which terminal
+#: statuses leave a transcript worth retaining: done/stuck/error are all
+#: states a supervisor may want to continue from ("you stalled -- try
+#: this"). Cancelled and superseded are deliberately absent: the user
+#: killed it, or it was replaced -- resuming either would undo an explicit
+#: human decision.
+RETAINED_TRANSCRIPT_STATUSES = frozenset({RUN_DONE, RUN_STUCK, RUN_ERROR})
+
+#: Default retention caps ([agents] retained_transcripts /
+#: retained_transcript_max_chars -- read by the BRIDGE's coordinator
+#: factory beside max_live; this pure module never reads config itself).
+#: Count cap: oldest-evicted-first. Char cap: an oversize transcript is
+#: NOT retained at all (coordinator ruling #2 -- truncation could split
+#: native pairs and silently change the child's memory). A cap of 0 (or
+#: below) retains nothing.
+DEFAULT_RETAINED_TRANSCRIPTS = 5
+DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS = 200_000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,6 +106,45 @@ class FleetHandle:
     queued_steering: int = 0
 
 
+@dataclasses.dataclass(frozen=True)
+class RetainedTranscript:
+    """A finished child's coherent transcript, kept for continuation.
+
+    PR3b Task 4 (spec SS6). Captured at finish time from the child's own
+    ``RunOutcome.final_messages`` (the last drain-boundary prefix, so it
+    can never end inside a split native batch) plus whatever steering the
+    child never got to drain. IN-MEMORY ONLY -- cross-restart resurrection
+    is explicitly out of scope (spec SS6), and after a restart the
+    supervisor is told the transcript is gone.
+
+    Attributes:
+        handle_id: The finished child's fleet handle id.
+        run_id: Its agent-run id, if one was ever attached (the id a
+            completion notice speaks; ``resumed_from_run_id`` records it
+            on the resumed row).
+        agent: The agent-definition NAME the child was spawned from, or
+            ``None`` for a plain spawn. Continuation re-resolves it
+            against the CURRENT roster (coordinator ruling #1) -- the
+            definition itself is deliberately not snapshotted here.
+        task: The original task text (the resumed handle reuses it).
+        status: The terminal status at retention time (done/stuck/error).
+        messages: The coherent transcript (copies; see ``get_retained``).
+        steering: The undelivered ``(source, text)`` mailbox remnant,
+            claimed at retention time -- a resume seeds these (original
+            labels) before the new supervisor message.
+        retained_at: Coordinator-clock timestamp of the retention.
+    """
+
+    handle_id: str
+    run_id: str | None
+    agent: str | None
+    task: str
+    status: str
+    messages: tuple[dict, ...]
+    steering: tuple[tuple[str, str], ...]
+    retained_at: float
+
+
 class FleetCoordinator:
     """State machine managing concurrent sub-agent task handles.
 
@@ -90,12 +153,25 @@ class FleetCoordinator:
     handles are ignored).
     """
 
-    def __init__(self, max_live: int, clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        max_live: int,
+        clock: Callable[[], float],
+        *,
+        retained_transcripts: int = DEFAULT_RETAINED_TRANSCRIPTS,
+        retained_transcript_max_chars: int = DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+    ) -> None:
         """Initialize the coordinator.
 
         Args:
             max_live: Maximum number of concurrently live handles.
             clock: Callable returning a float timestamp (for testing).
+            retained_transcripts: How many finished children's transcripts
+                to keep for continuation (oldest evicted first); 0 keeps
+                none.
+            retained_transcript_max_chars: Serialized-size ceiling above
+                which a transcript is NOT retained (ruling #2: refuse,
+                never truncate); 0 retains none.
         """
         self._max_live = max_live
         self._clock = clock
@@ -108,6 +184,16 @@ class FleetCoordinator:
         # exists only while entries are queued (drain pops the whole
         # list), and dies with its handle in prune_terminal.
         self._steering: dict[str, list[tuple[str, str]]] = {}
+        # PR3b Task 4: retained transcripts of finished children, keyed by
+        # handle id, insertion-ordered (Python dicts) so eviction is
+        # oldest-first. DELIBERATELY SEPARATE from `_handles`:
+        # `prune_terminal` drops terminal handles at every turn start, and
+        # a finished child must stay continuable past that (Task 2's
+        # concern (a)). Run-id resolution scans the values -- the store is
+        # capped at `retained_transcripts`, so a scan is O(cap).
+        self._retained_transcripts_cap = retained_transcripts
+        self._retained_transcript_max_chars = retained_transcript_max_chars
+        self._retained: dict[str, RetainedTranscript] = {}
 
     def reserve(self, task: str, agent: str | None) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
@@ -229,6 +315,7 @@ class FleetCoordinator:
         result: str = "",
         error: str = "",
         total_tokens: int = 0,
+        transcript: "list[dict] | None" = None,
     ) -> None:
         """Mark a handle as finished with terminal status.
 
@@ -249,6 +336,25 @@ class FleetCoordinator:
                 terminal, like ``result``/``error``. Defaults to 0 for
                 every pre-existing caller (abandonment, thread-start
                 failure) that has no outcome to report a real figure from.
+            transcript: PR3b Task 4 -- the child's coherent
+                ``RunOutcome.final_messages``, retained ATOMICALLY with
+                this terminal transition (same critical section) when the
+                status is retainable and the transcript fits the caps.
+                Atomic on purpose, not merely convenient (Qodo finding on
+                the plan PR #1773): a separate post-``finish`` retention
+                call leaves a window where the child answers as terminal
+                but ``get_retained`` still misses -- a ``send_to_agent``
+                continuation racing that window would refuse a child that
+                is genuinely continuable microseconds later. Under one
+                lock, any observer that sees the terminal status also sees
+                the retention. ``None`` (every pre-existing caller --
+                abandonment, thread-start failure, plain finishes) retains
+                nothing and leaves the mailbox remnant untouched (Task 1's
+                pinned survive-until-prune window). First-writer-wins
+                covers retention too: a late finish-with-transcript on an
+                already-cancelled handle is wholly ignored, so a
+                user-cancelled child can never be retained by its own
+                straggling teardown.
         """
         with self._lock:
             if handle_id not in self._handles:
@@ -283,6 +389,11 @@ class FleetCoordinator:
                     status=status,
                 )
             )
+
+            # PR3b Task 4: retention, in the SAME critical section as the
+            # transition above -- see the `transcript` arg docstring.
+            if transcript is not None:
+                self._retain_locked(handle_id, transcript)
 
     def get(self, handle_id: str) -> FleetHandle | None:
         """Retrieve a handle by ID.
@@ -357,6 +468,156 @@ class FleetCoordinator:
         """
         with self._lock:
             self._max_live = max_live
+
+    @property
+    def retained_transcripts(self) -> int:
+        """The configured retention COUNT cap (read-only, like max_live)."""
+        return self._retained_transcripts_cap
+
+    @property
+    def retained_transcript_max_chars(self) -> int:
+        """The configured retention SIZE cap (read-only, like max_live)."""
+        return self._retained_transcript_max_chars
+
+    def set_retention_caps(
+        self, retained_transcripts: int, retained_transcript_max_chars: int
+    ) -> None:
+        """Re-size the retention caps in place (the ``set_max_live`` shape).
+
+        The cross-turn owner (the bridge's coordinator factory) re-reads
+        ``[agents] retained_transcripts`` / ``retained_transcript_max_chars``
+        every turn; re-sizing beats replacing the coordinator for the same
+        reason ``set_max_live`` does -- a replacement would drop the
+        retained transcripts along with every live handle. Lowering the
+        count cap evicts oldest-first immediately; the char cap governs
+        only FUTURE retentions (already-retained transcripts were measured
+        against the cap in force when they were captured).
+
+        Args:
+            retained_transcripts: The new count cap; 0 keeps nothing new
+                and evicts everything currently held.
+            retained_transcript_max_chars: The new size ceiling.
+        """
+        with self._lock:
+            self._retained_transcripts_cap = retained_transcripts
+            self._retained_transcript_max_chars = retained_transcript_max_chars
+            self._evict_over_cap_locked()
+
+    def _evict_over_cap_locked(self) -> None:
+        """Drop oldest retained entries until within the count cap.
+
+        Caller must hold ``self._lock``. Insertion order IS age order
+        (retain appends; nothing reorders), so the dict's first key is
+        always the oldest entry.
+        """
+        cap = max(self._retained_transcripts_cap, 0)
+        while len(self._retained) > cap:
+            oldest = next(iter(self._retained))
+            del self._retained[oldest]
+
+    def retain_transcript(
+        self, handle_id: str, messages: "list[dict] | None"
+    ) -> bool:
+        """Retain a finished child's coherent transcript for continuation.
+
+        The standalone seam over ``_retain_locked``. Production retention
+        rides ``finish(..., transcript=...)`` instead -- ATOMIC with the
+        terminal transition, closing the terminal-but-unretained window a
+        separate post-finish call would open (see ``finish``'s
+        ``transcript`` docstring). This method exists for callers that
+        already hold a terminal handle (and for tests of the retention
+        rules themselves); it runs the exact same checks and claim.
+
+        The mailbox claim is Task 1's pinned window
+        (``test_undrained_entries_survive_finish_until_prune_terminal``):
+        the remnant still exists between ``finish()`` and
+        ``prune_terminal()``, and retention CLAIMS it into the entry, so
+        the fleet row's "queued (N)" honestly reads 0 for a finished
+        child and a resume can replay the entries the child never saw.
+
+        Args:
+            handle_id: The finished child's handle id.
+            messages: The child's ``RunOutcome.final_messages`` -- the
+                coherent transcript -- or ``None`` when the run died
+                without producing one (a raise before the loop returned).
+
+        Returns:
+            True when retained. False -- and nothing stored, mailbox
+            untouched -- for: an unknown or still-live handle; a terminal
+            status outside ``RETAINED_TRANSCRIPT_STATUSES`` (cancelled/
+            superseded: the user killed it or it was replaced); a missing
+            transcript; an oversize one (ruling #2: refuse, never
+            truncate); or caps of 0.
+        """
+        with self._lock:
+            return self._retain_locked(handle_id, messages)
+
+    def _retain_locked(
+        self, handle_id: str, messages: "list[dict] | None"
+    ) -> bool:
+        """The retention rules + claim. Caller must hold ``self._lock``."""
+        handle = self._handles.get(handle_id)
+        if handle is None or handle_id in self._live_ids:
+            return False
+        if handle.status not in RETAINED_TRANSCRIPT_STATUSES:
+            return False
+        if messages is None:
+            return False
+        if self._retained_transcripts_cap <= 0:
+            return False
+        if self._retained_transcript_max_chars <= 0:
+            return False
+        try:
+            size = len(json.dumps(messages, default=str))
+        except Exception:  # noqa: BLE001 — an unmeasurable transcript
+            return False  # cannot be size-bounded, so it is not kept
+        if size > self._retained_transcript_max_chars:
+            return False
+        steering = tuple(self._steering.pop(handle_id, []))
+        self._retained[handle_id] = RetainedTranscript(
+            handle_id=handle_id,
+            run_id=handle.run_id,
+            agent=handle.agent,
+            task=handle.task,
+            status=handle.status,
+            messages=tuple(dict(m) for m in messages),
+            steering=steering,
+            retained_at=self._clock(),
+        )
+        self._evict_over_cap_locked()
+        return True
+
+    def get_retained(self, target_id: str) -> RetainedTranscript | None:
+        """Resolve a retained transcript by handle id, then by run id.
+
+        Same vocabulary order as live resolution (Task 2's pin): the
+        handle id is the primary vocabulary, so a pathological collision
+        (one child's run id equals another's handle id) lands on the
+        handle-id owner.
+
+        Args:
+            target_id: A retained child's handle id, or its run id.
+
+        Returns:
+            A copy of the entry (fresh message dicts, so a reader's
+            mutation can never corrupt the store), or ``None``.
+        """
+        with self._lock:
+            entry = self._retained.get(target_id)
+            if entry is None:
+                entry = next(
+                    (
+                        candidate
+                        for candidate in self._retained.values()
+                        if candidate.run_id == target_id
+                    ),
+                    None,
+                )
+            if entry is None:
+                return None
+            return dataclasses.replace(
+                entry, messages=tuple(dict(m) for m in entry.messages)
+            )
 
     def prune_terminal(self) -> int:
         """Forget every already-terminal handle. Returns how many went.

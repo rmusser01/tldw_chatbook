@@ -169,7 +169,11 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
         "-- a sub-agent inside a long tool call sees it late, only after "
         "that call returns. Steering never cancels or restarts the "
         "sub-agent: it keeps its task and its progress, and simply reads "
-        "your message as extra direction."
+        "your message as extra direction. Sent to a recently FINISHED "
+        "sub-agent, this instead starts a NEW run seeded with its "
+        "retained transcript plus your message (the finished run itself "
+        "is untouched); the new run costs a spawn slot, and transcripts "
+        "are kept in memory only -- not across an app restart."
     ),
     parameters={
         "type": "object",
