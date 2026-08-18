@@ -3953,11 +3953,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: $ds-console-composer-height;
     max-height: 4;
     padding: 0 1;
-    /* TASK-17657: DELIBERATE one-row gap below the composer (owner call) —
-       the bar groups with the conversation above it, not the status/footer
-       cluster below. Not the TASK-17650 phantom: this row is pinned by the
-       single-separator contract test. Compact mode drops it. */
-    margin: 0 0 1 0;
+    /* TASK-17657/17659: DELIBERATE one-row gap on each side of the composer
+       (owner calls) — the bar floats clear of the status row above and the
+       footer below. Not the TASK-17650 phantom: both rows are pinned by the
+       single-separator contract test. Compact mode drops them. */
+    margin: 1 0;
     layout: horizontal;
     align: left middle;
     border: none;
