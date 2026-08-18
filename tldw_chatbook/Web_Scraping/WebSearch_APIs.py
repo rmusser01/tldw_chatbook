@@ -1896,6 +1896,11 @@ def aggregate_results(
     input_data = "Follow the above instructions."
 
     synthesis_error: str | None = None
+    # Qodo (PR 1782): verify_citations runs inside this same block AFTER the
+    # provider has returned a report, so a citation-verification defect used to
+    # be recorded as a SYNTHESIS failure -- corrupting the very failure-class
+    # measurement this records. The stage is tracked as the block progresses.
+    failed_stage = "synthesis"
     try:
         logger.info("Generating the report")
         messages_payload = [
@@ -1927,6 +1932,7 @@ def aggregate_results(
             # Unknown ids are flagged inline ("[n?]") and counted, never
             # deleted; failure/empty branches below carry no verdict rather
             # than a fabricated clean one.
+            failed_stage = "verification"
             cv = deep_search_citations.verify_citations(
                 returned_response, evidence_payload
             )
@@ -1974,7 +1980,7 @@ def aggregate_results(
         ),
         "chunks": chunk_metadata,
         "synthesis_failed": {
-            "stage": "synthesis",
+            "stage": failed_stage,
             "error_type": synthesis_error or "empty_response",
             "evidence_count": len(evidence_payload),
             "chunk_count": len(chunk_infos),
