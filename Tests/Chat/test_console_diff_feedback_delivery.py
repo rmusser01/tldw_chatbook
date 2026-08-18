@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -349,17 +348,11 @@ def test_list_content_user_message_leaves_notes_pending_and_appends_no_disclosur
 
     vision_message = {"role": "user", "content": [{"type": "text", "text": "hi"}]}
     captured: dict = {}
-    # Unrelated pre-existing gap, worked around here rather than fixed
-    # (out of this task's scope): the fake gateway reports no usage, so
-    # the "no usage" fallback estimates tokens by iterating message
-    # content as characters -- which raises on LIST content. Forcing a
-    # usage value skips that estimate path so this test can isolate the
-    # attach-loop behavior under test instead of tripping an unrelated
-    # token-counter limitation.
-    with (
-        patch.object(AgentService, "run_turn", _spy_run_turn(captured)),
-        patch.object(agent_service_module, "_usage_total_tokens", lambda resp: 5),
-    ):
+    # TASK-17610: this test used to force a usage value to dodge the
+    # no-usage token-estimate path, which crashed on LIST content. The
+    # estimator now normalizes part-list content, so the real fallback
+    # path runs here unpatched.
+    with patch.object(AgentService, "run_turn", _spy_run_turn(captured)):
         run_id, outcome = bridge.run_reply(
             **_run_kwargs(session, aid, agent_messages=[vision_message])
         )

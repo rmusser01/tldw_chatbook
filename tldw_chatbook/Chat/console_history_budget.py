@@ -22,12 +22,16 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 
 from tldw_chatbook.Utils.token_counter import (
+    NON_TEXT_PART_TOKEN_ESTIMATE,
     count_tokens_messages,
     get_model_token_limit,
 )
 
 DEFAULT_RESPONSE_RESERVATION = 1024
-DEFAULT_PER_IMAGE_TOKENS = 1024
+# One shared per-image charge with the generic estimator (TASK-17610 /
+# Qodo PR #1783): a lower estimator figure would let image-heavy no-usage
+# turns slip past budget enforcement that charges images at this rate.
+DEFAULT_PER_IMAGE_TOKENS = NON_TEXT_PART_TOKEN_ESTIMATE
 _MIN_SAFETY_MARGIN = 512
 
 
