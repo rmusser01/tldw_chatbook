@@ -4231,13 +4231,46 @@ class ConsoleAgentBridge:
         )
         if max_live <= 1:
             return None
+        # PR3b Task 4: the retention caps, read beside max_live every turn
+        # (same module-read/monkeypatch reasoning as above) and applied the
+        # same way -- construction for a new coordinator, an in-place
+        # re-size for an existing one. Replacing the coordinator would
+        # drop the retained transcripts along with every live handle.
+        retained_transcripts = (
+            agent_service_module._coerce_retained_transcripts(
+                agent_service_module._setting(
+                    agent_service_module.RETAINED_TRANSCRIPTS_KEY,
+                    agent_service_module.DEFAULT_RETAINED_TRANSCRIPTS,
+                )
+            )
+        )
+        retained_transcript_max_chars = (
+            agent_service_module._coerce_retained_transcript_max_chars(
+                agent_service_module._setting(
+                    agent_service_module.RETAINED_TRANSCRIPT_MAX_CHARS_KEY,
+                    agent_service_module.DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+                )
+            )
+        )
         coordinator = self._fleet_coordinators.get(conversation_id)
         if coordinator is None:
-            coordinator = FleetCoordinator(max_live=max_live, clock=self._clock)
+            coordinator = FleetCoordinator(
+                max_live=max_live,
+                clock=self._clock,
+                retained_transcripts=retained_transcripts,
+                retained_transcript_max_chars=retained_transcript_max_chars,
+            )
             self._fleet_coordinators[conversation_id] = coordinator
             return coordinator
         if coordinator.max_live != max_live:
             coordinator.set_max_live(max_live)
+        if (
+            coordinator.retained_transcripts,
+            coordinator.retained_transcript_max_chars,
+        ) != (retained_transcripts, retained_transcript_max_chars):
+            coordinator.set_retention_caps(
+                retained_transcripts, retained_transcript_max_chars
+            )
         coordinator.prune_terminal()
         return coordinator
 
