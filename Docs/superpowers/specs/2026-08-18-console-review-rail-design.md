@@ -54,7 +54,15 @@ renders each run independently. New:
   NEW path and supersedes the old path's entry.
   `ConversationFileEntry` (frozen): `root, path, label (multi-root
   prefixed, same convention as turn_file_entries), status, adds, dels,
-  run_id, snapshot_id, note_count`.
+  run_id, snapshot_id, note_count`. **Counts honesty**: `adds/dels` are
+  the NEWEST covering turn's deltas for that file, not cumulative since
+  conversation start — the section header says "latest turn deltas" so
+  the numbers cannot be misread as totals.
+  **Pruned rows**: `changed_files(row)` raises `ChangeTrackingError` when
+  retention pruned a row's snapshots (the Review screen banners this,
+  `_load_turn`'s per-row try/except) — the aggregation catches per row,
+  skips it, and reports a `pruned_rows` count the section renders as a
+  dim "history pruned for N turns" tail line rather than hiding it.
 - **Provider method** on `AgentRunsChangeReviewProvider`:
   `conversation_changed_files() -> list[ConversationFileEntry]` — reads
   `change_snapshots_for_conversation`, calls `changed_files(row)` per clean
@@ -76,11 +84,17 @@ precedent, copied exactly:
   `_console_changed_files_row_cache: dict[int, list[ChangedFile]]` keyed by
   snapshot row id so a recompute only runs git for rows it has not seen
   (incremental: a new turn costs its own rows' git calls, not the whole
-  history's).
+  history's). The memo and summary are **cleared on conversation switch**
+  (CLAUDE.md performance rule: clear caches on context switch) — row ids
+  are globally unique so this is hygiene, not correctness.
+  The provider is acquired exactly like the card's factory — the V1
+  `_console_change_review_provider()` recipe (bridge → conversation id →
+  provider), called inside the worker, never at render time.
 - **Guard**: `_last_console_changed_files_scope = (conversation_id,
   newest change_review_run_id present in the message store)`. Marker
   messages already carry `change_review_run_id`, so the guard costs no DB
-  read at all. When the guard tuple changes, the screen dispatches ONE
+  read at all (an O(messages) in-memory scan; derived where the message
+  list is already being handled rather than re-scanned per idle tick). When the guard tuple changes, the screen dispatches ONE
   off-thread worker (`asyncio.to_thread`, exclusive group) that calls the
   provider's `conversation_changed_files()` and lands the cache via
   `call_from_thread`, then syncs the section in place by id.
@@ -106,7 +120,12 @@ precedent, copied exactly:
   rule.
 - **Screen handler**: opens the Review screen through the existing
   `_open_change_review` recipe with `initial_run_id=<the file's newest
-  run>` and the new `initial_path=<path>`.
+  run>`, the new `initial_path=<path>`, and
+  `initial_snapshot_id=<snapshot_id>` — `select_file` matches by path
+  alone (`:705-714`), which is ambiguous when two windows of one run
+  cover the same path; the extended selection prefers the leaf whose
+  row id equals `initial_snapshot_id` and falls back to first-path-match
+  (legacy callers pass no snapshot id and keep today's behavior).
 - **Empty state**: the section renders nothing (height 0) when the
   conversation has no snapshot rows — the rail must not grow a permanent
   empty box.
@@ -115,11 +134,12 @@ precedent, copied exactly:
 
 ### 3. Review screen: `initial_path`, line cursor, comments
 
-- **`initial_path`** joins `initial_run_id` as **constructor state** — the
-  post-push race is documented at `change_review_screen.py:414-427`
-  (`call_after_refresh` fired before compose; NoMatches). `_load_turn`
-  honors it via the already-existing `select_file(path)` (`:705`) instead
-  of `_focus_leaf(0)`, then clears it (turn switches revert to
+- **`initial_path` / `initial_snapshot_id`** join `initial_run_id` as
+  **constructor state** — the post-push race is documented at
+  `change_review_screen.py:414-427` (`call_after_refresh` fired before
+  compose; NoMatches). `_load_turn` honors them via `select_file`
+  (extended per §2's snapshot-aware matching) instead of
+  `_focus_leaf(0)`, then clears them (turn switches revert to
   first-file).
 - **Line cursor**: the diff pane stays ONE flat `Static`
   (`_render_diff`, `:827-861`); a cursor is screen state
@@ -131,9 +151,12 @@ precedent, copied exactly:
   diff `VerticalScroll` consumes up/down for scrolling, so the pane gets
   the card's proven `on_key`-reclaim treatment (`console_turn_file_card`'s
   Enter fix precedent — traced there against Textual's real dispatch):
-  when the pane is focused, up/down move the cursor (and scroll follows),
-  `c` opens the line-comment input, Escape returns focus to the tree.
-  `j`/`k` file navigation is untouched.
+  when the pane is focused, ONLY up/down/`c`/Escape are reclaimed —
+  page-up/down/home/end keep native scrolling. Up/down move the cursor
+  (scroll follows), `c` opens the line-comment input, and Escape returns
+  focus to the tree — deliberately SHADOWING the screen's Esc-dismiss
+  while the pane is focused (Esc-Esc = pane→tree→dismiss, an explicit UX
+  decision, tested). `j`/`k` file navigation is untouched.
 - **Comment creation**: `c` (pane focused, cursor on a diff line) opens an
   inline one-line `Input` under the pane (reusing the card's validation:
   strip, non-empty, ≤2,000 chars via `input_validation`); Enter saves
@@ -146,8 +169,13 @@ precedent, copied exactly:
   line comments as a `● comment` marker appended to their diff line (and
   the note text in a strip below the pane), file comments and the card's
   hunk notes in the same strip, each labeled by kind, `sent` when
-  delivered. Display reads from the same off-thread load as the diff
-  (provider `notes_for_run` per visible turn — already exists, `:388`).
+  delivered. **Posture correction (self-review)**: this screen's diff
+  load is SYNCHRONOUS on the UI thread today (`_render_diff` calls
+  `provider.diff_text` directly, `:838`) — the notes read
+  (`notes_for_run`, `:388`, a SQLite query) loads the same synchronous
+  way, matching the screen's accepted posture; the off-thread discipline
+  belongs to the RAIL (§2) and the comment WRITE paths, not to this
+  screen's reads.
   Pending comments can be deleted from the strip (same
   `delete_change_note` rules as the card: pending only).
 
@@ -165,8 +193,12 @@ by the same PRAGMA-guarded idempotent-ALTER convention:
   retention posture as `hunk_excerpt`.
 
 For `diff_line` rows, the hunk fields are ALSO populated (the hunk the
-line falls in, via `split_unified_diff`) so every consumer that renders
-hunk context keeps working; `hunk_excerpt` for a line comment is the
+line falls in, via `split_unified_diff`) — a deliberate convergence: the
+turn file card's existing hunk-note filter (hunk_index + hunk_header +
+snapshot_id) therefore renders line comments under their hunk in the
+card too, with no card changes (`file` rows' `-1`/`''` sentinels can
+never match a real hunk, so they stay out of the card). Stated so a
+reviewer reads it as intended, not accidental; `hunk_excerpt` for a line comment is the
 line's own hunk excerpt. For `file` rows, `hunk_index = -1`,
 `hunk_header = ''`, `hunk_excerpt = ''` — the formatters (§5) render kind
 -aware and never show a dangling `@@` for them.
