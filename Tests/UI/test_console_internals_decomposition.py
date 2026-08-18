@@ -469,7 +469,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.region.y + composer.region.height <= console.size.height
         assert command_input.display is False
         assert visible_draft.region.width > 20
-        assert 4 <= composer.region.height <= 6
+        # task-17651: dense-form composer — zero chrome rows, 1-4 total.
+        assert 1 <= composer.region.height <= 4
         assert visible_draft.region.height == 1
         composer.load_draft("visible composer text")
         await pilot.pause(0.1)
@@ -1059,8 +1060,9 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == long_draft
-        assert composer.region.height > 5
-        assert composer.region.height <= 10
+        # task-17651: growth is draft rows alone (no chrome), capped at 4.
+        assert composer.region.height > 1
+        assert composer.region.height <= 4
         assert visible_draft.region.height > 1
         assert visible_draft.region.height <= 4
         assert "\n" in visible_plain
@@ -1090,7 +1092,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert command_input.value == pasted_text
-        assert composer.region.height <= 10
+        assert composer.region.height <= 4
         assert visible_draft.region.height <= 4
         assert expected_token in visible_plain
         assert pasted_text not in visible_plain
@@ -1410,7 +1412,14 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
+    """task-17651: the row above the draft belongs to the widget above.
+
+    The textual-web boundary forgiveness keys off the composer's real box;
+    with zero chrome rows the draft IS the composer, so a click one row up
+    lands on the neighboring strip and must not steal the activation —
+    while the draft's own first row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1426,9 +1435,13 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y - 1,
+        )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y,
         )
 
         assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
@@ -1436,7 +1449,13 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_unfurl_prompt():
+async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor():
+    """task-17651: the row below the draft belongs to the widget below.
+
+    Mirror of the top-boundary contract: the old +1-row forgiveness only
+    ever covered the composer's own padding row, which no longer exists —
+    the draft's own last row still activates.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1452,9 +1471,13 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
-        assert composer.activate_visible_draft_screen_position(
+        assert not composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
             visible_region.y + visible_draft.size.height,
+        )
+        assert composer.activate_visible_draft_screen_position(
+            visible_region.x + 4,
+            visible_region.y + visible_draft.size.height - 1,
         )
 
         assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
@@ -1479,9 +1502,11 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
         await pilot.pause(0.1)
 
         visible_region = composer._screen_region(visible_draft)
+        # task-17651: click the draft's own last row (the old +1 forgiveness
+        # row was the composer's padding, which no longer exists).
         assert composer.activate_visible_draft_screen_position(
             visible_region.x + 4,
-            visible_region.y + visible_draft.size.height,
+            visible_region.y + visible_draft.size.height - 1,
         )
 
         assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
@@ -3075,7 +3100,8 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
         assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
+        # task-17651: the grid's bottom border is the single separator.
+        assert transcript_border.bottom[0] in {"", "none"}
         assert transcript_border.left[0] == "solid"
 
         staged_context_border = console.query_one(
@@ -3095,10 +3121,12 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert workspace_context_border.left[0] in {"", "none"}
 
         composer_border = console.query_one("#console-native-composer").styles.border
-        assert composer_border.top[0] == "solid"
-        assert composer_border.right[0] == "solid"
-        assert composer_border.bottom[0] == "solid"
-        assert composer_border.left[0] == "solid"
+        # task-17651: no inline frame at all (this harness sees no CSS; the
+        # dense-form left edge is a stylesheet rule pinned elsewhere).
+        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
 
 @pytest.mark.asyncio
@@ -3148,16 +3176,33 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        for selector in (
-            "#console-workspace-grid",
-            "#console-left-rail",
-            "#console-native-composer",
-        ):
-            border = console.query_one(selector).styles.border
-            assert border.top[0] == "solid", f"{selector} missing top frame"
-            assert border.right[0] == "solid", f"{selector} missing right frame"
-            assert border.bottom[0] == "solid", f"{selector} missing bottom frame"
-            assert border.left[0] == "solid", f"{selector} missing left frame"
+        # task-17651: the workbench frame closes at the grid — the grid
+        # keeps its full border, its children suppress their bottom edge,
+        # and the composer left the frame grammar entirely (dense-form
+        # left edge only).
+        grid_border = console.query_one("#console-workspace-grid").styles.border
+        assert grid_border.top[0] == "solid"
+        assert grid_border.right[0] == "solid"
+        assert grid_border.bottom[0] == "solid"
+        assert grid_border.left[0] == "solid"
+
+        rail_border = console.query_one("#console-left-rail").styles.border
+        assert rail_border.top[0] == "solid"
+        assert rail_border.right[0] == "solid"
+        assert rail_border.bottom[0] in {"", "none"}
+        assert rail_border.left[0] == "solid"
+
+        # This harness loads no app CSS, so only INLINE styles are visible
+        # here: the meaningful pin is that frame.py no longer frames the
+        # composer at all. Its CSS dense-form left edge is pinned by the
+        # bundled-harness tests in test_console_composer_collapse.py.
+        composer = console.query_one("#console-native-composer")
+        assert not composer.has_class("console-frame-solid")
+        composer_border = composer.styles.border
+        assert composer_border.left[0] in {"", "none"}
+        assert composer_border.top[0] in {"", "none"}
+        assert composer_border.right[0] in {"", "none"}
+        assert composer_border.bottom[0] in {"", "none"}
 
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-frame-solid")
@@ -3166,7 +3211,7 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         handle_border = right_handle.styles.border
         assert handle_border.top[0] == "solid"
         assert handle_border.right[0] == "solid"
-        assert handle_border.bottom[0] == "solid"
+        assert handle_border.bottom[0] in {"", "none"}
         assert handle_border.left[0] == "solid"
 
         transcript_border = console.query_one(
@@ -3174,7 +3219,7 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
         assert transcript_border.right[0] == "solid"
-        assert transcript_border.bottom[0] == "solid"
+        assert transcript_border.bottom[0] in {"", "none"}
         assert transcript_border.left[0] == "solid"
 
         for selector in (
@@ -3198,7 +3243,9 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         border = right_rail.styles.border
         assert border.top[0] == "solid", "#console-right-rail missing top frame"
         assert border.right[0] == "solid", "#console-right-rail missing right frame"
-        assert border.bottom[0] == "solid", "#console-right-rail missing bottom frame"
+        # task-17651: grid children suppress their bottom edge — the grid's
+        # own bottom border closes the workbench frame.
+        assert border.bottom[0] in {"", "none"}, "#console-right-rail bottom edge"
         assert border.left[0] == "solid", "#console-right-rail missing left frame"
         assert inspector_state.region.width > 0
         assert right_rail.region.x <= inspector_state.region.x

@@ -51,7 +51,6 @@ from .provider_model_resolution import (
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
     CONSOLE_FRAME_BORDER,
-    CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
 from ..Console_Modules.status_row import (
@@ -8815,9 +8814,6 @@ class ChatScreen(BaseAppScreen):
             if popup is not None:
                 popup.hide()
         composer.set_collapsed(collapsed)
-        composer.styles.border = (
-            CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
-        )
         composer.refresh(layout=True)
         self.call_after_refresh(
             self._finish_console_composer_layout_change,
@@ -12997,6 +12993,7 @@ class ChatScreen(BaseAppScreen):
         widget: Any,
         *,
         top: bool = True,
+        bottom: bool = True,
         variant: str = "solid",
     ) -> Any:
         """Apply a visible Textual-native workbench frame.
@@ -13019,7 +13016,7 @@ class ChatScreen(BaseAppScreen):
         Returns:
             The same `widget`, mutated in place with frame styling applied.
         """
-        return frame_console_region(widget, top=top, variant=variant)
+        return frame_console_region(widget, top=top, bottom=bottom, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -13849,7 +13846,7 @@ class ChatScreen(BaseAppScreen):
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
-                yield self._frame_console_region(left_handle)
+                yield self._frame_console_region(left_handle, bottom=False)
 
                 # The section-level values below are computed here, on the
                 # screen, exactly as they were computed inline before this
@@ -13947,7 +13944,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                yield self._frame_console_region(left_rail)
+                yield self._frame_console_region(left_rail, bottom=False)
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
@@ -14033,7 +14030,7 @@ class ChatScreen(BaseAppScreen):
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                yield self._frame_console_region(right_rail)
+                yield self._frame_console_region(right_rail, bottom=False)
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -14052,7 +14049,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle)
+                yield self._frame_console_region(right_handle, bottom=False)
             # task-17652: the status row's side of the composer cluster is
             # user-configurable ([console] status_chips_position). "above"
             # (the default; owner ruling 2026-08-17) tops the cluster
@@ -14141,7 +14138,9 @@ class ChatScreen(BaseAppScreen):
                     composer.load_draft(store.session_draft(store.active_session_id))
                 except KeyError:
                     pass
-            yield self._frame_console_region(composer)
+            # TASK-17651: the composer is a dense-form field, not a framed
+            # region — CSS owns its left-edge marker and focus treatment.
+            yield composer
             # In "below" mode the chips close the shell as a bottom status
             # row: the composer cluster (staged evidence, prompt queue,
             # composer) stays contiguous with the transcript, and the chips
@@ -19053,32 +19052,46 @@ class ChatScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Swap the rail regions' inline frame to the accent while focused.
+        """Swap framed regions' inline borders to the accent while focused.
 
         TASK-359: F6's rail stop focuses the collapse button; the region
         border is inline-styled (single-frame contract), so this is the
         only place a visible pane-stop indicator can be painted.
+
+        TASK-17651: the transcript region joins the painter — the widget
+        inside it draws no border of its own any more, so the region's
+        column lines ARE the transcript's focus indicator. Edges are
+        written individually, never via the ``border`` shorthand: every
+        region here has a suppressed edge (rails: bottom; transcript
+        region: top and bottom — the workspace grid's border closes the
+        frame) that a shorthand write would silently resurrect.
         """
-        for rail_id in ("console-left-rail", "console-right-rail"):
+        for region_id, accent_edges in (
+            ("console-left-rail", ("left", "right", "top")),
+            ("console-right-rail", ("left", "right", "top")),
+            ("console-transcript-region", ("left", "right")),
+        ):
             try:
-                rail = self.query_one(f"#{rail_id}")
+                framed = self.query_one(f"#{region_id}")
             except QueryError:
                 continue
             focused_within = False
             node = event.widget
             while node is not None:
-                if node is rail:
+                if node is framed:
                     focused_within = True
                     break
                 node = node.parent
             border = (
                 CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
             )
-            # styles.border_top holds (str, Color) — compare against the
+            # styles.border_left holds (str, Color) — compare against the
             # parsed color, or the dedup guard never dedups (review #739).
-            current_kind, current_color = rail.styles.border_top
-            if current_kind != border[0] or current_color != Color.parse(border[1]):
-                rail.styles.border = border
+            current_kind, current_color = framed.styles.border_left
+            if current_kind == border[0] and current_color == Color.parse(border[1]):
+                continue
+            for edge in accent_edges:
+                setattr(framed.styles, f"border_{edge}", border)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.

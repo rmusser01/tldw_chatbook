@@ -1,8 +1,9 @@
 ---
 id: TASK-17651
 title: 'Console: flatten the composer to a one-row dense-form field'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
 labels:
   - console
@@ -27,12 +28,37 @@ Also in scope (reallocated from TASK-17650 during implementation review): consol
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The default composer renders exactly 1 row with all current children on the content row (Composer collapse control, Menu, draft, disabled-reason banner, Send, Dictate) and grows with the draft to at most 4 rows
-- [ ] #2 The focus treatment follows the dense-form convention, causes no dimensional change, and demonstrably renders on the running screen (i.e. is not overridden by inline frame styles)
-- [ ] #3 The composer collapse control still exists and swaps to the run-status variant at the same height; updated tests encode the new economics (collapse no longer promises extra transcript rows)
-- [ ] #4 Exactly one separator row renders between the last transcript content line and the composer content row (transcript border, region frame, grid frame, and composer top border consolidated), and the transcript keeps a visible, dimensionally-stable keyboard-focus treatment at all sizes
-- [ ] #5 The transcript gains at least 7 more rows at 150x44 versus the post-TASK-17650 baseline (4 composer chrome + 2 transcript border + 1 duplicate frame row)
-- [ ] #6 All affected geometry pins are updated to the new contract (composer-collapse suite, internals-decomposition geometry blocks, non-obscuring-focus composer AND transcript stable-border rules), using bundle-loading harnesses wherever geometry is asserted
-- [ ] #7 The setup-blocked/first-run state renders correctly with the flattened composer (the disabled-reason banner is the widest single-row competitor) and the draft's usable width at 150 columns does not regress
-- [ ] #8 User Guide Console page updated
+- [x] #1 The default composer renders exactly 1 row with all current children on the content row (Composer collapse control, Menu, draft, disabled-reason banner, Send, Dictate) and grows with the draft to at most 4 rows
+- [x] #2 The focus treatment follows the dense-form convention, causes no dimensional change, and demonstrably renders on the running screen (i.e. is not overridden by inline frame styles)
+- [x] #3 The composer collapse control still exists and swaps to the run-status variant at the same height; updated tests encode the new economics (collapse no longer promises extra transcript rows)
+- [x] #4 Exactly one separator row renders between the last transcript content line and the composer content row (transcript border, region frame, grid frame, and composer top border consolidated), and the transcript keeps a visible, dimensionally-stable keyboard-focus treatment at all sizes
+- [x] #5 The transcript gains at least 7 more rows at 150x44 versus the post-TASK-17650 baseline (4 composer chrome + 2 transcript border + 1 duplicate frame row)
+- [x] #6 All affected geometry pins are updated to the new contract (composer-collapse suite, internals-decomposition geometry blocks, non-obscuring-focus composer AND transcript stable-border rules), using bundle-loading harnesses wherever geometry is asserted
+- [x] #7 The setup-blocked/first-run state renders correctly with the flattened composer (the disabled-reason banner is the widest single-row competitor) and the draft's usable width at 150 columns does not regress
+- [x] #8 User Guide Console page updated
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED pins first: single-row default geometry + single-separator contract (bundle harness), watched fail.
+2. COMPOSER_CHROME_ROWS 4 -> 0; init heights from constants; CSS padding 0 1, max-height 4, $ds-console-composer-height 1.
+3. frame.py: `bottom` param; composer removed from the frame grammar (CSS dense-form edge owns it); grid children (rails, handles, region — both compose paths incl. the recovery subclass) suppress bottom edges so the grid's border is the single separator.
+4. Transcript border none in both states (compact-mode drop generalized); TASK-359 focus painter extended to the region's column lines with per-edge writes (the shorthand would resurrect suppressed edges).
+5. Focus tests with PAINTED assertions; mutation-tested; collateral pins updated deliberately (heights, frame contracts, click boundaries, snapshots helper).
+6. Live probes (ready/long-draft/collapsed/setup-blocked/compact, both chip placements); docs + DESIGN.md; lessons entry.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The composer is now a dense-form one-row bar: `COMPOSER_CHROME_ROWS = 0`, no border box, `padding: 0 1`, growing 1-4 rows with the draft. It left the workbench frame grammar entirely — `frame_console_region` gained a `bottom` param, the grid keeps its full border as the bottom stack's single separator, and every grid child (rails, handles, transcript region — both compose paths, including the provider-recovery subclass) suppresses its bottom edge. The transcript widget draws no border at any size (the TASK-2154.1 compact drop generalized); its keyboard-focus cue is the region's column lines, recolored by the TASK-359 pane-stop painter (extended with per-edge writes — the `border` shorthand would silently resurrect suppressed edges) plus a scrollbar accent.
+
+Headline catch, recorded in lessons-testing-evidence.md: removing the border box ACTIVATED the global `*:focus` outline on the composer (and latently the transcript) — corner glyphs overpainting the row while every style-level read stayed pristine. Caught only by the painted row-map probe; fixed with `outline: none` opt-outs per the reset's own DataTable pattern, and the focus tests now pin the painted first cells (`│`/`█`, never `┌─`). A second self-inflicted catch: the freshly written pin `"outline:" not in focus` banned the cure along with the disease — the updated pin bans `outline: solid/heavy` and REQUIRES the opt-out.
+
+Contract updates, all deliberate: composer heights 5-8 -> 1-4 across the collapse suite and internals-decomposition; collapse is a same-height content swap (its +4-transcript-rows promise retired); the textual-web click-boundary forgiveness tests inverted — the ±1 rows now belong to the neighboring strips (the production hit-test needed NO change; it always keyed off the composer's real box); frame-contract tests and the snapshots' `_assert_solid_border` helper learned the suppressed bottom edges; the composer's CSS pins moved to the dense-form grammar. Bundleless-harness tests now pin only the inline no-frame fact, with CSS edges pinned in bundle-loaded tests.
+
+Evidence: 838 passed on the 16-file sweep (the screen-size ratchet stays red exactly as on dev — task-3751; this branch adds +13 net lines to chat_screen.py, with the new logic in frame.py/CSS). Live probes at 150x44: transcript region 29 -> 33 (+4 outer, +7 content lines with the interior border rows), draft width 70 -> 71, single `└──` separator, growth capped at 4, collapse/setup-blocked/compact all sane in both chip placements. RED-first on the two core pins; mutation tests on both focus mechanisms.
+
+Files: `console_composer_bar.py`, `UI/Console_Modules/frame.py` + `transcript.py` + `provider_continuation_recovery.py`, `chat_screen.py`, `css/components/_agentic_terminal.tcss` + `core/_variables.tcss` (+ bundle), tests: `test_console_composer_collapse.py`, `test_console_internals_decomposition.py`, `test_non_obscuring_focus_contract.py`, `test_workbench_visual_snapshots.py`; docs: `Docs/User_Guide/console.md`, `DESIGN.md`, `backlog/docs/lessons-testing-evidence.md`.
+<!-- SECTION:NOTES:END -->

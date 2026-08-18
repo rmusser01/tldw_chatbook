@@ -384,7 +384,9 @@ class ConsoleComposerBar(Horizontal):
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
-    COMPOSER_CHROME_ROWS = 4
+    # TASK-17651: the dense-form composer has no border box or vertical
+    # padding — total height IS the draft row count (1-4).
+    COMPOSER_CHROME_ROWS = 0
     VOICE_CHIP_MIN_WIDTH = 24
     # Fits the 51-cell shared-executor busy copy plus the chip's cell of
     # horizontal padding on each side at ordinary Console widths.
@@ -477,8 +479,8 @@ class ConsoleComposerBar(Horizontal):
         super().__init__(**kwargs)
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
-        self.styles.height = 5
-        self.styles.min_height = 5
+        self.styles.height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
         self.paste_collapse_threshold = coerce_int_setting(

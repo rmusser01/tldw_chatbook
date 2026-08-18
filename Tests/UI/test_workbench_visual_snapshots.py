@@ -161,7 +161,9 @@ def _assert_solid_border(widget) -> None:
     border = widget.styles.border
     assert border.top[0] == "solid"
     assert border.right[0] == "solid"
-    assert border.bottom[0] == "solid"
+    # task-17651: grid children suppress their bottom edge — the grid's
+    # own bottom border closes the workbench frame.
+    assert border.bottom[0] in {"", "none"}
     assert border.left[0] == "solid"
 
 
