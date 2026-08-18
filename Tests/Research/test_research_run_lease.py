@@ -148,3 +148,36 @@ def test_release_frees_the_run_for_the_next_executor():
 
     assert service.release_lease(run["id"], lease_id=lease) is True
     assert service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
+
+
+def test_a_clean_release_resets_the_retry_budget():
+    """Regression guard for task-18060 finding 1: a healthy claim->release
+    cycle must NOT burn the crash-retry budget. Without resetting
+    lease_attempts on release, several healthy cycles would exhaust
+    max_attempts on their own, and the genuine crash recovery below would
+    be refused even though the run was never actually abandoned more than
+    once.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    # Several healthy claim -> release cycles by well-behaved executors.
+    for _ in range(3):
+        lease = service.claim_run(
+            run["id"], worker_id="w", lease_seconds=60, max_attempts=3
+        )
+        assert lease is not None
+        assert service.release_lease(run["id"], lease_id=lease) is True
+
+    # A genuine crash: claimed but never released, lease left to expire.
+    abandoned = service.claim_run(
+        run["id"], worker_id="w", lease_seconds=0, max_attempts=3
+    )
+    assert abandoned is not None
+
+    # The rescue claim must still succeed -- the prior clean releases must
+    # not have consumed the budget that this single abandonment is spending.
+    rescue = service.claim_run(
+        run["id"], worker_id="rescuer", lease_seconds=60, max_attempts=3
+    )
+    assert rescue is not None

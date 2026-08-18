@@ -700,7 +700,11 @@ class LocalResearchService:
         EXPIRED lease -- a run's very first claim always succeeds. A run
         whose executor keeps dying is broken rather than slow, and must
         stop being retried once the budget is spent (task-18060, following
-        the server job manager's retry budget).
+        the server job manager's retry budget). A clean ``release_lease``
+        resets the counter to 0, since a run that was voluntarily released
+        was not abandoned -- so the budget tracks CONSECUTIVE abandonments
+        (crashes that leave the lease to expire), not the run's lifetime
+        claim count.
 
         Args:
             run_id: The run to claim.
@@ -782,7 +786,7 @@ class LocalResearchService:
                 """
                 UPDATE research_runs
                    SET lease_owner = NULL, lease_id = NULL, leased_until = NULL,
-                       updated_at = ?
+                       lease_attempts = 0, updated_at = ?
                  WHERE id = ? AND lease_id = ?
                 """,
                 (self._now(), run_id, lease_id),
