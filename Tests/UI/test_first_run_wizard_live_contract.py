@@ -787,6 +787,37 @@ def test_started_flag_mirrors_only_after_success_and_logs_bounded_failure(
     assert "private-value" not in rendered_log
 
 
+def test_prompt_branch_returns_true_to_defer_lower_priority_startup_offers(
+    monkeypatch,
+):
+    """Finding 3 (final review 2026-08-17): the recovery-dialog "prompt"
+    branch must also return True from ``_maybe_offer_first_run_wizard`` --
+    app.py only defers the lower-priority project-.SKILLS import offer when
+    this method returns True (see the ``if not wizard_offered:`` call site),
+    so previously only the wizard's own "offer" branch stopped the skills
+    offer from stacking on top of a just-pushed screen; the "prompt" branch
+    (``SetupRecoveryDialog``) did not, letting the skills modal stack on
+    top of the recovery dialog.
+    """
+    from tldw_chatbook.app import TldwCli
+    import tldw_chatbook.UI.Wizards.first_run_setup_state as state_module
+
+    monkeypatch.setattr(
+        state_module, "setup_recovery_action", lambda app_config, environ: "prompt"
+    )
+
+    scheduled: list = []
+    fake = SimpleNamespace(app_config={}, _first_run_startup_action_scheduled=False)
+    fake.call_after_refresh = lambda cb: scheduled.append(cb)
+    fake._push_first_run_recovery_dialog = lambda: None
+
+    result = TldwCli._maybe_offer_first_run_wizard(fake)
+
+    assert result is True
+    assert fake._first_run_startup_action_scheduled is True
+    assert scheduled == [fake._push_first_run_recovery_dialog]
+
+
 @pytest.mark.asyncio
 async def test_resume_marks_attempt_before_pushing_restored_wizard(monkeypatch):
     from tldw_chatbook.app import TldwCli

@@ -49,6 +49,48 @@ def test_invalid_name_flagged_not_failed(tmp_path):
     assert "lowercase" in entry.reason
 
 
+def test_both_candidates_present_prefers_skills_upper_and_logs_ignored(
+    tmp_path, monkeypatch
+):
+    """Finding 5 (spec §5.1): when BOTH ``.SKILLS/`` and ``.skills/`` exist,
+    ``.SKILLS`` wins (existing behavior) and a debug/info log line records
+    that the second candidate was found but ignored -- silent precedence
+    is a footgun for a project that accidentally has both.
+
+    Can't create both as REAL directories: on this machine's (and most
+    macOS) default case-insensitive filesystem, ``.SKILLS`` and ``.skills``
+    collide onto the same inode -- ``mkdir`` of the second raises
+    ``FileExistsError``. A project on a case-sensitive filesystem (Linux,
+    or a case-sensitive APFS volume) genuinely can have both though, so
+    this fakes ``Path.is_dir``/``is_symlink`` for exactly the two
+    candidate names instead of depending on the test host's filesystem
+    case-sensitivity.
+    """
+    from tldw_chatbook.Skills_Interop import project_skills_discovery as _module
+
+    real_is_dir = Path.is_dir
+
+    def fake_is_dir(self):
+        if self.parent == tmp_path and self.name in (".SKILLS", ".skills"):
+            return True
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", fake_is_dir)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+
+    messages: list[str] = []
+    sink_id = _module.logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        result = find_project_skills_dir(tmp_path)
+    finally:
+        _module.logger.remove(sink_id)
+
+    assert result == tmp_path / ".SKILLS"
+    assert any(
+        ".skills" in message and str(tmp_path) in message for message in messages
+    )
+
+
 def test_symlinked_skills_dir_refused(tmp_path):
     real = tmp_path / "elsewhere"
     real.mkdir()

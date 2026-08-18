@@ -11,6 +11,8 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 _PROJECT_SKILLS_DIRNAMES = (".SKILLS", ".skills")
 MAX_DISCOVERED_ENTRIES = 50
 FRONTMATTER_READ_CAP_BYTES = 65536
@@ -41,8 +43,13 @@ def find_project_skills_dir(root: Path) -> Path | None:
 
     ``.SKILLS`` is preferred over ``.skills`` purely by check order: the
     names are tried in that order and the function returns on the first
-    candidate that exists, is a directory, and is not itself a symlink.
+    candidate that exists, is a directory, and is not itself a symlink. If
+    a lower-priority candidate ALSO exists, that is logged (spec §5.1) --
+    a project with both is an easy-to-miss footgun (e.g. a rename that left
+    the old casing behind), so which one silently wins should be visible
+    somewhere other than "reading this function's check order".
     """
+    found: Path | None = None
     for name in _PROJECT_SKILLS_DIRNAMES:
         candidate = root / name
         try:
@@ -50,8 +57,19 @@ def find_project_skills_dir(root: Path) -> Path | None:
                 continue
         except OSError:
             continue
-        return candidate
-    return None
+        if found is None:
+            found = candidate
+        else:
+            logger.debug(
+                "project-skills: both {} and {} exist in {}; using {}, "
+                "ignoring {}",
+                found.name,
+                candidate.name,
+                root,
+                found.name,
+                candidate.name,
+            )
+    return found
 
 
 def find_project_dir_with_skills(start: Path) -> Path | None:

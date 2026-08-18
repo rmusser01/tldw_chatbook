@@ -27,13 +27,14 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Static
 
-from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.config import get_cli_setting, get_user_data_dir
 from tldw_chatbook.Skills_Interop.project_skills_discovery import (
     ProjectSkillEntry,
     ProjectSkillsDiscovery,
 )
 from tldw_chatbook.Skills_Interop.project_skills_prompt import (
     ProjectSkillsPromptLedger,
+    should_offer_project_skills_prompt,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -229,10 +230,31 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             )
             yield Button("Close", id="project-skills-close", compact=True)
 
+    def _import_in_flight(self) -> bool:
+        """True only while a committed import hasn't produced outcomes yet.
+
+        Finding 2 (final review 2026-08-17): the offer-phase buttons stay
+        mounted while ``_run_import`` is running (the modal only recomposes
+        into the results phase once ``self._outcomes`` is set), so a click
+        can still land on "Never"/"Not now", or Escape can still fire,
+        while an import the user already committed to is mid-flight. All
+        three must be inert then -- dismissing (or re-running) would either
+        discard a partial import silently or race the in-flight worker.
+        """
+        return self._committed and self._outcomes is None
+
     async def _perform_safe_cancel(self, *, source: str) -> None:
-        # Escape / backdrop-click / "Not now" all route here, and must all
-        # dismiss with the same ("not_now", None) decision tuple.
+        # Escape / backdrop-click / "Not now" all route here.
         del source
+        if self._import_in_flight():
+            return
+        if self._outcomes is not None:
+            # Results phase (minor 6): escape/backdrop must dismiss exactly
+            # like "Close" -- the import already ran, there is nothing left
+            # to cancel, and mislabeling it "not_now" would make the
+            # already-completed import look declined to the ledger.
+            self.dismiss_safe_once(("imported", self._outcomes))
+            return
         self.dismiss_safe_once(("not_now", None))
 
     @on(Button.Pressed, "#project-skills-not-now")
@@ -243,6 +265,8 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
     @on(Button.Pressed, "#project-skills-never")
     def _never(self, event: Button.Pressed) -> None:
         event.stop()
+        if self._import_in_flight():
+            return
         self.dismiss_safe_once(("never", None))
 
     def _selected_entries(self) -> tuple[ProjectSkillEntry, ...]:
@@ -261,6 +285,19 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
         if self._committed:
             return
         self._committed = True
+        # Belt-and-suspenders alongside the `_import_in_flight()` guards
+        # above: visibly disable the offer-phase buttons too, so a
+        # still-mounted "Never"/"Not now" doesn't even look clickable while
+        # the import it would discard is running.
+        for button_id in (
+            "#project-skills-import",
+            "#project-skills-not-now",
+            "#project-skills-never",
+        ):
+            try:
+                self.query_one(button_id, Button).disabled = True
+            except Exception:  # noqa: BLE001 - purely cosmetic, never fatal
+                pass
         selected = self._selected_entries()
         self.run_worker(self._run_import(selected), exclusive=True)
 
@@ -417,12 +454,17 @@ async def _offer_next_project_skills_discovery(
             if not remaining:
                 app._project_skills_offer_active = False
             else:
+                # The coroutine is created before `run_worker` sees it (it
+                # has to be -- it's the call's own argument), but a
+                # `run_worker` failure must not leak it as a never-awaited
+                # coroutine (Finding 7, final review 2026-08-17): keep the
+                # reference so the except branch can close it explicitly
+                # instead of letting Python warn-and-leak an orphaned one.
+                continuation = _run_project_skills_offer_chain(app, remaining)
                 try:
-                    app.run_worker(
-                        _run_project_skills_offer_chain(app, remaining),
-                        exclusive=False,
-                    )
+                    app.run_worker(continuation, exclusive=False)
                 except Exception:
+                    continuation.close()
                     app._project_skills_offer_active = False
                     logger.opt(exception=True).debug(
                         "project-skills offer chain continuation failed to start"
@@ -453,13 +495,35 @@ def maybe_offer_project_skills_import(
 ) -> None:
     """Offer imports for each discovery in turn (spec §5.5).
 
-    The one entry point other call sites use (startup, workspace-create
-    chaining). Builds ``installed_names``/an ``importer`` from the live
-    ``app.skills_scope_service``, then pushes one modal per discovery --
-    the next discovery's modal is only pushed once the current one
+    The one entry point EVERY call site uses -- startup and every
+    workspace-create surface (Console, Settings, Library) -- and therefore
+    the one choke point where gating lives (final review 2026-08-17,
+    Finding 1). Previously only the startup path pre-filtered discoveries
+    through the kill-switch/ledger before calling here, so a "Never for
+    this folder" or a disabled kill-switch recorded via one trigger did not
+    silence the other, violating spec §5.3's "declining in one place
+    silences the other". This function now applies the SAME gating no
+    matter which trigger calls it:
+
+    1. The ``[skills] project_skills_prompt_enabled`` kill-switch is
+       checked first -- off means no offer, full stop.
+    2. Without a usable ``app.skills_scope_service`` an offer can only
+       fail (Finding 6): suppressed rather than pushing a modal whose
+       "Import selected" is guaranteed to error.
+    3. Each discovery is re-checked against the prompt ledger
+       (``should_offer_project_skills_prompt`` -- never-seen, or
+       changed-and-not-"never"); a discovery already declined "never", or
+       unchanged since it was last shown, is dropped. If none remain,
+       nothing is offered.
+
+    For any survivors: builds ``installed_names``/an ``importer`` from the
+    live ``app.skills_scope_service``, then pushes one modal per discovery
+    -- the next discovery's modal is only pushed once the current one
     dismisses. Every dismissal is recorded in the prompt ledger
     (``ProjectSkillsPromptLedger``, keyed by ``discovery.root``), and a
     "review" decision also posts a navigation request to the Skills screen.
+    (The startup path's own pre-filtering in ``startup_discovery_for``
+    becomes redundant with this, but idempotent -- harmless double gating.)
 
     Re-entrancy: while one offer flow is already running for ``app``
     (tracked via ``app._project_skills_offer_active``, set here when the
@@ -481,13 +545,34 @@ def maybe_offer_project_skills_import(
             ``run_worker``).
         discoveries: Discoveries to offer, one modal at a time.
     """
+    if not get_cli_setting("skills", "project_skills_prompt_enabled", True):
+        logger.debug(
+            "project-skills offer suppressed: "
+            "[skills] project_skills_prompt_enabled is off"
+        )
+        return
     if getattr(app, "_project_skills_offer_active", False):
         return
     discoveries = tuple(discoveries)
     if not discoveries:
         return
+    if getattr(app, "skills_scope_service", None) is None:
+        logger.debug(
+            "project-skills offer suppressed: app.skills_scope_service is unavailable"
+        )
+        return
+    ledger = ProjectSkillsPromptLedger(get_user_data_dir())
+    gated_discoveries = tuple(
+        discovery
+        for discovery in discoveries
+        if should_offer_project_skills_prompt(
+            True, ledger.decision_for(discovery.root), discovery.fingerprint
+        )
+    )
+    if not gated_discoveries:
+        return
     app._project_skills_offer_active = True
     app.run_worker(
-        _run_project_skills_offer_chain(app, discoveries),
+        _run_project_skills_offer_chain(app, gated_discoveries),
         exclusive=False,
     )

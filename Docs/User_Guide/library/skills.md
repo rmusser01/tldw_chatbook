@@ -100,8 +100,11 @@ Chatbook offers to import from `.SKILLS/` at two moments, never silently:
 The prompt lists each discovered skill with a checkbox — **new** entries
 checked by default, entries that match an **already installed** skill name
 left unchecked (an existing skill is never silently overwritten), and
-**invalid** entries (bad name, unparseable frontmatter) shown unselectable
-with a reason. **Import selected** runs the same importer as a manual
+**invalid** entries (a bad name, or a file that can't be read) shown
+unselectable with a reason. Unparseable frontmatter is not one of those
+reasons — a skill file whose frontmatter can't be parsed still imports
+fine, just with an empty description (matching how a manual import treats
+the same case). **Import selected** runs the same importer as a manual
 import; **Not now** declines for this launch only — you're asked again only
 if the project's skill set actually changes (a new or removed skill file
 changes its fingerprint); **Never for this folder** declines permanently for

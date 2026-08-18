@@ -322,10 +322,18 @@ class WorkspaceCreateModal(
         self._folders.append(resolved_locator)
         # Pure filesystem scan (no side effects, no trust decisions) so the
         # row can flag "contains N project skill(s)" up front; only stored
-        # when there's something to offer later (spec §5.5).
-        discovery = discover_project_skills(resolved)
-        if discovery is not None and discovery.entries:
-            self._folder_discoveries[resolved_locator] = discovery
+        # when there's something to offer later (spec §5.5). Skipped
+        # entirely when the kill-switch is off (Finding 1, final review
+        # 2026-08-17): the feature's "no scanning" promise must be
+        # literally true, not merely "no offer" once the flag was already
+        # set. Imported locally (like app.py's startup discovery worker
+        # does) rather than at module import time.
+        from tldw_chatbook.config import get_cli_setting
+
+        if get_cli_setting("skills", "project_skills_prompt_enabled", True):
+            discovery = discover_project_skills(resolved)
+            if discovery is not None and discovery.entries:
+                self._folder_discoveries[resolved_locator] = discovery
         self._error = ""
         self._stash_form_state()
         self._folder_path_value = ""  # the just-consumed path is cleared

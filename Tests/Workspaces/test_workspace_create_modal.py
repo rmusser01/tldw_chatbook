@@ -436,3 +436,40 @@ async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
         await pilot.pause()
     assert len(app.result.project_skills) == 1
     assert app.result.project_skills[0].entries[0].name == "alpha-skill"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_suppresses_folder_discovery_scan(tmp_path, monkeypatch):
+    """Finding 1: with the ``[skills] project_skills_prompt_enabled``
+    kill-switch off, ``_add_folder`` must not scan the bound folder for
+    project skills AT ALL -- "no scanning" must be literally true, not
+    merely "no offer" later. Monkeypatches ``discover_project_skills`` with
+    a recorder to prove the call never happens.
+    """
+    calls: list = []
+
+    def _recorder(root):
+        calls.append(root)
+        return None
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.workspace_create_modal.discover_project_skills",
+        _recorder,
+    )
+
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    skill = project / ".SKILLS" / "alpha-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: x\n---\nB\n", encoding="utf-8")
+
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+
+    assert calls == []

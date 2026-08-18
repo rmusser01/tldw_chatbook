@@ -135,6 +135,32 @@ Deviations from the plan: none structural. The three same-day fix rounds
 above (Tasks 1, 2, 4) were caught by each task's own RED/GREEN discipline or
 immediate self-review, not by this close-out task.
 
+**Post-review gate connection (final review 2026-08-17, Finding 1):** the
+final whole-branch review found that AC#2's gating ("declining re-prompts
+only when the fingerprint changes; 'Never' is permanent; the kill-switch
+disables the feature") was consulted ONLY by the startup trigger
+(`startup_discovery_for`) -- the create-modal trigger's own path
+(`WorkspaceCreateModal._add_folder` -> `maybe_offer_project_skills_import`)
+scanned and offered unconditionally, bypassing the kill-switch, "Never",
+and fingerprint gating entirely, which violated spec §5.3's "declining in
+one place silences the other" and this AC. Fixed at the declared choke
+point: `maybe_offer_project_skills_import` (every call site routes through
+it) now checks the kill-switch first, filters every discovery through
+`should_offer_project_skills_prompt` + the ledger before offering anything,
+and suppresses when `app.skills_scope_service` is absent; `_add_folder`
+skips the scan entirely (not just the offer) when the kill-switch is off.
+New RED/GREEN pilot coverage: `test_never_for_folder_silences_create_
+trigger`, `test_kill_switch_suppresses_create_offer`,
+`test_kill_switch_suppresses_folder_discovery_scan`,
+`test_missing_skills_scope_service_suppresses_offer` (all in
+`Tests/Skills/test_project_skills_import_modal.py` /
+`Tests/Workspaces/test_workspace_create_modal.py`). AC#2 stays ticked with
+this fix in place; see `.superpowers/sdd/2026-08-17-project-skills-import/
+finalfix-report.md` for the full fix-wave record (also covers 6 other
+review findings: in-flight-import dismissal races, a recovery-dialog
+startup stacking bug, a docs inaccuracy about unparseable frontmatter, a
+missing precedence log line, and a coroutine-leak hardening fix).
+
 Modified/added files (cumulative, all 6 tasks): `tldw_chatbook/Skills_Interop/
 project_skills_discovery.py` (new), `project_skills_prompt.py` (new),
 `tldw_chatbook/Widgets/project_skills_import_modal.py` (new),

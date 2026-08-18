@@ -10174,14 +10174,19 @@ class TldwCli(
         """Offer the setup wizard once; otherwise nudge unfinished setups.
 
         Returns:
-            True iff the wizard was pushed this launch (the ``"offer"``
-            branch); False for every other outcome (already scheduled,
-            the recovery-dialog "prompt" branch, the resume-toast "none"
-            branch -- which still runs and notifies -- or a caught
+            True iff the wizard OR the recovery dialog was pushed this
+            launch (the ``"offer"`` and ``"prompt"`` branches); False for
+            every other outcome (already scheduled, the resume-toast
+            "none" branch -- which still runs and notifies -- or a caught
             exception). Callers use this to decide whether a lower-
             priority startup offer (e.g. the project-.SKILLS import
             prompt, spec 2026-08-17 §5.4) should defer to next launch
-            instead of competing with the wizard for the user's attention.
+            instead of competing with the wizard OR the recovery dialog
+            for the user's attention -- both branches push a screen onto
+            the stack, so both must suppress the lower-priority offer
+            (final review 2026-08-17, Finding 3: the "prompt" branch used
+            to return False here, letting the skills-import modal stack
+            on top of a just-pushed ``SetupRecoveryDialog``).
         """
         if getattr(self, "_first_run_startup_action_scheduled", False):
             return False
@@ -10199,6 +10204,7 @@ class TldwCli(
             elif action == "prompt":
                 self._first_run_startup_action_scheduled = True
                 self.call_after_refresh(self._push_first_run_recovery_dialog)
+                return True
             elif action == "none" and should_show_resume_toast(
                 self.app_config, os.environ
             ):

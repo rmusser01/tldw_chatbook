@@ -43,6 +43,26 @@ class _HarnessApp(App[None]):
         self.push_screen(self._modal, _done)
 
 
+class _RecorderApp:
+    """Minimal app double (not a real Textual App): records
+    ``push_screen``/``run_worker`` calls without ever running an event
+    loop -- used for Finding 1/6 tests where ``maybe_offer_project_skills_
+    import`` must return BEFORE touching either, so there is nothing to
+    pump.
+    """
+
+    def __init__(self, skills_scope_service="sentinel"):
+        self.skills_scope_service = skills_scope_service
+        self.pushed: list = []
+        self.workers: list = []
+
+    def push_screen(self, screen, callback=None):
+        self.pushed.append(screen)
+
+    def run_worker(self, coro, **kwargs):
+        self.workers.append(coro)
+
+
 def _modal(tmp_path, installed=frozenset(), imported=None, fail=()):
     imported = imported if imported is not None else []
 
@@ -143,6 +163,60 @@ async def test_double_click_import_runs_importer_once_per_entry(tmp_path):
         await pilot.click("#project-skills-import")
         await pilot.pause(0.2)
     assert sorted(imported) == ["alpha-skill", "beta-skill"]
+
+
+@pytest.mark.asyncio
+async def test_never_during_inflight_import_is_inert(tmp_path):
+    """Finding 2: while an import is running (``_committed`` and no
+    outcomes yet), "Never for this folder" must be inert -- it must not
+    dismiss the modal mid-import -- and the flow must still land on the
+    results phase once the import finishes.
+    """
+    imported: list[str] = []
+
+    async def slow_importer(entry):
+        await asyncio.sleep(0.1)
+        imported.append(entry.name)
+
+    modal = ProjectSkillsImportModal(
+        discovery=_discovery(tmp_path),
+        installed_names=frozenset(),
+        importer=slow_importer,
+    )
+    app = _HarnessApp(modal)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#project-skills-import")
+        await pilot.pause()
+        # The slow importer is still in flight here (0.1s sleep, no pause
+        # duration given) -- Never must be a no-op, not a dismissal.
+        await pilot.click("#project-skills-never")
+        await pilot.pause()
+        assert app.result == "unset"  # still open -- no dismissal happened
+        assert app.screen is modal
+        await pilot.pause(0.2)  # let the slow importer finish
+        assert modal._outcomes is not None  # landed on the results phase
+    assert sorted(imported) == ["alpha-skill", "beta-skill"]
+
+
+@pytest.mark.asyncio
+async def test_escape_on_results_phase_dismisses_as_imported(tmp_path):
+    """Minor 6: escape on the RESULTS phase must dismiss like "Close"
+    (``("imported", outcomes)``), not like a cancel (``("not_now", None)``)
+    -- the import already ran; there is nothing left to cancel.
+    """
+    modal, _imported = _modal(tmp_path)
+    app = _HarnessApp(modal)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#project-skills-import")
+        await pilot.pause()
+        assert modal._outcomes is not None  # sanity: results phase reached
+        await pilot.press("escape")
+        await pilot.pause()
+    decision, outcomes = app.result
+    assert decision == "imported"
+    assert outcomes is not None and len(outcomes) == 2
 
 
 class _StubSkillsScopeService:
@@ -319,4 +393,70 @@ async def test_on_dismiss_bookkeeping_failure_still_clears_flag_and_does_not_rai
         # in the un-fixed `_on_dismiss` would have exited it here.
         assert not app._exit
 
+    assert getattr(app, "_project_skills_offer_active", False) is False
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: the create-path trigger must respect the SAME gating as the
+# startup path -- kill-switch, "Never", and fingerprint gating -- not just
+# scan-and-offer unconditionally. ``maybe_offer_project_skills_import`` is
+# the one entry point every call site (startup, Console/Settings/Library
+# create-modal chaining) routes through, so fixing gating there closes all
+# of them at once.
+# ---------------------------------------------------------------------------
+
+
+def test_never_for_folder_silences_create_trigger(tmp_path, monkeypatch):
+    """A "never" decision recorded for a discovery's root (e.g. via the
+    startup offer) must silence a LATER create-path offer for the same
+    folder too -- spec §5.3's "declining in one place silences the other".
+    """
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+    monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: True)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    ledger.record(discovery.root, "never", discovery.fingerprint)
+
+    app = _RecorderApp()
+    maybe_offer_project_skills_import(app, (discovery,))
+
+    assert app.pushed == []
+    assert app.workers == []
+    assert getattr(app, "_project_skills_offer_active", False) is False
+
+
+def test_kill_switch_suppresses_create_offer(tmp_path, monkeypatch):
+    """The ``[skills] project_skills_prompt_enabled`` kill-switch must be
+    consulted at the top of ``maybe_offer_project_skills_import`` itself --
+    not only by the startup path's own pre-filtering -- so every call site
+    that routes through this one helper is covered.
+    """
+    monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: False)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    app = _RecorderApp()
+
+    maybe_offer_project_skills_import(app, (discovery,))
+
+    assert app.pushed == []
+    assert app.workers == []
+    assert getattr(app, "_project_skills_offer_active", False) is False
+
+
+def test_missing_skills_scope_service_suppresses_offer(tmp_path, monkeypatch):
+    """Finding 6: without ``app.skills_scope_service`` an offer can only
+    fail (there is nothing to import into) -- suppress it entirely instead
+    of pushing a modal whose "Import selected" is guaranteed to error.
+    """
+    monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: True)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    app = _RecorderApp(skills_scope_service=None)
+
+    maybe_offer_project_skills_import(app, (discovery,))
+
+    assert app.pushed == []
+    assert app.workers == []
     assert getattr(app, "_project_skills_offer_active", False) is False
