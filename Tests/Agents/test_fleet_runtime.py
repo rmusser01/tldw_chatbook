@@ -1103,14 +1103,17 @@ def test_a_survivors_pending_approval_is_answerable_after_its_turn(db):
 
 
 def test_stopping_the_turn_still_stops_its_children(db, monkeypatch):
-    """User cancellation still reaches the fleet, survival default or not.
+    """User cancellation reaches the fleet UNDER THE KILL SWITCH.
 
-    Stop is the user's only kill switch for a run tree, and spec Sec 10
-    puts any change to its semantics in PR 3b. So a cancelled turn settles
-    exactly as phase 2 did -- the survival path is for a turn that ENDED,
-    not for one the user killed. Note this runs on the SHIPPED default:
-    nothing is pinned here.
+    PR3b Task 5 (spec Sec 8) changed the SHIPPED-default fate this test
+    used to pin: with `subagents_outlive_turn` on, a user Stop now stops
+    the supervisor only and the children keep working (see
+    `Tests/Agents/test_fleet_stop_semantics.py`, whose probes were
+    measured red/green at the merge-base). What this test guards since
+    then is the kill switch's half of that contract: pinned turn-scoped,
+    a cancelled turn settles exactly as phase 2 did, byte-identically.
     """
+    pin_turn_scoped_children(monkeypatch)
     # The child is blocked inside its provider call, so it can only be
     # abandoned, never joined; 0.2s of grace makes the point in 0.2s.
     monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
@@ -2382,13 +2385,28 @@ def test_wait_agents_with_no_children_says_so(db):
 # -- cancellation and the wall-clock bound --------------------------------
 
 
-def test_wait_agents_cancellation_stops_children_and_ends_the_run(db):
-    """User cancellation while waiting propagates to the children.
+def test_wait_agents_cancellation_stops_children_and_ends_the_run(
+    db, monkeypatch
+):
+    """User cancellation around a wait propagates -- UNDER THE KILL SWITCH.
 
     The child keeps calling a tool (with varying arguments, so the cycle
     detector never fires), which gives it the step boundaries at which a
     cooperative cancel is actually noticed.
+
+    PR3b Task 5 pinned this turn-scoped: on the shipped default a Stop
+    now spares the children (`test_fleet_stop_semantics`), so the kill
+    propagation asserted here is what `subagents_outlive_turn = false`
+    buys. Honest mechanics note, verified while writing that suite's
+    probes: this script flips `cancelled` BEFORE returning the wait
+    fence, so the parent dies at the loop's pre-dispatch cancellation
+    gate and `wait_agents` never actually runs -- the children die
+    through the child-side parent poll and the end-of-turn settle, both
+    of which this kill-switch path keeps. `wait_agents`' own cancel
+    branch is exercised (both key directions) by
+    `test_fleet_stop_semantics`' in-wait triggers.
     """
+    pin_turn_scoped_children(monkeypatch)
     cancelled = threading.Event()
 
     def cancel_then_wait():

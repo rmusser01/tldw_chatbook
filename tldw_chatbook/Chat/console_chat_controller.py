@@ -2368,12 +2368,20 @@ class ConsoleChatController:
 
         - **killed**: sessions with an active stream task or an
           outstanding approval-like round. Shutdown's ``_signal_stop``
-          fanout sets the in-flight turn's own cancel event, and a
-          cancelled turn settles its children ``cancelled`` rather than
-          promoting survivors (``AgentService._surviving_handles``;
-          pinned by execution in ``Tests/Agents/test_fleet_runtime.py::
-          test_stopping_the_turn_still_stops_its_children``). This work
-          genuinely dies.
+          fanout sets the in-flight turn's own cancel event, and the
+          TURN genuinely dies. PR3b Task 5 (spec Sec 8) narrowed what
+          dies with it: under the shipped ``subagents_outlive_turn``
+          default a cancelled turn's still-running children now SURVIVE
+          the stop and continue as background survivors
+          (``AgentService._surviving_handles``; pinned by
+          ``Tests/Agents/test_fleet_stop_semantics.py``), so "killed"
+          describes the session's run, and its children only under the
+          kill switch (``test_fleet_runtime.py::test_stopping_the_turn_
+          still_stops_its_children``, now pinned turn-scoped). The
+          teardown notice therefore under-reports in the same direction
+          the "surviving" bullet already documents: a killed run's
+          surviving children go unmentioned there and are reported by
+          their own settle toasts instead.
         - **surviving**: sessions whose ONLY busy-ness is a cross-turn
           survivor. Task 1 A1 executed the fate: no cancel signal ever
           reaches such a child (its turn's cancel event was popped when
