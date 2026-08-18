@@ -98,6 +98,21 @@ is the order AC#1 exists to prevent. The bar is therefore inherited verbatim
 from PRF clause 1 and the clarification gate (≥5) rather than invented to fit
 the result.
 
+**Review (PR #1812) found two more, both accepted, neither moving the
+verdict.** (1) The census chunked raw `CorpusDoc.content`, but conversations
+are indexed with the sender prepended (`f"{sender}: {content}"`), so it
+measured text one word short of what exists in the index — re-measured under
+parity across all 31 conversation fixtures, **0 chunk counts change**; fixed
+anyway. (2) An errored query used to shrink the population silently while the
+census still reported NULL — it now claims **no verdict** if any query
+errored, and this run prints `errors: 0 -- population COMPLETE`. That is a
+THIRD instance of the same species in two arcs: "could not measure" rendering
+identically to "measured, found nothing".
+
 **Files:** `Docs/superpowers/qa/2026-08-18-granularity-census/report.md` and
-`granularity_census.py` (rerunnable); `Tests/RAG_Eval/README.md` (sixth
-retired premise). No source file changed.
+`granularity_census.py` (rerunnable, guarded); `Tests/RAG_Eval/README.md`
+(sixth retired premise); `Tests/RAG_Eval/test_granularity_census.py` (13
+pins over the classification logic, added at review's request —
+mutation-verified: disabling the negative exclusion reds the matching test).
+**No PRODUCTION source file changed**, so the gate cannot move; `Tests/
+RAG_Eval` runs 326 passed / 14 skipped.
