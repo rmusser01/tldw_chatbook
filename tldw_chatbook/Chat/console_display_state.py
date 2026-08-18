@@ -1276,21 +1276,135 @@ def split_unified_diff(text: str) -> list[DiffHunk]:
     return hunks
 
 
-def hunk_excerpt(hunk: DiffHunk, cap: int = 40) -> str:
+#: Byte cap applied to a captured hunk excerpt (Qodo #5, PR #1779 fix
+#: round). The line cap (``hunk_excerpt``'s ``cap`` parameter) alone is not
+#: enough: a minified single-line file's ONE body line can carry far more
+#: bytes than the whole delivery block's cap, and `render_diff_feedback_
+#: block`'s per-note inclusion loop treats any note whose entry alone
+#: exceeds the block cap as an unconditional queue-blocker (see that
+#: function's own fix below). Bounding excerpt bytes at CAPTURE time keeps
+#: newly-saved notes well clear of that failure mode; the render-time
+#: truncation-to-fit guard below is what protects notes captured before
+#: this cap existed.
+_EXCERPT_BYTE_CAP = 4096
+_EXCERPT_BYTE_CAP_TAIL = "… truncated"
+#: Tail appended when `render_diff_feedback_block` truncates the OLDEST
+#: pending note's excerpt to guarantee it is always deliverable (Qodo #5).
+_EXCERPT_TRUNCATED_TO_FIT_TAIL = "… excerpt truncated to fit"
+
+
+def _byte_safe_truncate(text: str, max_bytes: int) -> str:
+    """Truncate ``text`` to at most ``max_bytes`` UTF-8 bytes.
+
+    Never splits a multi-byte codepoint: backs off byte-by-byte from a
+    raw slice of the UTF-8 encoding until the remainder decodes cleanly.
+
+    Args:
+        text: The text to truncate.
+        max_bytes: The maximum UTF-8 byte length of the result.
+
+    Returns:
+        The longest prefix of ``text`` that both decodes cleanly and fits
+        in ``max_bytes`` bytes. Empty when ``max_bytes <= 0``.
+    """
+    if max_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    truncated = encoded[:max_bytes]
+    while truncated:
+        try:
+            return truncated.decode("utf-8")
+        except UnicodeDecodeError:
+            truncated = truncated[:-1]
+    return ""
+
+
+def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
+    """Truncate ``text`` to fit ``budget_bytes`` UTF-8 bytes, tail included.
+
+    Prefers a line boundary: keeps whole lines from the start for as long
+    as they fit, then appends ``"\\n" + tail``. The one line that does NOT
+    fit whole is not simply dropped, though -- whatever budget remains
+    after the last whole line is spent on a byte-safe PARTIAL prefix of
+    it, so a body that is one huge line (e.g. a minified file's single
+    diff line -- the motivating case for this cap) still yields a useful,
+    budget-respecting excerpt instead of empty content past the header.
+
+    Args:
+        text: The text to cap.
+        budget_bytes: Maximum UTF-8 byte length of the result, tail
+            included.
+        tail: An honest elision marker appended (on its own line) when
+            truncation actually happens.
+
+    Returns:
+        ``text`` unchanged when it already fits ``budget_bytes``;
+        otherwise a truncated prefix plus ``"\\n" + tail``, guaranteed to
+        encode to at most ``budget_bytes`` UTF-8 bytes.
+    """
+    if len(text.encode("utf-8")) <= budget_bytes:
+        return text
+
+    tail_line = f"\n{tail}"
+    tail_bytes = len(tail_line.encode("utf-8"))
+    content_budget = budget_bytes - tail_bytes
+    if content_budget <= 0:
+        # No room for the tail alongside any content -- best effort: a
+        # bare hard truncation, no tail, still honoring the byte budget.
+        return _byte_safe_truncate(text, max(budget_bytes, 0))
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        sep = "\n" if kept else ""
+        sep_bytes = len(sep)  # sep is ASCII ("" or "\n") -- 1 byte or 0
+        line_bytes = len(line.encode("utf-8"))
+        if used + sep_bytes + line_bytes <= content_budget:
+            kept.append(line)
+            used += sep_bytes + line_bytes
+            continue
+        # This line doesn't fit whole -- spend whatever budget remains on
+        # a byte-safe PARTIAL prefix of it rather than dropping its
+        # content outright.
+        remaining = content_budget - used - sep_bytes
+        if remaining > 0:
+            partial = _byte_safe_truncate(line, remaining)
+            if partial:
+                kept.append(partial)
+        break
+
+    return "\n".join(kept) + tail_line
+
+
+def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP) -> str:
     """Render a capped, self-contained excerpt of one hunk.
 
     This is the retention safety net (spec §1): captured once at note
     creation, it keeps a note's display and delivery self-contained even
     after the shadow repo prunes the snapshots the hunk came from.
 
+    Two independent caps apply, in order: ``cap`` bounds the number of
+    body LINES (as before); ``byte_cap`` then bounds the whole rendered
+    excerpt's UTF-8 BYTE size (Qodo #5, PR #1779 fix round) -- a line cap
+    alone does not bound a minified single-line file's excerpt, which can
+    carry far more bytes in that one line than the entire delivery
+    block's cap.
+
     Args:
         hunk: The hunk to excerpt.
         cap: Maximum number of body lines to include before eliding.
+        byte_cap: Maximum UTF-8 byte size of the rendered excerpt.
 
     Returns:
         The header (when non-empty) followed by up to ``cap`` body lines,
         newline-joined. When the body is longer than ``cap``, an honest
-        "… N more lines" tail line is appended.
+        "… N more lines" tail line is appended. When the result (line cap
+        already applied) still exceeds ``byte_cap`` bytes, it is further
+        truncated at a line boundary where possible with an honest
+        "… truncated" tail.
     """
     parts: list[str] = []
     if hunk.header:
@@ -1299,7 +1413,8 @@ def hunk_excerpt(hunk: DiffHunk, cap: int = 40) -> str:
     parts.extend(body[:cap])
     if len(body) > cap:
         parts.append(f"… {len(body) - cap} more lines")
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    return _cap_text_to_byte_budget(text, byte_cap, _EXCERPT_BYTE_CAP_TAIL)
 
 
 def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
@@ -1323,6 +1438,58 @@ def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
     )
 
 
+def _oldest_note_entry_truncated_to_fit(
+    note: Mapping[str, Any], *, cap_bytes: int, held_after: int
+) -> "str | None":
+    """Shrink ONLY this note's excerpt so its entry fits under ``cap_bytes``.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): the oldest pending
+    note must always be deliverable, even one whose captured excerpt (a
+    legacy row from before ``hunk_excerpt`` grew its own byte cap) is
+    larger than the whole block cap. Only the excerpt is shrunk -- path,
+    hunk header, and note text are never touched -- and the shrink budget
+    already reserves room for the "… N more notes held" line the caller
+    will need to append when ``held_after`` notes remain uninspected.
+
+    Args:
+        note: The oldest pending note's row dict.
+        cap_bytes: The block's overall byte cap.
+        held_after: How many notes after this one will be left pending
+            (the caller always stops considering further notes once this
+            guard engages, so this count is fixed at call time).
+
+    Returns:
+        The rendered entry (heading NOT included) when a truncation makes
+        it fit; ``None`` when even a zero-length excerpt can't -- the
+        note's own fixed metadata alone already exceeds the budget, so
+        the caller falls back to the pre-fix excluded/held behavior.
+    """
+    heading_bytes = len(_DIFF_FEEDBACK_HEADING.encode("utf-8"))
+    sep_bytes = 1  # the "\n" joining the heading and this entry
+    if held_after > 0:
+        holdover_bytes = len(
+            f"\n\n… {held_after} more notes held for the next message".encode(
+                "utf-8"
+            )
+        )
+    else:
+        holdover_bytes = 0
+
+    # -1 for a strict-inequality safety margin, matching the rest of this
+    # module's "strictly under cap" per-note convention.
+    entry_budget = cap_bytes - heading_bytes - sep_bytes - holdover_bytes - 1
+    skeleton = _diff_feedback_note_entry({**note, "hunk_excerpt": ""})
+    skeleton_bytes = len(skeleton.encode("utf-8"))
+    excerpt_budget = entry_budget - skeleton_bytes
+    if excerpt_budget <= 0:
+        return None
+
+    truncated_excerpt = _cap_text_to_byte_budget(
+        str(note["hunk_excerpt"]), excerpt_budget, _EXCERPT_TRUNCATED_TO_FIT_TAIL
+    )
+    return _diff_feedback_note_entry({**note, "hunk_excerpt": truncated_excerpt})
+
+
 def render_diff_feedback_block(
     notes: Sequence[dict], *, cap_bytes: int = 16384
 ) -> "tuple[str, list[int]]":
@@ -1334,6 +1501,16 @@ def render_diff_feedback_block(
     strictly under the cap. The first note that would push the block over
     the cap, and every note after it, are excluded and NOT stamped
     delivered by the caller -- they stay pending and ride the next send.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): when the very
+    FIRST (oldest) note alone doesn't fit -- typically a legacy row whose
+    excerpt predates ``hunk_excerpt``'s own byte cap, since a freshly
+    captured excerpt is now bounded well under this block's cap -- its
+    excerpt is truncated to fit instead of excluding it outright, so the
+    oldest pending note is (almost) always deliverable and can never
+    permanently block every note behind it. Every note after it still
+    follows the pre-existing break-at-cap behavior (they stay pending,
+    riding the next send, holdover line as today).
 
     The cap covers the WHOLE rendered block, including the trailing
     "… N more notes held for the next message" line when one is needed --
@@ -1358,12 +1535,34 @@ def render_diff_feedback_block(
 
     lines: list[str] = [_DIFF_FEEDBACK_HEADING]
     included_count = 0
-    for note in notes:
-        candidate = "\n".join(lines + [_diff_feedback_note_entry(note)])
-        if len(candidate.encode("utf-8")) >= cap_bytes:
-            break
-        lines.append(_diff_feedback_note_entry(note))
-        included_count += 1
+    floor = 0
+    for index, note in enumerate(notes):
+        entry = _diff_feedback_note_entry(note)
+        candidate = "\n".join(lines + [entry])
+        if len(candidate.encode("utf-8")) < cap_bytes:
+            lines.append(entry)
+            included_count += 1
+            continue
+
+        if index == 0:
+            # Queue-blocker guard: this oldest note doesn't fit even alone
+            # -- try shrinking ITS excerpt (only) so it is deliverable
+            # anyway, rather than leaving it (and everything behind it)
+            # pending forever.
+            held_after = len(notes) - 1
+            truncated_entry = _oldest_note_entry_truncated_to_fit(
+                note, cap_bytes=cap_bytes, held_after=held_after
+            )
+            if truncated_entry is not None:
+                lines.append(truncated_entry)
+                included_count = 1
+                # Guaranteed (by construction, see the helper's budget
+                # math) to already fit under cap_bytes with the holdover
+                # line included -- never evict it below this floor.
+                floor = 1
+        # Every note after the oldest keeps the pre-existing break-at-cap
+        # behavior regardless of whether the guard above engaged.
+        break
 
     if included_count == len(notes):
         # Everything fit -- no holdover line, so nothing needed to be
@@ -1374,14 +1573,15 @@ def render_diff_feedback_block(
     # account for the holdover line's own bytes). Evict from the tail
     # until the holdover-inclusive block actually fits under cap_bytes --
     # each eviction both shrinks the notes portion and (usually) shrinks
-    # "held"'s digit count, so this converges quickly. `included_count ==
-    # 0` is the irreducible floor (heading + holdover for every note) and
-    # is returned even if it still exceeds cap_bytes -- there is nothing
-    # left to evict.
+    # "held"'s digit count, so this converges quickly. ``floor`` is the
+    # irreducible bound (0 normally; 1 when the queue-blocker guard above
+    # already placed a guaranteed-to-fit truncated oldest note that must
+    # never be evicted) and is returned even if it still exceeds
+    # cap_bytes -- there is nothing left that may be evicted.
     while True:
         held = len(notes) - included_count
         block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
-        if len(block.encode("utf-8")) <= cap_bytes or included_count == 0:
+        if len(block.encode("utf-8")) <= cap_bytes or included_count <= floor:
             included_ids = [int(note["id"]) for note in notes[:included_count]]
             return block, included_ids
         included_count -= 1

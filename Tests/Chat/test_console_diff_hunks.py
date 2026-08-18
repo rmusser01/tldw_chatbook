@@ -215,6 +215,78 @@ def test_hunk_excerpt_fallback_hunk_omits_empty_header_line(diff_fixture):
 
 
 # --------------------------------------------------------------------------
+# hunk_excerpt byte cap (Qodo #5, PR #1779 fix round)
+# --------------------------------------------------------------------------
+
+
+def test_hunk_excerpt_default_byte_cap_is_4096():
+    """A hunk whose (line-capped) rendering exceeds 4096 UTF-8 bytes is
+    further truncated by the DEFAULT byte_cap, with no explicit argument
+    needed -- the line cap alone (40 lines) does not bound bytes."""
+    # 200 lines of 40 bytes each easily clears both the 40-line cap (so
+    # only the first 40 lines would ever be line-cap-eligible) but this
+    # exercises the byte cap on a body that's short enough in LINE COUNT
+    # (well under 40) yet still oversized in BYTES -- one enormous single
+    # line, the exact "minified file" shape the fix targets.
+    huge_line = "x" * 20_000
+    hunk = DiffHunk(header="@@ -1,1 +1,1 @@", body_lines=(huge_line,), file_prelude="")
+    excerpt = hunk_excerpt(hunk)
+    assert len(excerpt.encode("utf-8")) <= 4096
+    assert excerpt.endswith("… truncated")
+    assert excerpt.startswith("@@ -1,1 +1,1 @@\n" + "x" * 10)
+
+
+def test_hunk_excerpt_under_byte_cap_is_unaffected():
+    hunk = DiffHunk(header="@@ -1,1 +1,1 @@", body_lines=("short line",), file_prelude="")
+    excerpt = hunk_excerpt(hunk)
+    assert excerpt == "@@ -1,1 +1,1 @@\nshort line"
+    assert "truncated" not in excerpt
+
+
+def test_hunk_excerpt_custom_byte_cap_truncates_at_line_boundary():
+    """Whole lines are kept for as long as they fit; the ONE line that
+    finally overflows the budget is included as a partial (byte-safe)
+    prefix rather than dropped outright -- so the surviving content is
+    exactly a prefix of the original header+body text, never content from
+    a later line jumping ahead of a dropped one."""
+    body = tuple(f"line{i}-{'y' * 20}" for i in range(20))  # ~25 bytes/line
+    hunk = DiffHunk(header="@@ -1,1 +1,1 @@", body_lines=body, file_prelude="")
+    excerpt = hunk_excerpt(hunk, byte_cap=120)
+    assert len(excerpt.encode("utf-8")) <= 120
+    assert excerpt.endswith("… truncated")
+
+    tail = "\n… truncated"
+    assert excerpt.endswith(tail)
+    kept_text = excerpt[: -len(tail)]
+    full_text = "\n".join([hunk.header, *body])
+    assert full_text.startswith(kept_text)
+    assert kept_text != full_text  # genuinely truncated, not the whole text
+
+
+def test_hunk_excerpt_single_line_wider_than_byte_cap_hard_truncates_within_it():
+    """The line-boundary preference degrades gracefully: when even the
+    FIRST body line alone overflows byte_cap (no earlier newline to stop
+    at), the excerpt still respects byte_cap via a hard truncation inside
+    that one line, rather than either overflowing the cap or dropping the
+    line's content entirely."""
+    hunk = DiffHunk(header="", body_lines=("z" * 500,), file_prelude="")
+    excerpt = hunk_excerpt(hunk, byte_cap=50)
+    assert len(excerpt.encode("utf-8")) <= 50
+    assert excerpt.endswith("… truncated")
+    assert excerpt.startswith("z")
+
+
+def test_hunk_excerpt_byte_cap_and_line_cap_both_apply():
+    """The line cap's own "… N more lines" tail is itself subject to the
+    byte cap when the surviving (line-capped) text is still oversized."""
+    body = tuple(f"l{i}-{'a' * 30}" for i in range(60))
+    hunk = DiffHunk(header="@@ -1,1 +1,1 @@", body_lines=body, file_prelude="")
+    excerpt = hunk_excerpt(hunk, cap=40, byte_cap=200)
+    assert len(excerpt.encode("utf-8")) <= 200
+    assert excerpt.endswith("… truncated")
+
+
+# --------------------------------------------------------------------------
 # render_diff_feedback_block / format_diff_feedback_disclosure
 # --------------------------------------------------------------------------
 
@@ -438,6 +510,79 @@ def test_render_diff_feedback_block_excludes_all_notes_when_cap_too_small():
     assert block.startswith("## Diff feedback from the user (on your earlier file changes)")
     assert block.endswith("… 1 more notes held for the next message")
     assert "a.py" not in block
+
+
+# --------------------------------------------------------------------------
+# render_diff_feedback_block queue-blocker guard (Qodo #5, PR #1779 fix
+# round): the OLDEST pending note must always be deliverable, even one
+# whose captured excerpt (a legacy row predating hunk_excerpt's own byte
+# cap) is bigger than the whole block cap on its own.
+# --------------------------------------------------------------------------
+
+
+def test_render_diff_feedback_block_oversized_oldest_note_is_truncated_not_dropped():
+    """Pre-fix, a note whose rendered entry alone exceeds cap_bytes made
+    the loop `break` on the very first iteration with NOTHING included
+    (included_ids == []) -- that note (and every note behind it, since it
+    is always the oldest/first considered on every subsequent call) was
+    never delivered, permanently blocking the whole queue. This is the
+    regression pin: the oversized note's id MUST appear in included_ids,
+    truncated to fit, rather than being silently excluded forever.
+    """
+    huge_excerpt = "x" * 20_000  # single "line" -- the minified-file shape
+    oversized = _note(id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one")
+    normal = _note(id=2, path="b.py", note="normal one")
+
+    block, included_ids = render_diff_feedback_block([oversized, normal])
+
+    assert len(block.encode("utf-8")) <= 16384
+    # The queue-blocker regression: id 1 must be deliverable.
+    assert 1 in included_ids
+    assert included_ids[0] == 1
+    assert "minified.js" in block
+    assert "huge one" in block
+    assert "… excerpt truncated to fit" in block
+    # The oldest note's own truncated excerpt is a genuine (long) prefix
+    # of the original -- not reduced to nothing.
+    assert "x" * 100 in block
+
+
+def test_render_diff_feedback_block_oversized_oldest_note_leaves_later_notes_pending():
+    """The note behind the truncated oldest one follows the ordinary
+    break-at-cap behavior -- held for the next send, not lost, not
+    force-included alongside it."""
+    huge_excerpt = "x" * 20_000
+    oversized = _note(id=1, path="minified.js", hunk_excerpt=huge_excerpt, note="huge one")
+    normal = _note(id=2, path="b.py", note="normal one")
+
+    block, included_ids = render_diff_feedback_block([oversized, normal])
+
+    assert included_ids == [1]
+    assert "b.py" not in block
+    assert block.endswith("… 1 more notes held for the next message")
+
+
+def test_render_diff_feedback_block_oversized_note_still_excluded_when_metadata_alone_overflows():
+    """When the cap is so small even the note's fixed metadata (path,
+    header, note text -- never touched by the truncation guard) can't
+    fit, the note is excluded exactly like the pre-fix floor case -- the
+    guard only ever shrinks the EXCERPT, never other fields."""
+    notes = [_note(id=1, path="a.py", hunk_excerpt="x" * 20_000, note="first note")]
+    block, included_ids = render_diff_feedback_block(notes, cap_bytes=1)
+    assert included_ids == []
+    assert block.endswith("… 1 more notes held for the next message")
+
+
+def test_render_diff_feedback_block_only_note_oversized_and_alone_still_delivered():
+    """A single-note queue: no holdover line is needed once the oldest
+    (only) note is truncated to fit, since nothing is left pending."""
+    huge_excerpt = "y" * 20_000
+    note = _note(id=1, path="solo.js", hunk_excerpt=huge_excerpt, note="alone")
+    block, included_ids = render_diff_feedback_block([note])
+    assert included_ids == [1]
+    assert len(block.encode("utf-8")) <= 16384
+    assert "more notes held" not in block
+    assert "… excerpt truncated to fit" in block
 
 
 def test_render_diff_feedback_block_embeds_real_hunk_excerpt(diff_fixture):
