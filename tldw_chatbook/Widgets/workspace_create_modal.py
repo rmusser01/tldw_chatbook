@@ -334,6 +334,12 @@ class WorkspaceCreateModal(
             discovery = discover_project_skills(resolved)
             if discovery is not None and discovery.entries:
                 self._folder_discoveries[resolved_locator] = discovery
+            else:
+                # Finding 9 (Qodo review, PR #1810): a re-add of the same
+                # locator (e.g. after Remove) must not resurrect a stale
+                # discovery from an earlier scan when the fresh one finds
+                # nothing usable -- assign-or-pop, not assign-only.
+                self._folder_discoveries.pop(resolved_locator, None)
         self._error = ""
         self._stash_form_state()
         self._folder_path_value = ""  # the just-consumed path is cleared
@@ -348,7 +354,14 @@ class WorkspaceCreateModal(
         except ValueError:
             return
         if 0 <= index < len(self._folders):
+            locator = self._folders[index]
             del self._folders[index]
+            # Finding 9 (Qodo review, PR #1810): a removed folder's stale
+            # discovery must not linger -- otherwise re-adding a DIFFERENT
+            # folder that happens to resolve to the same locator later (or
+            # a subsequent buggy rescan) could read an annotation for a
+            # folder that is no longer bound at all.
+            self._folder_discoveries.pop(locator, None)
             self._error = ""
             self._stash_form_state()
             self.refresh(recompose=True)

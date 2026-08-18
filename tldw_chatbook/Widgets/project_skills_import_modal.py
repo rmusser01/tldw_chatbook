@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
+import stat
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -56,12 +59,19 @@ ImportOutcome = tuple[str, str]
 #: ``("imported" | "not_now" | "never" | "review", outcomes-or-None)``.
 ImportDecision = tuple[str, tuple[ImportOutcome, ...] | None]
 
-#: Decision -> ledger verb (spec §5.3/§5.5): review still counts as imported
-#: (the entries were already copied in; "review" only changes what happens
-#: after dismissal, not whether the import itself is recorded).
+#: Decision -> ledger verb for the two decisions whose mapping does NOT
+#: depend on per-entry outcomes (spec §5.3/§5.5). "imported"/"review" are
+#: handled separately in ``_record_project_skills_decision`` below: review
+#: still counts as imported when the import fully succeeded (the entries
+#: were already copied in; "review" only changes what happens after
+#: dismissal), but -- Qodo finding 6, PR #1810 -- NEITHER is recorded when
+#: any attempted entry failed, or none were attempted at all. A failed
+#: import leaves the ``.SKILLS/`` folder's fingerprint unchanged, so
+#: recording "imported" anyway would make the ledger's unchanged-
+#: fingerprint check (``should_offer_project_skills_prompt``) permanently
+#: suppress every future offer for a root that never actually finished
+#: importing.
 _LEDGER_DECISIONS = {
-    "imported": "imported",
-    "review": "imported",
     "not_now": "declined",
     "never": "never",
 }
@@ -361,6 +371,66 @@ async def _project_skills_installed_names(app: Any) -> frozenset[str]:
     return frozenset(names)
 
 
+def _read_loose_skill_file_sync(path: Path) -> bytes:
+    """Re-validate and read a loose-file skill body at import time.
+
+    Finding 7 (Qodo review, PR #1810): discovery accepts a loose ``.md``
+    file well before the user presses "Import selected" -- in between, a
+    hostile or racing actor can swap the accepted regular file for a
+    symlink pointing at any other readable file on disk. Reading via
+    ``entry.path.read_bytes()`` at import time would silently follow that
+    swap and ingest the symlink's target instead of the file the user
+    actually reviewed.
+
+    This re-checks symlink/regular-file status via ``os.lstat`` (which,
+    unlike ``stat``, does not itself follow a symlink) immediately before
+    reading, then opens with ``O_NOFOLLOW`` where the platform supports it
+    (macOS and Linux both do) so even a symlink planted in the TOCTOU
+    window between the ``lstat`` check and the ``open`` call is refused by
+    the kernel rather than followed.
+
+    Args:
+        path: The loose skill file's path, as recorded on the
+            ``ProjectSkillEntry`` at discovery time.
+
+    Returns:
+        The file's raw bytes.
+
+    Raises:
+        ValueError: The path is now a symlink, is no longer a regular
+            file, or otherwise could not be opened/read for import --
+            reported uniformly as "skill file changed on disk" so a caller
+            never has to distinguish a swap from an ordinary race with
+            deletion.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        raise ValueError("skill file changed on disk") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise ValueError("skill file changed on disk")
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is None:
+        # Platform without O_NOFOLLOW: the lstat check above is the only
+        # protection against a same-window swap, but a regular open() is
+        # still correct for the (overwhelmingly common) unswapped case.
+        try:
+            return path.read_bytes()
+        except OSError as exc:
+            raise ValueError("skill file changed on disk") from exc
+    try:
+        fd = os.open(path, os.O_RDONLY | o_nofollow)
+    except OSError as exc:
+        # ELOOP (symlink) or ENOENT/others (deleted/replaced) alike: same
+        # clean, uniform error either way.
+        raise ValueError("skill file changed on disk") from exc
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            return handle.read()
+    except OSError as exc:
+        raise ValueError("skill file changed on disk") from exc
+
+
 def _project_skills_importer(app: Any) -> Importer:
     """Build the injected importer from ``app.skills_scope_service``.
 
@@ -388,7 +458,7 @@ def _project_skills_importer(app: Any) -> Importer:
             return
         if not callable(import_skill_file):
             raise RuntimeError("Skill import is unavailable.")
-        data = await asyncio.to_thread(entry.path.read_bytes)
+        data = await asyncio.to_thread(_read_loose_skill_file_sync, entry.path)
         await import_skill_file(
             data,
             mode="local",
@@ -401,11 +471,44 @@ def _project_skills_importer(app: Any) -> Importer:
 
 
 def _record_project_skills_decision(
-    discovery: ProjectSkillsDiscovery, decision: str
+    discovery: ProjectSkillsDiscovery,
+    decision: str,
+    outcomes: tuple[ImportOutcome, ...] | None,
 ) -> None:
-    ledger_decision = _LEDGER_DECISIONS.get(decision)
-    if ledger_decision is None:
-        return
+    """Record one discovery's dismissal in the prompt ledger, or suppress it.
+
+    Finding 6 (Qodo review, PR #1810): "imported"/"review" are recorded as
+    ``"imported"`` ONLY when every attempted entry actually succeeded
+    (``outcome == "imported"`` for all of them). When any attempted entry
+    failed, or nothing was attempted at all (``outcomes`` empty or
+    ``None`` -- e.g. the user pressed Import with nothing checked),
+    NOTHING is recorded for this root: the ``.SKILLS/`` folder's
+    fingerprint is unchanged by a failed/no-op import, so recording
+    ``"imported"`` anyway would make the ledger's unchanged-fingerprint
+    check permanently suppress every future offer even though nothing
+    actually succeeded. Leaving prior ledger state untouched means the
+    next trigger re-offers -- entries that DID succeed naturally render
+    "(already installed)" on that re-offer.
+
+    "not_now"/"never" are unaffected by ``outcomes`` -- see
+    ``_LEDGER_DECISIONS``.
+
+    Args:
+        discovery: The discovery being dismissed.
+        decision: One of ``"imported"``, ``"review"``, ``"not_now"``,
+            ``"never"``.
+        outcomes: The per-entry ``(name, "imported" | error text)`` results
+            from the modal's import run, or ``None`` when no import ran
+            (declined/never decisions).
+    """
+    if decision in ("imported", "review"):
+        if not outcomes or any(message != "imported" for _name, message in outcomes):
+            return
+        ledger_decision = "imported"
+    else:
+        ledger_decision = _LEDGER_DECISIONS.get(decision)
+        if ledger_decision is None:
+            return
     ledger = ProjectSkillsPromptLedger(get_user_data_dir())
     ledger.record(discovery.root, ledger_decision, discovery.fingerprint)
 
@@ -425,7 +528,7 @@ async def _offer_next_project_skills_discovery(
     def _on_dismiss(result: ImportDecision) -> None:
         try:
             decision, _outcomes = result
-            _record_project_skills_decision(discovery, decision)
+            _record_project_skills_decision(discovery, decision, _outcomes)
             if decision == "review":
                 app.post_message(NavigateToScreen("skills"))
         except Exception:
@@ -519,11 +622,19 @@ def maybe_offer_project_skills_import(
     For any survivors: builds ``installed_names``/an ``importer`` from the
     live ``app.skills_scope_service``, then pushes one modal per discovery
     -- the next discovery's modal is only pushed once the current one
-    dismisses. Every dismissal is recorded in the prompt ledger
-    (``ProjectSkillsPromptLedger``, keyed by ``discovery.root``), and a
-    "review" decision also posts a navigation request to the Skills screen.
-    (The startup path's own pre-filtering in ``startup_discovery_for``
-    becomes redundant with this, but idempotent -- harmless double gating.)
+    dismisses. Every dismissal is passed through
+    ``_record_project_skills_decision`` (``ProjectSkillsPromptLedger``,
+    keyed by ``discovery.root``): "not_now"/"never" record
+    "declined"/"never" unconditionally, but "imported"/"review" record
+    "imported" ONLY when every attempted entry actually succeeded --
+    otherwise (any entry failed, or nothing was attempted) NOTHING is
+    recorded, leaving prior ledger state untouched so the next trigger
+    re-offers (Qodo finding 6, PR #1810: a failed import's unchanged
+    ``.SKILLS/`` fingerprint must not permanently suppress retries). A
+    "review" decision also posts a navigation request to the Skills
+    screen. (The startup path's own pre-filtering in
+    ``startup_discovery_for`` becomes redundant with this, but idempotent
+    -- harmless double gating.)
 
     Re-entrancy: while one offer flow is already running for ``app``
     (tracked via ``app._project_skills_offer_active``, set here when the
@@ -534,10 +645,14 @@ def maybe_offer_project_skills_import(
     silence the feature for the rest of the session -- because every path
     that can end the flow clears it: the chain worker's own failure
     (``_run_project_skills_offer_chain``'s ``except``), a failure
-    scheduling the next discovery's worker, and (via a ``finally``, so it
-    runs even if the ledger write or the review-navigation post above it
-    raised) the dismissal callback's terminal step when the last discovery
-    in the chain dismisses.
+    scheduling the next discovery's worker, a failure scheduling this
+    INITIAL worker (Qodo finding 10, PR #1810: mirrors the continuation's
+    own guard -- the coroutine is created up front so a raising
+    ``run_worker`` can still be closed explicitly instead of leaking a
+    never-awaited coroutine), and (via a ``finally``, so it runs even if
+    the ledger write or the review-navigation post above it raised) the
+    dismissal callback's terminal step when the last discovery in the
+    chain dismisses.
 
     Args:
         app: The running ``TldwCli`` app (or a test double exposing
@@ -572,7 +687,18 @@ def maybe_offer_project_skills_import(
     if not gated_discoveries:
         return
     app._project_skills_offer_active = True
-    app.run_worker(
-        _run_project_skills_offer_chain(app, gated_discoveries),
-        exclusive=False,
-    )
+    # The coroutine is created before `run_worker` sees it (same shape as
+    # the continuation's own guard in `_on_dismiss`): a `run_worker`
+    # failure here must not leave `_project_skills_offer_active` stuck
+    # True forever (Finding 10, Qodo review 2026-08-17) -- close the
+    # never-started coroutine explicitly instead of letting Python
+    # warn-and-leak an orphaned one, clear the flag, and never propagate.
+    coroutine = _run_project_skills_offer_chain(app, gated_discoveries)
+    try:
+        app.run_worker(coroutine, exclusive=False)
+    except Exception:
+        coroutine.close()
+        app._project_skills_offer_active = False
+        logger.opt(exception=True).debug(
+            "project-skills offer chain failed to start"
+        )

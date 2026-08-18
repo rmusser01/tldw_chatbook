@@ -116,6 +116,48 @@ def test_entry_cap_reports_truncation(tmp_path):
     assert discovery.truncated == 3
 
 
+def test_scan_bound_caps_enumeration_and_skipped_list(tmp_path, monkeypatch):
+    """Finding 8 (Qodo review, PR #1810): unbounded materialize/sort +
+    unbounded skips. A ``.SKILLS/`` with hundreds of junk files must not
+    enumerate/sort/record everything -- the raw scan is capped at
+    ``MAX_SCANNED_CHILDREN`` and the ``skipped`` list stays bounded even
+    when far more than that many children exist, while the valid skills
+    within the scanned window are still found.
+    """
+    skills_dir = tmp_path / ".SKILLS"
+    _skill_dir(tmp_path, "a-alpha-skill")
+    (skills_dir / "a-beta-skill.md").write_text(
+        "---\ndescription: Loose one.\n---\nBody\n", encoding="utf-8"
+    )
+    for i in range(600):
+        (skills_dir / f"junk-{i:04d}.txt").write_text("junk", encoding="utf-8")
+
+    # Real filesystem iteration order (APFS/ext4 are hash-ordered, not
+    # creation-ordered) does not reliably put the "a-"-prefixed entries
+    # within the first MAX_SCANNED_CHILDREN raw children -- verified empty
+    # on this host. Force the .SKILLS/ raw iterdir() order deterministically
+    # (valid entries first) so the "found IF within the scanned window"
+    # case is actually exercised rather than left to chance.
+    real_iterdir = Path.iterdir
+
+    def fake_iterdir(self):
+        if self == skills_dir:
+            children = list(real_iterdir(self))
+            children.sort(key=lambda p: (not p.name.startswith("a-"), p.name))
+            return iter(children)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+
+    discovery = discover_project_skills(tmp_path)
+
+    assert discovery is not None
+    names = {e.name for e in discovery.entries}
+    assert {"a-alpha-skill", "a-beta-skill"} <= names
+    assert len(discovery.skipped) <= 21  # bounded: no unbounded skip growth
+    assert discovery.truncated >= 1
+
+
 def test_fingerprint_changes_when_a_skill_is_added(tmp_path):
     _skill_dir(tmp_path, "alpha-skill")
     first = discover_project_skills(tmp_path).fingerprint

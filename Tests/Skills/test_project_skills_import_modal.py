@@ -1,4 +1,6 @@
 import asyncio
+import os
+from types import SimpleNamespace
 
 import pytest
 from textual import on
@@ -15,6 +17,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets import project_skills_import_modal as _offer_module
 from tldw_chatbook.Widgets.project_skills_import_modal import (
     ProjectSkillsImportModal,
+    _project_skills_importer,
     maybe_offer_project_skills_import,
 )
 
@@ -397,6 +400,115 @@ async def test_on_dismiss_bookkeeping_failure_still_clears_flag_and_does_not_rai
 
 
 # ---------------------------------------------------------------------------
+# Finding 6 (Qodo review, PR #1810): a failed import's unchanged fingerprint
+# must not be recorded as "imported" in the ledger -- the .SKILLS/ folder on
+# disk is untouched by a failed import, so recording "imported" anyway would
+# make the ledger's unchanged-fingerprint check permanently suppress every
+# future offer for a root that never actually finished importing.
+# ---------------------------------------------------------------------------
+
+
+class _NoInstalledSkillsScopeService(_StubSkillsScopeService):
+    """Like ``_StubSkillsScopeService`` but reports nothing as installed --
+    so every row defaults checked and gets attempted on Import."""
+
+    async def get_context(self, *, mode=None):
+        del mode
+        return {"available_skills": [], "blocked_skills": []}
+
+
+class _PartialFailureSkillsScopeService(_NoInstalledSkillsScopeService):
+    """Fails ``import_skill_directory`` for one configured skill name;
+    every other entry imports normally."""
+
+    def __init__(self, fail_name: str):
+        super().__init__()
+        self._fail_name = fail_name
+
+    async def import_skill_directory(self, path, *, mode, name, trust_approved):
+        if name == self._fail_name:
+            raise RuntimeError("import exploded")
+        await super().import_skill_directory(
+            path, mode=mode, name=name, trust_approved=trust_approved
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_import_failure_leaves_ledger_untouched(tmp_path, monkeypatch):
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill", "beta-skill"))
+    service = _PartialFailureSkillsScopeService(fail_name="beta-skill")
+    app = _OfferHarnessApp(service, (discovery,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, ProjectSkillsImportModal)
+
+        await pilot.click("#project-skills-import")
+        await pilot.pause()
+        await pilot.click("#project-skills-close")
+        await pilot.pause()
+        await pilot.pause()
+
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    assert ledger.decision_for(discovery.root) is None
+
+
+@pytest.mark.asyncio
+async def test_fully_successful_import_records_imported_decision(
+    tmp_path, monkeypatch
+):
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    service = _NoInstalledSkillsScopeService()
+    app = _OfferHarnessApp(service, (discovery,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, ProjectSkillsImportModal)
+
+        await pilot.click("#project-skills-import")
+        await pilot.pause()
+        await pilot.click("#project-skills-close")
+        await pilot.pause()
+        await pilot.pause()
+
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    assert ledger.decision_for(discovery.root) == ("imported", discovery.fingerprint)
+
+
+@pytest.mark.asyncio
+async def test_zero_selected_import_records_nothing(tmp_path, monkeypatch):
+    """The "outcomes empty because the import never ran" half of Finding 6:
+    pressing Import with nothing checked must not record "imported" either
+    -- nothing actually happened, so the ledger must stay untouched."""
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    service = _NoInstalledSkillsScopeService()
+    app = _OfferHarnessApp(service, (discovery,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, ProjectSkillsImportModal)
+
+        app.screen.query_one("#project-skill-row-0", Checkbox).value = False
+        await pilot.click("#project-skills-import")
+        await pilot.pause()
+        await pilot.click("#project-skills-close")
+        await pilot.pause()
+        await pilot.pause()
+
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    assert ledger.decision_for(discovery.root) is None
+
+
+# ---------------------------------------------------------------------------
 # Finding 1: the create-path trigger must respect the SAME gating as the
 # startup path -- kill-switch, "Never", and fingerprint gating -- not just
 # scan-and-offer unconditionally. ``maybe_offer_project_skills_import`` is
@@ -460,3 +572,132 @@ def test_missing_skills_scope_service_suppresses_offer(tmp_path, monkeypatch):
     assert app.pushed == []
     assert app.workers == []
     assert getattr(app, "_project_skills_offer_active", False) is False
+
+
+# ---------------------------------------------------------------------------
+# Finding 7 (Qodo review, PR #1810): TOCTOU symlink swap between discovery
+# and import. Discovery accepts a loose ``.md`` file, but the import-time
+# read happens later (after the user reviews and presses "Import selected")
+# -- a hostile/racing actor can swap the accepted file for a symlink to any
+# readable file in between. The loose-file importer must re-validate
+# symlink/regular-file status immediately before reading, not trust
+# discovery's earlier check.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loose_file_symlink_swap_before_import_is_refused(tmp_path):
+    skill_path = tmp_path / ".SKILLS" / "swapped-skill.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\ndescription: real.\n---\nBody\n", encoding="utf-8")
+    discovery = discover_project_skills(tmp_path)
+    assert discovery is not None
+    entry = next(e for e in discovery.entries if e.name == "swapped-skill")
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP SECRET CONTENTS", encoding="utf-8")
+
+    # Swap the discovery-accepted regular file for a symlink pointing at an
+    # arbitrary (readable) file, simulating a race between discovery and
+    # the user pressing "Import selected".
+    skill_path.unlink()
+    os.symlink(secret, skill_path)
+
+    calls: list = []
+
+    class _Service:
+        async def import_skill_file(self, data, **kwargs):
+            calls.append(data)
+
+        async def import_skill_directory(self, *args, **kwargs):
+            raise AssertionError("directory import should not be reached")
+
+    app = SimpleNamespace(skills_scope_service=_Service())
+    importer = _project_skills_importer(app)
+
+    with pytest.raises(ValueError, match="skill file changed on disk"):
+        await importer(entry)
+
+    assert calls == []  # the symlink target must never reach the importer
+
+
+@pytest.mark.asyncio
+async def test_loose_file_unswapped_import_still_succeeds(tmp_path):
+    """Sanity companion to the swap test above: the re-validation added for
+    Finding 7 must not break the ordinary (unswapped) loose-file import
+    path."""
+    skill_path = tmp_path / ".SKILLS" / "steady-skill.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\ndescription: real.\n---\nBody\n", encoding="utf-8")
+    discovery = discover_project_skills(tmp_path)
+    assert discovery is not None
+    entry = next(e for e in discovery.entries if e.name == "steady-skill")
+
+    calls: list = []
+
+    class _Service:
+        async def import_skill_file(self, data, **kwargs):
+            calls.append((data, kwargs))
+
+    app = SimpleNamespace(skills_scope_service=_Service())
+    importer = _project_skills_importer(app)
+    await importer(entry)
+
+    assert len(calls) == 1
+    data, kwargs = calls[0]
+    assert data == skill_path.read_bytes()
+    assert kwargs["filename"] == "steady-skill.md"
+
+
+# ---------------------------------------------------------------------------
+# Finding 10 (Qodo review, PR #1810): the INITIAL ``run_worker`` call in
+# ``maybe_offer_project_skills_import`` was unguarded -- unlike the
+# continuation's own ``run_worker`` call in ``_on_dismiss``, a scheduling
+# failure here (e.g. the app's task runner rejecting the call) left
+# ``_project_skills_offer_active`` stuck True forever, permanently
+# silencing every future offer for the app's whole session.
+# ---------------------------------------------------------------------------
+
+
+class _RaisingOnceRunWorkerApp(_RecorderApp):
+    """``run_worker`` raises on its first call only; succeeds after."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fail_next = True
+
+    def run_worker(self, coro, **kwargs):
+        if self._fail_next:
+            self._fail_next = False
+            # Deliberately does NOT close `coro` here -- closing it is the
+            # fix's own responsibility (Finding 10), not this double's; a
+            # correct fix closes it in its `except` branch so no
+            # "coroutine was never awaited" warning escapes this test.
+            raise RuntimeError("scheduling exploded")
+        return super().run_worker(coro, **kwargs)
+
+
+def test_initial_scheduling_failure_clears_flag_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: tmp_path / "data")
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    app = _RaisingOnceRunWorkerApp()
+
+    maybe_offer_project_skills_import(app, (discovery,))
+
+    # The failed scheduling attempt must not propagate, and must not leave
+    # the re-entrancy flag stuck True.
+    assert app.workers == []
+    assert getattr(app, "_project_skills_offer_active", False) is False
+
+    # A second call must not be blocked by a stuck flag -- it schedules
+    # normally now that run_worker no longer raises.
+    maybe_offer_project_skills_import(app, (discovery,))
+    assert len(app.workers) == 1
+    # `_RecorderApp.run_worker` only records the coroutine, it never
+    # awaits it (no event loop here) -- close it explicitly so pytest's
+    # gc-based leak detector doesn't flag it as never-awaited.
+    app.workers[0].close()
