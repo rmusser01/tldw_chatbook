@@ -198,10 +198,8 @@ def test_cancel_all_reuses_the_per_handle_cancel_path_one_call_per_live_handle(
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
         parent_script=[
-            [
-                _fence("spawn_subagent", {"task": "job one"}),
-                _fence("spawn_subagent", {"task": "job two"}),
-            ],
+            [_fence("spawn_subagent", {"task": "job one"})],  # primary turn 1
+            [_fence("spawn_subagent", {"task": "job two"})],  # primary turn 2
             ["turn 1 final"],
         ],
         child_result=["child answer"],

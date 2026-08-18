@@ -4521,6 +4521,65 @@ class ConsoleAgentBridge:
                 return True
         return False
 
+    def cancel_all_subagents(self, conversation_id: str) -> int:
+        """Cancel EVERY live child of this conversation's fleet, at once.
+
+        PR3b Task 5 ("Cancel all agents"): with Stop decoupled from the
+        children (a stopped turn's children now survive it -- see
+        ``AgentService._surviving_handles``), this is the user's
+        whole-fleet kill switch. Two rules, both load-bearing:
+
+        * **The walk is the existing one.** Live handles are enumerated
+          from the same two tiers ``fleet_snapshot`` reads -- the
+          published service's coordinator view while a run is in flight,
+          else the retained survivor owners -- and each handle is
+          cancelled through the EXISTING per-handle ``cancel_subagent``
+          directly above, whose current-service-then-retained-owners walk
+          finds the one service actually holding that handle's cancel
+          Event. No second cancellation mechanism: approval-card
+          revocation (``_cancel_fleet_handles`` ->
+          ``_revoke_handle_approvals``) and the honest ownership refusals
+          ride along unchanged, pinned by the delegation-spy test in
+          ``test_console_agent_bridge_cancel_all``.
+        * **Live handles only, count returned.** A terminal handle is
+          nothing to cancel and is never counted; a handle that loses the
+          race (goes terminal between the snapshot and its cancel) is
+          simply not counted, because ``cancel_subagent`` reports the
+          miss honestly. The count is therefore "children actually
+          cancelled by this press", which is what the panel's feedback
+          copy needs.
+
+        Args:
+            conversation_id: The conversation whose fleet to stop.
+
+        Returns:
+            The number of live children actually cancelled -- ``0``,
+            never a raise, for an unknown conversation or an idle fleet.
+        """
+        self._prune_settled_fleet_survivors(conversation_id)
+        live_ids: list[str] = []
+        seen: set[str] = set()
+        service = self._fleet_services.get(conversation_id)
+        owners: list[AgentService] = [service] if service is not None else []
+        owners.extend(self._retained_fleet_owners(conversation_id))
+        for owner in owners:
+            # `fleet_snapshot` (the whole shared coordinator) rather than
+            # `live_subagent_handles` (an owner's OWN children) so a live
+            # handle is enumerated even mid-handoff between owners; the
+            # per-handle walk below resolves who can actually stop it.
+            for handle in owner.fleet_snapshot():
+                if handle.handle_id in seen:
+                    continue
+                seen.add(handle.handle_id)
+                if handle.status in TERMINAL_RUN_STATUSES:
+                    continue
+                live_ids.append(handle.handle_id)
+        cancelled = 0
+        for handle_id in live_ids:
+            if self.cancel_subagent(conversation_id, handle_id):
+                cancelled += 1
+        return cancelled
+
     def steer_subagent(self, conversation_id: str, row_id: str, text: str) -> bool:
         """Queue USER steering for ONE live child of this conversation's fleet.
 

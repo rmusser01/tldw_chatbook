@@ -60,6 +60,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
     RUN_RUNNING,
+    SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEERING_SOURCE_USER,
     WAIT_AGENTS_TOOL_NAME,
@@ -484,6 +485,64 @@ def test_a_survivor_of_a_stopped_turn_dies_on_its_own_cancel_event(
     _wait_until(coordinator.all_finished, "the cancelled child never stopped")
     assert coordinator.snapshot()[0].status == RUN_CANCELLED
     assert _child_row(db)["status"] == RUN_CANCELLED
+
+
+def test_a_cancel_alled_child_draws_the_not_retained_refusal_not_unknown(
+    db, monkeypatch
+):
+    """Task 4 interaction: Cancel-all never manufactures a resumable child.
+
+    "Cancel all agents" cancels each child through the per-handle
+    `cancel_subagent` seam (pinned by the delegation spy in
+    `test_console_agent_bridge_cancel_all`); a child cancelled that way
+    finishes `cancelled`, which is NEVER a retained status -- so a later
+    `send_to_agent` must draw the honest finished-but-not-retained
+    refusal, never the unknown-id copy (the child is real; pretending
+    the id is unknown would send the supervisor hunting for a typo).
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def cancel_all_then_send():
+        # The user presses Cancel-all while the child works: the panel's
+        # walk lands on this service's per-handle seam.
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        handle_id = coordinator.snapshot()[0].handle_id
+        assert service.cancel_subagent(handle_id) is True
+        release.set()
+        # Wait for the child to fully unwind so `finish(CANCELLED)` has
+        # run and retention has (correctly) refused it.
+        service._fleet_threads[handle_id].join(_JOIN_TIMEOUT)
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME, {"id": handle_id, "message": "keep going"}
+        )
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            cancel_all_then_send,
+            "parent done",
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+        allow_unconsumed=True,  # the cancelled child strands its reply
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    sends = _tool_results(db.get_run(run_id), SEND_TO_AGENT_TOOL_NAME)
+    assert sends, "send_to_agent never ran"
+    assert "has finished (cancelled)" in sends[0], sends[0]
+    assert "no retained transcript" in sends[0], sends[0]
+    assert "no sub-agent matches id" not in sends[0], (
+        "a real cancel-all'd child must never draw the unknown-id copy"
+    )
 
 
 def test_app_exit_takes_everything_fleet_children_are_daemon_threads(
