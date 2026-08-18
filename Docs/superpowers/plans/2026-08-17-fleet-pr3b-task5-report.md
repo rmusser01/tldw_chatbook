@@ -261,7 +261,7 @@ the backstop.
 | `Tests/UI/test_console_agent_steering_bar.py` | 14 passed | **14 passed** |
 | `Tests/UI/test_console_agent_controller.py` | 7 passed | **7 passed** |
 | `Tests/UI/test_console_reaction_picker.py` (rail-constructor consumer) | 38 passed | **38 passed** |
-| `Tests/UI/test_console_mcp_approval.py` | 3 failed, 71 passed (dev red, ruling 2 below) | **3 failed, 71 passed — identical set** |
+| `Tests/UI/test_console_mcp_approval.py` | 3 failed, 71 passed (dev red, ruling 2 below; fixed on dev by #1811) | **74 passed** (post-#1811 merge) |
 | `Tests/test_probe_import_provenance.py` | 1 passed (names this worktree) | **1 passed** |
 
 **Two attribution rulings, both measured at the untouched merge-base
@@ -289,6 +289,15 @@ before being called anything:**
    fail with a worker thread still parked after the cancel/shutdown
    signal ("teardown left a survivor's round parked"). **Routed to the
    owner as a dev red; nothing in this branch touches that path.**
+   **RESOLVED by PR #1811** (`9a7797694`, merged into dev and merged
+   into this branch): the three tests were poking the raw
+   `_shutdown_requested` Event (the harness-shortcut trap, fourth
+   instance); repointing them at `begin_shutdown()` exposed a REAL
+   latent fragility — the queue tombstone's owner-thread-affinity
+   assert could skip the cancellation signals entirely on an off-thread
+   raise — hardened with try/finally and mutation-checked there. The
+   suite reads 74 passed again on this branch post-merge (gate table
+   updated).
 
 ### The one-process app-lifetime population gate — VETOED
 
