@@ -18,7 +18,14 @@ every golden query through the real seam across all three profile modes.
 > P2ab; TASK-15400's construction flip took it the rest of the way), and the
 > baselines were re-stamped once, deliberately, at the end of each arc that
 > moved a cell — TASK-15700 (2026-08-13) moved the default a second time and
-> moved **none**, so it re-stamped nothing and said so. Two candidate
+> moved **none**, so it re-stamped nothing and said so. **TASK-17755
+> (2026-08-18) re-stamped `plain.json` and only `plain.json`**: adopting the
+> engine's `and_then_prefix` construction on the Library's four-seam keyword
+> path took plain overall MRR/precision 0.304 → 0.326 and the `keyword`
+> category 0.875 → 0.938 (all ten plain cells up; `mean_docs_at_k`
+> 0.304 → 0.457), while every `semantic` and `hybrid` cell held at +0.000 —
+> that mode split is the evidence the change is confined to the path it
+> claims. Two candidate
 > classes (`compositional`, `acronym`) proved **unfailable** on this corpus
 > and model and were not authored — that is recorded evidence against two
 > P2c feature premises, not an omission. A **fourth** premise died the same

@@ -77,3 +77,37 @@ rearrangement can answer, and where a null is an acceptable outcome.
 This also answers the divergence TASK-15400's AC#8 deferred here: adopting the
 engine's construction collapses the two matching rules on the Library screen
 to one.
+
+## CORRECTION (2026-08-18, from TASK-17755's final review)
+
+**The "7 of 32 rescued" figure in this task's AC#2 table was wrong, and the
+owner's decision was taken partly on it.** The delivered implementation
+rescues **1** zero-row query with the right document (`kw-thimble-relay`),
+not 7. A second query (`ng-mains-supply`, a negation) gains 6 rows, none
+relevant.
+
+**Why this task over-counted.** Its `and_then_prefix` arm was not the shipped
+construction. It was computed *analytically* from two whole-query runs — AND
+result where the query returned rows, prefix result otherwise — whereas the
+shipped construction falls back **per sub-leg**, and its prefix form is the
+engine's (stopword-trimmed), not this probe's crude `OR` of quoted prefixes
+over the raw query string. The probe's arm was an approximation of the real
+thing and it over-estimated. **The harness was never committed**, which is
+why the number could not be reconciled by inspection; the repo's own
+construction matrix scores this construction on the engine leg at 3 rescues,
+so 7 was always the outlier.
+
+**The decision still stands, on better evidence than the number that
+prompted it.** The gate measured the shipped change: overall MRR
+0.304 → 0.326, NDCG 0.296 → 0.318, keyword-category cells +0.062, with every
+`semantic` and `hybrid` cell holding at +0.000 — verified independently by
+the reviewer, including a control mutation that reproduces the OLD baseline
+bit-for-bit, proving attribution. What changed is the *magnitude* of the win,
+not its direction or its risk profile: the untouched-primaries property that
+made this the low-risk arm is pinned on construction, not on the rescue
+count.
+
+**The methodological lesson, which is this task's real residue:** an
+analytically-composed arm is a different construction from the one you will
+ship, and a probe that is not committed cannot be reconciled later. Compose
+arms by running the real code path, and commit the harness.
