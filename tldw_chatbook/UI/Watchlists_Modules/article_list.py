@@ -423,11 +423,15 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
             classes="watchlists-hint-line",
         )
         with Horizontal(id="items-pagination", classes="destination-filter-strip"):
+            # task-17663: every destination action button carries an outcome
+            # tooltip (pinned by test_destination_action_buttons_explain_
+            # their_outcome) — these two shipped without one in 1a57986ee.
             yield Button(
                 "Previous",
                 id="items-page-previous",
                 compact=True,
                 disabled=self.page_loading or not self.has_previous,
+                tooltip="Load the previous page of items.",
             )
             yield Static(f"Page {self.page_number}", id="items-page-label")
             yield Button(
@@ -435,6 +439,7 @@ class ArticleListPane(RecomposeCaptureGuard, Vertical):
                 id="items-page-next",
                 compact=True,
                 disabled=self.page_loading or not self.has_next,
+                tooltip="Load the next page of items.",
             )
 
     def _build_rows(self) -> list[ListItem]:
