@@ -1450,6 +1450,22 @@ class ConsoleChatController:
         #: ``<= 0`` default is "no deadline" for the mounted case too),
         #: this run's own cancel event, or these two teardown signals.
         self._headless_visit_cancel: threading.Event | None = None
+        #: Whether a Console visit is OPEN on this controller right now
+        #: (``begin_visit()`` .. ``leave_console()``). Qodo audit S2
+        #: (PR 1752): ``_bind_visit_cancel_signal`` used to infer "no
+        #: visit open" from ``_shutdown_requested.is_set()`` -- but a
+        #: controller that has NEVER had a visit holds the constructor's
+        #: unset Event, so a round armed viewless-from-birth (wake-at-
+        #: launch) bound THAT Event, and the first ``begin_visit()``
+        #: REPLACED the attribute, orphaning it: neither the next leave
+        #: nor ``begin_shutdown`` could ever reach the round. This flag
+        #: states the visit lifecycle instead of inferring it. False at
+        #: birth on purpose: a controller built lazily DURING a visit
+        #: (``attach_view`` ran before the controller existed, so
+        #: ``begin_visit`` never fired on it) binds the headless Event --
+        #: which both teardown paths set, so its rounds still deny at
+        #: leave/exit exactly as before.
+        self._visit_open = False
         #: True once this controller has been torn down for good
         #: (``begin_shutdown``). Blocks ``begin_visit`` from ever handing
         #: a disposed controller a fresh, unset cancellation Event.
@@ -3799,10 +3815,24 @@ class ConsoleChatController:
         excluded -- it keeps the permanently-set Event, so an app-exit
         round still denies immediately.
 
+        Qodo audit S2 (PR 1752): "no visit open" is now the explicit
+        ``_visit_open`` lifecycle flag, not an ``is_set()`` inference. The
+        inference read a NEVER-VISITED controller (constructor Event
+        unset) as "visit in progress", so a wake-at-launch round bound the
+        constructor Event -- which the first ``begin_visit()`` then
+        replaced, orphaning the round beyond the reach of every teardown
+        signal until its own deadline. Only a round armed while a visit
+        is genuinely open (and not already ending) binds the visit Event;
+        every other live round binds the headless Event, which BOTH
+        teardown paths set (``leave_console``/``begin_shutdown``, via
+        ``_cancel_headless_rounds``).
+
         Returns:
             The Event whose set() this round must treat as cancellation.
         """
-        if self._disposed or not self._shutdown_requested.is_set():
+        if self._disposed:
+            return self._shutdown_requested
+        if self._visit_open and not self._shutdown_requested.is_set():
             return self._shutdown_requested
         event = self._headless_visit_cancel
         if event is None or event.is_set():
@@ -6048,6 +6078,7 @@ class ConsoleChatController:
         """
 
         self._disposed = True
+        self._visit_open = False
         self.prompt_queue_coordinator.shutdown()
         self._shutdown_requested.set()
         self._cancel_headless_rounds()
@@ -6090,6 +6121,9 @@ class ConsoleChatController:
         if self._disposed:
             return
         self._shutdown_requested = threading.Event()
+        # Qodo audit S2: state the visit lifecycle explicitly -- see
+        # `_visit_open`'s own comment and `_bind_visit_cancel_signal`.
+        self._visit_open = True
         self._stop_requested = False
         reopen = getattr(self.prompt_queue_coordinator, "reopen", None)
         if callable(reopen):
@@ -6134,6 +6168,7 @@ class ConsoleChatController:
         # Tombstone first: `begin_shutdown`'s ordering contract ("before any
         # teardown cancellation"), unchanged.
         self.prompt_queue_coordinator.shutdown()
+        self._visit_open = False
         self._shutdown_requested.set()
         # task-15860 Task 5: a round armed while DETACHED deferred to this
         # moment. The user has now had a Console visit in which to answer

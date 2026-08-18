@@ -177,7 +177,13 @@ class ConsoleAgentSteeringBar(Vertical):
         the time this runs the payload HAS changed, so the writes below
         are always warranted. A target change also clears any standing
         refusal note (it referred to a draft aimed at the previous
-        child).
+        child) AND the input's own draft (Qodo audit S3, PR 1793):
+        visibility toggles via ``styles.display``, so without the clear a
+        draft typed for child A survived drill-out/drill-in and submit
+        paired it with the LATEST ``target_id`` — steering child B with
+        A's text. A sync for the SAME target (queued-count change,
+        elapsed repaint) keeps the draft: a routine tick must never eat
+        text the user is mid-typing.
         """
         previous = self._state
         self._state = state
@@ -191,6 +197,12 @@ class ConsoleAgentSteeringBar(Vertical):
         queued.styles.display = "block" if state.queued > 0 else "none"
         if state.target_id != previous.target_id:
             self._set_note("")
+            try:
+                steer_input = self.query_one(f"#{STEERING_INPUT_ID}", Input)
+            except Exception:
+                pass  # not composed: compose() starts the input empty
+            else:
+                steer_input.value = ""
 
     def _set_note(self, text: str) -> None:
         try:
@@ -199,6 +211,22 @@ class ConsoleAgentSteeringBar(Vertical):
             return
         note.update(text)
         note.styles.display = "block" if text else "none"
+
+    def clear_draft(self) -> None:
+        """Clear the input after a submit the bridge actually QUEUED.
+
+        Qodo audit minor batch: the input used to clear at post time, so
+        a submit the bridge then refused (unknown/terminal target, dead
+        coordinator) destroyed the user's text with nothing delivered and
+        nothing shown. The screen's ``SteeringSubmitted`` handler calls
+        this only on a ``True`` return from the steering route; a refusal
+        keeps the draft in place for retry.
+        """
+        try:
+            steer_input = self.query_one(f"#{STEERING_INPUT_ID}", Input)
+        except Exception:
+            return
+        steer_input.value = ""
 
     @on(Input.Submitted, f"#{STEERING_INPUT_ID}")
     def _on_steering_submitted(self, event: Input.Submitted) -> None:
@@ -224,5 +252,7 @@ class ConsoleAgentSteeringBar(Vertical):
             )
             return
         self._set_note("")
-        event.input.value = ""
+        # The draft is NOT cleared here: the screen handler clears it via
+        # `clear_draft()` only once the bridge reports the entry queued
+        # (see that method's docstring for the refusal case).
         self.post_message(self.SteeringSubmitted(self._state.target_id, text))

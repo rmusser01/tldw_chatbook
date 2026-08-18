@@ -365,9 +365,13 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     # copy from the mailbox itself (never stored on the live handle), so
     # this figure can never disagree with what the drain would deliver;
     # it defaults 0 for the historical/fallback row sources, which never
-    # reach this builder anyway.
+    # reach this builder anyway. Terminal rows drop the segment (Qodo
+    # audit minor batch): a finished/errored/cancelled child never drains
+    # its mailbox again, so "steering queued (N)" on such a row is a
+    # delivery promise the app can no longer keep -- the mailbox copy
+    # still reports the count, which is exactly why the gate lives here.
     queued_steering = int(getattr(handle, "queued_steering", 0) or 0)
-    if queued_steering:
+    if queued_steering and status not in TERMINAL_RUN_STATUSES:
         steering_segment = f"steering queued ({queued_steering})"
         secondary = (
             f"{secondary} · {steering_segment}" if secondary else steering_segment
