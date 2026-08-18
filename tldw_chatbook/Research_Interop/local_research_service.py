@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -239,6 +239,33 @@ class LocalResearchService:
                 );
                 """
             )
+            self._ensure_run_lease_columns(conn)
+
+    #: Columns added after the original schema shipped. CREATE TABLE IF NOT
+    #: EXISTS never revisits an existing database, so each one is applied by
+    #: an idempotent ALTER guarded on PRAGMA table_info (task-18060).
+    _RUN_COLUMN_ADDITIONS = (
+        ("lease_owner", "TEXT"),
+        ("lease_id", "TEXT"),
+        ("leased_until", "TEXT"),
+        ("lease_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    )
+
+    def _ensure_run_lease_columns(self, conn: sqlite3.Connection) -> None:
+        """Add lease columns to research_runs when they are absent.
+
+        Args:
+            conn: An open connection inside the caller's transaction.
+        """
+        existing = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(research_runs)").fetchall()
+        }
+        for column, declaration in self._RUN_COLUMN_ADDITIONS:
+            if column not in existing:
+                conn.execute(
+                    f"ALTER TABLE research_runs ADD COLUMN {column} {declaration}"
+                )
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -601,6 +628,48 @@ class LocalResearchService:
         )
         self._dispatch_terminal_run_notification(updated)
         return updated
+
+    def _timestamp_after(self, seconds: float) -> str:
+        """An ISO timestamp ``seconds`` in the future, in the same format as
+        ``_now`` so string comparison orders correctly."""
+        return (
+            datetime.now(timezone.utc) + timedelta(seconds=max(0.0, float(seconds)))
+        ).isoformat()
+
+    def claim_run(
+        self, run_id: str, *, worker_id: str, lease_seconds: float
+    ) -> str | None:
+        """Take the execution lease on a run, or decline it.
+
+        The claim is atomic: the UPDATE only matches when no live lease
+        exists, so two racing executors cannot both succeed (task-18060).
+
+        Args:
+            run_id: The run to claim.
+            worker_id: Identifies the claiming executor.
+            lease_seconds: How long the lease is valid without renewal.
+
+        Returns:
+            A new lease id when the claim succeeded, otherwise None.
+        """
+        self._require_one("research_runs", run_id, "research run")
+        lease_id = uuid.uuid4().hex
+        now = self._now()
+        expires = self._timestamp_after(lease_seconds)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE research_runs
+                   SET lease_owner = ?, lease_id = ?, leased_until = ?,
+                       updated_at = ?
+                 WHERE id = ?
+                   AND (leased_until IS NULL OR leased_until <= ?)
+                """,
+                (worker_id, lease_id, expires, now, run_id, now),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return lease_id
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:
