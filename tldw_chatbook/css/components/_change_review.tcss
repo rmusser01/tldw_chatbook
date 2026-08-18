@@ -40,10 +40,35 @@
     width: 1fr;
     height: 1fr;
     padding: 0 1;
+    /* TASK-18060 Task 6 follow-up: the diff `Text` renders with
+       `no_wrap=True` (conventional diff-viewer behavior, and the only way
+       to make the line cursor's rendered row == its logical line index --
+       see `_render_diff`/`_scroll_cursor_into_view`) -- a long line must
+       therefore scroll horizontally rather than clip. `scrollbar-size`
+       mirrors the sibling diff viewport's own convention
+       (`ConsoleTurnFileCard`'s `.console-turn-file-diff`, and this
+       codebase's other scrollable diff/log panes) so the new horizontal
+       scrollbar stays thin. */
+    overflow-x: auto;
+    scrollbar-size: 1 1;
 }
 .change-review-diff-body {
-    width: 1fr;
+    /* TASK-18060 Task 6 follow-up: `width: auto` (not `1fr`) is load-
+       bearing, not cosmetic -- a `1fr` width caps this Static's measured
+       width at the PANE's viewport width, so Textual's `Content` layer
+       still folds/wraps a long line at that width regardless of the
+       `text-wrap` rule below (confirmed empirically: `no_wrap`/`text-wrap:
+       nowrap` alone, with `width: 1fr`, still produced extra wrapped rows).
+       `auto` lets the Static size to its OWN longest line, so nothing
+       needs to fold -- `#change-review-diff`'s `overflow-x: auto` then
+       scrolls that width horizontally instead of clipping or wrapping it.
+       `text-wrap: nowrap` is kept explicit (belt-and-braces with the
+       Python-side `Text(no_wrap=True)` in `_render_diff`) so intent is
+       readable at both layers even though `width: auto` alone already
+       removes the squeeze that would trigger a wrap. */
+    width: auto;
     height: auto;
+    text-wrap: nowrap;
 }
 #change-review-footer {
     height: 1;

@@ -1481,3 +1481,99 @@ async def test_binary_file_render_carries_no_cursor(review_fixture):
         assert "Binary file changed." in screen.diff_pane_text(), (
             "a cursor keypress against a binary render must not corrupt it"
         )
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_scroll_target_survives_a_long_wrapped_line(tmp_path):
+    """Review catch (Task 6 follow-up): `_scroll_cursor_into_view`'s
+    ``Region(0, line, 1, 1)`` assumes the cursor's logical line index IS
+    its rendered row -- true only when the diff `Text` disables wrapping.
+    A very long line ahead of the cursor's target, left to WRAP under the
+    pane's default `overflow-x: hidden`, pushes the target's TRUE rendered
+    row down by several rows; the (buggy) scroll target still asked for
+    "row == index" and landed on the wrong row, leaving the cursor's
+    highlighted line outside the visible window."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+
+    def mutate():
+        lines = [f"line {n}\n" for n in range(20)]
+        # One very long line early in the file -- in an 80-column pane,
+        # left to wrap, this alone consumes several extra visual rows.
+        lines[2] = ("x" * 400) + "\n"
+        (root / "big.txt").write_text("".join(lines))
+
+    _record_turn(db, tracker, root, run, mutate)
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c"
+    )
+    app = _Harness(provider)
+    # Narrow enough for the long line to wrap into several rows; short
+    # enough (in height) that a multi-row drift pushes the cursor's true
+    # row outside a small viewport.
+    async with app.run_test(size=(80, 12)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 19" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "big.txt diff",
+        )
+        raw_lines = text.split("\n")
+        target_index = next(
+            i for i, line in enumerate(raw_lines) if line.endswith("line 15")
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == target_index
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        content = screen.query_one("#change-review-diff-content", Static)
+
+        # Ground truth: don't compare the scroll offset against the
+        # LOGICAL index (that's exactly what the buggy code itself did --
+        # comparing a naive index against a rendered-row-based offset would
+        # pass "by accident" whether or not wrapping actually drifted
+        # anything). Instead, find the TRUE rendered row that carries the
+        # cursor's own line content, straight from the Static's own render
+        # cache (`Widget.render_line`, unaffected by parent scrolling), and
+        # check THAT row is inside the pane's actual visible window.
+        true_row = next(
+            (
+                row
+                for row in range(content.size.height)
+                if "line 15" in content.render_line(row).text
+            ),
+            None,
+        )
+        assert true_row is not None, "the cursor's target line must render somewhere"
+
+        viewport_height = int(pane.size.height) or 1
+        visible_start = pane.scroll_offset.y
+        visible_end = visible_start + viewport_height
+        assert visible_start <= true_row < visible_end, (
+            f"cursor's TRUE rendered row {true_row} not in the visible window "
+            f"[{visible_start}, {visible_end}) -- scroll_offset={pane.scroll_offset}, "
+            "a long line upstream drifted the scroll target off the true row"
+        )
+        # With wrapping disabled this is also an equality, not just
+        # containment -- row == index is the whole point of the fix.
+        assert true_row == target_index, (
+            f"row/index drifted: true rendered row {true_row} != logical "
+            f"index {target_index} -- the diff Text is still wrapping"
+        )

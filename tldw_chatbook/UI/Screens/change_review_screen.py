@@ -1172,7 +1172,25 @@ class ChangeReviewScreen(Screen):
             if rendered_count > 0
             else 0
         )
-        text = Text()
+        # TASK-18060 Task 6 follow-up (review catch): `_scroll_cursor_
+        # into_view`'s `Region(0, line, 1, 1)` target assumes the cursor's
+        # logical line index IS its rendered row -- true only when this
+        # `Text` never wraps. Without that, a long line ahead of the cursor
+        # consumes several extra visual rows under word-wrapping, silently
+        # drifting every row after it and scrolling to the WRONG target.
+        # `no_wrap=True` is set here for correctness when this `Text` is
+        # consumed by a plain Rich `Console` (tests, `diff_pane_text()`),
+        # but it is NOT what stops Textual's own Static from wrapping --
+        # empirically, Textual 8.x converts a `rich.text.Text` into its own
+        # `Content` type (`textual.visual.visualize`/`Content.from_rich_
+        # text`), which discards this flag entirely and instead reads a
+        # `text-wrap` CSS rule at render time. The actual fix is
+        # `.change-review-diff-body`'s CSS (`text-wrap: nowrap` +
+        # `width: auto` -- see `_change_review.tcss` for why BOTH are
+        # required); `#change-review-diff`'s `overflow-x: auto` then makes
+        # a long, now-unwrapped line horizontally scrollable instead of
+        # clipped.
+        text = Text(no_wrap=True)
         for index, line in enumerate(lines[:cap]):
             # Plain-string appends with explicit styles: content is DATA;
             # nothing here is ever markup-parsed.
