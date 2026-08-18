@@ -31,7 +31,15 @@ every golden query through the real seam across all three profile modes.
 > P2c feature premises, not an omission. A **fourth** premise died the same
 > way in TASK-15965 (2026-08-13): pseudo-relevance feedback was probed
 > before it was built and came back NULL — see "The fourth retired P2c
-> premise" under the admission protocol. Start at the **headroom table**
+> premise" under the admission protocol. A **fifth** died on 2026-08-18
+> (TASK-16072): the **clarification gate**, killed by a CENSUS rather than a
+> probe — of 60 golden queries only 2 have more than one relevant document,
+> and both of those have two CORRECT answers, so a clarifying question would
+> ask the user to discard a right one. Qualifying queries: 0 against a
+> pre-registered bar of 5. The census cost one query over the fixture and
+> reached the same kind of answer PRF needed a full probe for, which is why
+> the next candidate (TASK-18155, granularity router) requires a census
+> first. Start at the **headroom table**
 > below: it names, per category, what is left to improve and what can only
 > be regressed.
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-16072
 title: 'P2c candidate 5: clarification gate, probed before built'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-14 01:52'
 labels:
@@ -79,9 +79,47 @@ A recorded null is a success outcome of this arc, exactly as it was for PRF.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Step 0 runs first and answers, from the corpus rather than from argument, whether any golden query carries an ambiguity or underspecification signal a gate could fire on — and its per-query answer is reported before any design or code
-- [ ] #2 The admission bar and the kill condition are written down BEFORE the probe runs, including what evidence would license production code and what result ends the arc
-- [ ] #3 If the gate's value cannot be measured on this instrument without user-interaction fixtures, that is recorded as the finding and the arc ends there — a paper analysis is an acceptable deliverable; an unmeasurable improvement claim is not
-- [ ] #4 Any measurement reports gains AND losses by query id, with guard populations derived from a baseline pass at probe time, and no control is read as a property of the pipeline unless the variables it holds fixed are named
-- [ ] #5 No production code exists before the verdict; a below-bar result is recorded beside the retired premises in Tests/RAG_Eval/README.md with the next candidate filed
+- [x] #1 Step 0 runs first and answers, from the corpus rather than from argument, whether any golden query carries an ambiguity or underspecification signal a gate could fire on — and its per-query answer is reported before any design or code
+- [x] #2 The admission bar and the kill condition are written down BEFORE the probe runs, including what evidence would license production code and what result ends the arc
+- [x] #3 If the gate's value cannot be measured on this instrument without user-interaction fixtures, that is recorded as the finding and the arc ends there — a paper analysis is an acceptable deliverable; an unmeasurable improvement claim is not
+- [x] #4 Any measurement reports gains AND losses by query id, with guard populations derived from a baseline pass at probe time, and no control is read as a property of the pipeline unless the variables it holds fixed are named
+- [x] #5 No production code exists before the verdict; a below-bar result is recorded beside the retired premises in Tests/RAG_Eval/README.md with the next candidate filed
 <!-- AC:END -->
+
+## Outcome (2026-08-18): NULL — the premise is dead, no code was written
+
+**Step 0 (AC#1), from the corpus:** of 60 golden queries, **2** have more
+than one relevant document, 51 have exactly one, 7 are negative controls.
+A query with a single relevant document has nothing for a gate to
+disambiguate *between*, whatever its surface vagueness.
+
+**The 2 candidates fail the third condition, and badly.**
+`kw-nimbus-rollback` and `kw-calyx-limiter` each have two relevant documents
+— both correct. A clarifying question there would ask the user to discard one
+of two right answers, making retrieval worse rather than ambiguous-then-
+better. Qualifying count under all three conditions: **0**, against a
+pre-registered bar of 5. The kill condition fires.
+
+**Twelve short queries are not twelve gate cases.** ≤3-word queries like
+`'plant maintenance record'` all have exactly one relevant document: terse,
+not ambiguous. That distinction is what the bar was written to force.
+
+**Why this generalises past the fixture:** every failing class fails for a
+reason a question cannot repair — `negation` because the corpus asserts what
+the query excludes, `prompt` and the residual zero-row queries on absent
+CONTENT words, `paraphrase`/`vocabulary_mismatch` in `plain` on no shared
+content word. No answer to any question puts a missing document into an index.
+
+Reaching the bar would have required authoring ambiguity fixtures, which the
+kill condition pre-declared a kill: the admission protocol admits only what
+today's pipeline is measured to fail, and a class invented to give a feature
+something to show measures the class.
+
+**The fifth P2c premise to die before being built** (after `expansion`,
+`acronym`, `compositional`, PRF). Four died on measurement; this one died on
+a **census** — one query over the fixture, a fraction of PRF's cost. That is
+the transferable lesson and it is carried into the next candidate,
+**TASK-18155** (granularity router), whose ACs require the census first.
+
+Artifacts: `Docs/superpowers/qa/2026-08-18-clarification-gate/bar.md`
+(registered before the probe) and `step0.md` (the census and verdict).
