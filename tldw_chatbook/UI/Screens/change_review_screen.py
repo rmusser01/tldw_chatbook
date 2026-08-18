@@ -15,6 +15,7 @@ line by line with diff coloring, never markup-parsed: file content is data
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
@@ -33,13 +34,18 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Key
 from textual.geometry import Region
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, Select, Static, Tree
+from textual.widgets import Button, Input, Select, Static, Tree
 
 from tldw_chatbook.Chat.console_display_state import (
     ConversationFileEntry,
+    DiffHunk,
     conversation_file_summary,
+    hunk_excerpt,
+    split_unified_diff,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangedFile,
     ChangeTrackingError,
@@ -519,6 +525,138 @@ class AgentRunsChangeReviewProvider:
 #: markup-parsed" discipline covers it.
 _CURSOR_LINE_STYLE = "on grey37"
 
+#: Note text cap (TASK-18060 Task 7, review-rail spec §3) — mirrors
+#: ``ConsoleTurnFileCard.NOTE_MAX_LENGTH`` (TASK-16800 spec §1) so the
+#: Review screen's comment inputs enforce the identical boundary. Kept as
+#: a local constant rather than importing the card's private module-level
+#: name, to avoid a cross-module private import between the two comment-
+#: creation surfaces; both derive from the same spec value.
+NOTE_MAX_LENGTH = 2000
+
+#: TASK-18060 Task 7: the notes strip's glyphs, routed through
+#: ``resolve_glyph`` for terminal-fallback safety — same vocabulary as
+#: ``ConsoleTurnFileCard``'s ``_GLYPH_NOTE``/``_GLYPH_DELETE``.
+_GLYPH_NOTE = "✎"
+_GLYPH_DELETE = "✕"
+
+
+def _validate_note_text(raw: str) -> "str | None":
+    """Strip and bound-check a comment before it reaches the DB.
+
+    Mirrors ``console_turn_file_card._validate_note_text`` (TASK-16800
+    spec §1) verbatim: the strip-then-empty check runs first because
+    ``input_validation.validate_text_input`` treats an empty string as
+    valid (it only rejects *oversized*/dangerous text).
+
+    Args:
+        raw: The raw ``Input.value`` text.
+
+    Returns:
+        The stripped comment text, or ``None`` when it is empty or fails
+        validation (over ``NOTE_MAX_LENGTH`` chars, or a dangerous
+        HTML/script pattern).
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if not validate_text_input(text, max_length=NOTE_MAX_LENGTH):
+        return None
+    return text
+
+
+def _note_kind_label(note: dict) -> str:
+    """Render one note's kind as the strip's short label (spec §3).
+
+    Args:
+        note: A ``change_notes`` row dict.
+
+    Returns:
+        ``"file"``, ``"line <index>"``, or ``"hunk"`` (the default for
+        any row whose ``anchor_kind`` is missing or unrecognized — every
+        pre-TASK-18060 row reads as ``"hunk"`` truthfully, spec §4).
+    """
+    kind = str(note.get("anchor_kind") or "hunk")
+    if kind == "diff_line":
+        index = note.get("diff_line_index")
+        return f"line {index}" if index is not None else "line"
+    if kind == "file":
+        return "file"
+    return "hunk"
+
+
+def _note_matches_leaf(note: dict, snapshot_id: "int | None") -> bool:
+    """Whether a note belongs to the CURRENTLY focused leaf's snapshot row.
+
+    Mirrors ``console_turn_file_card._note_matches_snapshot`` (Qodo #6,
+    PR #1779 fix round): a note carrying a non-null ``snapshot_id`` must
+    equal the focused leaf's own ``change_snapshots`` row id to match — a
+    run can hold two windows on the same root+path, and this disambiguates
+    which window's notes belong under which leaf. A legacy note
+    (``snapshot_id`` is ``None``) matches by root+path alone, the same
+    fallback the card uses.
+
+    Args:
+        note: A note record (DB row dict).
+        snapshot_id: The focused leaf's owning ``change_snapshots`` row id
+            (``row.get("id")``), or ``None`` when unavailable.
+
+    Returns:
+        Whether this note belongs under the focused leaf.
+    """
+    note_snapshot_id = note.get("snapshot_id")
+    if note_snapshot_id is None:
+        return True
+    return note_snapshot_id == snapshot_id
+
+
+def _hunk_containing_line(
+    hunks: "list[DiffHunk]", line_index: int
+) -> "tuple[int, DiffHunk | None]":
+    """Find the hunk covering ``line_index`` over the file's FULL diff text.
+
+    TASK-18060 Task 7 (review-rail spec §3/§4): a ``diff_line`` note's
+    hunk fields are ALSO populated with the hunk the cursor's line falls
+    in — ``split_unified_diff`` segments a diff into ``DiffHunk``s but
+    does not carry each hunk's absolute line offset, so this reconstructs
+    it by walking the hunks in order: hunk *k* occupies its header line
+    (one line) plus its body lines, contiguously, right after the shared
+    file prelude — ``split_unified_diff``'s own segmentation guarantees no
+    gaps between one hunk's last body line and the next hunk's header.
+
+    Args:
+        hunks: ``split_unified_diff``'s output for the file's full diff.
+        line_index: 0-based index over the SAME full diff text (the
+            screen's own ``_cursor_line``, which under the display cap
+            equals the full-diff line index — the cap truncates only the
+            tail).
+
+    Returns:
+        ``(hunk_index, hunk)`` for the hunk covering ``line_index``. A
+        line in the shared prelude (before any hunk header) degrades to
+        the first hunk rather than reporting "no hunk" — a line comment
+        always has SOME hunk context when the diff has hunks at all. A
+        line past every hunk's tracked span (should not happen for a real
+        cursor line) degrades to the last hunk. ``(-1, None)`` only when
+        ``hunks`` itself is empty.
+    """
+    if not hunks:
+        return -1, None
+    if len(hunks) == 1 and not hunks[0].header:
+        # The fallback shape (binary/rename-no-change, split_unified_
+        # diff's own docstring): no real hunk headers at all — every line
+        # belongs to the one synthetic hunk.
+        return 0, hunks[0]
+    prelude = hunks[0].file_prelude
+    offset = len(prelude.splitlines()) if prelude else 0
+    if line_index < offset:
+        return 0, hunks[0]
+    for index, hunk in enumerate(hunks):
+        span = 1 + len(hunk.body_lines)  # the header line + its body
+        if offset <= line_index < offset + span:
+            return index, hunk
+        offset += span
+    return len(hunks) - 1, hunks[-1]
+
 
 class ChangeReviewDiffPane(VerticalScroll):
     """The diff viewport: hosts the review line cursor, reclaiming keys.
@@ -544,10 +682,13 @@ class ChangeReviewDiffPane(VerticalScroll):
       ``ChangeReviewScreen._move_diff_cursor``/``_render_diff``) instead of
       scrolling the pane directly — the cursor's own re-render scrolls it
       into view, so the net effect still tracks the keypress.
-    - ``c`` is swallowed as a no-op placeholder — Task 7 wires line-comment
-      creation onto it; reclaiming the key now (even before there is a
-      handler) means a stray ``c`` keypress while the pane is focused can
-      never leak through to the screen or transcript in the meantime.
+    - ``c`` opens the inline line-comment ``Input`` (TASK-18060 Task 7,
+      review-rail spec §3), anchored to the cursor's current diff line —
+      mounted as a SIBLING of this pane (under ``#change-review-right``),
+      never as this pane's own descendant, so once it is focused the key
+      bubble no longer passes through this pane at all and this handler
+      stops seeing keys (``ChangeReviewScreen`` reclaims Enter/Escape for
+      it instead — see that screen's own ``on_key``).
     - escape moves focus to the changed-file tree — a DELIBERATE shadow of
       the screen's own ``escape -> dismiss_screen`` binding while the pane
       is focused (spec §3's explicit UX ruling): Esc-Esc is pane -> tree ->
@@ -586,9 +727,7 @@ class ChangeReviewDiffPane(VerticalScroll):
             elif event.key == "c":
                 event.stop()
                 event.prevent_default()
-                # Task 7 placeholder: intentionally a no-op for now (see
-                # class docstring) — swallowed so it never reaches the
-                # transcript/screen.
+                await screen._open_comment_input("diff_line")  # noqa: SLF001 -- same module
             elif event.key == "escape":
                 event.stop()
                 event.prevent_default()
@@ -609,6 +748,11 @@ class ChangeReviewScreen(Screen):
         Binding("enter", "focus_diff", "View diff", show=False),
         Binding("u", "revert_file", "Revert file"),
         Binding("U", "undo_all", "Undo all", show=False),
+        # TASK-18060 Task 7 (review-rail spec §3): a whole-file comment,
+        # reachable from either the tree or the diff pane — it always
+        # acts on `self._focused_leaf` (the file whose diff is showing),
+        # not on which widget currently holds keyboard focus.
+        Binding("C", "comment_file", "Comment file", show=False),
     ]
 
     def __init__(
@@ -681,6 +825,15 @@ class ChangeReviewScreen(Screen):
                     prompt="No turns",
                 )
                 yield Static("", id="change-review-totals", markup=False)
+                # TASK-18060 Task 7 (review-rail spec §3): the "Comment
+                # file" affordance named alongside footer key `C` — a
+                # small button near the totals.
+                yield Button(
+                    "Comment file",
+                    id="change-review-comment-file-btn",
+                    classes="change-review-comment-file-btn",
+                    compact=True,
+                )
             yield Static(
                 "",
                 id="change-review-banner",
@@ -689,15 +842,28 @@ class ChangeReviewScreen(Screen):
             )
             with Horizontal(id="change-review-body"):
                 yield Tree("Changes", id="change-review-tree")
-                with ChangeReviewDiffPane(id="change-review-diff"):
-                    yield Static(
-                        "",
-                        id="change-review-diff-content",
-                        classes="change-review-diff-body",
-                        markup=False,
+                # TASK-18060 Task 7: the inline comment `Input` and notes
+                # strip are mounted as SIBLINGS of the diff pane (never as
+                # its descendants) — while either is focused, key events
+                # bubble past this `Vertical` straight to the screen
+                # without ever passing through `ChangeReviewDiffPane`, so
+                # the pane's own up/down/`c`/escape reclaim never
+                # intercepts them (see `ChangeReviewDiffPane`'s docstring).
+                with Vertical(id="change-review-right"):
+                    with ChangeReviewDiffPane(id="change-review-diff"):
+                        yield Static(
+                            "",
+                            id="change-review-diff-content",
+                            classes="change-review-diff-body",
+                            markup=False,
+                        )
+                    yield Vertical(
+                        id="change-review-notes-strip",
+                        classes="change-review-notes-strip",
                     )
             yield Static(
-                "j/k files · Enter diff · Esc back",
+                "j/k files · Enter diff · c comment line · C comment file "
+                "· Esc back",
                 id="change-review-footer",
                 markup=False,
             )
@@ -910,6 +1076,11 @@ class ChangeReviewScreen(Screen):
                 self._focus_leaf(0)
         else:
             self._show_empty("No file changes in this turn.")
+            # TASK-18060 Task 7: `_focus_leaf` is the strip's usual refresh
+            # choke point, but a zero-leaf turn never reaches it — clear
+            # (hide) any stale strip content from a previously focused
+            # turn explicitly.
+            self._refresh_notes_strip()
 
     @staticmethod
     def _leaf_label(
@@ -986,6 +1157,10 @@ class ChangeReviewScreen(Screen):
         self._cursor_line = 0
         row, change = self._leaves[self._focused_leaf]
         self._render_diff(row, change)
+        # TASK-18060 Task 7 (review-rail spec §3): the strip's one refresh
+        # choke point — every leaf focus (a fresh selection, j/k, or a
+        # mouse click) shows exactly the newly-focused file's notes.
+        self._refresh_notes_strip()
 
     def _move_diff_cursor(self, delta: int) -> None:
         """Move the diff-pane line cursor by ``delta`` and re-render.
@@ -1057,6 +1232,352 @@ class ChangeReviewScreen(Screen):
 
     def action_focus_diff(self) -> None:
         self.query_one("#change-review-diff", VerticalScroll).focus()
+
+    # -- comment creation + notes strip (TASK-18060 Task 7, spec §3) ------
+
+    async def action_comment_file(self) -> None:
+        """`C`: open a whole-file comment on the focused leaf."""
+        await self._open_comment_input("file")
+
+    @on(Button.Pressed, "#change-review-comment-file-btn")
+    async def _on_comment_file_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._open_comment_input("file")
+
+    async def _open_comment_input(self, kind: str) -> None:
+        """Mount the inline comment ``Input`` below the diff pane.
+
+        Args:
+            kind: ``"diff_line"`` (the cursor's current line) or
+                ``"file"`` (the whole focused file). A ``"diff_line"``
+                request degrades to a no-op when the focused file has no
+                cursor to anchor to — a binary render (spec §3's "no
+                cursor there") or a diff the provider cannot produce
+                (a pruned/tracking-error row). ``"file"`` always works,
+                including on those same renders.
+        """
+        try:
+            if not self._leaves or self._focused_leaf < 0:
+                return
+            row, change = self._leaves[self._focused_leaf]
+            if kind == "diff_line":
+                if change.binary:
+                    return
+                try:
+                    self._provider.diff_text(row, change.path)
+                except ChangeTrackingError:
+                    return
+            container = self.query_one("#change-review-right", Vertical)
+            existing = list(container.query(".change-review-comment-input"))
+            if existing:
+                # Already open (either kind) -- focus it rather than
+                # mounting a second input, same "already open" precedent
+                # as the turn file card's hunk note input.
+                existing[0].focus()
+                return
+            note_input = Input(
+                classes="change-review-comment-input",
+                placeholder=(
+                    "Add a comment on this line…"
+                    if kind == "diff_line"
+                    else "Add a comment on this file…"
+                ),
+                max_length=NOTE_MAX_LENGTH,
+            )
+            note_input.anchor_kind = kind
+            note_input.leaf_row = row
+            note_input.leaf_change = change
+            note_input.cursor_line = self._cursor_line if kind == "diff_line" else None
+            strip = self.query_one("#change-review-notes-strip", Vertical)
+            await container.mount(note_input, before=strip)
+            note_input.focus()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: comment input open failed"
+            )
+
+    async def on_key(self, event: Key) -> None:
+        """Reclaim Enter/Escape while the comment ``Input`` is focused.
+
+        Same raw-Key belt-and-braces precedent as
+        ``ConsoleTurnFileCard.on_key`` (see that class's own docstring for
+        the traced Textual dispatch this mirrors): the comment ``Input``
+        is mounted as a SIBLING of the diff pane, so its bubble path
+        reaches this screen directly (never through
+        ``ChangeReviewDiffPane.on_key``) — Escape here must NOT fall
+        through to this screen's own ``escape -> dismiss_screen`` binding.
+        """
+        try:
+            focused = self.app.focused
+            if focused is None or not focused.has_class(
+                "change-review-comment-input"
+            ):
+                return
+            if event.key == "enter":
+                event.stop()
+                event.prevent_default()
+                await self._save_comment_input(focused)
+            elif event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                await self._cancel_comment_input()
+            elif event.key in ("up", "down"):
+                event.stop()
+                event.prevent_default()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: comment input key handling failed"
+            )
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the comment input: save off-thread."""
+        if not event.input.has_class("change-review-comment-input"):
+            return
+        event.stop()
+        await self._save_comment_input(event.input)
+
+    async def _cancel_comment_input(self) -> None:
+        """Unmount the comment input without saving; refocus the pane.
+
+        Spec §3's Escape contract: cancels WITHOUT dismissing the screen
+        or moving focus to the tree — focus returns to the diff pane.
+        """
+        try:
+            focused = self.app.focused
+            if focused is not None and focused.has_class(
+                "change-review-comment-input"
+            ):
+                await focused.remove()
+            self.query_one("#change-review-diff", ChangeReviewDiffPane).focus()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: comment input cancel failed"
+            )
+
+    async def _save_comment_input(self, note_input: Input) -> None:
+        """Validate, persist off-thread, and refresh the notes strip.
+
+        A raising ``provider.add_change_note`` (or any other failure) is
+        swallowed here — the input stays mounted with the user's text
+        intact so nothing is lost, and a warning is logged (the screen's
+        own "no exception escapes an `on_*` handler" rule, same as the
+        turn file card's).
+
+        Args:
+            note_input: The submitted comment ``Input``.
+        """
+        try:
+            if not note_input.is_mounted or self._active_turn is None:
+                return
+            text = _validate_note_text(note_input.value)
+            if text is None:
+                return
+            row = getattr(note_input, "leaf_row", None)
+            change = getattr(note_input, "leaf_change", None)
+            kind = getattr(note_input, "anchor_kind", None)
+            if row is None or change is None or kind is None:
+                return
+            run_id = self._active_turn.run_id
+            snapshot_id = row.get("id")
+
+            if kind == "diff_line":
+                cursor_line = getattr(note_input, "cursor_line", None)
+                if cursor_line is None:
+                    return
+                try:
+                    diff_text = self._provider.diff_text(row, change.path)
+                except ChangeTrackingError:
+                    self.notify(
+                        "Diff unavailable — comment not saved",
+                        severity="warning",
+                    )
+                    return
+                lines = diff_text.splitlines()
+                if not (0 <= cursor_line < len(lines)):
+                    return
+                diff_line_text = lines[cursor_line]
+                hunks = split_unified_diff(diff_text)
+                hunk_idx, hunk = _hunk_containing_line(hunks, cursor_line)
+                write_kwargs = dict(
+                    anchor_kind="diff_line",
+                    hunk_index=hunk_idx,
+                    hunk_header=hunk.header if hunk is not None else "",
+                    hunk_excerpt=hunk_excerpt(hunk) if hunk is not None else "",
+                    diff_line_index=cursor_line,
+                    diff_line_text=diff_line_text,
+                )
+            else:
+                write_kwargs = dict(
+                    anchor_kind="file",
+                    hunk_index=-1,
+                    hunk_header="",
+                    hunk_excerpt="",
+                    diff_line_index=None,
+                    diff_line_text=None,
+                )
+
+            def _write() -> int:
+                return self._provider.add_change_note(
+                    run_id=run_id,
+                    root=row["root"],
+                    path=change.path,
+                    note=text,
+                    snapshot_id=snapshot_id,
+                    **write_kwargs,
+                )
+
+            try:
+                await asyncio.to_thread(_write)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "change_review: comment save failed"
+                )
+                self.notify("Could not save comment", severity="warning")
+                return
+            if note_input.is_mounted:
+                await note_input.remove()
+            try:
+                self.query_one(
+                    "#change-review-diff", ChangeReviewDiffPane
+                ).focus()
+            except Exception:  # noqa: BLE001 -- focus-return is cosmetic
+                pass
+            self._refresh_notes_strip()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: comment save failed"
+            )
+
+    async def _delete_review_note(self, button: Button) -> None:
+        """Delete a pending note off-thread and refresh the strip.
+
+        Args:
+            button: The pressed ``✕`` button, carrying a ``note_id``
+                attribute set at mount time.
+        """
+        try:
+            note_id = getattr(button, "note_id", None)
+            if note_id is None:
+                return
+            delete_change_note = getattr(
+                self._provider, "delete_change_note", None
+            )
+            if not callable(delete_change_note):
+                return
+
+            def _delete() -> bool:
+                return delete_change_note(note_id)
+
+            deleted = await asyncio.to_thread(_delete)
+            if not deleted:
+                # Delivered behind the screen's back (same live-view
+                # honesty rule as the turn file card): don't silently
+                # no-op a press that looks actionable.
+                self.notify(
+                    "Note already sent — no longer deletable",
+                    severity="warning",
+                )
+                return
+            self._refresh_notes_strip()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: note delete failed"
+            )
+
+    @on(Button.Pressed, ".change-review-note-delete")
+    async def _on_note_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._delete_review_note(event.button)
+
+    def _refresh_notes_strip(self) -> None:
+        """Repopulate the focused file's notes strip.
+
+        Spec §3's posture correction: this is a SYNCHRONOUS read
+        (``notes_for_run`` is a plain SQLite query), matching the
+        screen's existing diff-load posture — only the comment WRITE
+        paths (save/delete above) run off-thread. Called after every
+        file focus change (``_focus_leaf``) and after every successful
+        save/delete.
+        """
+        try:
+            strip = self.query_one("#change-review-notes-strip", Vertical)
+        except Exception:  # noqa: BLE001 -- screen dismissed before refresh
+            return
+        try:
+            strip.remove_children()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: notes strip clear failed"
+            )
+            return
+        if (
+            not self._leaves
+            or self._focused_leaf < 0
+            or self._active_turn is None
+        ):
+            strip.display = False
+            return
+        row, change = self._leaves[self._focused_leaf]
+        try:
+            notes = self._provider.notes_for_run(self._active_turn.run_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: notes load failed"
+            )
+            strip.display = False
+            return
+        matching = [
+            note
+            for note in notes
+            if note.get("root") == row.get("root")
+            and note.get("path") == change.path
+            and _note_matches_leaf(note, row.get("id"))
+        ]
+        strip.display = bool(matching)
+        for note in matching:
+            try:
+                strip.mount(self._build_note_row(note))
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "change_review: note row mount failed"
+                )
+
+    @staticmethod
+    def _build_note_row(note: dict) -> Horizontal:
+        """Render one note as a ``.change-review-note-row`` row.
+
+        Args:
+            note: A ``change_notes`` row dict (at minimum ``id``,
+                ``note``, ``anchor_kind``, ``diff_line_index``,
+                ``delivered_at``).
+
+        Returns:
+            A row with the note's kind label + text, plus a ``✕`` delete
+            button while ``delivered_at`` is null — delivered notes
+            render a ``sent`` marker instead and carry no delete
+            affordance (they are record).
+        """
+        delivered = note.get("delivered_at") is not None
+        label = Text()
+        label.append(f"{resolve_glyph(_GLYPH_NOTE)} ", style="dim")
+        label.append(_note_kind_label(note), style="bold")
+        label.append(" · ")
+        label.append(str(note.get("note", "")))
+        if delivered:
+            label.append("  · sent", style="dim")
+        children: list = [
+            Static(label, classes="change-review-note-text")
+        ]
+        if not delivered:
+            delete_btn = Button(
+                Text(resolve_glyph(_GLYPH_DELETE)),
+                classes="change-review-note-delete",
+                compact=True,
+            )
+            delete_btn.note_id = int(note["id"])
+            delete_btn.active_effect_duration = 0
+            children.append(delete_btn)
+        return Horizontal(*children, classes="change-review-note-row")
 
     def action_revert_file(self) -> None:
         """Revert the focused file (confirmed)."""

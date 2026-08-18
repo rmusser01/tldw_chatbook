@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Select, Static, Tree
+from textual.widgets import Button, Input, Select, Static, Tree
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
@@ -1341,10 +1341,12 @@ async def test_escape_in_pane_focuses_tree_then_second_escape_dismisses(
 
 
 @pytest.mark.asyncio
-async def test_c_key_is_swallowed_while_pane_focused(review_fixture):
-    """`c` is a Task 7 placeholder -- it must be reclaimed (swallowed) now
-    so it never leaks to the screen/transcript, even though it does
-    nothing yet."""
+async def test_c_key_opens_line_comment_input_reclaimed_from_the_pane(
+    review_fixture,
+):
+    """`c` is reclaimed by the pane (never leaks to the screen/transcript)
+    and, as of Task 7 (review-rail spec §3), opens the inline line-comment
+    `Input` -- moving focus onto it -- rather than doing nothing."""
     provider, root, run1, run2 = review_fixture
     app = _Harness(provider)
     async with app.run_test(size=(160, 48)) as pilot:
@@ -1362,7 +1364,6 @@ async def test_c_key_is_swallowed_while_pane_focused(review_fixture):
         )
         screen.action_focus_diff()
         await pilot.pause()
-        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
         cursor_before = screen._cursor_line
         text_before = screen.diff_pane_text()
 
@@ -1372,7 +1373,10 @@ async def test_c_key_is_swallowed_while_pane_focused(review_fixture):
         assert app.screen is screen, "'c' must not dismiss or navigate the screen"
         assert screen._cursor_line == cursor_before, "'c' must not move the cursor"
         assert screen.diff_pane_text() == text_before
-        assert app.focused is pane, "'c' must not move focus off the pane"
+        note_input = screen.query_one(".change-review-comment-input", Input)
+        assert app.focused is note_input, (
+            "'c' must open and focus the inline comment input"
+        )
 
 
 @pytest.mark.asyncio
@@ -1577,3 +1581,453 @@ async def test_diff_cursor_scroll_target_survives_a_long_wrapped_line(tmp_path):
             f"row/index drifted: true rendered row {true_row} != logical "
             f"index {target_index} -- the diff Text is still wrapping"
         )
+
+
+# -- Task 7 (console-review-rail): comment creation + notes strip -----------
+
+
+async def _open_comment_input(pilot, screen: ChangeReviewScreen) -> Input:
+    """Wait for the inline comment ``Input`` to appear and return it."""
+    return await _wait_for(
+        pilot,
+        lambda: (
+            screen.query_one(".change-review-comment-input", Input)
+            if screen.query(".change-review-comment-input")
+            else None
+        ),
+        "comment input opened",
+    )
+
+
+async def _wait_input_closed(pilot, screen: ChangeReviewScreen) -> None:
+    await _wait_for(
+        pilot,
+        lambda: True if not screen.query(".change-review-comment-input") else None,
+        "comment input closed",
+    )
+
+
+def _note_strip_texts(screen: ChangeReviewScreen) -> list[str]:
+    return [str(s.renderable) for s in screen.query(".change-review-note-text")]
+
+
+@pytest.mark.asyncio
+async def test_line_comment_save_persists_exact_anchor(review_fixture):
+    """`c` + Enter saves a `diff_line` note whose DB row carries the EXACT
+    anchor: kind, the 0-based index over the FULL diff, the line's
+    verbatim text, the containing hunk's index/header/excerpt, and the
+    focused leaf's own snapshot id."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt"
+        full_diff = provider.diff_text(row, change.path)
+        lines = full_diff.split("\n")
+        target_index = next(
+            i for i, line in enumerate(lines) if line.startswith("+after")
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+        assert screen._cursor_line == target_index
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "this line needs work"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["anchor_kind"] == "diff_line"
+        assert note["diff_line_index"] == target_index
+        assert note["diff_line_text"] == lines[target_index]
+        assert note["note"] == "this line needs work"
+        assert note["snapshot_id"] == row["id"]
+        assert note["hunk_header"].startswith("@@")
+        assert note["hunk_index"] == 0
+        assert note["hunk_excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_C_binding_saves_file_comment_with_sentinels(review_fixture):
+    """`C` saves a whole-file comment: `anchor_kind="file"` with the
+    `hunk_index=-1`/`hunk_header=""`/`hunk_excerpt=""` sentinels and no
+    diff-line fields."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "whole file needs a pass"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        note = notes[0]
+        assert note["anchor_kind"] == "file"
+        assert note["hunk_index"] == -1
+        assert note["hunk_header"] == ""
+        assert note["hunk_excerpt"] == ""
+        assert note["diff_line_index"] is None
+        assert note["diff_line_text"] is None
+        assert note["note"] == "whole file needs a pass"
+        assert note["path"] == "edit.txt"
+
+
+@pytest.mark.asyncio
+async def test_notes_strip_lists_all_kinds_with_labels(review_fixture):
+    """The strip shows a pre-seeded hunk note (the card's own shape) plus
+    a new file comment and a new line comment, each labeled by kind."""
+    provider, root, run1, run2 = review_fixture
+    provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="pre-seeded hunk note",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        await _wait_for(
+            pilot,
+            lambda: (
+                True
+                if any("pre-seeded hunk note" in t for t in _note_strip_texts(screen))
+                else None
+            ),
+            "hunk note in strip",
+        )
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "file-level note"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        line_index = screen._cursor_line
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "line-level note"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        texts = await _wait_for(
+            pilot,
+            lambda: (
+                (lambda ts: ts if len(ts) >= 3 else None)(_note_strip_texts(screen))
+            ),
+            "all three notes rendered",
+        )
+        joined = "\n".join(texts)
+        assert "hunk" in joined and "pre-seeded hunk note" in joined
+        assert "file" in joined and "file-level note" in joined
+        assert f"line {line_index}" in joined and "line-level note" in joined
+
+
+@pytest.mark.asyncio
+async def test_pending_note_delete_removes_row_and_db_entry(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="delete me",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        delete_btn = await _wait_for(
+            pilot,
+            lambda: (
+                screen.query_one(".change-review-note-delete", Button)
+                if screen.query(".change-review-note-delete")
+                else None
+            ),
+            "delete button rendered",
+        )
+        assert len(provider.notes_for_run(run2)) == 1
+
+        delete_btn.focus()
+        await pilot.press("enter")
+        await _wait_for(
+            pilot,
+            lambda: True if not screen.query(".change-review-note-delete") else None,
+            "delete completes",
+        )
+        assert not screen.query(".change-review-note-text")
+        assert provider.notes_for_run(run2) == []
+
+
+@pytest.mark.asyncio
+async def test_delivered_note_renders_sent_without_delete(review_fixture, tmp_path):
+    provider, root, run1, run2 = review_fixture
+    note_id = provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="already delivered",
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db.mark_notes_delivered([note_id])
+
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (
+                True
+                if any("sent" in t for t in _note_strip_texts(screen))
+                else None
+            ),
+            "delivered note shows sent",
+        )
+        assert not screen.query(".change-review-note-delete"), (
+            "a delivered note must carry no delete button"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_on_note_delivered_behind_screens_back_notifies(
+    review_fixture, tmp_path
+):
+    """A note delivered elsewhere while this screen stays open still shows
+    its stale ✕ -- pressing it must notify, not silently no-op, and the
+    row must survive untouched (same live-view honesty rule as the turn
+    file card)."""
+    provider, root, run1, run2 = review_fixture
+    note_id = provider.add_change_note(
+        run_id=run2,
+        root=str(root),
+        path="edit.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-before\n+after",
+        note="will be delivered behind the screen's back",
+    )
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        delete_btn = await _wait_for(
+            pilot,
+            lambda: (
+                screen.query_one(".change-review-note-delete", Button)
+                if screen.query(".change-review-note-delete")
+                else None
+            ),
+            "delete button rendered",
+        )
+
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        db.mark_notes_delivered([note_id])
+
+        notify_calls: list[tuple[tuple, dict]] = []
+        pilot.app.notify = lambda *a, **kw: notify_calls.append((a, kw))
+
+        delete_btn.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        assert notify_calls, (
+            "pressing delete on an already-delivered note must notify"
+        )
+        message = notify_calls[0][0][0]
+        assert "already sent" in message.lower()
+        assert notify_calls[0][1].get("severity") == "warning"
+        assert screen.query(".change-review-note-delete"), (
+            "the stale row must survive untouched"
+        )
+        stored = provider.notes_for_run(run2)
+        assert len(stored) == 1
+        assert stored[0]["delivered_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_escape_cancels_comment_input_without_saving_or_dismissing(
+    review_fixture,
+):
+    """Escape unmounts the comment input without persisting a row, without
+    dismissing the screen, and without moving focus to the tree -- focus
+    returns to the diff pane (spec §3's explicit contract)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "abandoned draft"
+        note_input.focus()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not screen.query(".change-review-comment-input"), (
+            "escape must unmount the comment input"
+        )
+        assert provider.notes_for_run(run2) == [], (
+            "escape must not persist a row"
+        )
+        assert app.screen is screen, (
+            "escape-in-input must not dismiss the screen"
+        )
+        tree = screen.query_one("#change-review-tree", Tree)
+        assert app.focused is not tree, (
+            "escape-in-input must not move focus to the tree"
+        )
+        assert app.focused is pane, (
+            "escape-in-input must return focus to the diff pane"
+        )
+
+
+@pytest.mark.asyncio
+async def test_provider_add_change_note_raising_does_not_crash(tmp_path):
+    """A provider whose `add_change_note` raises must not crash the app:
+    the comment input stays mounted (nothing lost) and a warning is
+    logged -- the screen's absolute "no exception escapes an `on_*`
+    handler" rule."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "edit.txt").write_text("before\n")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db, tracker, root, run_id, lambda: (root / "edit.txt").write_text("after\n")
+    )
+
+    class _RaisingProvider(AgentRunsChangeReviewProvider):
+        def add_change_note(self, **kwargs):
+            raise RuntimeError("simulated write failure")
+
+    provider = _RaisingProvider(db=db, service=service, conversation_id="c")
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "this will fail to save"
+        note_input.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+
+        assert app.is_running, "a raising add_change_note must not crash the app"
+        assert screen.is_mounted
+        surviving = screen.query(".change-review-comment-input")
+        assert surviving, "input must stay mounted after a save failure"
+        assert surviving.first().value == "this will fail to save"
+        assert db.notes_for_run(run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_binary_file_c_noops_C_still_works(review_fixture):
+    """`c` no-ops on a binary render (no cursor there); `C` still works."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("image.bin")
+        await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "Binary file changed." in t else None
+            )(screen.diff_pane_text()),
+            "binary render",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+
+        await pilot.press("c")
+        await pilot.pause()
+        assert not screen.query(".change-review-comment-input"), (
+            "'c' must no-op on a binary render"
+        )
+
+        await pilot.press("C")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "flag this binary asset"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        notes = provider.notes_for_run(run2)
+        assert len(notes) == 1
+        assert notes[0]["anchor_kind"] == "file"
+        assert notes[0]["path"] == "image.bin"
