@@ -66,10 +66,44 @@ four of its decisions are adopted deliberately rather than re-derived:
   `retry_count` on the row, with `available_at` carrying the backoff, so a run
   that keeps dying is eventually failed rather than retried forever. A research
   run that crashes its executor three times is a broken run, not a slow one.
-- **The heartbeat carries progress.** `renew_job_lease` takes
-  `progress_percent` and `progress_message`, so one call both proves liveness
-  and updates what the user sees. The engine already emits phase progress; that
-  emission becomes the heartbeat rather than a second mechanism beside it.
+- **The heartbeat may carry progress, but must not depend on it.** The
+  server's `renew_job_lease` takes `progress_percent` and `progress_message`,
+  and it is tempting to conclude that our existing phase-progress emission can
+  double as the heartbeat. It cannot, and the reason is specific to this
+  workload: between the "Synthesizing findings" update and the `analyze_fn`
+  call there are ZERO further emissions for the whole ~970s synthesis. A lease
+  renewed only by progress events would expire inside the longest phase, the
+  run would be taken over, and the most expensive phase would execute twice
+  while the first executor was still paying for it. The renewal is therefore an
+  explicit keep-alive on a timer for as long as a phase is in flight; progress
+  rides along when there is progress to report.
+
+**Fencing must guard writes, not just completion.** A displaced executor
+blocked in a long provider call will still return, still write artifacts, and
+still settle its ledger. Checking the lease only when finishing the run leaves
+every write in between unguarded, so the fence is checked before each
+persisting write.
+
+**Completion side effects are made idempotent.** `chat_handoff` inserts a
+message into the originating conversation; a takeover race would announce the
+same report twice. The run records that the handoff was delivered, and the
+insert is skipped when it already was.
+
+**One retry budget, owned by the run.** The scheduler has its own retry and
+backoff for failed tasks, and the run now has a retry budget of its own.
+Undefined precedence is how two counters drift apart, so the run's budget is
+authoritative: the scheduler task retries only its own dispatch, never the
+research work.
+
+**The scheduler task is cleaned up.** A one-time task per run is deleted when
+the run reaches a terminal state or is cancelled, so tasks do not accumulate
+behind completed work.
+
+**Why not the existing local jobs table.** `Library_Ingest_Jobs_DB` already
+carries a `retry_count` and a queued/failed/cancelled model, but no lease
+columns and a lifecycle shaped for file ingestion. Research runs keep their own
+table and gain lease columns there rather than being forced into it; the two
+converge only if a third consumer appears.
 
 What is NOT adopted: the server's multi-tenant machinery — domains, queues,
 fair-share scheduling, priority bands, quarantine for poison messages, the
@@ -141,6 +175,12 @@ require an out-of-process scheduler and is a different piece of work.
 
 - Two executors race one run: exactly one claims it, the other declines, and no
   phase runs twice.
+- A phase that emits no progress for longer than the lease keeps its lease: the
+  keep-alive renews on its own timer, and the run is not taken over mid-phase.
+- A displaced executor cannot write artifacts or settle its ledger after losing
+  its lease, not merely cannot complete the run.
+- A run announced once stays announced once across a takeover.
+- A terminal or cancelled run leaves no scheduler task behind.
 - A stale lease is taken over; a live one is not.
 - A resumed run restores its spent budget rather than being re-granted it.
 - A resumed run does not re-search a completed round, and rehydrates evidence
@@ -156,5 +196,6 @@ require an out-of-process scheduler and is a different piece of work.
 
 A research run interrupted by an app exit resumes on the next launch without
 redoing its searches or re-granting its budget, finishes a synthesis that takes
-longer than any single provider timeout, and announces itself in the
+longer than the DEFAULT provider timeout (a synthesis exceeding the configured
+ceiling still fails, and says so), and announces itself exactly once in the
 conversation that asked for it and in the artifacts screen.
