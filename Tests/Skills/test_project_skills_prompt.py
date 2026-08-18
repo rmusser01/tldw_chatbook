@@ -34,3 +34,12 @@ def test_ledger_survives_corrupt_file(tmp_path):
     assert ledger.decision_for(Path("/x")) is None
     ledger.record(Path("/x"), "imported", "f1")
     assert ledger.decision_for(Path("/x")) == ("imported", "f1")
+
+
+def test_ledger_key_normalizes_path_spellings(tmp_path):
+    (tmp_path / "x").mkdir()
+    (tmp_path / "proj").mkdir()
+    ledger = ProjectSkillsPromptLedger(tmp_path)
+    unresolved = tmp_path / "x" / ".." / "proj"
+    ledger.record(unresolved, "imported", "f1")
+    assert ledger.decision_for(tmp_path / "proj") == ("imported", "f1")
