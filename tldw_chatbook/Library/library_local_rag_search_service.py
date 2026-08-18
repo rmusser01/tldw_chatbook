@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Hashable, Optional
 
@@ -20,7 +20,10 @@ from tldw_chatbook.Chat.rag_scope import (
     media_id_params,
     note_id_params,
 )
-from tldw_chatbook.Library.library_fts_query import build_fts_match_query
+from tldw_chatbook.Library.library_fts_query import (
+    build_fts_match_query,
+    build_prefix_match_query,
+)
 from tldw_chatbook.Library.library_notes_sync_state import count_noun
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchOutcome
 from tldw_chatbook.Library.library_rag_state import (
@@ -481,15 +484,31 @@ class LibraryLocalRagSearchService:
         # the seam order breaks the tie. That is a pinned convention, not a
         # relevance claim (`Tests/Library/test_library_keyword_cross_seam.py`).
         #
-        # NO TIERING, deliberately. TASK-15700's tiered merge exists because
-        # the ENGINE's keyword leg mixes primary matches with widened
-        # FALLBACK constructions, and a fallback row must fill positions
-        # rather than displace a primary one. This path has no such split:
-        # every seam builds its MATCH with `build_fts_match_query` and
-        # nothing else, so all four rankings are all-primary and this is the
-        # pre-15700 all-primary interleave, which 15700 proved correct for
-        # that regime. If this path ever gains fallback forms, the 15700 tier
-        # design applies here too.
+        # NO TIERING -- and TASK-17755 is the change that makes that a live
+        # decision rather than a vacuous one, so read this before touching
+        # it. TASK-15700's tiered merge exists because the ENGINE's keyword
+        # leg mixes primary matches with widened FALLBACK rows, and a
+        # fallback row must fill positions rather than displace a primary
+        # one. Until TASK-17755 this path had no such split (every seam ran
+        # `build_fts_match_query` and nothing else) and the note here said
+        # the 15700 tier design would apply if it ever gained fallback
+        # forms. It now has them: a sub-leg whose AND primary returns zero
+        # rows re-runs a prefix form (`_rows_with_prefix_fallback`).
+        #
+        # This merge is nonetheless left UNTIERED, deliberately and
+        # narrowly: `and_then_prefix` was MEASURED untiered on this path
+        # (TASK-3997's report -- 0.396 -> 0.423 MRR, the numbers the owner
+        # decided on), and tiering it would ship an ordering nothing has
+        # measured. What protects the primary rows meanwhile is weaker than
+        # the engine's tiering but not nothing: the widened rows only ever
+        # come from sub-legs that contributed NOTHING before, so no primary
+        # row loses a position it used to hold at the front of the merge --
+        # position 0 of each seam still comes first, in seam order. Deeper
+        # in the list a fallback row can interleave ahead of a primary one,
+        # which is exactly what tiering would fix. Tiering this path is a
+        # follow-up that must be re-measured on the golden set, not a
+        # tidy-up; `Tests/Library/test_library_keyword_and_then_prefix.py`
+        # pins the untiered order so the change cannot happen silently.
         #
         # Dedup across seams is structurally vacuous -- the seams are
         # disjoint by source type -- but the primitive needs a key, and
@@ -541,31 +560,39 @@ class LibraryLocalRagSearchService:
         service = getattr(self._app, "notes_scope_service", None)
         if service is None:
             return False, []
-        try:
-            # Forward the allowlist only when provided so an unscoped call
-            # keeps the exact legacy call shape (byte-identical, spec D2).
-            allowlist_kwargs = (
-                {"id_allowlist": id_allowlist} if id_allowlist is not None else {}
-            )
+        # Forward the allowlist only when provided so an unscoped call
+        # keeps the exact legacy call shape (byte-identical, spec D2).
+        allowlist_kwargs = (
+            {"id_allowlist": id_allowlist} if id_allowlist is not None else {}
+        )
+
+        async def run_match(fts_match_query: str) -> list[dict[str, Any]]:
+            # Pre-built MATCH string (plural/singular widened) so the notes
+            # seam is not limited to its exact-phrase fallback -- FTS5
+            # unicode61 has no stemming (task-185 UAT). Which expression
+            # arrives here -- the AND primary or the prefix widening -- is
+            # `_rows_with_prefix_fallback`'s decision, not this seam's.
             raw_results = await service.search_notes(
                 scope="local_note",
                 query=query,
                 limit=top_k,
                 user_id=user_id,
-                # Pre-built MATCH string (plural/singular widened) so the
-                # notes seam is not limited to its exact-phrase fallback --
-                # FTS5 unicode61 has no stemming (task-185 UAT).
-                fts_match_query=build_fts_match_query(query),
+                fts_match_query=fts_match_query,
                 **allowlist_kwargs,
             )
+            return [
+                _note_row(item)
+                for item in raw_results or ()
+                if isinstance(item, Mapping)
+            ]
+
+        try:
+            return True, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: notes seam failed."
             )
             return True, []
-        return True, [
-            _note_row(item) for item in raw_results or () if isinstance(item, Mapping)
-        ]
 
     async def _search_media(
         self,
@@ -578,27 +605,31 @@ class LibraryLocalRagSearchService:
         service = getattr(self._app, "media_reading_scope_service", None)
         if service is None:
             return False, []
-        try:
-            # Forward the allowlist only when provided so an unscoped call
-            # keeps the exact legacy call shape (byte-identical, spec D2).
-            allowlist_kwargs = (
-                {"id_allowlist": id_allowlist} if id_allowlist is not None else {}
-            )
+        # Forward the allowlist only when provided so an unscoped call
+        # keeps the exact legacy call shape (byte-identical, spec D2).
+        allowlist_kwargs = (
+            {"id_allowlist": id_allowlist} if id_allowlist is not None else {}
+        )
+
+        async def run_match(fts_match_query: str) -> list[dict[str, Any]]:
             payload = await service.search_media(
                 mode="local",
                 query=query,
                 limit=top_k,
                 offset=0,
-                fts_match_query=build_fts_match_query(query),
+                fts_match_query=fts_match_query,
                 **allowlist_kwargs,
             )
+            items = payload.get("items", []) if isinstance(payload, Mapping) else []
+            return [_media_row(item) for item in items if isinstance(item, Mapping)]
+
+        try:
+            return True, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: media seam failed."
             )
             return True, []
-        items = payload.get("items", []) if isinstance(payload, Mapping) else []
-        return True, [_media_row(item) for item in items if isinstance(item, Mapping)]
 
     async def _search_conversations(
         self,
@@ -609,8 +640,8 @@ class LibraryLocalRagSearchService:
         db = getattr(self._app, "chachanotes_db", None)
         if db is None:
             return False, []
-        fts_query = build_fts_match_query(query)
-        try:
+
+        async def run_match(fts_query: str) -> list[dict[str, Any]]:
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
                 # thread that created the database has the migrated schema;
@@ -620,16 +651,19 @@ class LibraryLocalRagSearchService:
                 raw_results = await asyncio.to_thread(
                     db.search_conversations_by_content, fts_query, top_k
                 )
+            return [
+                _conversation_row(item)
+                for item in raw_results or ()
+                if isinstance(item, Mapping)
+            ]
+
+        try:
+            return True, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: conversations seam failed."
             )
             return True, []
-        return True, [
-            _conversation_row(item)
-            for item in raw_results or ()
-            if isinstance(item, Mapping)
-        ]
 
     async def _search_prompts(
         self,
@@ -640,23 +674,30 @@ class LibraryLocalRagSearchService:
         service = getattr(self._app, "prompt_scope_service", None)
         if service is None:
             return False, []
-        try:
+
+        async def run_match(fts_match_query: str) -> list[dict[str, Any]]:
+            # Pre-built MATCH string, same as the notes/media/conversations
+            # seams above -- and, since TASK-17755, under the same
+            # ``and_then_prefix`` rule as all three.
             raw_results = await service.search_prompts(
                 mode="local",
                 query=query,
                 limit=top_k,
-                # Pre-built MATCH string (plural/singular widened), same as
-                # the notes/media/conversations seams above.
-                fts_match_query=build_fts_match_query(query),
+                fts_match_query=fts_match_query,
             )
+            return [
+                _prompt_row(item)
+                for item in raw_results or ()
+                if isinstance(item, Mapping)
+            ]
+
+        try:
+            return True, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: prompts seam failed."
             )
             return True, []
-        return True, [
-            _prompt_row(item) for item in raw_results or () if isinstance(item, Mapping)
-        ]
 
     async def _search_semantic(
         self,
@@ -1140,6 +1181,73 @@ def _retrieval_payload(
             "semantic_scope_coverage": _semantic_scope_coverage(source_types, rows)
         }
     return result
+
+
+async def _rows_with_prefix_fallback(
+    query: str,
+    run_match: Callable[[str], Awaitable[list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    """Run ONE sub-leg's keyword query under the ``and_then_prefix`` rule.
+
+    TASK-17755, and the whole of it: the AND-of-variant-groups
+    (`build_fts_match_query`) stays the primary, and the PREFIX form
+    (`build_prefix_match_query`) runs **only** for a sub-leg whose primary
+    returned zero rows.
+
+    Written once and used by all four seams rather than inlined four times,
+    for the reason the four seams have historically drifted: each one calls
+    a different service with a different signature, and a construction
+    copied four ways is a construction that will eventually be three
+    constructions. The seams differ in HOW to run a MATCH; that is what
+    `run_match` carries. They do not differ in WHEN to widen.
+
+    The decision is per SUB-LEG, exactly as the engine makes it
+    (`RAGService._fts_rows_with_fallback`, shipped since TASK-15700), never
+    per query. One search can legitimately carry AND rows from the notes
+    seam and prefix rows from the media seam -- that mix is the point.
+    Deciding per query would either leave every seam strict (no rescue at
+    all, since any one seam matching would suppress the others' fallback) or
+    widen seams that had already found the right document.
+
+    Why this cannot regress a hit: a sub-leg that found rows never builds
+    the prefix expression, let alone runs it. That is a property of the
+    control flow, not of the two forms' relative recall, which is why it
+    survives whatever either builder is changed to later. It is pinned by
+    counting prefix CONSTRUCTIONS rather than comparing rows, in
+    `Tests/Library/test_library_keyword_and_then_prefix.py`.
+
+    An empty expression means "no rows" on both sides and the query is
+    skipped: an empty MATCH is an FTS5 syntax error rather than an empty
+    answer, and for the prefix form specifically the only alternative to
+    skipping would be an unbounded stopword prefix over the whole corpus.
+
+    Args:
+        query: The raw user query. Both forms are built from it; the caller
+            never builds either itself.
+        run_match: Runs ONE MATCH expression against this seam's service and
+            returns the seam's finished row list (already projected by the
+            seam's row builder, so the zero-row test is made on what would
+            actually reach the merge -- not on a raw payload whose items the
+            projection might have dropped).
+
+    Returns:
+        The primary's rows, or -- only when those were empty -- the prefix
+        form's rows. Never both: a sub-leg's rows are all-primary or
+        all-fallback within one query.
+    """
+    primary = build_fts_match_query(query)
+    rows = await run_match(primary) if primary else []
+    if rows:
+        return rows
+
+    # Built here and nowhere earlier: constructing it eagerly would cost
+    # nothing measurable but would destroy the ability to PROVE the fallback
+    # never fires for a hitting sub-leg, which is the property the owner's
+    # decision rests on.
+    fallback = build_prefix_match_query(query)
+    if not fallback:
+        return []
+    return await run_match(fallback)
 
 
 def _keyword_row_identity(row: Mapping[str, Any]) -> Hashable:

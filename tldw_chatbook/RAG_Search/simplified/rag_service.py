@@ -44,6 +44,14 @@ except ImportError:
 import psutil
 
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Utils.fts5_match_forms import (
+    FTS5_STOPWORDS,
+    build_prefix_match_expression,
+    fts5_query_tokens,
+    fts5_token_runs,
+    is_fts5_stopword,
+    quote_fts5_token,
+)
 from tldw_chatbook.Metrics.metrics_logger import (
     log_counter,
     log_histogram,
@@ -255,18 +263,17 @@ FTS_MATCH_FORMS_BY_CONSTRUCTION: Dict[str, Tuple[str, Optional[str]]] = {
 # were `template`, `building`, `rough`, `turns`, `pulls`, `builds`, which no
 # stopword list removes). The exact size is pinned by
 # `test_stopword_list_is_lowercase_and_covers_the_measured_blocker`.
-_FTS5_STOPWORDS: FrozenSet[str] = frozenset(
-    {
-        "a", "about", "all", "also", "am", "an", "and", "any", "are", "as",
-        "at", "be", "been", "but", "by", "can", "do", "does", "for", "from",
-        "had", "has", "have", "how", "i", "if", "in", "into", "is", "it",
-        "its", "me", "my", "no", "not", "of", "on", "or", "our", "out",
-        "so", "than", "that", "the", "their", "them", "then", "there",
-        "these", "they", "this", "to", "up", "was", "we", "were", "what",
-        "when", "where", "which", "who", "why", "will", "with", "would",
-        "you", "your",
-    }
-)
+#
+# TASK-17755 MOVED the literal to `Utils/fts5_match_forms.py` and imports it
+# back under this name. It did not copy it. The Library's four-seam plain
+# Search path adopted `and_then_prefix` in that task, so a second consumer
+# now needs this list and the prefix builder below -- and the Library screen
+# runs BOTH paths (Search is the four-seam one, RAG Answer is this engine),
+# which is precisely the situation where two lists that agree today and
+# diverge next quarter present as a retrieval bug nobody can locate. There
+# is one list; `_FTS5_STOPWORDS` is still the name the engine's tests and
+# the RAG_Eval probes read it by.
+_FTS5_STOPWORDS: FrozenSet[str] = FTS5_STOPWORDS
 
 
 def _resolve_keyword_source_types(
@@ -3338,12 +3345,11 @@ class RAGService:
 
         # Bound total processing length before tokenizing (DoS guard). The
         # warning belongs to `_escape_fts5_query`, which runs once per
-        # search; this helper also runs once per RESULT ROW.
-        query = query[:MAX_QUERY_LENGTH]
-
-        return [
-            token for token in query.split() if any(ch.isalnum() for ch in token)
-        ]
+        # search; this helper also runs once per RESULT ROW. The bound stays
+        # HERE rather than in the shared tokenizer: it is this service's
+        # configured limit, and the Library's four-seam path -- the other
+        # consumer since TASK-17755 -- validates against its own.
+        return fts5_query_tokens(query[:MAX_QUERY_LENGTH])
 
     def _escape_fts5_query(self, query: str) -> str:
         """
@@ -3600,7 +3606,7 @@ class RAGService:
         Returns:
             The token as a quoted FTS5 term.
         """
-        return '"{}"'.format(token.replace('"', '""'))
+        return quote_fts5_token(token)
 
     @staticmethod
     def _is_fts5_stopword(token: str) -> bool:
@@ -3638,8 +3644,7 @@ class RAGService:
             True when the token is a single alphanumeric run listed in
             ``_FTS5_STOPWORDS``.
         """
-        runs = re.findall(r"[^\W_]+", token, re.UNICODE)
-        return len(runs) == 1 and runs[0].lower() in _FTS5_STOPWORDS
+        return is_fts5_stopword(token)
 
     @staticmethod
     def _fts5_term_key(token: str) -> str:
@@ -3658,7 +3663,7 @@ class RAGService:
         Returns:
             The token's runs, space-joined and case-folded.
         """
-        return " ".join(re.findall(r"[^\W_]+", token, re.UNICODE)).lower()
+        return " ".join(fts5_token_runs(token)).lower()
 
     def _resolved_fts_match_construction(self) -> str:
         """The active MATCH construction, or ``"and"`` for anything unknown.
@@ -3844,11 +3849,13 @@ class RAGService:
             FTS_MATCH_CONSTRUCTION_PREFIX,
             FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX,
         ):
-            # The star goes OUTSIDE the quotes: FTS5 reads `"tok"*` as "a
-            # phrase whose last token is a prefix", while a star inside the
-            # quotes is an inert character in the literal (the tokenizer
-            # drops it) and would silently reduce this to the trimmed AND.
-            prefix_expression = " ".join(f"{token}*" for token in quoted)
+            # The ONE prefix-form builder (TASK-17755 moved it to
+            # `Utils/fts5_match_forms.py`; the Library's four-seam path runs
+            # the same form for the same reason). It re-applies the stopword
+            # trim, which is idempotent on `content_tokens` -- so this is
+            # byte-identical to the inline construction it replaced, pinned
+            # by `test_the_engine_and_the_library_build_the_same_prefix_form`.
+            prefix_expression = build_prefix_match_expression(content_tokens)
 
             if construction == FTS_MATCH_CONSTRUCTION_PREFIX:
                 # Trimming empties -> "" (the skip contract), never the full

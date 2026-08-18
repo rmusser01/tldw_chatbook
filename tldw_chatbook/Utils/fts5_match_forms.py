@@ -1,0 +1,204 @@
+"""The FTS5 MATCH *forms* shared by the RAG engine and the Library seams.
+
+TASK-17755. Two retrieval paths in this app build FTS5 MATCH expressions:
+the engine's keyword leg (``RAG_Search/simplified/rag_service.py``) and the
+Library's four-seam plain-Search path (``Library/library_fts_query.py`` +
+``Library/library_local_rag_search_service.py``). The engine has shipped the
+``and_then_prefix`` construction since TASK-15700 and TASK-17755 adopts the
+same construction on the four-seam path, so both now need the **PREFIX
+form** and the function-word list it trims with.
+
+This module is that ONE definition. It exists because the alternative --
+a second copy of a 67-word stopword list and a second `"tok"*` builder --
+is the exact failure mode TASK-17600 shipped a guard against: twin literals
+drift apart silently, and a retrieval form that differs between two paths
+is indistinguishable from a retrieval *bug* when a query answers in one
+place and not the other. Reuse is not a tidiness preference here; the whole
+point of TASK-17755 is that the Library's Search tab and its RAG Answer tab
+stop disagreeing about what matches.
+
+Deliberately dependency-free (stdlib only, no package imports): its two
+consumers are a heavy engine module and a pure Library module, and the pure
+one must stay cheap to import. That is why it lives under ``Utils/`` --
+whose ``__init__`` is empty -- rather than under ``RAG_Search/``, whose
+package ``__init__`` pulls the whole simplified engine (chromadb,
+embeddings) in a try/except.
+
+What is NOT here: the AND forms. The engine's implicit-AND
+(``_escape_fts5_query``) and the Library's OR-of-plural-variants
+(``build_fts_match_query``) are genuinely different constructions with
+different histories, and they are each path's *primary* -- unchanged by
+TASK-17755 and not shared. Only the widening fallback is common.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import FrozenSet, Iterable, List
+
+__all__ = [
+    "FTS5_STOPWORDS",
+    "build_prefix_match_expression",
+    "fts5_query_tokens",
+    "fts5_token_runs",
+    "is_fts5_stopword",
+    "quote_fts5_token",
+]
+
+# A small fixed English function-word list, consulted by every widening FORM
+# and by NO primary AND form. Moved here verbatim from
+# ``rag_service._FTS5_STOPWORDS`` (TASK-15400/15700), which now imports it
+# back under that name so the engine's own tests and probes keep reading the
+# same object they always did -- there is exactly one list, not two that
+# happen to agree today.
+#
+# Where it lands on the shipped default paths: the engine's
+# ``and_then_prefix`` PRIMARY is the full AND, which does not consult this
+# list, and its FALLBACK is the prefix form, which does -- so it is
+# consulted only for sub-legs whose primary returned zero rows. TASK-17755
+# gives the Library's four seams the same shape, so the same sentence is now
+# true there.
+#
+# The PREFIX form is where this list is MOST load-bearing, by a distance. An
+# untrimmed OR admits every document containing "the"; an untrimmed prefix
+# term is worse still, because ``"the"*`` matches "the", "then", "there",
+# "their", "these" -- i.e. nearly a whole corpus -- and the prefix form ANDs
+# its terms, so one such term does not merely add noise, it makes the whole
+# expression match almost everything the other terms allow. That is why
+# ``build_prefix_match_expression`` answers ``""`` (no rows) when trimming
+# empties the token list rather than widening to something useless.
+#
+# Fixed and small on purpose -- a large list starts deleting content words
+# (TASK-15400's census found the real blockers were `template`, `building`,
+# `rough`, `turns`, `pulls`, `builds`, which no stopword list removes).
+FTS5_STOPWORDS: FrozenSet[str] = frozenset(
+    {
+        "a", "about", "all", "also", "am", "an", "and", "any", "are", "as",
+        "at", "be", "been", "but", "by", "can", "do", "does", "for", "from",
+        "had", "has", "have", "how", "i", "if", "in", "into", "is", "it",
+        "its", "me", "my", "no", "not", "of", "on", "or", "our", "out",
+        "so", "than", "that", "the", "their", "them", "then", "there",
+        "these", "they", "this", "to", "up", "was", "we", "were", "what",
+        "when", "where", "which", "who", "why", "will", "with", "would",
+        "you", "your",
+    }
+)
+
+#: One alphanumeric run, as FTS5's default ``unicode61`` tokenizer reads it.
+_RUN_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def fts5_token_runs(token: str) -> List[str]:
+    """The alphanumeric runs FTS5 would index a raw token as.
+
+    ``Obsidian-3`` is two runs (``Obsidian``, ``3``); ``About,`` is one
+    (``about``, case-folded by the tokenizer). Every comparison in this
+    module is made on runs rather than on the raw string, because runs are
+    what FTS5 actually matches.
+
+    Args:
+        token: One raw whitespace-delimited query token.
+
+    Returns:
+        The token's alphanumeric runs, in order; empty for pure punctuation.
+    """
+    return _RUN_PATTERN.findall(token)
+
+
+def quote_fts5_token(token: str) -> str:
+    """Quote ONE query token as an FTS5 string literal.
+
+    The single place the injection-safety property of TASK-3995 is
+    implemented for the widening forms: a bare token FTS5 parses as
+    column-filter or operator syntax (``Obsidian-3`` raises
+    ``OperationalError('no such column: 3')``; a typed ``OR`` becomes a
+    disjunction of the user's own words), while a quoted token is a literal
+    string with no operator semantics. An embedded double quote is doubled,
+    FTS5's own escape for a literal quote inside a quoted term.
+
+    Args:
+        token: One raw token from ``fts5_query_tokens``.
+
+    Returns:
+        The token as a quoted FTS5 term.
+    """
+    return '"{}"'.format(token.replace('"', '""'))
+
+
+def is_fts5_stopword(token: str) -> bool:
+    """Whether a raw query token is a function word.
+
+    Compared on the token's alphanumeric runs, because that is how FTS5
+    reads a quoted token: ``About,`` indexes and matches exactly as
+    ``about``, so the trimmer must see them as the same word. A token with
+    more than one run (``read-only``) is content, never a stopword.
+
+    Args:
+        token: One raw token from ``fts5_query_tokens``.
+
+    Returns:
+        True when the token is a single alphanumeric run listed in
+        ``FTS5_STOPWORDS``.
+    """
+    runs = fts5_token_runs(token)
+    return len(runs) == 1 and runs[0].lower() in FTS5_STOPWORDS
+
+
+def fts5_query_tokens(query: str) -> List[str]:
+    """Tokenize a raw user query for MATCH construction.
+
+    Tokens are whitespace-separated runs containing at least one
+    alphanumeric character. FTS5's default tokenizer indexes only
+    alphanumeric runs, so a pure-punctuation token ("!!!") can never match
+    anything and is dropped rather than carried as a no-op that would make
+    the prefix form ``"!!!"*`` -- an expression matching nothing, ANDed with
+    the terms that would otherwise have matched.
+
+    Length bounding is deliberately NOT done here: the engine bounds at its
+    own configured ``MAX_QUERY_LENGTH`` before calling in, and the Library
+    validates at ``LIBRARY_RAG_QUERY_MAX_LENGTH`` at its own boundary. A
+    third limit baked in here would silently override whichever caller's
+    limit is larger.
+
+    Args:
+        query: Raw search query (already length-bounded by the caller).
+
+    Returns:
+        The query's searchable tokens, in query order; empty when the query
+        is empty, whitespace-only or all punctuation.
+    """
+    if not query:
+        return []
+    return [token for token in query.split() if any(ch.isalnum() for ch in token)]
+
+
+def build_prefix_match_expression(tokens: Iterable[str]) -> str:
+    """Build the PREFIX form: content tokens as prefix terms, implicitly ANDed.
+
+    The widening form both ``and_then_prefix`` implementations run for a
+    sub-leg whose AND primary returned zero rows. Function words are trimmed
+    (see ``FTS5_STOPWORDS`` for why that matters more here than anywhere
+    else), each surviving token is quoted, and the star goes **outside** the
+    quotes: FTS5 reads ``"tok"*`` as "a phrase whose last token is a
+    prefix", while a star inside the quotes is an inert character in the
+    literal (the tokenizer drops it) and would silently reduce this to a
+    plain trimmed AND.
+
+    Passing already-trimmed tokens is safe: the trim is idempotent, which is
+    what lets the engine hand in its ``content_tokens`` and the Library hand
+    in its full token list and both get the same form.
+
+    Args:
+        tokens: Raw query tokens, e.g. from ``fts5_query_tokens``.
+
+    Returns:
+        The prefix expression, or ``""`` when trimming leaves nothing.
+        ``""`` means "no rows" and callers must skip the FTS5 query
+        entirely -- never fall back to a wider expression, because the only
+        query left to run would be an unbounded stopword prefix.
+    """
+    return " ".join(
+        f"{quote_fts5_token(token)}*"
+        for token in tokens
+        if not is_fts5_stopword(token)
+    )

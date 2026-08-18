@@ -12,9 +12,24 @@ module deliberately emits: parentheses and ``OR`` between variants of one
 term, and ``AND`` between terms. The explicit ``AND`` keeps the service's
 existing whitespace-implied AND-of-terms semantics -- it must be spelled out
 because FTS5 rejects implicit AND next to a parenthesized group.
+
+That AND is strict: one absent term zeroes a seam. TASK-3997 measured what
+that costs on the gated corpus (32 of 53 ground-truthed golden queries
+returned nothing) and the owner adopted ``and_then_prefix``, so this module
+now also exposes the WIDENING form -- ``build_prefix_match_query`` -- that
+`library_local_rag_search_service` runs for a sub-leg whose AND primary
+found nothing. The two are deliberately separate functions: the AND above
+is unchanged by TASK-17755 and is still what every seam runs first, and it
+has a second consumer (`Chat/scope_picker_listers.py`) that gets no
+fallback.
 """
 
 from __future__ import annotations
+
+from tldw_chatbook.Utils.fts5_match_forms import (
+    build_prefix_match_expression,
+    fts5_query_tokens,
+)
 
 # Terms shorter than this are never expanded (articles, initials, "as", ...).
 _MIN_EXPANSION_LENGTH = 3
@@ -99,3 +114,35 @@ def build_fts_match_query(query: str) -> str:
         else:
             groups.append("(" + " OR ".join(quoted) + ")")
     return " AND ".join(groups)
+
+
+def build_prefix_match_query(query: str) -> str:
+    """Build the PREFIX form -- ``and_then_prefix``'s widening fallback.
+
+    TASK-17755. Run by `library_local_rag_search_service` for a sub-leg
+    whose `build_fts_match_query` primary returned zero rows, and never
+    otherwise. It reaches documents the primary's plural/singular widening
+    cannot: "tension" does not widen to "tensioner", but ``"tension"*``
+    matches it.
+
+    A thin adapter over `Utils.fts5_match_forms`, which is the ONE
+    definition of this form and of the function-word list it trims with --
+    shared with the engine's keyword leg, which has run the same
+    construction since TASK-15700. Not re-implemented here on purpose: the
+    Library screen's Search tab is this path and its RAG Answer tab is the
+    engine, and TASK-3997 documented a user hitting two different matching
+    rules on one screen. A second copy of the form would re-open that gap
+    the first time either copy was edited.
+
+    Args:
+        query: Validated user query text (plain natural language).
+
+    Returns:
+        The prefix expression, e.g. ``feedback loop`` becomes
+        ``"feedback"* "loop"*``. ``""`` when the query has no content
+        tokens -- meaning "no rows", which callers must honour by skipping
+        the query rather than widening further (see the shared module for
+        why an unbounded stopword prefix is the one thing worse than a
+        zero-row seam).
+    """
+    return build_prefix_match_expression(fts5_query_tokens(query))

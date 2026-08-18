@@ -1,6 +1,6 @@
 {
   "baseline_id": "plain",
-  "created_at": "2026-08-12T23:01:15.692447+00:00",
+  "created_at": "2026-08-18T02:04:39.534789+00:00",
   "pipeline_config": {
     "mode": "plain",
     "k": 10,
@@ -13,16 +13,16 @@
     ]
   },
   "metrics": {
-    "overall.precision": 0.30434782608695654,
-    "overall.recall": 0.29347826086956524,
-    "overall.mrr": 0.30434782608695654,
-    "overall.ndcg": 0.295937982451423,
-    "overall.f1": 0.2971014492753623,
-    "category.keyword.precision": 0.875,
-    "category.keyword.recall": 0.84375,
-    "category.keyword.mrr": 0.875,
-    "category.keyword.ndcg": 0.8508216995478411,
-    "category.keyword.f1": 0.8541666666666666,
+    "overall.precision": 0.32608695652173914,
+    "overall.recall": 0.31521739130434784,
+    "overall.mrr": 0.32608695652173914,
+    "overall.ndcg": 0.3176771128862056,
+    "overall.f1": 0.3188405797101449,
+    "category.keyword.precision": 0.9375,
+    "category.keyword.recall": 0.90625,
+    "category.keyword.mrr": 0.9375,
+    "category.keyword.ndcg": 0.9133216995478411,
+    "category.keyword.f1": 0.9166666666666666,
     "category.negation.precision": 0.0,
     "category.negation.recall": 0.0,
     "category.negation.mrr": 0.0,
@@ -59,17 +59,17 @@
       "platform": "darwin"
     },
     "environment_info": {
-      "sentence_transformers": "5.4.1"
+      "sentence_transformers": "5.7.0"
     },
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 14.2,
-        "p95_ms": 24.8,
-        "max_ms": 33.4,
-        "total_s": 0.8
+        "mean_ms": 18.4,
+        "p95_ms": 31.1,
+        "max_ms": 41.6,
+        "total_s": 1.1
       },
-      "mean_docs_at_k": 0.304,
+      "mean_docs_at_k": 0.457,
       "num_queries": 46,
       "num_golden_queries": 60,
       "num_negative": 7,
