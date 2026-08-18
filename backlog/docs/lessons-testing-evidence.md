@@ -5144,3 +5144,37 @@ arc's own freshly written pin `assert "outline:" not in focus` — written
 minutes earlier to mean "no focus outline". Ban the specific values
 (`outline: solid`, `outline: heavy`) and PIN the opt-out explicitly; a
 substring ban on the property name bans the cure along with the disease.
+
+## A bundle-less harness does not just hide styles — it changes LAYOUT MODE (task-17660, 2026-08-18)
+
+**What happened.** Two Settings toggle tests went red on dev and looked like a
+regression from recent merges. The real chain: the Console Behavior card's
+stylesheet rule is `height: auto`, but the test harness (`DestinationHarness`,
+a `ConsolidatedCSSApp` with no bundle) never loads it — so the card fell back
+to the container default and was CLAMPED to a fraction of the pane. When two
+new sections landed in the card (Status row placement, Selection side chat),
+its content grew past the clamp; the paste checkbox laid out beyond the card's
+box, sibling detail rows painted over its coordinates, and `pilot.click`
+missed silently — `clicked` came back `False`, nothing staged, and the Save
+button truthfully reported "no changes". A bundled probe against the same
+build showed the card auto-growing to its full height with the control
+reachable by ordinary scrolling: **no production defect existed**.
+
+Three mechanics worth keeping:
+
+1. **Missing CSS can flip a container from auto-sizing to fraction-sizing.**
+   That is a different failure class from "the margin/padding I assert on is
+   absent": the whole layout topology changes, children overflow their
+   parent's box, and hit-testing lands on unrelated widgets. A geometry or
+   interaction test whose subject sits deep in a card is meaningless without
+   the bundle.
+2. **`pilot.click` misses are silent unless you assert the return value.**
+   The click "succeeded" as far as the test flow was concerned and the
+   failure surfaced two steps later as a missing toast — assert `clicked` at
+   the click site so the failure names the real problem.
+3. This is the third distinct incident of the bundle-less-harness trap
+   (`ConsoleHarness` could not see the phantom chips margin in task-17650;
+   the composer padding in the same audit; now layout-mode clamping here).
+   When a mounted test drives clicks or asserts geometry, subclass the
+   harness with `CSS_PATH = BUNDLED_STYLESHEET` — and treat a red mounted
+   test in a bare harness as unattributed until reproduced under the bundle.
