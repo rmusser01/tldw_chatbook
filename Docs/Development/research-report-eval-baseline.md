@@ -468,6 +468,39 @@ refuted by the gate. task-17384 is therefore on the critical path for BOTH
 decomposition mechanisms now that multi-hop ships on by default: the bigger the
 evidence pool either one produces, the more of it chunking swallows.
 
+### The chunk fix, and where the bottleneck went next (arm H, task-17384)
+
+Arm G's conditions repeated with map-reduce chunk summarization fixed (the
+summarizer was pinned to a 4096 token budget while the chat path ran on 16384,
+and the model spends ~3.6-4k of that on reasoning):
+
+| | Arm G (chunk summaries failing) | Arm H (fixed) |
+|---|---|---|
+| chunk summarization failures | 6 of 8 | **0 of 2** |
+| evidence admitted | 50 | **66** |
+| resolved citation markers | 37 over 3 runs | 55 over 2 runs (**2.2x per run**) |
+| `cited_sentence_ratio` | 0.63 | **1.00** |
+| `citation_accuracy` | 1.00 | 1.00 |
+| questions scored | 3 of 3 | **2 of 3** |
+
+**The retrieval gain now reaches the report.** Citation density hit 1.00 --
+every sentence in both scored reports carried a marker -- and markers per run
+more than doubled. Chunk summarization stopped failing entirely.
+
+**And the bottleneck moved again, to the synthesis call's wall clock.** The
+third question produced NOTHING: its single synthesis call hit the provider read
+timeout (600s, what the recorder primes) and the run left no report and no
+verification payload, so it is absent from the aggregate rather than scored as a
+failure. Filed as task-17386.
+
+That is the fourth time in this program that fixing one stage has revealed the
+next one as the binding constraint -- gate, then chunk summarization, then
+per-result summarization, now synthesis wall clock. The pattern is worth stating
+plainly: **each measured improvement in what the pipeline RETRIEVES raises the
+load on what it must then SUMMARIZE and WRITE**, and every one of those stages
+had a bound calibrated for the single-query runs this document used to record.
+
+
 ### Reading gate_pass_rate
 
 It is a ratio, and multi-hop adds to its denominator. Pulling in more marginal
