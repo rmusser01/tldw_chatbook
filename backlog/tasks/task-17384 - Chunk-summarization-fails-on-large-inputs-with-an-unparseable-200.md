@@ -9,7 +9,7 @@ labels:
   - llm-calls
   - bug
 dependencies: []
-priority: medium
+priority: high
 ---
 
 ## Description
@@ -33,6 +33,14 @@ The consequence is bounded rather than silent: the caller recognizes the failure
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+Raised to high priority on task-17372's arm G evidence (2026-08-17): this now
+blocks BOTH decomposition mechanisms, not just an edge case. That arm admitted
+56% more evidence than its predecessor (32 -> 50 sources) and produced HALF the
+resolved citation markers (70 -> 37), because it was the first fan-out arm large
+enough to trigger map-reduce chunking -- 8 chunk operations, 6 of them failing
+here. With multi-hop shipping on by default, every larger evidence pool runs
+into this, so the defect converts retrieval improvements into worse reports.
+
 Evidence from the task-17370 arm F run (2026-08-17), all three earlier defects
 already fixed:
 

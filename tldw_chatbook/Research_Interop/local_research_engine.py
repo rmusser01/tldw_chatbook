@@ -76,6 +76,11 @@ def _configured_max_iterations() -> int:
     return configured if configured >= 1 else DEFAULT_MAX_ITERATIONS
 
 
+#: Total search queries per call when nothing configures it. Qodo (PR 1772):
+#: the literal was repeated at every read site, so a change to one silently
+#: left the lanes reading different caps.
+DEFAULT_MAX_QUERIES = 5
+
 SearchFn = Callable[[str, dict[str, Any]], Any]
 AnalyzeFn = Callable[..., Awaitable[Any]]
 GapFn = Callable[[dict[str, Any]], Awaitable[list[str]]]
@@ -472,7 +477,8 @@ class LocalResearchEngine:
             reserved_for_call = 0
             if remaining is not None:
                 cap = min(
-                    int(params.get("search_default_max_queries", 5) or 5),
+                    int(params.get("search_default_max_queries", DEFAULT_MAX_QUERIES)
+                or DEFAULT_MAX_QUERIES),
                     max(1, remaining),
                 )
                 params["search_default_max_queries"] = cap
@@ -506,6 +512,76 @@ class LocalResearchEngine:
             if reserved_for_call > executed_searches:
                 ledger.release_searches(reserved_for_call - executed_searches)
         return collected, sub_questions, warnings
+
+    def _academic_queries(
+        self,
+        round_queries: list[str],
+        round_sub_questions: list[str],
+        params: dict[str, Any],
+        ledger: BudgetLedger,
+    ) -> tuple[list[str], int]:
+        """Queries the academic lane searches this round (task-17372).
+
+        Sub-question generation lives inside the WEB pipeline, so generated
+        facets used to drive web searches only: this lane looped
+        ``round_queries``, which is ``[question]`` in round 1. Fan-out therefore
+        changed how academic evidence was JUDGED -- the facets do reach the
+        relevance gate through the merged sub-question list -- while leaving
+        what was RETRIEVED untouched, which is why task-17370 measured fan-out
+        as flat on the repositories lane and could say nothing about retrieval.
+        The lane now searches the facets too, so enabling fan-out changes both.
+
+        The generated facets are bounded twice over. The total is capped by the
+        same ``search_default_max_queries`` the web lane obeys, and each EXTRA
+        query is reserved against the search ledger, so a tight ``max_searches``
+        cannot be exceeded by this lane. The base ``round_queries`` keep today's
+        accounting (uncounted) deliberately: counting them would shrink every
+        existing run's web budget, which is a separate decision from this one.
+
+        Args:
+            round_queries: This round's primary queries.
+            round_sub_questions: Facets the web pipeline generated this round.
+            params: Resolved search params, read for the query cap.
+            ledger: Budget ledger; extra queries are reserved against it.
+
+        Returns:
+            ``(queries, reserved_extras)``: the queries to search, in order and
+            deduplicated case-insensitively, and how many searches were
+            RESERVED for the generated facets. Qodo (PR 1772): the caller must
+            settle what it actually attempts and release the rest -- settling
+            here recorded later, unattempted searches as spent whenever a run
+            failed part-way through the lane.
+        """
+        queries: list[str] = []
+        seen: set[str] = set()
+        reserved_extras = 0
+        for query in round_queries:
+            key = str(query).strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                queries.append(query)
+        try:
+            cap = int(
+                params.get("search_default_max_queries", DEFAULT_MAX_QUERIES)
+                or DEFAULT_MAX_QUERIES
+            )
+        except (TypeError, ValueError):
+            cap = DEFAULT_MAX_QUERIES
+        cap = max(1, cap)
+        for facet in round_sub_questions:
+            if len(queries) >= cap:
+                break
+            key = str(facet).strip().casefold()
+            if not key or key in seen:
+                continue
+            remaining = ledger.remaining_searches()
+            if remaining is not None and remaining < 1:
+                break
+            ledger.reserve_searches(1)
+            reserved_extras += 1
+            seen.add(key)
+            queries.append(str(facet).strip())
+        return queries, reserved_extras
 
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
         self.service.save_artifact(
@@ -632,7 +708,24 @@ class LocalResearchEngine:
                 # run failure -- the other lane already collected.
                 providers_filter = self._active_academic_providers
                 accepts_providers = self._paper_fn_accepts_providers()
-                for query in round_queries:
+                academic_queries, reserved_extras = self._academic_queries(
+                    round_queries,
+                    round_sub_questions,
+                    # The same resolved params the web lane collected with, so
+                    # a per-run result_count/engine override cannot leave the
+                    # two lanes reading different caps.
+                    self._active_run_params or search_params,
+                    ledger,
+                )
+                base_count = len(
+                    [q for q in academic_queries if q in set(round_queries)]
+                )
+                attempted_extras = 0
+                for position, query in enumerate(academic_queries):
+                    if position >= base_count:
+                        # An attempted provider call has spent, whether or not
+                        # it returned -- settled here, not at planning time.
+                        attempted_extras += 1
                     try:
                         if providers_filter is not None and accepts_providers:
                             papers = await self._maybe_await(
@@ -650,6 +743,10 @@ class LocalResearchEngine:
                                 continue
                             seen_dois.add(doi)
                         paper_results.append(paper)
+                if attempted_extras:
+                    ledger.settle_searches(attempted_extras)
+                if reserved_extras > attempted_extras:
+                    ledger.release_searches(reserved_extras - attempted_extras)
             # task-16791: merge order follows the policy's preferred lane.
             round_results = (
                 paper_results + round_results
