@@ -51,6 +51,21 @@ Top to bottom:
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
+- **Status chip strip** — one row of chips directly below the
+  conversation pane, above the composer: **Provider**, **Model**,
+  **Assistant**, **Library search**, **Sources**, **Tools**,
+  **Approvals**, and — once retrieval is narrowed — **Scope**. (Settings ▸
+  Console Behavior ▸ **Status row placement** can move this row below the
+  composer instead, restoring the older bottom-row layout; the collapse
+  choice on its leading **Status ▾** control is remembered across visits
+  and restarts.)
+  The chips are actions, not just readouts: **Sources** and **Tools** open
+  the Inspector rail (the only way to reach it in single-pane mode, where
+  the edge handles hide), **Provider**/**Model** open the model picker,
+  **Library search** opens the search settings, **Approvals** jumps to the
+  pending approval card, and **Scope** opens the scope picker. The **Tools**
+  chip only appears once tools are counted for the session (after your
+  first send) — before that it stays hidden rather than guessing.
 - **Staged-evidence strip** — appears directly above the composer only
   while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
@@ -64,17 +79,6 @@ Top to bottom:
   choose a model to continue"), so you never have to hover to find out why.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
-- **Status chip strip** — the shell's bottom row, one row of chips directly
-  below the composer: **Provider**, **Model**, **Assistant**,
-  **Library search**, **Sources**, **Tools**, **Approvals**, and — once
-  retrieval is narrowed — **Scope**.
-  The chips are actions, not just readouts: **Sources** and **Tools** open
-  the Inspector rail (the only way to reach it in single-pane mode, where
-  the edge handles hide), **Provider**/**Model** open the model picker,
-  **Library search** opens the search settings, **Approvals** jumps to the
-  pending approval card, and **Scope** opens the scope picker. The **Tools**
-  chip only appears once tools are counted for the session (after your
-  first send) — before that it stays hidden rather than guessing.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
   Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
 
@@ -420,4 +424,10 @@ post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
 it previously grew to 1966 and kept growing; not re-checked live. Verified
 against 22d156155 + TASK-17650 — 2026-08-17 (headless row-map probe at
 150×44): the permanent blank row between the status row and the footer is
-gone, and the transcript gained the row (region height 28 → 29).*
+gone, and the transcript gained the row (region height 28 → 29). Verified
+against TASK-17652 — 2026-08-17 (headless row-map probes at 150×44, both
+placements): the status chip strip now defaults to sitting ABOVE the
+composer, directly under the conversation pane; Settings ▸ Console
+Behavior ▸ Status row placement restores the below-composer bottom row;
+the Status ▾ collapse choice persists across Console re-entry and app
+restart.*

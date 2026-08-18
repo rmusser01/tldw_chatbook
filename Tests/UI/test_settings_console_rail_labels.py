@@ -48,9 +48,17 @@ async def test_console_rail_label_setting_carries_state_and_stages_from_keyboard
         paste_toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle", Checkbox
         )
+        # task-17652: the status-row placement toggle sits between the rail
+        # checkbox and the paste checkbox in focus order.
+        position_toggle = screen.query_one(
+            "#settings-console-status-row-position-toggle", Button
+        )
         paste_toggle.focus()
         await pilot.press("shift+tab")
+        assert host.focused is position_toggle
+        await pilot.press("shift+tab")
         assert host.focused is toggle
+        await pilot.press("tab")
         await pilot.press("tab")
         assert host.focused is paste_toggle
 
