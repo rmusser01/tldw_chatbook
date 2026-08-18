@@ -372,6 +372,10 @@ def build_eval_runtime(
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+        ServerPromptService,
+        build_prompt_scope_service,
+    )
     from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
     from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
@@ -523,21 +527,25 @@ def build_eval_runtime(
                 server_service=None,
             ),
             notes_user_id=NOTES_USER_ID,
-            # No prompts seam, deliberately, and this is now a REAL gap
-            # rather than a shape convenience — record it when reading the
-            # numbers. Prompts are written and indexed-in-FTS as of
-            # TASK-15020/B2, so hybrid retrieves them through the engine's
-            # keyword leg; PLAIN mode does not go through the engine at all,
-            # it fans out over the Library's own four seams, and the prompts
-            # one is this attribute. Leaving it None means the harness's
-            # plain column reports 0.000 for prompts while the shipped app's
-            # plain mode does find them. B2's deliverable is the ENGINE leg
-            # (the spec puts the four-seam path out of scope), so wiring a
-            # `PromptScopeService` here is left to the Library work rather
-            # than smuggled in — and would move plain-mode numbers for
-            # NON-prompt queries too, since the seam appends its rows to
-            # every plain fan-out.
-            prompt_scope_service=None,
+            # The prompts seam, wired (TASK-18255). It used to be `None`
+            # "deliberately", and that omission cost a wrong finding: the
+            # plain `category.prompt.*` cells read 0.000 because
+            # `_search_prompts` returns `(False, [])` — the seam reporting
+            # itself UNAVAILABLE — and TASK-17855 read that as a production
+            # retrieval defect. The metrics table renders "not measured" and
+            # "measured, found nothing" identically, so an unwired seam is
+            # indistinguishable from a broken one.
+            #
+            # `server_service` is passed EXPLICITLY as a client-less service
+            # rather than left to `app_config`: the default path runs
+            # `derive_configured_server_binding`, and a harness that consults
+            # ambient config could bind to the developer's own server — the
+            # same hazard the `*_db_path` overrides above exist to prevent.
+            # Local-only, no network, by construction.
+            prompt_scope_service=build_prompt_scope_service(
+                prompt_db=prompts_db,
+                server_service=ServerPromptService(client=None),
+            ),
             # An UNSTAMPED `_rag_service` wins outright in the seam's
             # resolver (`semantic_availability.current_app_rag_service`'s
             # direct-injection carve-out), so the seam retrieves through
