@@ -149,6 +149,76 @@ def summarize_with_local_llm(
 DEFAULT_SUMMARY_MAX_TOKENS = 4096
 
 
+def _resolve_local_provider_config(
+    loaded_config_data, modern_key: str, legacy_key: str
+) -> tuple[dict, dict]:
+    """Return ``(modern, legacy)`` config tables for a local provider.
+
+    task-17383: several summarizers indexed sections the loader has never built
+    (`api_keys`, `local_api_ip`, `models`), so they raised before contacting a
+    server and reported failure by RETURNING an error string -- which the
+    deep-search caller could store as a result's evidence. Resolved by name and
+    defensively here, never by index.
+
+    Args:
+        loaded_config_data: The loaded settings mapping (may be None).
+        modern_key: Provider key under ``api_settings`` (e.g. "koboldcpp").
+        legacy_key: Historical top-level section (e.g. "kobold_api").
+
+    Returns:
+        The two tables, each an empty dict when absent.
+    """
+    if not isinstance(loaded_config_data, dict):
+        return {}, {}
+    modern = (loaded_config_data.get("api_settings") or {}).get(modern_key) or {}
+    legacy = loaded_config_data.get(legacy_key) or {}
+    return (
+        modern if isinstance(modern, dict) else {},
+        legacy if isinstance(legacy, dict) else {},
+    )
+
+
+def _resolve_provider_credential(parameter_key, modern: dict, legacy: dict):
+    """Credential for a local provider: the caller's parameter, then the modern
+    table, then the legacy section, then the environment variable the config
+    NAMES (``api_key_env_var`` -- this repo's existing convention, honoured by
+    the media and settings windows; tabbyapi's modern table carries only that).
+
+    Args:
+        parameter_key: Key passed by the caller, if any.
+        modern: Modern per-provider table.
+        legacy: Legacy section.
+
+    Returns:
+        The resolved key, or None when nothing supplies one.
+    """
+    if parameter_key and str(parameter_key).strip():
+        return str(parameter_key).strip()
+    declared = False
+    for table in (modern, legacy):
+        if "api_key" not in table:
+            continue
+        candidate = table.get("api_key")
+        if candidate is None:
+            # Declared as null reads as ABSENT, not blank: these functions
+            # refuse a run with no credential at all while proceeding without
+            # an Authorization header for a configured empty string.
+            continue
+        declared = True
+        if str(candidate).strip():
+            return str(candidate).strip()
+    env_name = str(modern.get("api_key_env_var") or "").strip()
+    if env_name:
+        env_value = os.environ.get(env_name, "").strip()
+        if env_value:
+            return env_value
+    # "Configured but blank" is NOT the same as "absent": these summarizers
+    # proceed without an Authorization header for the former and refuse the
+    # latter, and their tests pin that distinction. Collapsing both to None
+    # turned a working blank-credential call into a failure.
+    return "" if declared else None
+
+
 def summarize_with_llama(
     input_data,
     custom_prompt,
@@ -457,6 +527,12 @@ def summarize_with_kobold(
     try:
         logging.debug("Kobold: Loading and validating configurations")
         loaded_config_data = load_settings()
+        # task-17383: this function indexed `api_keys` and `local_api_ip`,
+        # names the loader has never built, so it raised before reaching a
+        # server. Both a modern api_settings entry and a legacy section exist.
+        kobold_modern, kobold_legacy = _resolve_local_provider_config(
+            loaded_config_data, "koboldcpp", "kobold_api"
+        )
         if loaded_config_data is None:
             logging.error("Failed to load configuration data")
             kobold_api_key = None
@@ -467,13 +543,19 @@ def summarize_with_kobold(
                 logging.info("Kobold: Using API key provided as parameter")
             else:
                 # If no parameter is provided, use the key from the config
-                kobold_api_key = loaded_config_data["api_keys"].get("kobold")
+                kobold_api_key = _resolve_provider_credential(
+                    None, kobold_modern, kobold_legacy
+                )
                 if kobold_api_key:
                     logging.info("Kobold: Using API key from config file")
                 else:
                     logging.warning("Kobold: No API key found in config file")
             # Get the Streaming API IP from the config
-            kobold_openai_api_IP = loaded_config_data["local_api_ip"]["kobold_openai"]
+            kobold_openai_api_IP = (
+                kobold_modern.get("api_url")
+                or kobold_legacy.get("api_streaming_ip")
+                or kobold_legacy.get("api_ip")
+            )
 
         if kobold_api_key is None:
             raise TypeError("'NoneType' object is not subscriptable")
@@ -527,7 +609,12 @@ def summarize_with_kobold(
 
         logging.debug("Kobold Summarization: Submitting request to API endpoint")
         logging.info("Kobold Summarization: Submitting request to API endpoint")
-        kobold_api_ip = loaded_config_data["local_api_ip"]["kobold"]
+        kobold_api_ip = kobold_modern.get("api_url") or kobold_legacy.get("api_ip")
+        if not kobold_api_ip:
+            raise ValueError(
+                "Kobold Summarize: no API URL configured "
+                "(api_settings.koboldcpp.api_url or kobold_api.api_ip)"
+            )
 
         if streaming:
             logging.debug("Kobold Summarization: Streaming mode enabled")
@@ -536,8 +623,8 @@ def summarize_with_kobold(
                 session = requests.Session()
 
                 # Load config values
-                retry_count = loaded_config_data["kobold_api"]["api_retries"]
-                retry_delay = loaded_config_data["kobold_api"]["api_retry_delay"]
+                retry_count = kobold_legacy["api_retries"]
+                retry_delay = kobold_legacy["api_retry_delay"]
 
                 # Configure the retry strategy
                 retry_strategy = Retry(
@@ -613,8 +700,8 @@ def summarize_with_kobold(
                 session = requests.Session()
 
                 # Load config values
-                retry_count = loaded_config_data["kobold_api"]["api_retries"]
-                retry_delay = loaded_config_data["kobold_api"]["api_retry_delay"]
+                retry_count = kobold_legacy["api_retries"]
+                retry_delay = kobold_legacy["api_retry_delay"]
 
                 # Configure the retry strategy
                 retry_strategy = Retry(
@@ -945,6 +1032,11 @@ def summarize_with_tabbyapi(
     try:
         logging.debug("TabbyAPI: Loading and validating configurations")
         loaded_config_data = load_settings()
+        # task-17383: same defect -- `api_keys`, `local_api_ip` and `models`
+        # are names nothing produces.
+        tabby_modern, tabby_legacy = _resolve_local_provider_config(
+            loaded_config_data, "tabbyapi", "tabby_api"
+        )
         if loaded_config_data is None:
             logging.error("Failed to load configuration data")
             tabby_api_key = None
@@ -955,15 +1047,22 @@ def summarize_with_tabbyapi(
                 logging.info("TabbyAPI: Using API key provided as parameter")
             else:
                 # If no parameter is provided, use the key from the config
-                tabby_api_key = loaded_config_data["api_keys"].get("tabby")
+                tabby_api_key = _resolve_provider_credential(
+                    None, tabby_modern, tabby_legacy
+                )
                 if tabby_api_key:
                     logging.info("TabbyAPI: Using API key from config file")
                 else:
                     logging.warning("TabbyAPI: No API key found in config file")
 
         # Set API IP and model from config.txt
-        tabby_api_ip = loaded_config_data["local_api_ip"]["tabby"]
-        tabby_model = loaded_config_data["models"]["tabby"]
+        tabby_api_ip = tabby_modern.get("api_url") or tabby_legacy.get("api_ip")
+        if not tabby_api_ip:
+            raise ValueError(
+                "TabbyAPI Summarize: no API URL configured "
+                "(api_settings.tabbyapi.api_url or tabby_api.api_ip)"
+            )
+        tabby_model = tabby_modern.get("model") or tabby_legacy.get("model")
         if temp is None:
             temp = 0.7
 
@@ -1027,8 +1126,8 @@ def summarize_with_tabbyapi(
                 session = requests.Session()
 
                 # Load config values
-                retry_count = loaded_config_data["tabby_api"]["api_retries"]
-                retry_delay = loaded_config_data["tabby_api"]["api_retry_delay"]
+                retry_count = tabby_legacy["api_retries"]
+                retry_delay = tabby_legacy["api_retry_delay"]
 
                 # Configure the retry strategy
                 retry_strategy = Retry(
@@ -1095,8 +1194,8 @@ def summarize_with_tabbyapi(
                 session = requests.Session()
 
                 # Load config values
-                retry_count = loaded_config_data["tabby_api"]["api_retries"]
-                retry_delay = loaded_config_data["tabby_api"]["api_retry_delay"]
+                retry_count = tabby_legacy["api_retries"]
+                retry_delay = tabby_legacy["api_retry_delay"]
 
                 # Configure the retry strategy
                 retry_strategy = Retry(

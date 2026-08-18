@@ -167,12 +167,14 @@ def _local_settings(*, llama_endpoint: str = "http://llama.invalid") -> dict[str
             "api_retries": 0,
             "api_retry_delay": 0,
         },
-        "api_keys": {"kobold": "fixed-kobold-key"},
-        "local_api_ip": {
-            "kobold": "http://kobold.invalid/generate",
-            "kobold_openai": "http://kobold.invalid/chat",
+        # Same for Kobold (task-17383): its own section is what exists.
+        "kobold_api": {
+            "api_key": "fixed-kobold-key",
+            "api_ip": "http://kobold.invalid/generate",
+            "api_streaming_ip": "http://kobold.invalid/chat",
+            "api_retries": 0,
+            "api_retry_delay": 0,
         },
-        "kobold_api": {"api_retries": 0, "api_retry_delay": 0},
     }
 
 
@@ -189,10 +191,16 @@ def _local_adapter_settings(
             "api_retries": 0,
             "api_retry_delay": 0,
         },
-        "api_keys": {"tabby": tabby_key},
-        "local_api_ip": {"tabby": "http://tabby.invalid/v1/chat/completions"},
-        "models": {"tabby": "fixed-tabby-model"},
-        "tabby_api": {"api_retries": 0, "api_retry_delay": 0},
+        # task-17383: `api_keys`, `local_api_ip` and `models` are names the
+        # loader has never built -- keying the fixture to them is what let the
+        # TabbyAPI summarizer pass here while failing on every real config.
+        "tabby_api": {
+            "api_key": tabby_key,
+            "api_ip": "http://tabby.invalid/v1/chat/completions",
+            "model": "fixed-tabby-model",
+            "api_retries": 0,
+            "api_retry_delay": 0,
+        },
     }
 
 
@@ -2744,7 +2752,10 @@ def test_local_core_kobold_missing_key_error_contract_is_unchanged(
         raise AssertionError("transport invoked before missing-key failure")
 
     settings = _local_settings()
-    settings["api_keys"]["kobold"] = None
+    # task-17383: the credential lives in the section the loader builds now;
+    # the intent is unchanged -- an ABSENT key still hits the historical
+    # TypeError contract, distinct from a configured-but-blank one.
+    settings["kobold_api"]["api_key"] = None
     monkeypatch.setattr(local_summarization, "load_settings", lambda: settings)
     monkeypatch.setattr(
         local_summarization.requests,
