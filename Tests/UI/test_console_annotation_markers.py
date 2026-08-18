@@ -281,3 +281,329 @@ async def test_n_without_notes_toasts_and_requests_nothing():
         assert app.review_notes_events == []
         assert len(notifications) == 1
         assert notifications[0][1] == "warning"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: screen wiring + unmocked round trips (task-18515 review-note
+# management)
+# ---------------------------------------------------------------------------
+
+
+def _stub_review_notes_modal(screen, resolver):
+    """Replace ``app.push_screen_wait`` and capture every pushed modal.
+
+    ``resolver(modal)`` runs synchronously with the REAL
+    ``ConsoleReviewNotesModal`` the flow built (its ``on_edit``/``on_delete``
+    are the flow's real closures, bound to the real DB) and returns the
+    dismiss result the flow should see.
+    """
+    pushed: list = []
+
+    async def _resolve(modal, *args, **kwargs):
+        pushed.append(modal)
+        return resolver(modal)
+
+    screen.app.push_screen_wait = _resolve  # type: ignore[method-assign]
+    return pushed
+
+
+async def _wait_until(pilot, predicate, attempts: int = 40) -> None:
+    for _ in range(attempts):
+        await pilot.pause()
+        if predicate():
+            return
+    # Final pause so the last state change (if any) has settled before the
+    # caller's own assertion runs and produces a readable failure.
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
+    """Unmocked screen->store->SQLite: an edit changes only comment/updated_at
+    (quote/row_key byte-identical), a delete soft-deletes the row, and a
+    ``user_feedback`` trajectory row written alongside the annotation is
+    byte-identical after BOTH operations -- the annotation and sidecar
+    tables must never touch each other."""
+    import json
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_e2e")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes e2e")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="the assistant's answer",
+                persist=True,
+            )
+
+            annotation_id = db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="the assistant's answer",
+                comment="original comment",
+            )
+            original = db.get_transcript_annotations(conversation_id)[0]
+
+            # ``append_message(persist=True)`` already wrote its own
+            # ``assistant`` trajectory row for this message; the
+            # ``user_feedback`` row added here is the one this test pins --
+            # identified by event_kind, not by "the only row in the table".
+            db.upsert_trajectory_rows(
+                [
+                    TrajectoryRowWrite(
+                        message_id=assistant.persisted_message_id,
+                        conversation_id=conversation_id,
+                        turn_id=assistant.persisted_message_id,
+                        seq=None,
+                        event_kind="user_feedback",
+                        payload_json=json.dumps(
+                            {"action": "comment", "quote": "the assistant's answer"}
+                        ),
+                    )
+                ]
+            )
+
+            def _feedback_row(rows):
+                matches = [row for row in rows if row.event_kind == "user_feedback"]
+                assert len(matches) == 1
+                return matches[0]
+
+            sidecar_before = _feedback_row(db.get_trajectory_rows(conversation_id))
+
+            # Edit and delete both run synchronously inside the resolver
+            # (mirroring a real edit-then-delete session before the modal
+            # closes), so the intermediate "after edit, before delete"
+            # state has to be captured HERE -- by the time ``pushed`` is
+            # observable from outside ``push_screen_wait``, both mutations
+            # have already happened.
+            snapshots: dict[str, object] = {}
+
+            def _resolver(modal) -> bool:
+                snapshots["edit_ok"] = modal._on_edit(annotation_id, "edited comment")
+                snapshots["after_edit_annotations"] = db.get_transcript_annotations(
+                    conversation_id
+                )
+                snapshots["after_edit_sidecar"] = _feedback_row(
+                    db.get_trajectory_rows(conversation_id)
+                )
+                snapshots["delete_ok"] = modal._on_delete(annotation_id)
+                snapshots["after_delete_annotations"] = db.get_transcript_annotations(
+                    conversation_id
+                )
+                snapshots["after_delete_sidecar"] = _feedback_row(
+                    db.get_trajectory_rows(conversation_id)
+                )
+                return True
+
+            pushed = _stub_review_notes_modal(screen, _resolver)
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: len(pushed) == 1)
+
+            assert pushed, "expected the review-notes modal to be pushed"
+            assert snapshots["edit_ok"] is True
+            assert snapshots["delete_ok"] is True
+
+            # Edit: comment + updated_at changed, everything else identical.
+            after_edit = snapshots["after_edit_annotations"]
+            assert len(after_edit) == 1
+            edited = after_edit[0]
+            assert edited["comment"] == "edited comment"
+            assert edited["updated_at"] != original["updated_at"]
+            for key in ("annotation_id", "conversation_id", "row_key", "message_id",
+                        "quote_text", "created_at"):
+                assert edited[key] == original[key], key
+
+            # Sidecar row is byte-identical after the edit.
+            assert snapshots["after_edit_sidecar"] == sidecar_before
+
+            # Delete: soft-deleted, no longer returned by the live read.
+            assert snapshots["after_delete_annotations"] == []
+
+            # Sidecar row is STILL byte-identical after the delete.
+            assert snapshots["after_delete_sidecar"] == sidecar_before
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_path):
+    """Deleting the only note on a message clears its inline marker: the
+    screen's forced reload (``_console_annotation_loaded_conversation =
+    None`` + an immediate re-sync) must actually run after a change."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_delete")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes delete")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="ok",
+                persist=True,
+            )
+            annotation_id = db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="ok",
+                comment="only note",
+            )
+
+            screen._sync_console_annotation_discovery(store)
+            await _wait_until(pilot, lambda: bool(screen._console_annotation_previews))
+            assert screen._console_annotation_previews == {
+                assistant.id: ("only note",)
+            }
+
+            def _resolver(modal) -> bool:
+                assert modal._on_delete(annotation_id) is True
+                return True
+
+            pushed = _stub_review_notes_modal(screen, _resolver)
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(
+                pilot, lambda: assistant.id not in screen._console_annotation_previews
+            )
+
+            assert pushed
+            assert assistant.id not in screen._console_annotation_previews
+            assert db.get_transcript_annotations(conversation_id) == []
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_no_review_notes_for_message_toasts_and_never_opens_modal(tmp_path):
+    """An empty match (message persisted, but no live annotation rows) toasts
+    a warning and never reaches ``push_screen_wait``."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_empty")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes empty")
+            store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="no notes here",
+                persist=True,
+            )
+
+            calls: list = []
+
+            async def _spy(modal, *args, **kwargs):
+                calls.append(modal)
+                return False
+
+            screen.app.push_screen_wait = _spy  # type: ignore[method-assign]
+            toasts: list = []
+            screen.notify = lambda *a, **k: toasts.append((a, k))  # type: ignore[method-assign]
+
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: bool(toasts))
+
+            assert calls == []
+            assert toasts, "expected a warning toast when there are no review notes"
+            assert toasts[-1][1].get("severity") == "warning"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
+    """The DB wrappers log and return False instead of propagating -- a
+    broken write must never crash the worker (``exit_on_error=False`` is the
+    backstop, this is the first line of defense)."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_boom")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+
+            session = store.ensure_session(title="Review notes boom")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="ok",
+                persist=True,
+            )
+            annotation_id = db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="ok",
+                comment="will fail to edit",
+            )
+
+            def _boom_edit(**kwargs):
+                raise RuntimeError("upsert boom")
+
+            def _boom_delete(_annotation_id):
+                raise RuntimeError("delete boom")
+
+            db.upsert_transcript_annotation = _boom_edit  # type: ignore[method-assign]
+            db.soft_delete_transcript_annotation = _boom_delete  # type: ignore[method-assign]
+
+            results: list = []
+
+            def _resolver(modal) -> bool:
+                results.append(modal._on_edit(annotation_id, "new text"))
+                results.append(modal._on_delete(annotation_id))
+                return False
+
+            pushed = _stub_review_notes_modal(screen, _resolver)
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: len(pushed) == 1)
+
+            assert pushed
+            assert results == [False, False]
+    finally:
+        db.close()

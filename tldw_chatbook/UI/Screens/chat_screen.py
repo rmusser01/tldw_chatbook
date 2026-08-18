@@ -469,6 +469,8 @@ from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
+from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
+from ...Widgets.Console.console_transcript import ConsoleReviewNotesRequested
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
     ConsoleSelectionNoteRequested,
@@ -19785,6 +19787,130 @@ class ChatScreen(BaseAppScreen):
             # the in-flight guard; a latched flag would silently kill the
             # feature after its first use.
             self._console_selection_feedback_inflight = False
+
+    @on(ConsoleReviewNotesRequested)
+    def on_console_review_notes_requested(
+        self, event: ConsoleReviewNotesRequested
+    ) -> None:
+        """Open the review-notes modal for one message's annotations.
+
+        task-18515 review-note management, task 3: posted by
+        ``ConsoleAnnotationMarker.on_click`` and by
+        ``ConsoleTranscript.action_open_review_notes`` (the ``n`` binding).
+        Dispatches a worker because ``push_screen_wait`` requires an active
+        worker context (see ``_console_selection_feedback_flow``'s identical
+        note); ``event.stop()`` because nothing above this screen subscribes.
+        """
+        event.stop()
+        self.run_worker(
+            self._console_review_notes_flow(event.anchor_message_id),
+            group="console-review-notes",
+            exit_on_error=False,
+        )
+
+    async def _console_review_notes_flow(self, anchor_message_id: str) -> None:
+        """Resolve, browse, and (maybe) mutate one message's review notes.
+
+        Runs as a worker (see the handler above); NOT ``exclusive=True`` for
+        the same reason ``_console_selection_feedback_flow`` isn't --
+        ``push_screen_wait``'s internal ``asyncio.shield`` protects the wait,
+        not the already-mounted modal, from cancellation.
+
+        The NATIVE anchor id is resolved to its persisted message id via the
+        store's own messages (the inverse of ``_load_console_annotation_
+        previews``'s ``native_by_persisted`` map), rows are read off-thread,
+        and -- when at least one row matches -- the modal is pushed with
+        ``on_edit``/``on_delete`` wrappers that write straight to SQLite
+        (single-row indexed writes, the same synchronous-on-the-UI-thread
+        precedent as ``_record_console_feedback_event``'s annotation write)
+        and never raise. A change forces the existing discovery machinery to
+        reload the preview map on its next sync tick.
+        """
+        controller = self._ensure_console_chat_controller()
+        store = controller.store
+        database = getattr(store.persistence, "db", None) if store.persistence else None
+        if database is None:
+            self.notify(
+                "Review notes are unavailable (no notes database).",
+                severity="warning",
+            )
+            return
+        session = getattr(store, "_sessions", {}).get(store.active_session_id)
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            self.notify("No review notes for this message.", severity="warning")
+            return
+        conversation_id = str(conversation_id)
+        persisted_by_native = {
+            message.id: message.persisted_message_id
+            for message in self._native_console_messages()
+        }
+        persisted_message_id = persisted_by_native.get(anchor_message_id)
+        if persisted_message_id is None:
+            self.notify("No review notes for this message.", severity="warning")
+            return
+        try:
+            rows = await asyncio.to_thread(
+                database.get_transcript_annotations, conversation_id
+            )
+        except Exception:
+            logger.warning(
+                f"Console review notes: load failed for {conversation_id!r}",
+                exc_info=True,
+            )
+            self.notify("Could not load review notes.", severity="warning")
+            return
+        matching = [
+            row
+            for row in rows
+            if str(row.get("message_id")) == str(persisted_message_id)
+        ]
+        if not matching:
+            self.notify("No review notes for this message.", severity="warning")
+            return
+        rows_by_id = {str(row["annotation_id"]): row for row in matching}
+
+        def _on_edit(annotation_id: str, new_comment: str) -> bool:
+            row = rows_by_id.get(annotation_id)
+            if row is None:
+                return False
+            try:
+                database.upsert_transcript_annotation(
+                    conversation_id=conversation_id,
+                    row_key=row["row_key"],
+                    message_id=row.get("message_id"),
+                    quote_text=row["quote_text"],
+                    comment=new_comment,
+                    annotation_id=annotation_id,
+                )
+                return True
+            except Exception:
+                logger.warning(
+                    f"Console review notes: edit failed for {annotation_id!r}",
+                    exc_info=True,
+                )
+                return False
+
+        def _on_delete(annotation_id: str) -> bool:
+            try:
+                return bool(database.soft_delete_transcript_annotation(annotation_id))
+            except Exception:
+                logger.warning(
+                    f"Console review notes: delete failed for {annotation_id!r}",
+                    exc_info=True,
+                )
+                return False
+
+        changed = await self.app.push_screen_wait(
+            ConsoleReviewNotesModal(matching, on_edit=_on_edit, on_delete=_on_delete)
+        )
+        if changed:
+            # Forces the existing discovery machinery (`_sync_console_
+            # annotation_discovery`) to treat this as a conversation change
+            # and reload -- the same mechanism the annotation-write
+            # precedent above relies on for its own live preview updates.
+            self._console_annotation_loaded_conversation = None
+            self._sync_console_annotation_discovery(store)
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"
