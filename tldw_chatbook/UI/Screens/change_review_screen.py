@@ -33,6 +33,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Select, Static, Tree
 
+from tldw_chatbook.Chat.console_display_state import (
+    ConversationFileEntry,
+    conversation_file_summary,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangedFile,
@@ -416,6 +420,60 @@ class AgentRunsChangeReviewProvider:
             One dict per note row (all columns), oldest first.
         """
         return self._db.notes_for_run(run_id)
+
+    def conversation_changed_files(
+        self,
+    ) -> "tuple[list[ConversationFileEntry], int]":
+        """Cross-turn latest-state summary of the WHOLE conversation.
+
+        TASK-18060 Task 2 (review-rail spec §1): reads every clean
+        ``change_snapshots`` row for :attr:`_conversation_id`, calls
+        :meth:`changed_files` on each (one shadow-repo diff -- a git
+        subprocess pair -- PER ROW), joins per-file note counts in one
+        query, and delegates assembly to
+        :func:`conversation_file_summary`.
+
+        A row is "clean" the same way :meth:`changed_files` itself already
+        guards: ``tracking_error`` falsy AND ``end_sha`` truthy. A clean
+        row can still raise :class:`ChangeTrackingError` when retention
+        pruned its snapshots out from under it (:meth:`snapshots_pruned`)
+        -- that row is skipped and counted in ``pruned_rows`` rather than
+        failing the whole summary (spec §1's honest "history pruned for N
+        turns" tail line; the Review screen's own ``_load_turn`` uses the
+        identical per-row try/except posture).
+
+        **NEVER call this on the UI thread** -- unlike this screen's own
+        synchronous diff-on-focus reads, this walks the conversation's
+        ENTIRE snapshot history and can run many git subprocesses in one
+        call. Callers (the Inspector rail's cached-summary worker, §2)
+        must run it off-thread (``asyncio.to_thread`` or a worker) and
+        land the result via ``call_from_thread``.
+
+        Returns:
+            ``(entries, pruned_rows)`` -- the cross-turn summary and how
+            many otherwise-clean rows were skipped because retention
+            pruned their snapshots.
+        """
+        rows = self._db.change_snapshots_for_conversation(self._conversation_id)
+        clean_rows = [
+            row
+            for row in rows
+            if not row.get("tracking_error") and row.get("end_sha")
+        ]
+        rows_with_files: list[tuple[dict, list[ChangedFile]]] = []
+        pruned_rows = 0
+        for row in clean_rows:
+            try:
+                files = self.changed_files(row)
+            except ChangeTrackingError:
+                pruned_rows += 1
+                continue
+            rows_with_files.append((row, files))
+        note_counts = self._db.change_note_counts_for_conversation(
+            self._conversation_id
+        )
+        entries = conversation_file_summary(rows_with_files, note_counts)
+        return entries, pruned_rows
 
 
 class ChangeReviewScreen(Screen):

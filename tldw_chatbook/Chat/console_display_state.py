@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -1165,6 +1166,104 @@ def turn_file_entries(
                 )
             )
     return paired
+
+
+@dataclass(frozen=True)
+class ConversationFileEntry:
+    """One file's cross-turn latest state in a conversation (review rail,
+    TASK-18060 spec §1).
+
+    ``label`` follows :class:`TurnFileEntry`'s exact convention: the bare
+    relpath when every contributing row shares one root, ``<root-name>/
+    <relpath>`` when they span several. ``run_id``/``snapshot_id`` name the
+    NEWEST clean row that still covers this ``(root, path)`` -- the row
+    whose diff the file's ``status``/``adds``/``dels`` come from, and the
+    identity :func:`conversation_file_summary`'s caller (the rail's
+    click-through) opens the Review screen against.
+
+    **Counts honesty** (spec §1): ``adds``/``dels`` are that NEWEST row's
+    own deltas for this file, not a sum across every turn that touched
+    it -- callers must present them as "latest turn deltas", never as a
+    cumulative total.
+    """
+
+    root: str
+    path: str
+    label: str
+    status: str
+    adds: int
+    dels: int
+    run_id: str
+    snapshot_id: int
+    note_count: int
+
+
+def conversation_file_summary(
+    rows_with_files: "Sequence[tuple[Mapping[str, Any], Sequence[ChangedFile]]]",
+    note_counts: "Mapping[tuple[str, str], int]",
+) -> "list[ConversationFileEntry]":
+    """Cross-turn latest-state summary of a conversation's changed files.
+
+    Pure assembly -- no I/O, no git, no DB. The caller (the provider's
+    ``conversation_changed_files``) is responsible for filtering to CLEAN
+    rows before calling this (``tracking_error`` falsy, ``end_sha``
+    truthy -- the same guard :meth:`AgentRunsChangeReviewProvider.
+    changed_files` applies) and for skipping any row whose diff raised
+    ``ChangeTrackingError`` (retention-pruned history); a row that made it
+    into ``rows_with_files`` is assumed to be fully readable.
+
+    Latest-wins per ``(root, path)`` (spec §1): ``rows_with_files`` arrives
+    OLDEST first (mirrors ``ORDER BY cs.id``), and each row's files simply
+    overwrite whatever an earlier row recorded for the same path -- so a
+    path deleted in an early turn and recreated in a later one correctly
+    ends up "A", not "D", with no special-casing. A rename (``status
+    "R"``) keys its entry by the NEW path (``changed.path``) and deletes
+    any existing entry for the OLD path (``changed.old_path``) -- the old
+    path stops existing as of that row.
+
+    Args:
+        rows_with_files: ``(row, changed_files)`` pairs, one per CLEAN
+            snapshot row, oldest first. ``changed_files`` is whatever
+            :meth:`AgentRunsChangeReviewProvider.changed_files` returned
+            for that exact row.
+        note_counts: ``{(root, path): count}`` from
+            :meth:`AgentRunsDB.change_note_counts_for_conversation`,
+            joined onto each surviving entry's CURRENT path (a rename's
+            note count follows the note's own ``(root, path)`` key, which
+            is unaffected by later renames -- callers accept that a note
+            recorded against a path before it was renamed away no longer
+            joins to the renamed entry).
+
+    Returns:
+        One :class:`ConversationFileEntry` per ``(root, path)`` still
+        alive at the end of history, ordered NEWEST first by owning
+        snapshot id, then by path.
+    """
+    multi_root = len({str(row["root"]) for row, _ in rows_with_files}) > 1
+    latest: dict[tuple[str, str], ConversationFileEntry] = {}
+    for row, files in rows_with_files:
+        root = str(row["root"])
+        run_id = str(row["run_id"])
+        snapshot_id = int(row["id"])
+        prefix = f"{PurePath(root).name}/" if multi_root else ""
+        for changed in files:  # ChangedFile
+            if changed.status == "R" and changed.old_path:
+                latest.pop((root, str(changed.old_path)), None)
+            path = str(changed.path)
+            latest[(root, path)] = ConversationFileEntry(
+                root=root,
+                path=path,
+                label=f"{prefix}{path}",
+                status=str(changed.status),
+                adds=int(changed.adds),
+                dels=int(changed.dels),
+                run_id=run_id,
+                snapshot_id=snapshot_id,
+                note_count=int(note_counts.get((root, path), 0)),
+            )
+    return sorted(
+        latest.values(), key=lambda entry: (-entry.snapshot_id, entry.path)
+    )
 
 
 def _cell_trim_prefix(text: str, budget: int) -> str:
