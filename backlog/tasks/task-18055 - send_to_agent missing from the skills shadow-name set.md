@@ -1,5 +1,5 @@
 ---
-id: task-18055
+id: TASK-18055
 title: send_to_agent missing from the skills shadow-name set
 status: Done
 assignee: []

@@ -799,8 +799,18 @@ class ConsoleAgentController:
                         steps = "\n".join(
                             f"{s.kind}: {s.text}" for s in live_run.steps
                         )
+                # PR3b Task 4: a resumed sub-agent (send_to_agent to a
+                # finished child starts a NEW run seeded with its retained
+                # transcript) carries its lineage in the header. The run
+                # row's `resumed_from_run_id` flows here for free (the
+                # bridge reads SELECT * row dicts); `.get(...) or ""`
+                # keeps pre-v11 rows (key absent or NULL) byte-identical.
+                resumed_from = str(record.get("resumed_from_run_id") or "")
+                header = f"Sub-agent · {record.get('status')}"
+                if resumed_from:
+                    header += f" · resumed from {resumed_from}"
                 return (
-                    f"Sub-agent · {record.get('status')} (Back)",
+                    f"{header} (Back)",
                     steps,
                     str(record.get("task") or ""),
                 )

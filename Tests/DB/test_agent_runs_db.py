@@ -739,3 +739,112 @@ def test_set_status_still_updates_a_running_run(db):
 
 def test_set_status_missing_run_returns_false(db):
     assert db.set_status("nope", "done") is False
+
+
+# --- PR3b Task 4 (fleet continuation): resumed_from_run_id, v11, and the
+# task-15669 constant-vs-version-table fold (coordinator ruling #3). ---
+
+#: The pre-v11 shape: agent_runs as every migration through v10 left it --
+#: all columns EXCEPT resumed_from_run_id -- with version rows through 10.
+_LEGACY_PRE_V11_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+    INSERT OR IGNORE INTO schema_version (version) VALUES (4);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (5);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (6);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (7);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (8);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (9);
+    INSERT OR IGNORE INTO schema_version (version) VALUES (10);
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        assistant_message_id TEXT,
+        agent_definition TEXT,
+        definition_fingerprint TEXT,
+        wake_delivered_at TEXT
+    );
+"""
+
+
+def test_schema_version_constant_agrees_with_the_version_table(tmp_path):
+    """task-15669 AC#1/#3 (folded into v11 per coordinator ruling #3): the
+    constant CLAUDE.md points every schema change at must agree with the
+    highest version a freshly created database actually records -- and
+    this test fails if the two ever diverge again."""
+    db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
+    with db.connection() as conn:
+        recorded = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
+
+
+def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
+    """Migration idempotency (plan red): a pre-v11 file gains the column
+    via the guarded ALTER on first open, and a second open is a no-op."""
+    path = tmp_path / "legacy_pre_v11.db"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(_LEGACY_PRE_V11_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    raw = sqlite3.connect(str(path))
+    try:
+        cols = {row[1] for row in raw.execute("PRAGMA table_info(agent_runs)")}
+    finally:
+        raw.close()
+    assert "resumed_from_run_id" not in cols
+
+    first = AgentRunsDB(path, client_id="test")
+    run_id = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resumed_from_run_id="prior-run",
+    )
+    assert first.get_run(run_id)["resumed_from_run_id"] == "prior-run"
+    with first.connection() as conn:
+        versions = {
+            row[0]
+            for row in conn.execute("SELECT version FROM schema_version")
+        }
+    assert 11 in versions
+
+    # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
+    second = AgentRunsDB(path, client_id="test")
+    second_id = second.create_run(
+        conversation_id="c", agent_kind="subagent", task="t2"
+    )
+    assert second.get_run(second_id)["resumed_from_run_id"] is None
+    assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
+
+
+def test_create_run_resumed_from_run_id_round_trips_and_defaults_none(db):
+    origin = db.create_run(conversation_id="c", agent_kind="subagent", task="t")
+    resumed = db.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        task="t",
+        resumed_from_run_id=origin,
+    )
+    assert db.get_run(resumed)["resumed_from_run_id"] == origin
+    assert db.get_run(origin)["resumed_from_run_id"] is None
+    # The lineage flows through the list read too (SELECT * row dicts).
+    listed = {row["id"]: row for row in db.list_runs("c")}
+    assert listed[resumed]["resumed_from_run_id"] == origin

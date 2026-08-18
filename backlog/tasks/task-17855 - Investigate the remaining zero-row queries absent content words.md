@@ -1,5 +1,5 @@
 ---
-id: task-17855
+id: TASK-17855
 title: Investigate the remaining zero-row queries — absent content words
 status: To Do
 assignee: []
@@ -35,7 +35,8 @@ publishable outcome and is sufficient to close this task.**
       the relevant document is reachable by ANY keyword construction over the
       terms the user typed, or only by semantic retrieval
 - [ ] At least one candidate is proposed with its measured or estimated
-      precision cost, judged against the finding that pure OR HALVED MRR —
+      precision cost, judged against the finding that pure OR cut MRR by a
+      THIRD (0.396 -> 0.261, -34%) —
       recall bought by broadening is not free and must be priced
 - [ ] A decision is recorded: pursue a specific candidate as its own arc, or
       record that keyword construction has reached its ceiling on this corpus
