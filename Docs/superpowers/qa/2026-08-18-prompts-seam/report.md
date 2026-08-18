@@ -109,3 +109,24 @@ Fixing the collapse properly means giving the metrics layer a distinct
 "unavailable" value for every optional seam, not just prompts. That is a
 larger change than this task, and it is the shape of the defect that produced
 TASK-17855 in the first place — recorded here as the accepted residual.
+
+
+## What review changed (PR #1818)
+
+**The README contradicted itself.** I updated the category table's `prompt`
+row to 0.200 but left the prose two paragraphs below still calling `plain`'s
+cell vacuous, and left the `overall` row at its pre-re-stamp 0.293. Both
+fixed: `overall` now reads **0.337** from the re-stamped baseline, with the
+rise attributed, and the prose says `prompt` is 0.000 in `semantic` **only**
+(prompts have no vector index). A reader can no longer take two incompatible
+readings of the result this arc establishes.
+
+**The probe leaked the eval runtime.** `seam_effect.py` built an
+`EvalRuntime` — SQLite connections, a Chroma store, and the event loop its
+pools are bound to — and never closed it, while the scratch directory
+vanished underneath. Every harness caller in `test_harness_run.py` closes it;
+this probe forgot. Now closed in a `finally`, with the failure reported rather
+than swallowed.
+
+Verdict unchanged on a full re-run: seam available, `pm-vendor-chaser` hits,
+1 of 5, 0 of 55 non-prompt fan-outs affected, 0 seam failures logged.

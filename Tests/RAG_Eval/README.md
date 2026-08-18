@@ -221,14 +221,14 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | **0.200** | **0.200** | `plain`'s cell was VACUOUS until TASK-18255 wired the harness prompts seam; it now MEASURES retrieval and reads 0.200 (`pm-vendor-chaser` hits, the other four are blocked by absent content words). 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
+| `prompt` | 5 | 0.000 | **0.200** | **0.200** | 1 of 5 in both. `plain`'s cell was VACUOUS until TASK-18255 wired the harness prompts seam; it now MEASURES retrieval, and `pm-vendor-chaser` hits. `hybrid`'s 0.200 came from TASK-15400's construction flip; TASK-15700's merge fix + `and_then_prefix` held it there while the MECHANISM under it moved (stopword trim → prefix fallback). Both modes' residual 4 are bounded by absent CONTENT words — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
-| **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
+| **overall** | **46** | **0.804** | **0.337** | **0.848** | hybrid is **0.152** off the ceiling; `plain` rose from 0.293 with TASK-18255's prompts-seam wiring (the prompt category stopped being vacuous) |
 
 **The remaining 0.000 rows are P2c's admission targets.** `negation` (all
-three modes) and `prompt` (0.000 in `semantic`; `plain`'s 0.000 is **vacuous** — see the
-⚠️ note) are the cells with room to rise, and they are not the same kind of
-problem:
+three modes) and `prompt` (0.000 in `semantic` only — prompts have no vector
+index; `plain` and `hybrid` both read 0.200) are the cells with room to rise,
+and they are not the same kind of problem:
 
 - **`negation` 0.000 in all three modes is a genuine open capability gap.**
   Three fixtures, each describing the exception *without ever naming the

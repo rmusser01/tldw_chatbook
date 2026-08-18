@@ -37,6 +37,10 @@ def main() -> int:
     Returns:
         0 on a complete run; 1 if any query errored or the seam logged a
         failure (either makes a zero unreadable).
+
+    Raises:
+        SystemExit: ``RAG_EVAL`` is not set to ``"1"``. This builds a real
+            index over the full fixture corpus, so it never runs by accident.
     """
     import tempfile
 
@@ -70,6 +74,7 @@ def main() -> int:
     )
 
     corpus, golden = load_fixtures()
+    rt = None
     try:
         with tempfile.TemporaryDirectory() as tmp:
             rt = build_eval_runtime(corpus, tmp)
@@ -114,6 +119,15 @@ def main() -> int:
                     any(s in set(docs) for s in q.relevant_slugs), len(rws), n_prompt
                 )
     finally:
+        # The runtime owns SQLite connections, a Chroma store and the event
+        # loop its pools are bound to; the scratch dir is about to vanish, so
+        # they must be released first. Every harness caller closes it -- this
+        # probe forgot to, which leaks handles into the rest of the process.
+        if rt is not None:
+            try:
+                rt.close()
+            except Exception as exc:                          # noqa: BLE001
+                print(f"NOTE: runtime.close() failed after the run: {exc!r}")
         logger.remove(sink_id)
 
     by_id = {q.id: q for q in golden}
