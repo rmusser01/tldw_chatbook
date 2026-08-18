@@ -12,6 +12,7 @@ import threading
 import pytest
 from PIL import Image as PILImage
 
+import tldw_chatbook.UI.Console_Modules.video as console_video_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -339,8 +340,14 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
     screen._ensure_console_video_store = lambda: (_ for _ in ()).throw(
         AssertionError("H3 image edit must not access the Video store")
     )
+    # `0b8e9e408 refactor: extract Console video controller` moved video
+    # generation out of `chat_screen` into `UI/Console_Modules/video.py`,
+    # which binds `run_video_generation` at ITS module scope. This guard
+    # kept patching the old, now-absent `chat_screen` attribute, so
+    # `monkeypatch.setattr` raised AttributeError instead of arming the
+    # assertion -- the guard had stopped guarding anything.
     monkeypatch.setattr(
-        chat_screen_module,
+        console_video_module,
         "run_video_generation",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("H3 image edit must not call Video generation")

@@ -107,7 +107,13 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     yield _make
 
     for controller in made:
-        controller._shutdown_requested.set()
+        # task-15860 split teardown into a per-VISIT Event and a headless
+        # one: a round armed with no Console visit open binds the HEADLESS
+        # Event, which only `_cancel_headless_rounds()` sets. Poking
+        # `_shutdown_requested` directly therefore no longer wakes these
+        # rounds -- they wait out their full deadline. `begin_shutdown()`
+        # is the real teardown API and sets BOTH signals.
+        controller.begin_shutdown()
 
 
 # -- bridge closure fixtures ------------------------------------------------
@@ -461,7 +467,7 @@ def test_shutdown_denies_a_pending_confirm(make_controller):
     thread = threading.Thread(target=worker)
     thread.start()
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
-    controller._shutdown_requested.set()
+    controller.begin_shutdown()
     thread.join(timeout=5)
     assert result["decision"]["allow"] is False
 
@@ -657,7 +663,7 @@ def test_stale_request_id_is_dropped_then_matching_id_resolves(make_controller):
     _wait_until(lambda: bool(controller.pending_skill_script_ids()))
     stale_id = controller.pending_skill_script_ids()[0]
     assert stale_id
-    controller._shutdown_requested.set()
+    controller.begin_shutdown()
     t1.join(timeout=5)
     assert round_one_result["decision"]["allow"] is False
     assert controller.pending_skill_script_ids() == []  # torn down

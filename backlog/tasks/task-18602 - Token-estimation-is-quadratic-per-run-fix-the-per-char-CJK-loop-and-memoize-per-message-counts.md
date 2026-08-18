@@ -85,6 +85,26 @@ partners:
 
 Single-call CJK scan of a 640 KB payload: 171.9 ms -> 0.007 ms (**25,000x**).
 
+The LIVE user-facing path is `bound_messages_to_window`, which
+`console_chat_controller` runs once per Console send to decide what fits in the
+context window:
+
+| history | before | after |
+|---|---|---|
+| 60 turns / 178 KB | 62.5 ms | 0.6 ms |
+| 120 turns / 354 KB | 153.4 ms | 1.1 ms |
+| 240 turns / 707 KB | 223.8 ms | 1.8 ms |
+
+That is blocking work removed from every send in a long conversation. Stated
+separately from the agent-loop figure on purpose: the 400-turn number is a worst
+case, this is what a user actually feels.
+
+One measurement was investigated and NOT claimed: `chat_token_events`'s pending-
+input path costs ~98 ms per keystroke on a 354 KB history and has no dirty gate,
+which would have been a dramatic typing-latency headline -- but task-17653
+retired the footer token counter, so that path is not live on Console. Its only
+remaining caller is `db_status_manager`, which uses the gated variant.
+
 Read that split honestly: on the shipped default (no tokenizer installed) the
 ASCII fast path does nearly all the work and the memo adds 2.1x. The memo earns
 its place on installs WITH tiktoken, where the per-turn re-encode of the whole

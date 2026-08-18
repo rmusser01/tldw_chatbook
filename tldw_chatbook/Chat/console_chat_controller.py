@@ -344,15 +344,39 @@ def _flatten_preflight_messages(
 def _continuation_restore_target_for_resolution(
     resolution: Any,
 ) -> ContinuationRestoreTarget | None:
-    """Build an exact target only from explicitly pinned resolution fields."""
+    """Build an exact target only from explicitly pinned resolution fields.
+
+    ``api_base_url`` is carried through VERBATIM. It used to be passed
+    through ``normalize_generic_endpoint_for_compare`` first, which expands
+    a base URL to its full chat-completions endpoint
+    (``https://api.moonshot.ai/v1`` -> ``.../v1/chat/completions``). That
+    silently broke every Resume: the checkpoint pins whatever
+    ``ConsoleAgentBridge`` recorded, and the bridge records
+    ``resolution.base_url`` RAW (see its ``ContinuationRestoreTarget(...)``
+    construction), so recovery compared an expanded URL against a
+    non-expanded one and ``validate_continuation_restore`` -- which is
+    byte-exact by design, down to a trailing slash -- rejected it with
+    "Pinned provider settings no longer match".
+
+    Normalizing BOTH sides instead would have been the wrong repair: the
+    exactness is deliberate (``test_provider_continuation`` pins that
+    ``https://api.deepseek.com/v1/`` and ``https://api.deepseek.com/v1``
+    are a MISMATCH), and this comparison is what stops a private
+    continuation from being replayed against a different endpoint than the
+    one that produced it. The two writers simply have to agree, and the
+    checkpoint's writer is the one that defines the format.
+    """
     protocol = getattr(resolution, "continuation_protocol", None) or getattr(
         resolution, "api_mode", None
     )
-    base_url = normalize_generic_endpoint_for_compare(
-        getattr(resolution, "base_url", None)
-    )
+    base_url = getattr(resolution, "base_url", None)
     model = getattr(resolution, "model", None)
-    if not protocol or not base_url.startswith(("http://", "https://")) or not model:
+    if (
+        not protocol
+        or not isinstance(base_url, str)
+        or not base_url.startswith(("http://", "https://"))
+        or not model
+    ):
         return None
     return ContinuationRestoreTarget(
         provider=provider_config_key(str(getattr(resolution, "provider", ""))),

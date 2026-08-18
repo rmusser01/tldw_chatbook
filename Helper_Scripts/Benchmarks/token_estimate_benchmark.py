@@ -85,6 +85,47 @@ def _run(label: str, *, legacy: bool, memo: bool) -> float:
     return cumulative
 
 
+def _bench_send_path() -> None:
+    """The LIVE path: `bound_messages_to_window` on each Console send.
+
+    `console_history_budget` is imported by `console_chat_controller` and
+    tokenizes the whole history to decide what fits in the context window,
+    once per send. This is the number that describes real user-facing cost;
+    the synthetic agent-loop figure below describes the worst case.
+    """
+    from tldw_chatbook.Chat.console_history_budget import bound_messages_to_window
+
+    print("\n== per Console send: bound_messages_to_window ==")
+    print(f"  {'history':<24}{'before':>12}{'after':>12}")
+    for turns in (60, 120, 240):
+        history = [{"role": "system", "content": "s" * 1500}]
+        for i in range(turns):
+            history.append({"role": "user", "content": f"q{i} " + "u" * 1500})
+            history.append({"role": "assistant", "content": f"a{i} " + "x" * 1500})
+        kilobytes = sum(len(m["content"]) for m in history) / 1024
+        timings = []
+        for legacy in (True, False):
+            real = token_counter._chars_estimate
+            if legacy:
+                token_counter._chars_estimate = legacy_chars_estimate
+            clear_estimate_cache()
+            try:
+                start = time.perf_counter()
+                bound_messages_to_window(
+                    history,
+                    model="gpt-4o-mini",
+                    provider="openai",
+                    response_reservation=4096,
+                )
+                timings.append(time.perf_counter() - start)
+            finally:
+                token_counter._chars_estimate = real
+        label = f"{turns} turns / {kilobytes:.0f} KB"
+        print(
+            f"  {label:<24}{timings[0] * 1000:>9.1f} ms{timings[1] * 1000:>9.1f} ms"
+        )
+
+
 def main() -> None:
     print(f"tiktoken installed: {TIKTOKEN_AVAILABLE}")
     if TIKTOKEN_AVAILABLE:
@@ -101,7 +142,9 @@ def main() -> None:
     print(f"  str.isascii() fast path            {after * 1000:8.4f} ms")
     print(f"  -> {before / after:,.0f}x")
 
-    print(f"\n== cumulative estimator CPU, {TURNS}-turn conversation ==")
+    _bench_send_path()
+
+    print(f"\n== cumulative estimator CPU, {TURNS}-turn agent run (worst case) ==")
     baseline = _run("before (per-char loop, no memo)", legacy=True, memo=False)
     fast = _run("+ ASCII fast path", legacy=False, memo=False)
     both = _run("+ memo (shipped)", legacy=False, memo=True)
