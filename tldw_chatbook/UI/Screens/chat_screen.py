@@ -14137,11 +14137,11 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
-            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
-                yield status_chips
-            # RAG-40: staged evidence belongs on the MAIN surface, directly
-            # above the composer it is about to be prepended to -- not only
-            # in an Inspector rail the staging path never opens.
+            # RAG-40: staged evidence belongs on the MAIN surface -- not only
+            # in an Inspector rail the staging path never opens. task-17661:
+            # ALL transient strips (staged evidence, prompt queue) sit at the
+            # TOP of the control deck, above the status line, so the area
+            # around the composer stays visually quiet.
             yield ConsoleStagedEvidenceStrip(
                 self._build_console_staged_evidence_strip_state(pending_launch),
                 id="console-staged-evidence-strip",
@@ -14170,6 +14170,8 @@ class ChatScreen(BaseAppScreen):
                     )
                 ),
             )
+            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             composer = ConsoleComposerBar(
                 id="console-native-composer",
                 classes="ds-panel",
