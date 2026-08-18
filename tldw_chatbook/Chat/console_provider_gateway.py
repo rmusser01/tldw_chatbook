@@ -2392,6 +2392,38 @@ class ConsoleProviderGateway:
             )
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                 wire_messages = [thaw_json(item) for item in prepared.messages]
+                # This branch builds its own HTTP body -- the one place
+                # capture IS the literal wire payload (spec Non-goals).
+                # `api_key` never enters `build_llamacpp_chat_payload`'s
+                # signature, so it structurally cannot leak into the
+                # captured request even though it rides `stream_llamacpp_
+                # chat`/`complete_llamacpp_chat`'s kwargs as auth headers.
+                if call_signals is not None:
+                    try:
+                        wire = build_llamacpp_chat_payload(
+                            model=resolution.model,
+                            messages=wire_messages,
+                            stream=resolution.streaming,
+                            temperature=resolution.temperature,
+                            top_p=resolution.top_p,
+                            min_p=resolution.min_p,
+                            top_k=resolution.top_k,
+                            max_tokens=effective_resolution.max_tokens,
+                            reasoning_effort=resolution.reasoning_effort,
+                            thinking_budget_tokens=resolution.thinking_budget_tokens,
+                        )
+                        capture_request, omitted = build_request_capture(
+                            {"model": resolution.model}
+                        )
+                        capture_request["wire_payload"] = stub_binary_strings(wire)
+                        call_signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=normalize_llamacpp_base_url(resolution.base_url),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 if not resolution.streaming:
                     completion = await self.complete_llamacpp_chat(
                         base_url=resolution.base_url,
@@ -2408,6 +2440,8 @@ class ConsoleProviderGateway:
                     )
                     if completion:
                         yield completion
+                    if call_signals is not None:
+                        call_signals.record_exchange_content(completion)
                     completed = True
                     return
                 async for chunk in self.stream_llamacpp_chat(
@@ -2423,6 +2457,8 @@ class ConsoleProviderGateway:
                     thinking_budget_tokens=resolution.thinking_budget_tokens,
                     api_key=resolution.api_key,
                 ):
+                    if call_signals is not None:
+                        call_signals.record_exchange_content(chunk)
                     yield chunk
                 completed = True
                 return

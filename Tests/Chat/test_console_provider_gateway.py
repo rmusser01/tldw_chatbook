@@ -6447,3 +6447,78 @@ class TestGatewayExchangeCapture:
         assert items == ["pong"]
         assert call_count["n"] == 1
         assert signals.exchange_captures() == []
+
+
+class TestLlamaCppExchangeCapture:
+    @staticmethod
+    def _resolution(*, streaming: bool) -> ConsoleProviderResolution:
+        return ConsoleProviderResolution(
+            provider="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            model="m",
+            ready=True,
+            execution_key="llama_cpp",
+            api_key="local-secret",
+            streaming=streaming,
+        )
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_capture_is_wire_literal_and_keyless(self, monkeypatch):
+        import json as _json
+
+        gateway = ConsoleProviderGateway()
+        streamed = ["hel", "lo"]
+
+        async def fake_stream(self, **kwargs):
+            for chunk in streamed:
+                yield chunk
+
+        monkeypatch.setattr(ConsoleProviderGateway, "stream_llamacpp_chat", fake_stream)
+        aggregate = ConsoleProviderStreamSignals()
+        resolution = self._resolution(streaming=True)
+        out = [
+            c
+            async for c in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            )
+        ]
+        assert out == streamed
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        wire = captures[0].request["wire_payload"]
+        assert wire["messages"][-1]["content"] == "q"
+        assert captures[0].response["content"] == "hello"
+        # resolution.api_key rides stream_llamacpp_chat's kwargs (headers),
+        # never the wire body -- the capture must contain no trace of it.
+        assert "local-secret" not in _json.dumps(captures[0].request)
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_non_streaming_capture_is_wire_literal_and_keyless(
+        self, monkeypatch
+    ):
+        import json as _json
+
+        gateway = ConsoleProviderGateway()
+
+        async def fake_complete(self, **kwargs):
+            return "done"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+        aggregate = ConsoleProviderStreamSignals()
+        resolution = self._resolution(streaming=False)
+        out = [
+            c
+            async for c in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            )
+        ]
+        assert out == ["done"]
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        wire = captures[0].request["wire_payload"]
+        assert wire["messages"][-1]["content"] == "q"
+        assert wire["stream"] is False
+        assert captures[0].response["content"] == "done"
+        assert "local-secret" not in _json.dumps(captures[0].request)
