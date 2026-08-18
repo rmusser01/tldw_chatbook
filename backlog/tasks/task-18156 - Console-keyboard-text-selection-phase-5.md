@@ -1,51 +1,32 @@
-# task-18156 - Console-keyboard-text-selection-phase-5
+---
+id: task-18156
+title: Console keyboard text selection phase 5
+status: In Progress
+assignee: ['@Robert']
+created_date: '2026-08-18'
+labels: [console, selection, keyboard]
+dependencies: []
+priority: high
+---
 
-## Description
+## Description (the why)
 
-Implement keyboard-driven text selection in the Console transcript view. Phase 5 delivers pure motion helper functions for navigating and selecting text in messages — word boundaries, line boundaries, and line up/down movement — as defined in the architectural spec for console selection. These helpers form the foundation for Tasks 2-5 which wire them into the UI.
+Text selection in the Console transcript is mouse-only; the selection menu's
+actions (quote, side chat, review feedback) are unreachable by keyboard.
+Phase 5 of the console-selection program adds a vim-style single-row
+keyboard selection mode that drives the SAME SelectionManager as the mouse,
+so both inputs converge on identical selection state and the entire action
+pipeline is shared. Spec:
+Docs/superpowers/specs/2026-08-18-console-keyboard-selection-and-note-management-design.md
+(Part 1). Plan: Docs/superpowers/plans/2026-08-18-console-keyboard-selection.md.
 
-## Acceptance Criteria
+## Acceptance Criteria (the what)
 
-- [x] `s` enters selection mode on eligible selected rows only
-- [x] motions per row kind incl. `o` (open/select)
-- [x] Enter opens the identical menu incl. feedback gating
-- [x] Esc layering
-- [x] hint truthful per row kind
-- [x] release-click token drained on keyboard finish
-- [x] tests green
-- [x] docs updated
-
-## Implementation Plan
-
-1. Sweep task IDs to find next available ID
-2. Create backlog task file for phase-5 phase
-3. Write failing tests for six motion helpers (word_forward, word_back, line_start, line_end, next_line, prev_line)
-4. Implement pure motion helpers in console_selection.py
-5. Verify tests pass
-6. Ruff both files for linting
-7. Commit with "feat(console): pure keyboard-motion helpers for selection phase 5"
-
-## Implementation Notes
-
-Implemented six pure motion helpers for keyboard text selection in console_selection.py:
-
-- `word_forward_offset()` — Vim-w: jump to start of next word (whitespace-delimited)
-- `word_back_offset()` — Vim-b: jump to start of previous word
-- `line_start_offset()` — Vim-0: start of current line
-- `line_end_offset()` — Vim-$: end of current line (before newline)
-- `next_line_offset()` — Move down one line, preserving column where possible
-- `prev_line_offset()` — Move up one line, preserving column where possible
-
-All functions:
-- Take `text: str` and `offset: int`, return clamped offset in `[0, len(text)]`
-- Are pure functions (no I/O, no state)
-- Handle empty text gracefully (return 0)
-- Follow Vim semantics for motion direction and scope
-
-Tests added to `test_console_selection_core.py` validate each motion's behavior on the text: "alpha beta\ngamma  delta\n\nepsilon"
-
-All tests pass; code linted clean.
-
-Modified files:
-- `tldw_chatbook/Widgets/Console/console_selection.py` — added 7 functions (_clamp + 6 motions)
-- `Tests/UI/test_console_selection_core.py` — added 5 test functions covering all motions and edge cases
+- [ ] `s` enters selection mode only on the j/k-selected message when its row supports selection; ineligible rows toast and do not enter the mode
+- [ ] Motions per row kind: h/l/w/b/0/$ char motions on plain and markdown rows, j/k line motions on all kinds, `o` swaps anchor and active end; char motions inert on diff rows; 1-unit selection floor
+- [ ] Enter opens the identical selection menu (same anchoring/clamp path, same feedback availability and run gating) as a mouse release
+- [ ] Esc layering: first Esc exits the mode keeping message selection; second Esc clears message selection
+- [ ] The in-mode hint advertises exactly the keys the active row kind honors; the static footer gains only `s`
+- [ ] Keyboard finish drains the release-click suppression tokens so the next genuine row click is not eaten
+- [ ] Tests green across the selection suites; ruff clean on touched files
+- [ ] Docs updated: user guide keyboard section, ADR-068 amendment, spec §42 amendment note
