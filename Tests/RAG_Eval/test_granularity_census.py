@@ -109,3 +109,68 @@ class TestRegisteredConstants:
         and structurally cannot move."""
         assert "plain" not in census.MODES
         assert census.MODES == ("semantic", "hybrid")
+
+
+class TestRowSlug:
+    """`row_slug` decides how many SLOTS a document occupies, so a mapping
+    failure does not merely lose a row -- it makes every row look like a
+    distinct document and drives the freed-slot count to zero."""
+
+    LOOKUP = {("media", "15"): "media-larkspur-turbine", ("note", "3"): "note-x"}
+
+    def test_maps_a_direct_hit(self, census):
+        row = {"provenance": {"source_type": "media"}, "source_id": "15"}
+        assert census.row_slug(row, self.LOOKUP) == "media-larkspur-turbine"
+
+    def test_strips_the_source_type_prefix_as_a_fallback(self, census):
+        """The hybrid FTS leg emits `SearchResult.id` (``media_15``), not a
+        bare source id -- `canonicalize` documents this as load-bearing:
+        without the strip, every hybrid keyword hit maps to nothing."""
+        row = {"provenance": {"source_type": "media"}, "source_id": "media_15"}
+        assert census.row_slug(row, self.LOOKUP) == "media-larkspur-turbine"
+
+    def test_unclaimed_row_is_kept_as_unknown_not_dropped(self, census):
+        """A dropped row would make precision answer 'of the rows I
+        recognized' -- a number that IMPROVES as retrieval returns garbage."""
+        row = {"provenance": {"source_type": "media"}, "source_id": "999"}
+        assert census.row_slug(row, self.LOOKUP) == "unknown:media:999"
+
+    def test_missing_provenance_does_not_raise(self, census):
+        assert census.row_slug({}, self.LOOKUP).startswith("unknown:")
+
+
+class TestSlotSummary:
+    def test_freed_counts_duplicate_slots(self, census):
+        """Three rows, two of them the same document -> one slot recoverable."""
+        freed, hit, unmapped = census.slot_summary(["a", "a", "b"], ("b",))
+        assert (freed, hit, unmapped) == (1, True, 0)
+
+    def test_no_duplicates_frees_nothing(self, census):
+        freed, _, _ = census.slot_summary(["a", "b", "c"], ("a",))
+        assert freed == 0
+
+    def test_hit_is_false_when_target_absent(self, census):
+        _, hit, _ = census.slot_summary(["a", "b"], ("z",))
+        assert hit is False
+
+    def test_empty_relevant_slugs_can_never_hit(self, census):
+        """Why every `negative` registers MISS by construction."""
+        _, hit, _ = census.slot_summary(["a", "b"], ())
+        assert hit is False
+
+    def test_unmapped_rows_are_counted_and_look_distinct(self, census):
+        """THE FAILURE THIS COUNTER EXISTS FOR.
+
+        Two rows of the SAME document that failed to map become two distinct
+        ``unknown:*`` keys, so `freed` reads 0 -- 'no displacement' when in
+        truth nothing was measured. The census reports `unmapped` alongside
+        the verdict for exactly this reason.
+        """
+        freed, _, unmapped = census.slot_summary(
+            ["unknown:media:1", "unknown:media:2"], ("a",)
+        )
+        assert freed == 0
+        assert unmapped == 2
+
+    def test_empty_rows(self, census):
+        assert census.slot_summary([], ("a",)) == (0, False, 0)

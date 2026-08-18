@@ -169,11 +169,28 @@ one arc earlier: **a number that means "could not measure" rendered
 identically to one that means "measured, found nothing".** Three instances in
 two arcs is a pattern, not a coincidence.
 
-**Pins added.** `Tests/RAG_Eval/test_granularity_census.py` (13 tests) covers
-the classification logic, including the negatives case. Mutation-verified:
-disabling the negative exclusion reds
-`test_negative_query_is_excluded_not_qualifying` and restoring it greens —
-so the pin proves the repair rather than merely coexisting with it.
+**A mapping failure would have faked this whole result, and now it cannot.**
+`row_slug` maps each row to a fixture slug; an unmapped row becomes a
+*distinct* `unknown:*` key, so if mapping broke, every row would look like a
+different document, the freed-slot count would fall to 0, and the census
+would confidently report "no displacement" having measured nothing. Hybrid's
+headline **is** a zero, which is exactly the shape that failure produces. The
+census now reports mapping health beside the verdict:
+
+```
+PROBE PROOF: rows canonicalized=1200, unmapped=0 (0.0%)
+```
+
+so hybrid's zero is backed by 1200 rows that were actually identified.
+
+**Pins added.** `Tests/RAG_Eval/test_granularity_census.py` (23 tests) covers
+the classification logic, `row_slug` (including the `media_15` prefix-strip
+fallback the hybrid FTS leg depends on, and unknown-row retention) and the
+freed-slot arithmetic. **Mutation-verified twice**: disabling the negative
+exclusion reds `test_negative_query_is_excluded_not_qualifying`; removing the
+prefix-strip fallback reds `test_strips_the_source_type_prefix_as_a_fallback`.
+Both green on restore — the pins prove the repairs rather than merely
+coexisting with them.
 
 ## What would reopen this
 

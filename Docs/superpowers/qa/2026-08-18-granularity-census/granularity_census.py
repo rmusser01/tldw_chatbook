@@ -35,6 +35,8 @@ REPO = Path(__file__).resolve().parents[4]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from Tests.RAG_Eval.harness.canonicalize import canonical_source_type  # noqa: E402
+
 CHUNK_SIZE = 384          # hybrid_basic profile, the harness's own
 CHUNK_OVERLAP = 64
 K = 10                    # run_eval's default
@@ -106,6 +108,33 @@ def classify(
     return "qualifying", ""
 
 
+def slot_summary(
+    slugs: list[str], relevant_slugs: tuple[str, ...]
+) -> tuple[int, bool, int]:
+    """Summarize one query's retrieved rows for the displacement question.
+
+    Args:
+        slugs: One fixture slug per retrieved ROW, in rank order, uncollapsed.
+        relevant_slugs: The query's ground-truth slugs.
+
+    Returns:
+        ``(freed, hit, unmapped)`` where ``freed`` is how many top-k slots a
+        granularity router would recover (rows minus distinct documents),
+        ``hit`` is whether any relevant document was retrieved, and
+        ``unmapped`` counts rows no fixture claimed.
+
+        ``unmapped`` is reported, not discarded: every unmapped row is a
+        DISTINCT ``unknown:*`` key, so a mapping failure would drive ``freed``
+        to 0 and the census would report "no displacement" when it had in
+        fact measured nothing.
+    """
+    counts = Counter(slugs)
+    freed = len(slugs) - len(counts)
+    hit = any(s in counts for s in relevant_slugs)
+    unmapped = sum(1 for s in slugs if s.startswith("unknown:"))
+    return freed, hit, unmapped
+
+
 def row_slug(row: Mapping[str, Any], lookup: Mapping[tuple[str, str], str]) -> str:
     """Map ONE retrieved row to its fixture slug, without collapsing.
 
@@ -123,8 +152,6 @@ def row_slug(row: Mapping[str, Any], lookup: Mapping[tuple[str, str], str]) -> s
         fixture claims the row (kept, never dropped -- an unrecognized row
         still occupies a top-k slot).
     """
-    from Tests.RAG_Eval.harness.canonicalize import canonical_source_type
-
     prov = row.get("provenance") or {}
     st = canonical_source_type(prov.get("source_type"))
     sid = str(row.get("source_id", ""))
@@ -143,19 +170,19 @@ def main() -> int:
         population, 1 when any query errored (an incomplete population cannot
         support a NULL, so no verdict is claimed).
     """
-    import tempfile
-
     if os.environ.get("RAG_EVAL") != "1":
         raise SystemExit("refusing to run without RAG_EVAL=1 (this builds a real index)")
 
+    # One contiguous local-import group. These are deferred to call time
+    # rather than module scope so the pure helpers above stay importable
+    # without the gate (and without building a retrieval stack) for
+    # `Tests/RAG_Eval/test_granularity_census.py`.
+    import tempfile
+
     import tldw_chatbook
-
-    # A census that silently measured another checkout would be worthless,
-    # and this programme already shipped one instrument that could not see
-    # what it was asked about (TASK-18255).
-    print(f"PROVENANCE tldw_chatbook <- {tldw_chatbook.__file__}")
-    assert str(REPO) in tldw_chatbook.__file__, f"WRONG TREE: expected under {REPO}"
-
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        LibraryLocalRagSearchService,
+    )
     from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 
     from Tests.RAG_Eval.harness.canonicalize import slug_lookup_from
@@ -166,6 +193,12 @@ def main() -> int:
         _extract_rows,
         build_query_scope,
     )
+
+    # A census that silently measured another checkout would be worthless,
+    # and this programme already shipped one instrument that could not see
+    # what it was asked about (TASK-18255).
+    print(f"PROVENANCE tldw_chatbook <- {tldw_chatbook.__file__}")
+    assert str(REPO) in tldw_chatbook.__file__, f"WRONG TREE: expected under {REPO}"
 
     corpus, golden = load_fixtures()
     print(f"PROBE PROOF: corpus={len(corpus)} docs, golden={len(golden)} queries")
@@ -201,6 +234,8 @@ def main() -> int:
 
     # --- population 2: DISPLACEMENT, needs a live index ---
     errors: list[str] = []
+    total_rows = 0
+    total_unmapped = 0
     qualifying: dict[str, list[str]] = {m: [] for m in MODES}
     any_dup: dict[str, list[str]] = {m: [] for m in MODES}
     excluded: dict[str, list[str]] = {m: [] for m in MODES}
@@ -208,10 +243,6 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         runtime = build_eval_runtime(corpus, tmp)
-        from tldw_chatbook.Library.library_local_rag_search_service import (
-            LibraryLocalRagSearchService,
-        )
-
         seam = LibraryLocalRagSearchService(runtime.app)
         lookup = slug_lookup_from(runtime.slug_to_source)
         cfg = runtime.service.config.search
@@ -235,9 +266,9 @@ def main() -> int:
                         errors.append(f"{mode}/{q.id}: {err}")
                         continue
                     slugs = [row_slug(r, lookup) for r in rows]
-                    counts = Counter(slugs)
-                    freed = len(slugs) - len(counts)     # slots a router would free
-                    hit = any(s in counts for s in q.relevant_slugs)
+                    freed, hit, unmapped = slot_summary(slugs, q.relevant_slugs)
+                    total_rows += len(slugs)
+                    total_unmapped += unmapped
                     verdict, reason = classify(q.relevant_slugs, q.category, mode, hit)
                     if q in direct:
                         direct_state[mode].append(
@@ -271,6 +302,15 @@ def main() -> int:
         )
 
     print(f"\n=== VERDICT vs pre-registered bar of {BAR} (inherited verbatim) ===")
+    print(
+        f"  PROBE PROOF: rows canonicalized={total_rows}, unmapped={total_unmapped} "
+        f"({100.0 * total_unmapped / total_rows if total_rows else 0.0:.1f}%) -- "
+        "an unmapped row is a DISTINCT unknown key, so a mapping failure would "
+        "drive freed-slot counts to 0 and fake a 'no displacement' result"
+    )
+    if total_rows == 0:
+        print("  NO VERDICT CLAIMED: zero rows canonicalized -- nothing was measured.")
+        return 1
     if errors:
         print(f"  !! {len(errors)} query/queries ERRORED -- population INCOMPLETE:")
         for e in errors:
