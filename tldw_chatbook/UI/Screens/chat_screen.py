@@ -3652,6 +3652,12 @@ class ChatScreen(BaseAppScreen):
         # Comment writes update the map in place.
         self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
         self._console_annotation_loaded_conversation: str | None = None
+        # Qodo (PR #1723): mutual exclusion for the selection-feedback flow.
+        # The worker is deliberately NOT exclusive (a superseding exclusive
+        # cancel would strand a mounted comment modal -- see the flow's
+        # docstring), so exclusion is this guard instead: re-triggers while
+        # a flow is in flight are ignored, never queued and never cancelled.
+        self._console_selection_feedback_inflight = False
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
@@ -19414,6 +19420,14 @@ class ChatScreen(BaseAppScreen):
             # Same blank-selection window as the quote/side-chat guards:
             # the row range was cleared while the menu was open.
             return
+        if self._console_selection_feedback_inflight:
+            # Rapid double-trigger (double-Enter before the menu unmounts):
+            # one flow, one modal, one dispatch, one durable record. Phase 4
+            # raised the stakes from a duplicate chat message to duplicate
+            # sidecar/annotation rows, so the documented phase-3 limitation
+            # is now closed rather than accepted.
+            return
+        self._console_selection_feedback_inflight = True
         action, quote = event.action, event.quote
         self.run_worker(
             self._console_selection_feedback_flow(
@@ -19495,20 +19509,30 @@ class ChatScreen(BaseAppScreen):
         would strand a live modal with no owner for its result (the
         ``EvalsScreen._on_delete_bench_pressed`` rationale).
         """
-        comment = await self.app.push_screen_wait(
-            ConsoleFeedbackCommentModal(action=action, quote=quote)
-        )
-        if comment is None:
-            return
-        lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
-        lines.extend(f"> {line}" if line.strip() else ">" for line in quote.splitlines())
-        if comment:
-            lines.append(comment)
-        # Audit BEFORE the dispatch: the queue may block behind an active
-        # run, and the record is about what the user said, not about when
-        # the send drained.
-        self._record_console_feedback_event(action, quote, comment, anchor_message_id)
-        await self._prompt_queue.dispatch("\n".join(lines))
+        try:
+            comment = await self.app.push_screen_wait(
+                ConsoleFeedbackCommentModal(action=action, quote=quote)
+            )
+            if comment is None:
+                return
+            lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
+            lines.extend(
+                f"> {line}" if line.strip() else ">" for line in quote.splitlines()
+            )
+            if comment:
+                lines.append(comment)
+            # Audit BEFORE the dispatch: the queue may block behind an active
+            # run, and the record is about what the user said, not about when
+            # the send drained.
+            self._record_console_feedback_event(
+                action, quote, comment, anchor_message_id
+            )
+            await self._prompt_queue.dispatch("\n".join(lines))
+        finally:
+            # Every exit path -- submit, cancel, or an error above -- releases
+            # the in-flight guard; a latched flag would silently kill the
+            # feature after its first use.
+            self._console_selection_feedback_inflight = False
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"

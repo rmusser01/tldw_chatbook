@@ -1468,3 +1468,58 @@ async def test_comment_annotation_reaches_the_real_database_unmocked(tmp_path):
             assert len(feedback_rows) == 1
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_rapid_double_trigger_dispatches_one_feedback():
+    """Qodo (PR #1723, d63cd21f0): the flow worker is deliberately
+    non-exclusive (an exclusive cancel would strand a mounted modal -- the
+    EvalsScreen rationale), so mutual exclusion is a guard instead: a second
+    request while one flow is in flight is ignored. Phase 4 raised the
+    stakes from a duplicate chat message to duplicate DURABLE records."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        pushed = _stub_comment_modal(screen, "once")
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        for _ in range(2):
+            screen.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action="comment", quote="q", anchor_message_id="msg-42"
+                )
+            )
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert len(pushed) == 1
+        assert queue.dispatched == ["[Comment]\n> q\nonce"]
+        assert len(store.calls) == 1
+        assert len(store.annotation_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_feedback_flow_can_run_again_after_completion():
+    """The in-flight guard must clear on every exit path -- a latched flag
+    would silently kill the feature after its first use."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        _stub_comment_modal(screen, "note")
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        for round_no in range(2):
+            screen.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action="lgm", quote=f"q{round_no}", anchor_message_id="msg-42"
+                )
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+        assert queue.dispatched == ["[LGTM]\n> q0\nnote", "[LGTM]\n> q1\nnote"]
