@@ -88,10 +88,19 @@ A recorded null is a success outcome of this arc, exactly as it was for PRF.
 
 ## Outcome (2026-08-18): NULL — the premise is dead, no code was written
 
-**Step 0 (AC#1), from the corpus:** of 60 golden queries, **2** have more
-than one relevant document, 51 have exactly one, 7 are negative controls.
-A query with a single relevant document has nothing for a gate to
-disambiguate *between*, whatever its surface vagueness.
+**Step 0 (AC#1), from the corpus — CORRECTED after Qodo's review of PR
+#1791.** The first census counted RELEVANCE LABELS, which answers what the
+fixture intends rather than what the corpus contains. Re-measured against
+document text: **1** of 60 queries has an unlabelled alternative reading in
+the corpus (`match > rel`); 59 have none. The per-query answer for all 60 is
+committed as `per-query-census.md`, produced by `census.py`.
+
+The single qualifying query is `negation` — *"which outstation does not take
+a standard maintenance record"* — where the two extra matches exist **because
+the corpus asserts what the query excludes**. A clarifying question cannot
+repair that, which is why `negation` reads 0.000 under every construction
+this programme has measured. Qualifying under all three conditions: **0**;
+under condition 2 alone: **1**. Bar was 5, so the kill fires either way.
 
 **The 2 candidates fail the third condition, and badly.**
 `kw-nimbus-rollback` and `kw-calyx-limiter` each have two relevant documents
@@ -123,3 +132,23 @@ the transferable lesson and it is carried into the next candidate,
 
 Artifacts: `Docs/superpowers/qa/2026-08-18-clarification-gate/bar.md`
 (registered before the probe) and `step0.md` (the census and verdict).
+
+### Review corrections (2026-08-18, Qodo on PR #1791)
+
+- **"Census misses corpus ambiguity" — right, and it changed the method.**
+  Re-measured against document text rather than label counts; verdict
+  unchanged but now resting on a corpus-derived measure.
+- **"`plant maintenance record` has industrial and botanical readings" —
+  factually wrong, checked in one query.** Exactly one corpus document
+  mentions "plant" (`note-saltmarsh-hide`) and it is the labelled relevant
+  one. Plausible claim, hence checked rather than believed.
+- **"Per-query census missing" — right.** All 60 rows are now committed.
+- **"Every ≤3-word query has one relevant doc" — my error.**
+  `kw-nimbus-rollback` is three words with two (both correct — a multi-target
+  query, not an ambiguous one). My own script printed both facts and I failed
+  to cross-check them.
+- **Task id case** — `TASK-18155` canonicalised; lowercase breaks discovery.
+- **Method note:** the corrected census first reported `match = 0` almost
+  everywhere because it read `body`/`text` while `CorpusDoc` uses `content` —
+  a measure reading nothing looks exactly like a clean null. `census.py` now
+  prints how many documents it actually read before any result.

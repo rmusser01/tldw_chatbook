@@ -3,46 +3,62 @@
 Run 2026-08-18 against the shipped fixture (172 docs, 60 golden queries).
 Bar and kill condition were registered first, in `bar.md`, unchanged since.
 
-## The census
+## The census (CORRECTED after review — see the method note below)
 
-Condition 2 of the bar — do a query's interpretations point at **different
-documents in this corpus** — is the one the fixture answers directly, and it
-is binding: a query with a single relevant document has nothing for a gate to
-disambiguate *between*, however vague its surface.
+Condition 2 asks whether a query's interpretations point at **different
+documents in this corpus**. The first version of this census answered that
+with the count of RELEVANCE LABELS, which was wrong: a label set encodes what
+the fixture intends, not what the corpus contains. Corrected measure — for
+each query, how many corpus documents contain every content word (plausible
+readings), versus how many are labelled relevant:
 
 | | queries |
 |---|---|
-| more than one relevant document | **2** |
-| exactly one relevant document | 51 |
-| zero (negative controls) | 7 |
+| corpus holds an unlabelled alternative reading (`match > rel`) | **1** |
+| no alternative reading in the corpus | 59 |
 
-Categories: keyword 16, paraphrase 13, vocabulary_mismatch 9, negative 7,
-scoped 7, prompt 5, negation 3.
+The full per-query table for all 60 queries is
+`per-query-census.md`; the script is `census.py` and prints a probe-proof
+line (`docs with non-empty text: 172 of 172`) before its table.
 
-## The two candidates fail condition 3, and they fail it badly
+**The one qualifying query is `negation`:** *"which outstation does not take a
+standard maintenance record"* — 3 corpus documents contain its content words,
+1 is labelled relevant. That is not gate-shaped either: the query is
+**precise**, and the other two match because the corpus asserts what the
+query excludes. A clarifying question cannot repair a negation the index
+cannot express — which is the same reason `negation` sits at 0.000 across
+every retrieval construction this programme has measured.
 
-| query | docs | text |
-|---|---|---|
-| `kw-nimbus-rollback` | 2 | "Nimbus-14 firmware rollback" |
-| `kw-calyx-limiter` | 2 | "Calyx-77 torque limiter slipping" |
+Qualifying under all three conditions: **0**. Under condition 2 alone: **1**.
+Against a bar of 5, **the kill condition fires either way.**
 
-Both are `keyword` queries whose **two documents are both relevant**. A
-clarifying question here would not choose between competing interpretations —
-it would ask the user to discard one of two correct answers. Firing a gate on
-these would make retrieval *worse*, not ambiguous-then-better.
+## Two review claims, checked rather than accepted
 
-So the qualifying count under all three conditions is **0**, against a bar of
-5. **The kill condition fires.**
+- **"The census misses corpus ambiguity" — RIGHT, and it changed the method.**
+  Label count ≠ corpus ambiguity. Re-measured against document text; the
+  answer moved from 0 to 1, still far below the bar.
+- **"`plant maintenance record` has industrial and botanical readings in the
+  corpus" — FACTUALLY WRONG, verified in one query.** Exactly **one** corpus
+  document mentions "plant" at all (`note-saltmarsh-hide`, the estuary/
+  botanical one) and it **is** the labelled relevant document. There is no
+  industrial-plant document to disambiguate against. The claim was plausible —
+  "plant" is the textbook polyseme — which is why it was checked instead of
+  believed.
+- **"Every ≤3-word query has exactly one relevant document" — MY ERROR, now
+  corrected.** `Nimbus-14 firmware rollback` is three words and has two.
+  The corrected statement: of the 12 queries of ≤3 words, **11** have exactly
+  one relevant document and one (`kw-nimbus-rollback`) has two — and its two
+  are both correct, so it is a multi-target query, not an ambiguous one. My
+  own script printed both facts and I did not cross-check them.
 
-## Twelve short queries are not twelve gate cases
+## Method note (the second time today this reflex paid)
 
-For completeness (condition 1 alone): 12 queries are ≤3 words, e.g.
-`'asset tag QX-8842'`, `'plant maintenance record'`, `'gum disease treatment'`,
-`'pump chamber inspection'`. Every one has **exactly one** relevant document.
-They are terse, not ambiguous — the corpus gives each a single target, so a
-question would add a round trip and change nothing about what is retrieved.
-This is the distinction the bar was written to force: surface vagueness is not
-an ambiguity signal unless the corpus supplies a second thing to mean.
+The corrected census initially reported `match = 0` for nearly every query —
+which would have made it look like a clean confirmation. It was reading
+**empty strings**: `CorpusDoc`'s text field is `content`, and the probe asked
+for `body`/`text`. A measure that silently reads nothing produces a
+perfect-looking null. `census.py` now prints how many documents it actually
+read before printing any result.
 
 ## Verdict: NULL — the arc ends here, per AC#3
 

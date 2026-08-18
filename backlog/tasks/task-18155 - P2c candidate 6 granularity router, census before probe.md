@@ -1,5 +1,5 @@
 ---
-id: task-18155
+id: TASK-18155
 title: 'P2c candidate 6: granularity router, census before probe'
 status: To Do
 assignee: []
