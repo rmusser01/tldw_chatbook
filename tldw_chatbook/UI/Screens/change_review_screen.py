@@ -30,6 +30,8 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import Key
+from textual.geometry import Region
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Select, Static, Tree
 
@@ -510,6 +512,93 @@ class AgentRunsChangeReviewProvider:
         return entries, pruned_rows
 
 
+#: Cursor line background (TASK-18060 Task 6, review-rail spec §3) — an
+#: explicit Rich style, never markup: the cursor is applied by appending a
+#: STYLE onto the (already-data) line text, exactly like the existing
+#: +/-/@@ diff coloring right below it, so the same "content is data, never
+#: markup-parsed" discipline covers it.
+_CURSOR_LINE_STYLE = "on grey37"
+
+
+class ChangeReviewDiffPane(VerticalScroll):
+    """The diff viewport: hosts the review line cursor, reclaiming keys.
+
+    A BINDINGS-only approach is provably wrong here for the same reason it
+    was wrong for ``ConsoleTurnFileCard``'s note input (that class's own
+    ``on_key`` docstring traces the root cause against Textual's real
+    dispatch, and is the precedent this mirrors): a non-priority binding
+    (this pane's own ``ScrollableContainer.BINDINGS`` up/down-scroll, and
+    ``ChangeReviewScreen``'s own ``escape -> dismiss_screen`` binding one
+    level up) is resolved by ``App._on_key`` ONLY once the raw ``Key``
+    MESSAGE has bubbled all the way to the App completely UNSTOPPED. This
+    pane sits directly on the bubble path from the focused widget (itself,
+    while the pane is focused — ``ChangeReviewScreen.action_focus_diff``
+    calls ``.focus()`` on it) up to the App, so reclaiming a key HERE — via
+    ``event.stop()`` before it can bubble further — wins the race and
+    replaces the DEFAULT behavior for that key while this pane is focused,
+    without touching the pane's or the screen's ``BINDINGS`` at all.
+
+    ONLY up/down/``c``/escape are reclaimed (spec §3's named hazard):
+
+    - up/down move the review cursor one rendered line (clamped; see
+      ``ChangeReviewScreen._move_diff_cursor``/``_render_diff``) instead of
+      scrolling the pane directly — the cursor's own re-render scrolls it
+      into view, so the net effect still tracks the keypress.
+    - ``c`` is swallowed as a no-op placeholder — Task 7 wires line-comment
+      creation onto it; reclaiming the key now (even before there is a
+      handler) means a stray ``c`` keypress while the pane is focused can
+      never leak through to the screen or transcript in the meantime.
+    - escape moves focus to the changed-file tree — a DELIBERATE shadow of
+      the screen's own ``escape -> dismiss_screen`` binding while the pane
+      is focused (spec §3's explicit UX ruling): Esc-Esc is pane -> tree ->
+      dismiss, never a single Esc dismissing straight out of the diff pane.
+
+      Page-up/page-down/home/end are intentionally NOT in this list — they
+      keep the pane's native ``ScrollableContainer`` scrolling untouched.
+    """
+
+    async def on_key(self, event: Key) -> None:
+        """Reclaim up/down/``c``/escape while this pane is focused.
+
+        Every branch below both ``stop()``s (block the bubble, so no
+        non-priority binding anywhere on the ancestor chain — including
+        this pane's OWN native up/down scroll bindings — ever sees the raw
+        key) and ``prevent_default()``s (mirrors the card precedent) the
+        event, in one whole-handler ``try/except`` so a failure here
+        degrades to a swallowed keypress rather than propagating out of an
+        ``on_*`` handler (which Textual would otherwise hand to
+        ``app._handle_exception()`` and exit the whole app).
+
+        Args:
+            event: The bubbling key event, dispatched here because this
+                pane is the focused widget (or an ancestor of it).
+        """
+        try:
+            screen = self.screen
+            if event.key == "up":
+                event.stop()
+                event.prevent_default()
+                screen._move_diff_cursor(-1)  # noqa: SLF001 -- same module
+            elif event.key == "down":
+                event.stop()
+                event.prevent_default()
+                screen._move_diff_cursor(1)  # noqa: SLF001 -- same module
+            elif event.key == "c":
+                event.stop()
+                event.prevent_default()
+                # Task 7 placeholder: intentionally a no-op for now (see
+                # class docstring) — swallowed so it never reaches the
+                # transcript/screen.
+            elif event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                screen.query_one("#change-review-tree", Tree).focus()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: diff pane key handling failed"
+            )
+
+
 class ChangeReviewScreen(Screen):
     """Changed-file tree + windowed diff viewer for one conversation."""
 
@@ -563,6 +652,14 @@ class ChangeReviewScreen(Screen):
         #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
         self._leaves: list[tuple[dict, ChangedFile]] = []
         self._focused_leaf: int = -1
+        #: TASK-18060 Task 6 (review-rail spec §3): the diff pane's line
+        #: cursor, an index over the file's RENDERED lines (which, under
+        #: the display cap, equal the full-diff line indices — the cap
+        #: truncates only the tail; see ``_render_diff``). Reset to 0 every
+        #: time the focused file changes (``_focus_leaf``); clamped into
+        #: range inside ``_render_diff`` itself against that render's own
+        #: line count, never against a stale one.
+        self._cursor_line: int = 0
 
     # -- compose -----------------------------------------------------------
 
@@ -592,7 +689,7 @@ class ChangeReviewScreen(Screen):
             )
             with Horizontal(id="change-review-body"):
                 yield Tree("Changes", id="change-review-tree")
-                with VerticalScroll(id="change-review-diff"):
+                with ChangeReviewDiffPane(id="change-review-diff"):
                     yield Static(
                         "",
                         id="change-review-diff-content",
@@ -883,8 +980,63 @@ class ChangeReviewScreen(Screen):
         if not self._leaves:
             return
         self._focused_leaf = max(0, min(index, len(self._leaves) - 1))
+        # TASK-18060 Task 6: the line cursor is per-file — every leaf focus
+        # (a fresh selection, or j/k switching files) starts back at the
+        # top rather than carrying over an unrelated file's line index.
+        self._cursor_line = 0
         row, change = self._leaves[self._focused_leaf]
         self._render_diff(row, change)
+
+    def _move_diff_cursor(self, delta: int) -> None:
+        """Move the diff-pane line cursor by ``delta`` and re-render.
+
+        TASK-18060 Task 6: called from ``ChangeReviewDiffPane.on_key``'s
+        up/down reclaim. The lower bound (0) is clamped HERE; the upper
+        bound (the file's own rendered-line count, excluding the
+        truncation tail) is clamped inside ``_render_diff`` against that
+        render's own line count — so a downward move that overshoots past
+        the cap settles on the last real line rather than the tail.
+
+        Args:
+            delta: ``-1`` for up, ``1`` for down.
+        """
+        if not self._leaves or self._focused_leaf < 0:
+            return
+        self._cursor_line = max(0, self._cursor_line + delta)
+        row, change = self._leaves[self._focused_leaf]
+        self._render_diff(row, change)
+
+    def _scroll_cursor_into_view(self, line: int) -> None:
+        """Scroll the diff pane so the cursor's rendered line is visible.
+
+        TASK-18060 Task 6 (spec §3): the diff pane is one flat ``Static``,
+        line-per-line, so the cursor's line index IS its y-offset inside
+        the pane's virtual content — ``Region(0, line, 1, 1)`` names it
+        directly. Deferred via ``call_after_refresh`` rather than called
+        synchronously right after ``content.update()``: the pane's virtual
+        size (needed to compute how far to scroll) is only current once
+        Textual has laid the just-updated ``Static`` out, which happens on
+        the next refresh, not synchronously inside this call.
+
+        Args:
+            line: The cursor's 0-based rendered-line index to scroll to.
+        """
+        try:
+            pane = self.query_one("#change-review-diff", ChangeReviewDiffPane)
+        except Exception:  # noqa: BLE001 -- screen dismissed before refresh
+            return
+
+        def _scroll() -> None:
+            try:
+                pane.scroll_to_region(
+                    Region(0, line, 1, 1), animate=False, x_axis=False
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "change_review: cursor scroll-into-view failed"
+                )
+
+        self.call_after_refresh(_scroll)
 
     @on(Tree.NodeSelected, "#change-review-tree")
     def _on_tree_node_selected(self, event: "Tree.NodeSelected") -> None:
@@ -1009,16 +1161,33 @@ class ChangeReviewScreen(Screen):
         cap = self._provider.diff_display_max_lines
         lines = diff.splitlines()
         hidden = max(0, len(lines) - cap)
+        # TASK-18060 Task 6 (spec §3): the cursor only ranges over REAL
+        # rendered lines, never the truncation tail line appended below —
+        # clamped here against THIS render's own count so a cursor left
+        # over from a longer file (or a downward move that overshot) never
+        # points past what is actually on screen.
+        rendered_count = min(len(lines), cap)
+        self._cursor_line = (
+            max(0, min(self._cursor_line, rendered_count - 1))
+            if rendered_count > 0
+            else 0
+        )
         text = Text()
-        for line in lines[:cap]:
+        for index, line in enumerate(lines[:cap]):
             # Plain-string appends with explicit styles: content is DATA;
             # nothing here is ever markup-parsed.
             if line.startswith("+") and not line.startswith("+++"):
-                text.append(line, style="green")
+                style = "green"
             elif line.startswith("-") and not line.startswith("---"):
-                text.append(line, style="red")
+                style = "red"
             elif line.startswith("@@"):
-                text.append(line, style="cyan")
+                style = "cyan"
+            else:
+                style = ""
+            if index == self._cursor_line:
+                style = f"{style} {_CURSOR_LINE_STYLE}".strip()
+            if style:
+                text.append(line, style=style)
             else:
                 text.append(line)
             text.append("\n")
@@ -1027,6 +1196,8 @@ class ChangeReviewScreen(Screen):
                 f"… diff truncated — {hidden} more lines", style="yellow"
             )
         content.update(text)
+        if rendered_count > 0:
+            self._scroll_cursor_into_view(self._cursor_line)
 
 
 class ChangeRevertConfirmModal(SafeModalDismissMixin, ModalScreen[bool]):

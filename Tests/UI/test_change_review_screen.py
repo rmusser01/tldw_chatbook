@@ -18,6 +18,7 @@ from textual.widgets import Select, Static, Tree
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
+    ChangeReviewDiffPane,
     ChangeReviewScreen,
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
@@ -135,6 +136,24 @@ def _tree_labels(tree: Tree) -> list[str]:
 
     walk(tree.root)
     return labels
+
+
+def _cursor_style_line(screen: ChangeReviewScreen) -> int | None:
+    """The rendered line index currently carrying the cursor's background
+    style span (TASK-18060 Task 6) -- read off the diff Static's own
+    ``rich.text.Text`` spans, never off ``diff_pane_text()`` (which is
+    deliberately PLAIN text, unaffected by the cursor -- style only)."""
+    content = screen.query_one("#change-review-diff-content", Static)
+    from rich.text import Text as _Text
+
+    renderable = content.renderable
+    if not isinstance(renderable, _Text):
+        return None
+    plain = renderable.plain
+    for span in renderable.spans:
+        if "grey37" in str(span.style):
+            return plain.count("\n", 0, span.start)
+    return None
 
 
 @pytest.mark.asyncio
@@ -1139,4 +1158,326 @@ async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
         _row, change = screen._leaves[0]
         assert change.path != "edit.txt", (
             f"leaf 0 must be run2's OWN first leaf, got {change.path!r}"
+        )
+
+
+# -- Task 6 (console-review-rail): diff-pane line cursor + key reclaim ------
+
+
+async def _press_n(pilot, key: str, n: int) -> None:
+    for _ in range(n):
+        await pilot.press(key)
+
+
+def _big_diff_provider(tmp_path, *, line_count: int = 200, cap: int = 50):
+    """A provider whose single turn produces a diff longer than ``cap`` --
+    the same fixture shape as ``test_truncation_row_reports_accurate_
+    hidden_count`` -- so the cursor's clamp-before-the-tail and the pane's
+    native page-scrolling both have real room to exercise."""
+    root = tmp_path / "root"
+    root.mkdir()
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run = db.create_run(conversation_id="c", agent_kind="primary")
+    _record_turn(
+        db,
+        tracker,
+        root,
+        run,
+        lambda: (root / "big.txt").write_text(
+            "".join(f"line {n}\n" for n in range(line_count))
+        ),
+    )
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="c", diff_display_max_lines=cap
+    )
+    return provider, root
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_down_moves_the_styled_line_and_scrolls(tmp_path):
+    """Focusing the pane and pressing down moves the cursor's styled
+    background span onto the next rendered line, and scrolls the pane so
+    that line becomes visible. `diff_pane_text()`'s PLAIN content -- the
+    observability seam -- stays byte-identical throughout: the cursor is a
+    style-only difference, never a content change."""
+    provider, root = _big_diff_provider(tmp_path)
+    app = _Harness(provider)
+    async with app.run_test(size=(80, 20)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        original_text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "line 0" in t else None)(screen.diff_pane_text()),
+            "big.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        assert app.focused is pane
+        assert screen._cursor_line == 0
+        assert _cursor_style_line(screen) == 0
+        start_offset = pane.scroll_offset.y
+
+        await _press_n(pilot, "down", 30)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == 30
+        assert _cursor_style_line(screen) == 30
+        assert screen.diff_pane_text() == original_text, (
+            "cursor movement must not change the pane's plain diff text"
+        )
+        assert pane.scroll_offset.y > start_offset, (
+            "moving the cursor past the visible window must scroll it into view"
+        )
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_up_clamps_at_zero(review_fixture):
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("edit.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        assert screen._cursor_line == 0
+        await pilot.press("up")
+        await pilot.pause()
+        assert screen._cursor_line == 0, "up at the top must clamp, not go negative"
+        assert _cursor_style_line(screen) == 0
+
+
+@pytest.mark.asyncio
+async def test_diff_cursor_down_clamps_before_the_truncation_tail(tmp_path):
+    """The cursor's range excludes the truncation tail line -- it must
+    settle on the last REAL rendered line (index cap-1), never the
+    "truncated -- N more lines" disclosure line appended after it."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "truncated" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "truncated diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+
+        await _press_n(pilot, "down", 80)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._cursor_line == 49, (
+            f"expected clamp at the last real line (49), got {screen._cursor_line}"
+        )
+        assert _cursor_style_line(screen) == 49
+        assert "truncated" in screen.diff_pane_text(), (
+            "the truncation disclosure must survive cursor clamping"
+        )
+
+
+@pytest.mark.asyncio
+async def test_escape_in_pane_focuses_tree_then_second_escape_dismisses(
+    review_fixture,
+):
+    """Spec §3's deliberate shadow: Esc while the diff pane is focused
+    moves focus to the tree (the screen stays alive) -- Esc-Esc is
+    pane -> tree -> dismiss, never a single Esc dismissing from the pane.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        assert app.focused is pane
+
+        await pilot.press("escape")
+        await pilot.pause()
+        tree = screen.query_one("#change-review-tree", Tree)
+        assert app.focused is tree, (
+            "escape while the pane is focused must move focus to the tree"
+        )
+        assert app.screen is screen, "the screen must stay alive on the first escape"
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is not screen, (
+            "a second escape, with the tree focused, must dismiss the screen"
+        )
+
+
+@pytest.mark.asyncio
+async def test_c_key_is_swallowed_while_pane_focused(review_fixture):
+    """`c` is a Task 7 placeholder -- it must be reclaimed (swallowed) now
+    so it never leaks to the screen/transcript, even though it does
+    nothing yet."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("edit.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        cursor_before = screen._cursor_line
+        text_before = screen.diff_pane_text()
+
+        await pilot.press("c")
+        await pilot.pause()
+
+        assert app.screen is screen, "'c' must not dismiss or navigate the screen"
+        assert screen._cursor_line == cursor_before, "'c' must not move the cursor"
+        assert screen.diff_pane_text() == text_before
+        assert app.focused is pane, "'c' must not move focus off the pane"
+
+
+@pytest.mark.asyncio
+async def test_pagedown_still_scrolls_natively_in_pane(tmp_path):
+    """Page-up/down/home/end are deliberately NOT reclaimed -- they must
+    keep scrolling the pane the ordinary `ScrollableContainer` way, and
+    must never move the review line cursor."""
+    provider, root = _big_diff_provider(tmp_path, line_count=200, cap=50)
+    app = _Harness(provider)
+    async with app.run_test(size=(80, 20)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("big.txt")
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "truncated" in t else None)(
+                screen.diff_pane_text()
+            ),
+            "big diff",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        pane = screen.query_one("#change-review-diff", ChangeReviewDiffPane)
+        start_offset = pane.scroll_offset.y
+        cursor_before = screen._cursor_line
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+
+        assert pane.scroll_offset.y > start_offset, (
+            "pagedown must still scroll the pane natively"
+        )
+        assert screen._cursor_line == cursor_before, (
+            "native page scrolling must not move the review cursor"
+        )
+
+
+@pytest.mark.asyncio
+async def test_jk_switch_files_and_reset_the_cursor(review_fixture):
+    """`j`/`k` file navigation is untouched by the pane's key reclaim, and
+    every switch resets the line cursor to the top of the new file."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        assert len(screen._leaves) >= 2, "fixture must offer multiple files"
+        screen.action_focus_diff()
+        await pilot.pause()
+        first_leaf = screen._focused_leaf
+
+        await _press_n(pilot, "down", 3)
+        await pilot.pause()
+        assert screen._cursor_line == 3
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert screen._focused_leaf != first_leaf, (
+            "'j' must still switch files while the diff pane is focused"
+        )
+        assert screen._cursor_line == 0, "switching files must reset the line cursor"
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert screen._focused_leaf == first_leaf, "'k' must still switch back"
+        assert screen._cursor_line == 0
+
+
+@pytest.mark.asyncio
+async def test_binary_file_render_carries_no_cursor(review_fixture):
+    """The binary-file render (`change.binary`) is one of the existing
+    early-return paths in `_render_diff` -- it must keep rendering with NO
+    cursor styling, and must not crash on a stray cursor keypress."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "leaves loaded")
+        screen.select_file("image.bin")
+        await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if "Binary file changed." in t else None
+            )(screen.diff_pane_text()),
+            "binary render",
+        )
+        screen.action_focus_diff()
+        await pilot.pause()
+        assert _cursor_style_line(screen) is None, (
+            "a binary render must carry no cursor styling"
+        )
+        await pilot.press("down")
+        await pilot.pause()
+        assert "Binary file changed." in screen.diff_pane_text(), (
+            "a cursor keypress against a binary render must not corrupt it"
         )
