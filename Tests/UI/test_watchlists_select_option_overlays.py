@@ -378,17 +378,31 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
     Nothing in the existing suite saw it (`test_settings_provider_test_draft.py`
     stayed green), so it is pinned here, on the painted rows, in all three
     states.
+
+    task-17664: the original exemplar died by design — 484c74af2 replaced
+    the visible provider Select with the search + picker flow and kept
+    `#settings-provider-value` only as a hidden manual-entry compat control
+    (`settings-provider-manual-hidden`, zero-size), which made this pin
+    IndexError on an empty paint. The contract outlives the exemplar
+    (~21 bordered compact Selects remain), so it is pinned on the Console
+    Behavior compaction-mode Select instead, scrolled into view first the
+    way a user reaches it.
     """
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(180, 50)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = pilot.app.screen
-        await _wait_for_selector(screen, pilot, "#settings-provider-value", timeout=5.0)
-        select = screen.query_one("#settings-provider-value", Select)
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-context-compaction-mode", timeout=5.0
+        )
+        select = screen.query_one("#settings-console-context-compaction-mode", Select)
         assert "-textual-compact" in select.classes, (
             "precondition: this control is the compact-AND-bordered shape"
         )
+        select.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
 
         def _frame() -> tuple[str, str]:
             rows = _painted_rows(screen, select.region)
@@ -407,7 +421,7 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
             f"painted {_painted_rows(screen, select.region)!r}"
         )
 
-        await pilot.hover("#settings-provider-value")
+        await pilot.hover("#settings-console-context-compaction-mode")
         await pilot.pause()
         assert _frame() == (rest_top, rest_bottom), (
             "and on hover -- a frame that appears and disappears under the "

@@ -77,13 +77,13 @@ def poke_console_setting(app_config: Any, key: str, value: Any) -> None:
 
 
 def apply_status_chips_position(screen: Any) -> bool:
-    """Move the mounted chips strip to the configured side of the composer cluster.
+    """Move the mounted chips strip to the configured side of the composer.
 
-    "Above" means directly under the workspace grid — above the
-    staged-evidence strip, the prompt-queue shelf, and the composer — so
-    the shelf-adjacency contract (queue hugs the composer) holds in both
-    modes. Never raises: a screen mid-teardown or a strip not yet mounted
-    is a no-op, not an error.
+    "Above" means directly above the composer's top gap — BELOW the
+    transient strips (staged evidence, prompt queue), which sit at the top
+    of the control deck at all times (task-17661). "Below" restores the
+    TASK-15704 bottom row. Never raises: a screen mid-teardown or a strip
+    not yet mounted is a no-op, not an error.
 
     Args:
         screen: The mounted ChatScreen (anything exposing ``query_one`` and
@@ -94,12 +94,11 @@ def apply_status_chips_position(screen: Any) -> bool:
     """
     try:
         chips = screen.query_one("#console-status-chips")
-        cluster_top = screen.query_one("#console-staged-evidence-strip")
         composer = screen.query_one("#console-native-composer")
     except Exception:
         return False
     parent = chips.parent
-    if parent is None or parent is not cluster_top.parent or parent is not composer.parent:
+    if parent is None or parent is not composer.parent:
         return False
     position = resolve_status_chips_position(
         getattr(getattr(screen, "app_instance", None), "app_config", None)
@@ -107,12 +106,13 @@ def apply_status_chips_position(screen: Any) -> bool:
     children: list["Widget"] = list(parent.children)
     try:
         chips_index = children.index(chips)
+        composer_index = children.index(composer)
         if position == STATUS_CHIPS_POSITION_ABOVE:
-            if chips_index < children.index(cluster_top):
+            if chips_index == composer_index - 1:
                 return False
-            parent.move_child(chips, before=cluster_top)
+            parent.move_child(chips, before=composer)
         else:
-            if chips_index > children.index(composer):
+            if chips_index == composer_index + 1:
                 return False
             parent.move_child(chips, after=composer)
     except Exception:
