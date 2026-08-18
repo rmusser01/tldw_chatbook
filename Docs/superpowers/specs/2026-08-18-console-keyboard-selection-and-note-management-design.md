@@ -97,6 +97,19 @@ Keyboard selections inherit the shipped semantics untouched: plain rows
 hold their last stable range; a markdown selection touching the last line
 grows with the stream (recorded ADR-068 behavior).
 
+### Implementation refinements (recorded during execution)
+
+- Markdown rows store character ranges as-is (live-spike evolution), so
+  char motions apply to plain AND markdown rows; only diff rows stay
+  line-granular (j/k/o only).
+- `o` swaps anchor and active end — without it a text-start anchor could
+  never reach a mid-text span.
+- Keyboard finish drains `consume_release_click()` + `consume_just_finished()`.
+- In-mode consumption covers ALL printable chars + enter/up/down (up/down
+  alias the selection-nav bindings); page keys/wheel fall through.
+- Added scope (maintainer, mid-execution): a fourth base menu action,
+  **Create note** — see the plan's Task 6 for the contract.
+
 ## Part 2 — Review-note management (the two riders)
 
 ### Entry points
