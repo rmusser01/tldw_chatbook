@@ -730,3 +730,26 @@ async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
             assert len(pushed) == 2
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_annotation_previews_join_the_transcript_refresh_key():
+    """Live-verification catch (task-18515): the marker survived deleting
+    its last note because the refresh key ignored annotation previews, so
+    nothing re-rendered while the app was idle. Phase 4 only appeared to
+    work because writing a note also dispatches a message (starting a run,
+    whose sync ticks refresh anyway)."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        before = screen._last_native_transcript_refresh_key
+        assert before is not None
+
+        screen._console_annotation_previews = {"m-any": ("a note",)}
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+
+        assert screen._last_native_transcript_refresh_key != before, (
+            "an annotation-preview change must invalidate the refresh key"
+        )

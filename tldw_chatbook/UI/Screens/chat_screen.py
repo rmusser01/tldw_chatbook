@@ -15903,6 +15903,13 @@ class ChatScreen(BaseAppScreen):
                 turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                # task-18515: an annotation added, edited, or deleted must
+                # force a refresh on its own. Without this the marker row
+                # only changed when something ELSE in the key did -- phase 4
+                # looked correct because writing a note also dispatches a
+                # message, while edit/delete leave the app idle and left a
+                # deleted note's marker on screen (caught live).
+                tuple(sorted(self._console_annotation_previews.items())),
                 tuple(sorted(self._console_speech_states.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
@@ -19933,13 +19940,21 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             if changed:
-                # Forces the existing discovery machinery (`_sync_console_
-                # annotation_discovery`) to treat this as a conversation
-                # change and reload -- the same mechanism the annotation-
-                # write precedent above relies on for its own live preview
-                # updates.
-                self._console_annotation_loaded_conversation = None
-                self._sync_console_annotation_discovery(store)
+                # Reload INLINE and push to the transcript, rather than
+                # marking the conversation stale and waiting for the next
+                # sync tick. Live verification caught the difference: the
+                # transcript sync timer only runs while a run is active, so
+                # the annotation-WRITE precedent appeared to refresh live
+                # only because it dispatches a message (starting a run).
+                # Edit/delete leave the app idle, so a tick-dependent
+                # reload left a deleted note's marker on screen until the
+                # user's next send. We are already in a worker here, so the
+                # loader can simply be awaited.
+                self._console_annotation_loaded_conversation = conversation_id
+                await self._load_console_annotation_previews(
+                    database, store, conversation_id
+                )
+                await self._sync_native_console_transcript()
         finally:
             # Every exit path -- empty-notes toast, modal cancel/dismiss, or
             # an error above -- releases the in-flight guard; a latched flag
