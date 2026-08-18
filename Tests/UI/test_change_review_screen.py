@@ -91,12 +91,15 @@ def review_fixture(tmp_path):
 class _Harness(App[None]):
     CSS_PATH = str(BUNDLE)
 
-    def __init__(self, provider) -> None:
+    def __init__(self, provider, initial_run_id: str | None = None) -> None:
         super().__init__()
         self._provider = provider
+        self._initial_run_id = initial_run_id
 
     def on_mount(self) -> None:
-        self.push_screen(ChangeReviewScreen(self._provider))
+        self.push_screen(
+            ChangeReviewScreen(self._provider, initial_run_id=self._initial_run_id)
+        )
 
 
 async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
@@ -764,3 +767,61 @@ def test_turn_for_run_matches_the_full_scan(review_fixture):
         direct = provider.turn_for_run(run_id)
         assert direct == scanned[run_id]
     assert provider.turn_for_run("no-such-run") is None
+
+
+# -- Task 7 (console-turn-file-annotate): initial_run_id --------------------
+
+
+@pytest.mark.asyncio
+async def test_initial_run_id_opens_directly_on_that_turn(review_fixture):
+    """The card's `Review` button opens the screen already scoped to its
+    OWN run -- not the conversation's latest turn. `turns()` returns
+    newest-first (`run2` here), so opening with `initial_run_id=run1`
+    proves the constructor arg actually wins over the "latest" default.
+    """
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run1)
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda ls: ls if any("first_turn.txt" in l for l in ls) else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "run1's files on initial open",
+        )
+        text = "\n".join(labels)
+        assert "first_turn.txt" in text
+        assert "new.txt" not in text, "opened on the latest turn, not run1"
+        select = screen.query_one("#change-review-turn-select", Select)
+        assert select.value == run1
+
+
+@pytest.mark.asyncio
+async def test_unknown_initial_run_id_falls_back_to_the_latest_turn(review_fixture):
+    """A stale/unknown run id (e.g. the run's history was later pruned)
+    must degrade to today's default -- opening on the latest turn -- not
+    an empty or broken screen."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id="no-such-run")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        labels = await _wait_for(
+            pilot,
+            lambda: (
+                lambda ls: ls if any("new.txt" in l for l in ls) else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "the latest turn's files as fallback",
+        )
+        text = "\n".join(labels)
+        assert "new.txt" in text
+        select = screen.query_one("#change-review-turn-select", Select)
+        assert select.value == run2

@@ -51,11 +51,28 @@ Top to bottom:
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
+- **Status chip strip** — one row of chips directly below the
+  conversation pane, above the composer: **Provider**, **Model**,
+  **Assistant**, **Library search**, **Sources**, **Tools**,
+  **Approvals**, and — once retrieval is narrowed — **Scope**. (Settings ▸
+  Console Behavior ▸ **Status row placement** can move this row below the
+  composer instead, restoring the older bottom-row layout; the collapse
+  choice on its leading **Status ▾** control is remembered across visits
+  and restarts.)
+  The chips are actions, not just readouts: **Sources** and **Tools** open
+  the Inspector rail (the only way to reach it in single-pane mode, where
+  the edge handles hide), **Provider**/**Model** open the model picker,
+  **Library search** opens the search settings, **Approvals** jumps to the
+  pending approval card, and **Scope** opens the scope picker. The **Tools**
+  chip only appears once tools are counted for the session (after your
+  first send) — before that it stays hidden rather than guessing.
 - **Staged-evidence strip** — appears directly above the composer only
   while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md).
-- **Composer row** — the "Composer ▾" collapse toggle, the draft area
+- **Composer row** — a slim one-row bar (it grows with your draft, up to
+  four rows) marked by a one-column edge on its left that brightens and
+  thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
   reply is streaming. **Send** is genuinely disabled whenever a send can't
@@ -64,19 +81,9 @@ Top to bottom:
   choose a model to continue"), so you never have to hover to find out why.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
-- **Status chip strip** — the shell's bottom row, one row of chips directly
-  below the composer: **Provider**, **Model**, **Assistant**,
-  **Library search**, **Sources**, **Tools**, **Approvals**, and — once
-  retrieval is narrowed — **Scope**.
-  The chips are actions, not just readouts: **Sources** and **Tools** open
-  the Inspector rail (the only way to reach it in single-pane mode, where
-  the edge handles hide), **Provider**/**Model** open the model picker,
-  **Library search** opens the search settings, **Approvals** jumps to the
-  pending approval card, and **Scope** opens the scope picker. The **Tools**
-  chip only appears once tools are counted for the session (after your
-  first send) — before that it stays hidden rather than guessing.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
-  Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
+  Ctrl+P), a word count, and database sizes. (Token usage lives in the
+  status row's cost chip — e.g. "2.7k tok" — not in the footer.)
 
 ### Small terminals
 
@@ -376,7 +383,7 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   gate use), `[console]` and `[console.background_effects]` (paste
   collapse, ambience), `[chat.images]` (attachments), `[general]`
   `default_tab` (start here).
-- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md)
+- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md) · [Text selection & feedback](console/text-selection-and-feedback.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).
 
 ## Quirks & troubleshooting
@@ -417,4 +424,27 @@ by the watermarks — measured ~150 rows / height ~600 at the default marks;
 a far jump mounted 5 rows instead of 490); not re-checked live. The
 head-pinned-selection pause (TASK-16851) verified by shipped tests — a
 post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
-it previously grew to 1966 and kept growing; not re-checked live.*
+it previously grew to 1966 and kept growing; not re-checked live. Verified
+against 22d156155 + TASK-17650 — 2026-08-17 (headless row-map probe at
+150×44): the permanent blank row between the status row and the footer is
+gone, and the transcript gained the row (region height 28 → 29). Verified
+against TASK-17652 — 2026-08-17 (headless row-map probes at 150×44, both
+placements): the status chip strip now defaults to sitting ABOVE the
+composer, directly under the conversation pane; Settings ▸ Console
+Behavior ▸ Status row placement restores the below-composer bottom row;
+the Status ▾ collapse choice persists across Console re-entry and app
+restart. Verified against TASK-17651 — 2026-08-17 (headless row-map
+probes at 150×44 and 150×30, ready/long-draft/collapsed/setup-blocked
+states): the composer is now a one-row dense-form bar growing to four
+rows with the draft, the workbench frame closes at the grid's single
+bottom border (the transcript and region no longer draw their own bottom
+edges), and the conversation gained seven content rows; transcript
+keyboard focus is carried by the region's column lines and the scrollbar
+accent. Verified against TASK-17657 — 2026-08-17 (headless probes, both
+status-row placements): one deliberate blank row now sits below the
+composer so it reads apart from the footer/status row; compact mode
+(under 35 rows) drops the gap. Verified against TASK-17659 — 2026-08-17
+(headless probes, both placements): a matching blank row now sits above
+the composer too, so the bar floats clear of the status row; the
+prompt-queue shelf and staged evidence sit immediately above that gap;
+compact mode drops both rows.*

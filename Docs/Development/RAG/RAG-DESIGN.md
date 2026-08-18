@@ -1900,6 +1900,20 @@ boost_factor = 1.5
 include_abbreviations = true
 ```
 
+> **A `[middleware.*]` block does not make a middleware run.** The block is
+> only its configuration; the behaviour is a branch on `middleware_id` in
+> `PipelineLoader._apply_before_middleware` / `_apply_after_middleware`. A
+> name with no branch — like `academic_term_enhancer`, `citation_formatter`
+> and `result_clustering` in the example above — is dispatched to nothing
+> and no-ops **silently**: no error, no warning, no log line. That is how the
+> shipped config came to declare eleven middleware names against four
+> implementations (TASK-17600); the eight that did nothing were deleted, and
+> `Tests/RAG_Search/test_pipeline_middleware_contract.py` now fails the suite
+> if `rag_pipelines.toml` declares a name the loader does not implement (or
+> implements with a bare `pass`), or implements one no pipeline declares.
+> Implemented today: `query_expansion` and `technical_term_detector`
+> (before), `citation_enhancement` (after).
+
 #### Step 3: Load and Use
 
 ```python
@@ -2368,8 +2382,18 @@ Future support for domain-specific step types:
      +0.022) and **strongly bimodal**: hybrid `scoped` MRR 0.163 → 0.929
      and `prompt` 0.022 → 0.200, paid for by demoting already-rank-1
      answers in `paraphrase`/`vocabulary_mismatch` (1.000 → 0.87–0.94).
-     It stays selectable as `reranking_strategy = "cross_encoder"` and is
-     the default of nothing. Numbers:
+     It stays selectable and is the default of nothing. **Where** it is
+     selectable was documented wrongly here until TASK-17600 F3: this line
+     used to say `reranking_strategy = "cross_encoder"`, a config key with
+     zero readers anywhere in the repo — following that instruction selected
+     nothing at all. The working lever is a RAG **profile**: set
+     `reranking_config.strategy` on a saved (or cloned) profile, whose JSON
+     under `<user data dir>/rag_profiles/` round-trips the whole
+     `RerankingConfig` through `ProfileConfig.to_dict`/`from_dict`
+     (`RAG_Search/config_profiles.py`; pinned by
+     `Tests/RAG/test_config_profiles.py::test_a_saved_profile_round_trips_its_reranking_strategy`).
+     The Settings form edits that profile's reranker provider, model and
+     top-k, but not its strategy. Numbers:
      `Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`.
    - Multi-lingual support
 

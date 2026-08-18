@@ -228,7 +228,15 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
         assert region.display
         assert region.region.height == 1
-        assert region.region.y + region.region.height == composer.region.y
+        # task-17659: the shelf is the composer's nearest neighbor above —
+        # immediately above its MARGIN box (the breathing-room row, when the
+        # stylesheet provides one; this harness loads no bundle, and compact
+        # sizes drop the margin). The painted gap itself is pinned by the
+        # bundled single-separator contract in test_console_composer_collapse.
+        assert (
+            region.region.y + region.region.height
+            == composer.region.y - composer.styles.margin.top
+        )
         assert manage.region.right <= region.region.right
         assert pause.region.right <= region.region.right
         assert manage.region.right <= pause.region.x

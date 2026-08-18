@@ -510,18 +510,28 @@ async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signatur
     assert landed["model"] == "gpt-4o-mini"
     assert landed["temp"] == 0.25
     assert landed["max_tokens"] == 128
-    assert landed["messages_payload"][-1] == {
-        "role": "user",
-        "content": "score this document",
-    }
+    # The messages carry the USER turn and nothing else: since TASK-17265 the
+    # system instruction travels as `system_message=` (see below and
+    # `test_reranker_system_prompt.py`, which asserts where each provider
+    # actually puts it).
+    assert landed["messages_payload"] == [
+        {"role": "user", "content": "score this document"},
+    ]
     # No argument carries a credential: the reranker resolves none, and each
     # `chat_with_<provider>` handler resolves its own from the normalised
     # config path (CLAUDE.md's documented precedence) -- which is what every
     # other `chat_api_call` caller in this repo already relies on.
     assert "api_key" not in landed
-    # And nothing lands in the parameter the broken positional call filled by
-    # displacement (`system_message` took the temperature).
-    assert "system_message" not in landed
+    # `system_message` was the parameter the broken positional call filled by
+    # displacement -- it took the TEMPERATURE. It is populated deliberately
+    # now (TASK-17265: anthropic and google read system text from nowhere
+    # else), so the guard is no longer "absent" but "carries the system
+    # prompt, and specifically not a displaced value".
+    # `isinstance(..., str)`, not `!= config.temperature`: a str is never
+    # equal to a float, so that comparison would have passed no matter what
+    # landed. The type check is what a displaced 0.25 would actually fail.
+    assert isinstance(landed["system_message"], str)
+    assert landed["system_message"] == reranker.config.system_prompt
     # NON-STREAMING IS PINNED, NOT INHERITED (final-review F5). The old
     # positional list put the token cap into `streaming` (truthy), so a
     # scoring call that had resolved a credential would have STREAMED. Today

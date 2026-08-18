@@ -4,11 +4,15 @@ Moved verbatim out of ``ChatScreen._frame_console_region`` (wave-1 console
 decomposition) so region widgets under `UI/Console_Modules/` can apply the
 same visible workbench frame without importing `chat_screen` itself, which
 would create an import cycle (the screen imports the regions).
+
+TASK-17651: the composer left the frame grammar (it is a dense-form field
+now, styled entirely in CSS), and the workbench frame closes at the grid:
+the grid keeps its full border while its children suppress their bottom
+edges (``bottom=False``) so a single full-width line separates the
+transcript from the control deck below.
 """
 
 from typing import Any
-
-from ...Widgets.Console import ConsoleComposerBar
 
 #: Canonical home of the Console shell frame color/border constants (moved
 #: here from `chat_screen.py`, wave-1 console decomposition task 2, so this
@@ -25,6 +29,7 @@ def frame_console_region(
     widget: Any,
     *,
     top: bool = True,
+    bottom: bool = True,
     variant: str = "solid",
 ) -> Any:
     """Apply a visible Textual-native workbench frame.
@@ -33,6 +38,9 @@ def frame_console_region(
         widget: The Console shell region widget to frame in place.
         top: When False, suppresses the top border (used where an adjacent
             region already renders that edge).
+        bottom: When False, suppresses the bottom border (used inside the
+            workspace grid, whose own bottom border is the bottom stack's
+            single separator — TASK-17651).
         variant: ``"solid"`` for the standard visible frame, ``"quiet"`` for
             a borderless frame that still carries the frame color.
 
@@ -44,11 +52,9 @@ def frame_console_region(
         widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
         return widget
     widget.add_class("console-frame-solid")
-    widget.styles.border = (
-        CONSOLE_QUIET_FRAME_BORDER
-        if isinstance(widget, ConsoleComposerBar) and widget.collapsed
-        else CONSOLE_FRAME_BORDER
-    )
+    widget.styles.border = CONSOLE_FRAME_BORDER
     if not top:
         widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
+    if not bottom:
+        widget.styles.border_bottom = ("none", CONSOLE_FRAME_COLOR)
     return widget

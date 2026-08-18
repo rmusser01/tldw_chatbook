@@ -13,6 +13,7 @@ import pytest
 
 from tldw_chatbook.Research_Interop.local_research_engine import LocalResearchEngine
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
 
 
 def _make_service() -> LocalResearchService:
@@ -1227,3 +1228,265 @@ def test_plan_review_patch_bounds_the_iterations():
     # Without the fix this is ["q", "gap one"]: the ledger honoured the patch
     # while the iteration bound fell back to the shipped default of 2.
     assert rounds == ["q"], rounds
+
+
+# --- fan-out reaches the academic lane (task-17372) ---------------------------
+# Sub-question generation lives inside the WEB pipeline, so generated
+# sub-questions only ever drove web searches: the academic lane looped
+# round_queries, which is [question] in round 1. Fan-out therefore changed how
+# academic evidence was JUDGED (the sub-questions reach the gate) while leaving
+# what was RETRIEVED untouched -- which is why task-17370 measured it as flat on
+# the repositories lane and could say nothing about retrieval.
+
+
+def _fanout_pipeline(question: str, sub_questions: list[str]):
+    """search_fn returning generated sub-questions, plus a recording paper_fn."""
+    paper_queries: list[str] = []
+
+    def search_fn(q, params):
+        return (
+            {"results": [{"title": "web", "url": "https://w.example/1"}], "warnings": []},
+            {"sub_questions": list(sub_questions), "main_goal": question},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        return {
+            "final_answer": {
+                "text": "Answer citing [1].",
+                "evidence": [{"id": 1, "url": "https://w.example/1", "title": "web"}],
+                "confidence": 0.5,
+                "chunks": [],
+            },
+            "relevant_results": {"0": {"url": "https://w.example/1"}},
+        }
+
+    def paper_search_fn(query):
+        paper_queries.append(query)
+        return [
+            {
+                "title": f"paper for {query}",
+                "url": f"https://p.example/{len(paper_queries)}",
+                "metadata": {"doi": f"10.1/{len(paper_queries)}"},
+            }
+        ]
+
+    async def gap_fn(context):
+        return []
+
+    return search_fn, analyze_fn, paper_search_fn, gap_fn, paper_queries
+
+
+def test_generated_sub_questions_reach_the_paper_providers():
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one", "facet two"], paper_queries
+
+
+def test_academic_fan_out_respects_the_query_cap():
+    """The lane must obey the same total-queries cap the web lane does."""
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two", "facet three"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 2},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries
+
+
+def test_academic_fan_out_cannot_spend_past_the_search_budget():
+    """Extra academic searches are ledger-counted, so a tight max_searches
+    cannot be exceeded by the lane fanning out."""
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["facet one", "facet two", "facet three"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    # The web call settles 1 + len(sub_questions) = 4 searches, so a budget of 5
+    # leaves room for exactly one extra academic query.
+    run = service.launch_run(
+        query="q",
+        autonomy_mode="autonomous",
+        limits_json={"max_iterations": 1, "max_searches": 5},
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries
+
+
+def test_a_sub_question_equal_to_the_question_is_not_searched_twice():
+    service = _make_service()
+    search_fn, analyze_fn, paper_fn, gap_fn, paper_queries = _fanout_pipeline(
+        "q", ["  Q  ", "facet one"]
+    )
+    engine = LocalResearchEngine(
+        service,
+        search_fn=search_fn,
+        analyze_fn=analyze_fn,
+        gap_fn=gap_fn,
+        paper_search_fn=paper_fn,
+        search_params={"search_default_max_queries": 5},
+    )
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    assert paper_queries == ["q", "facet one"], paper_queries
+
+
+# --- _academic_queries directly (Qodo, PR 1772) --------------------------------
+# The helper was only exercised through full runs, so its cap, dedup and
+# budget arithmetic were inferred from end-to-end behaviour rather than pinned.
+
+
+def _queries_engine():
+    return LocalResearchEngine(_make_service(), search_fn=lambda q, p: ({}, {}))
+
+
+def test_academic_queries_keeps_primary_queries_and_appends_facets():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, reserved = engine._academic_queries(
+        ["q"], ["facet a", "facet b"], {"search_default_max_queries": 5}, ledger
+    )
+
+    assert queries == ["q", "facet a", "facet b"]
+    assert reserved == 2
+
+
+def test_academic_queries_reserves_without_settling():
+    """Reserve-before/settle-after: planning must not record spend."""
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({"max_searches": 10})
+
+    _queries, reserved = engine._academic_queries(
+        ["q"], ["facet a"], {"search_default_max_queries": 5}, ledger
+    )
+
+    assert reserved == 1
+    snapshot = ledger.snapshot()
+    # The reservation is visible, but nothing is settled as spent yet.
+    assert snapshot.get("searches_settled", 0) == 0, snapshot
+
+
+def test_academic_queries_stops_at_the_remaining_budget():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({"max_searches": 2})
+    ledger.reserve_searches(1)
+    ledger.settle_searches(1)
+
+    queries, reserved = engine._academic_queries(
+        ["q"], ["facet a", "facet b", "facet c"],
+        {"search_default_max_queries": 9}, ledger,
+    )
+
+    assert reserved <= 1, reserved
+    assert queries[0] == "q"
+
+
+def test_academic_queries_dedupes_across_primaries_and_facets():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, reserved = engine._academic_queries(
+        ["q", "  Q "], ["  q  ", "facet a", "FACET A"],
+        {"search_default_max_queries": 9}, ledger,
+    )
+
+    assert queries == ["q", "facet a"], queries
+    assert reserved == 1
+
+
+def test_academic_queries_falls_back_when_the_cap_is_unusable():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, _reserved = engine._academic_queries(
+        ["q"], ["a", "b", "c", "d", "e", "f", "g"],
+        {"search_default_max_queries": "not-a-number"}, ledger,
+    )
+
+    assert len(queries) == 5, queries  # DEFAULT_MAX_QUERIES
+
+
+def test_a_failed_synthesis_is_recorded_on_the_run():
+    """task-17386: a synthesis that never returns leaves no citation verdict,
+    which used to make the run indistinguishable from one nobody scored -- it
+    completed quietly and vanished from any aggregate. The run must say so."""
+    service = _make_service()
+
+    def search_fn(q, params):
+        return (
+            {"results": [{"title": "One", "url": "https://one.example/"}], "warnings": []},
+            {"sub_questions": [], "main_goal": q},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        # Exactly what aggregate_results returns when synthesis raises.
+        return {
+            "final_answer": {
+                "text": "Could not create the report due to an error (ReadTimeoutError).",
+                "evidence": [],
+                "confidence": 0.0,
+                "chunks": [],
+                "synthesis_failed": {
+                    "stage": "synthesis",
+                    "error_type": "ReadTimeoutError",
+                    "evidence_count": 46,
+                    "chunk_count": 6,
+                },
+            },
+            "relevant_results": {},
+        }
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed"
+    summary = service.get_artifact(run["id"], "verification_summary.json") or {}
+    content = summary.get("content") or {}
+    assert content.get("synthesis_failed", {}).get("error_type") == "ReadTimeoutError"
+    warnings = " ".join(str(w) for w in (content.get("warnings") or []))
+    assert "synthesis produced no report" in warnings, content.get("warnings")

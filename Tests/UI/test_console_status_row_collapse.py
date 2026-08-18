@@ -113,6 +113,26 @@ class StatusRowApp(ConsolidatedCSSApp):
         )
 
 
+class PanelStatusRowApp(StatusRowApp):
+    """Mount the status row exactly as the Console screen does.
+
+    The real screen composes the chips with ``classes="ds-panel"``
+    (chat_screen.py), which carries a bottom margin the id rule must
+    cancel; a stand-in neighbor below makes the resulting gap, if any,
+    observable as real geometry.
+    """
+
+    def compose(self) -> ComposeResult:
+        """Compose the ds-panel status row above a stand-in neighbor."""
+        yield ConsoleStatusChips(
+            _state(),
+            collapsed=self._collapsed,
+            id="console-status-chips",
+            classes="ds-panel",
+        )
+        yield Static("footer stand-in", id="footer-stand-in")
+
+
 def _ready_console_host() -> tuple[ConsoleHarness, object]:
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -220,6 +240,25 @@ async def test_expanded_status_row_keeps_toggle_left_and_scroller_in_viewport(
         assert scroller.region.right == viewport.right
 
 
+@pytest.mark.asyncio
+async def test_status_row_panel_class_reserves_no_margin_row() -> None:
+    """ds-panel's bottom margin must not open a blank row under the chips.
+
+    ``.ds-panel`` declares ``margin: 0 0 1 0``; the ``#console-status-chips``
+    rule overrides the class's other box styles and must cancel the margin
+    too, or a zero-information blank row renders between the chips and the
+    footer on the real screen (TASK-17650).
+    """
+    app = PanelStatusRowApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        neighbor = app.query_one("#footer-stand-in", Static)
+
+        assert chips.styles.margin.bottom == 0
+        assert neighbor.region.y == chips.region.y + chips.region.height
+
+
 def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
     """Keep source and bundled status-row geometry contracts equivalent."""
     for stylesheet in (_AGENTIC_SOURCE, _BUNDLED_STYLESHEET):
@@ -236,6 +275,7 @@ def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
             "layout: horizontal;",
             "border: none;",
             "padding: 0 1;",
+            "margin: 0;",
         )
 
         presentations = _rule_body(
@@ -471,15 +511,43 @@ async def test_screen_status_expand_updates_state_and_focuses_collapse() -> None
 
 
 @pytest.mark.asyncio
-async def test_screen_status_collapse_state_resets_on_new_screen() -> None:
-    """Reset screen-local status collapse state on Console recreation."""
+async def test_screen_status_collapse_persists_to_config_and_new_screen() -> None:
+    """Collapse survives Console recreation via the live config (task-17652).
+
+    Inverts the former reset-on-recreation contract: collapsing pokes
+    ``[console] status_chips_collapsed`` synchronously, and a freshly
+    constructed screen seeds its state from that value.
+    """
     host, app = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         await pilot.click("#console-status-collapse")
         await pilot.pause()
         assert console._console_status_chips_collapsed is True
+        assert app.app_config["console"]["status_chips_collapsed"] is True
 
         replacement = ChatScreen(app)
 
-        assert replacement._console_status_chips_collapsed is False
+        assert replacement._console_status_chips_collapsed is True
+
+        await pilot.click("#console-status-expand")
+        await pilot.pause()
+        assert app.app_config["console"]["status_chips_collapsed"] is False
+        assert ChatScreen(app)._console_status_chips_collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_status_collapse_restores_from_persisted_config() -> None:
+    """A stored collapsed=True composes the strip collapsed from first paint."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["status_chips_collapsed"] = True
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+
+        assert console._console_status_chips_collapsed is True
+        assert strip.collapsed is True
+        expand = strip.query_one("#console-status-expand", Button)
+        assert _is_effectively_displayed(expand)

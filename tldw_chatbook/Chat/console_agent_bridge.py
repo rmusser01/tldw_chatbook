@@ -70,6 +70,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_display_state import (
+    format_diff_feedback_disclosure,
+    render_diff_feedback_block,
+)
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
@@ -520,6 +524,51 @@ def full_step_output(
         # affordance TASK-1843 removed from the Inspector.
         return None
     return text
+
+
+def _append_to_last_user_message(
+    messages: list[dict], block: str
+) -> tuple[list[dict], bool]:
+    """Append ``block`` to the last role=="user"/str-content entry, copy-on-write.
+
+    TASK-17611 (AC#4): shared by ``run_reply``'s turn-bundle-block and
+    diff-feedback-block attach seams, which used to be two near-identical
+    inline backward-scan loops. Scans ``messages`` from the end for the
+    last entry whose ``role`` is ``"user"`` and whose ``content`` is a
+    ``str`` (a vision/attachment turn's LIST content is correctly excluded
+    as a carrier, same as before this extraction) and appends ``block``
+    after a blank line.
+
+    Never mutates ``messages`` or any of its dicts -- when it attaches, it
+    returns a NEW list with a NEW dict at the matched index; the caller's
+    own list/dict are always safe to reuse afterward. A falsy ``block`` or
+    no eligible carrier both take the same no-op path: ``messages`` is
+    returned unchanged (same object identity), matching the existing
+    no-op contract both call sites relied on before this extraction.
+
+    Args:
+        messages: The message list to scan (never mutated).
+        block: The pre-rendered text block to append; a falsy value is a
+            no-op.
+
+    Returns:
+        ``(result_messages, attached)`` -- ``result_messages`` is
+        ``messages`` itself, unchanged, when ``attached`` is ``False``;
+        otherwise a shallow copy of ``messages`` with the carrier
+        message's dict replaced.
+    """
+    if not block:
+        return messages, False
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        content = message.get("content")
+        if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+            content, str
+        ):
+            result = list(messages)
+            result[index] = {**message, "content": f"{content}\n\n{block}"}
+            return result, True
+    return messages, False
 
 
 def _pair_step_diff(
@@ -3380,20 +3429,61 @@ class ConsoleAgentBridge:
         # run_reply at all, so they drop it unused. No-op (the original
         # `agent_messages` list is used unchanged) when there is no block
         # to append or no user message to append it to.
-        run_messages = agent_messages
-        if turn_bundle_block:
-            for index in range(len(agent_messages) - 1, -1, -1):
-                message = agent_messages[index]
-                content = message.get("content")
-                if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                    content, str
-                ):
-                    run_messages = list(agent_messages)
-                    run_messages[index] = {
-                        **message,
-                        "content": f"{content}\n\n{turn_bundle_block}",
-                    }
-                    break
+        run_messages, _ = _append_to_last_user_message(
+            agent_messages, turn_bundle_block
+        )
+        # task-5 (turn-file-annotate, spec §4): auto-attach this
+        # conversation's pending diff-feedback notes to the SAME outbound
+        # copy, immediately after the bundle block above and by the same
+        # mechanism -- appended to the last role=="user" entry, never
+        # mutating the caller's `agent_messages`. `diff_feedback_included_
+        # ids`/`diff_feedback_included_notes` are captured HERE, before
+        # `run_turn` is even called, and read again at the completion seam
+        # below (same stack frame -- a local suffices, no run-context
+        # object needed). That freeze is the mid-run-race guard: a note
+        # created by the user WHILE this run is in flight is simply absent
+        # from this list, so completion below can never stamp it delivered
+        # even though `pending_notes_for_conversation` would return it if
+        # queried again later. A notes-subsystem failure must never break
+        # the reply -- this whole seam degrades to "no notes this turn"
+        # and logs, exactly like the marker/tracking seams above.
+        diff_feedback_included_ids: list[int] = []
+        diff_feedback_included_notes: list[dict] = []
+        try:
+            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
+            diff_feedback_block, diff_feedback_included_ids = (
+                render_diff_feedback_block(pending_notes)
+            )
+            diff_feedback_included_notes = pending_notes[
+                : len(diff_feedback_included_ids)
+            ]
+            if diff_feedback_block:
+                run_messages, attached = _append_to_last_user_message(
+                    run_messages, diff_feedback_block
+                )
+                if not attached:
+                    # No user message with str content could carry the
+                    # block (no user message at all, or the only/last one
+                    # has LIST content -- a vision/attachment turn). The
+                    # notes were rendered but never actually reached the
+                    # payload, so completion below must not stamp/
+                    # disclose them: reset both to empty so they stay
+                    # pending and ride the next send that DOES have a
+                    # carrier.
+                    logger.warning(
+                        "change_review: "
+                        f"{len(diff_feedback_included_ids)} pending diff-"
+                        "feedback note(s) held back -- no user message "
+                        "could carry the block this turn"
+                    )
+                    diff_feedback_included_ids = []
+                    diff_feedback_included_notes = []
+        except Exception:  # noqa: BLE001 -- notes must never break the reply
+            logger.opt(exception=True).warning(
+                "change_review: could not attach pending diff-feedback notes"
+            )
+            diff_feedback_included_ids = []
+            diff_feedback_included_notes = []
         try:
             # FIRST statement in the block that owns this thread's
             # shutdown -- see its construction above. Not merely *before*
@@ -3544,6 +3634,71 @@ class ConsoleAgentBridge:
                 except Exception:  # noqa: BLE001 -- never mask the run's outcome
                     logger.opt(exception=True).warning(
                         "change_review: end_turn failed; turn changes untracked"
+                    )
+            # task-5 (turn-file-annotate, spec §4): stamp exactly the
+            # notes this run's attach seam included (captured above,
+            # before `run_turn` was even called) and disclose what was
+            # sent. Placed BESIDE the marker seam above -- not inside
+            # `_append_change_markers`, and deliberately NOT nested under
+            # `if change_handle is not None:`: diff-feedback notes are
+            # about what the user told the agent, unrelated to whether
+            # THIS turn's own tracked roots changed, or whether change
+            # tracking is even configured for this run at all -- the
+            # marker seam's internal `if files:` gate ("nothing to
+            # report") must not become a reason to strand notes that were
+            # genuinely delivered in the outbound payload. Gated only on
+            # the run having actually produced assistant output: a run
+            # that errors, gets cancelled empty-handed, or crashes before
+            # a run row exists leaves every attached note pending for the
+            # retry -- the block only ever lived in the outbound COPY (see
+            # the attach seam above run_turn), so nothing is lost by not
+            # stamping. `run_id`/`outcome` are bound together by the same
+            # assignment, so the one `locals()` check covers both. Double
+            # delivery is impossible by construction (the pending query
+            # excludes already-stamped rows). Never breaks the reply.
+            if (
+                "run_id" in locals()
+                and outcome.final_text
+                and diff_feedback_included_ids
+            ):
+                try:
+                    # task-6 fix round: stamp with the id of THIS
+                    # (completing) run -- the run whose completion is
+                    # actually doing the delivering, which resume
+                    # re-derivation anchors the disclosure row to. `run_id`
+                    # is already known-bound by the `locals()` check above.
+                    #
+                    # Qodo #4 (PR #1779 fix round): disclose only the ids
+                    # `mark_notes_delivered` reports ACTUALLY stamped, not
+                    # every id this seam captured -- a concurrent delivery
+                    # elsewhere could have already stamped one of them
+                    # first (the UPDATE's own `delivered_at IS NULL` guard
+                    # silently skips it), and disclosing a note nobody
+                    # verifiably delivered on THIS run's completion would
+                    # be dishonest. Concurrent replies on one conversation
+                    # are architecturally serialized today, so this is
+                    # defense in depth, not a reachable-today bug.
+                    stamped_ids = set(
+                        self._db.mark_notes_delivered(
+                            diff_feedback_included_ids, delivered_by_run_id=run_id
+                        )
+                    )
+                    disclosed_notes = [
+                        note
+                        for note in diff_feedback_included_notes
+                        if int(note["id"]) in stamped_ids
+                    ]
+                    if disclosed_notes:
+                        self._store.append_message(
+                            session_id,
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_diff_feedback_disclosure(
+                                disclosed_notes
+                            ),
+                        )
+                except Exception:  # noqa: BLE001 -- notes must never break the reply
+                    logger.opt(exception=True).warning(
+                        "change_review: could not stamp/disclose diff feedback"
                     )
         for step in outcome.steps:
             logger.info(
@@ -4670,6 +4825,20 @@ class ConsoleAgentBridge:
         tool/spawn/error step) yields an empty block; callers should skip
         those rather than inject nothing.
 
+        task-6 (turn-file-annotate, spec §4) + fix round: each block also
+        ends with one diff-feedback disclosure row per delivery batch
+        DELIVERED BY that run's own completion (grouped by
+        ``(delivered_by_run_id, delivered_at)``, oldest batch first),
+        rendered with the same ``format_diff_feedback_disclosure`` the
+        live completion seam uses -- so a re-derived row is
+        byte-identical to what live emission produced, and lands at the
+        same run's position live placed it at (not the position of
+        whichever earlier run the notes happen to be anchored/annotated
+        against). Pending notes yield nothing. This is the designed
+        healer for the live seam's stamp-then-append: if the live append
+        never happened (e.g. it raised after the stamp landed), resume
+        still surfaces the row from the DB.
+
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
         """
@@ -4688,6 +4857,41 @@ class ConsoleAgentBridge:
                 snap_by_run.setdefault(str(_row["run_id"]), []).append(_row)
         except Exception:  # noqa: BLE001 -- resume must not die on this
             snap_by_run = {}
+        # task-6 fix round (CRITICAL C1): ONE batched, GUARDED query for
+        # the whole conversation -- same no-N+1 precedent as the snapshot
+        # fetch immediately above, and the same "resume must not die on
+        # this" posture: a change_notes read failure must degrade to no
+        # disclosure rows, not break conversation resume entirely.
+        #
+        # Grouped by (target_run_id, delivered_at) where target_run_id is
+        # `delivered_by_run_id` -- the run whose COMPLETION actually
+        # stamped the note delivered, matching live emission's placement
+        # exactly, and immune to both failure modes an earlier version of
+        # this method had: (a) one live batch spanning notes anchored to
+        # TWO different runs no longer fragments into two resume rows --
+        # it stays one row, keyed on the single delivering run; (b) a note
+        # annotated against a run that later became superseded (and so is
+        # excluded from `records`, silently dropping any block keyed to
+        # it) still surfaces, because the delivering run -- typically
+        # still live/non-superseded -- is what the row is keyed to, not
+        # the (possibly off-branch) annotated run.
+        #
+        # `delivered_by_run_id` is NULL on rows stamped before that column
+        # existed (a pre-migration DB) or by any future caller that omits
+        # it -- there is no way to recover which run delivered those, so
+        # they fall back to the note's OWN `run_id` (the annotated run):
+        # the same position this method used before the fix round, kept
+        # here only as the legacy floor, not the common path.
+        disclosure_batches: dict[str, dict[str, list[dict]]] = {}
+        try:
+            for _note in self._db.delivered_notes_for_conversation(conversation_id):
+                _target = _note.get("delivered_by_run_id") or _note.get("run_id")
+                _delivered_at = str(_note.get("delivered_at"))
+                disclosure_batches.setdefault(str(_target), {}).setdefault(
+                    _delivered_at, []
+                ).append(_note)
+        except Exception:  # noqa: BLE001 -- resume must not die on this
+            disclosure_batches = {}
         blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
@@ -4779,6 +4983,34 @@ class ConsoleAgentBridge:
                             status="complete",
                         )
                     )
+            # task-6 (turn-file-annotate, spec §4) + fix round: append this
+            # run's own diff-feedback disclosure row(s) -- i.e. every
+            # delivery batch keyed to THIS run as the delivering run (see
+            # `disclosure_batches` construction above for the grouping and
+            # legacy-fallback rules). Placed after this run's own marker
+            # rows (steps, change-summary/failure rows), never gated on
+            # `snap_rows`, so a run with delivered notes but no snapshot
+            # rows at all (tracking failed or was never configured --
+            # delivery does not depend on tracking succeeding) still
+            # yields its disclosure row(s). This is the designed healer
+            # for Task 5's live seam, which stamps `delivered_at` then
+            # appends the disclosure row in one `try`: if the append fails
+            # after the stamp lands, the DB still records the delivery but
+            # the live transcript never got a row -- a fresh resume
+            # surfaces it regardless, byte-identical to what live emission
+            # would have produced (same shared `format_diff_feedback_disclosure`).
+            for _delivered_at in sorted(
+                disclosure_batches.get(str(record.get("id")), {})
+            ):
+                block.append(
+                    ConsoleChatMessage(
+                        role=ConsoleMessageRole.TOOL,
+                        content=format_diff_feedback_disclosure(
+                            disclosure_batches[str(record.get("id"))][_delivered_at]
+                        ),
+                        status="complete",
+                    )
+                )
             blocks.append((record.get("assistant_message_id"), block))
         return blocks
 

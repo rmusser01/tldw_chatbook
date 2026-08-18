@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from html import escape as html_escape
 from pathlib import PurePath
 from typing import Any, Mapping, Optional, Sequence
+
+from rich.cells import cell_len
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
@@ -1162,3 +1165,564 @@ def turn_file_entries(
                 )
             )
     return paired
+
+
+def _cell_trim_prefix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s START as fits ``budget`` display cells.
+
+    Drops trailing characters once the running cell width would exceed
+    ``budget`` -- used to shorten the FIRST path component in
+    :func:`middle_elide_path` (its directory hint lives at the front).
+    Measured whole-character via ``cell_len``, so a double-width character
+    that would not fully fit is dropped entirely rather than split.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest prefix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(kept)
+
+
+def _cell_trim_suffix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s END as fits ``budget`` display cells.
+
+    The mirror of :func:`_cell_trim_prefix`, used to shorten the LAST path
+    component in :func:`middle_elide_path` -- its recognizable tail (often
+    a file extension) lives at the end, so leading characters are dropped
+    instead.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest suffix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in reversed(text):
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(reversed(kept))
+
+
+def middle_elide_path(path: str, budget: int) -> str:
+    """Middle-elide a path to fit a display budget, preserving both ends.
+
+    Keeps the first and last path components intact -- the two fragments a
+    user actually recognizes a file by (its directory of origin and its
+    own name) -- and collapses everything between them into a single "…"
+    placeholder component. Splits on "/" rather than going through
+    `pathlib`: every path this renders (``TurnFileEntry.label``) is
+    already a root-relative git path, not a local filesystem path to
+    resolve, and git always uses "/" regardless of host OS.
+
+    TASK-17611 (AC#5): budgeted in terminal display CELLS via
+    ``rich.cells.cell_len``, not raw ``len()`` -- a path carrying
+    double-width (CJK etc.) characters can fit comfortably within a
+    character-count budget while still overflowing the actual row width
+    by several cells; ``cell_len`` is the same width function
+    Rich/Textual use to lay out text, so this budget check matches what
+    actually gets painted. ASCII paths are unaffected: ``cell_len(text)
+    == len(text)`` for any text with no wide/zero-width characters, so
+    every existing ASCII-path caller/test keeps its exact prior result.
+
+    Qodo round (same task): the ``"<first>/…/<last>"`` candidate is now
+    itself MEASURED, not just assumed to fit -- a wide first/last
+    component (or just a long one) can overflow the budget even after
+    dropping every middle component, which the original AC#5 fix left
+    unaddressed. When it does, both endpoint components are further
+    trimmed, cell-aware (:func:`_cell_trim_prefix`/:func:`_cell_trim_
+    suffix`), splitting the remaining budget between them (a component
+    that already fits its half-share donates the rest to the other side)
+    so the FINAL result never exceeds ``budget`` whenever ``budget`` is at
+    least the ellipsis's own cell width -- only a budget too small even
+    for the bare "…" placeholder is allowed to overflow, since there is
+    nothing narrower left to offer.
+
+    Args:
+        path: The path to elide.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        ``path`` unchanged when it already fits within ``budget``, or when
+        it has two or fewer components -- there is no middle left to drop
+        without mangling the one meaningful fragment that remains (a bare
+        filename, or a directory/filename pair where both ends already
+        ARE the whole path). Otherwise ``"<first>/…/<last>"`` when that
+        fits; when it doesn't, the same shape with one or both endpoint
+        components further cell-trimmed to fit ``budget`` exactly (or as
+        close as the budget allows) -- see the Qodo-round note above for
+        the one case still allowed to overflow.
+    """
+    if cell_len(path) <= budget:
+        return path
+    parts = path.split("/")
+    if len(parts) <= 2:
+        return path
+    first, last = parts[0], parts[-1]
+    candidate = f"{first}/…/{last}"
+    if cell_len(candidate) <= budget:
+        return candidate
+
+    ellipsis_width = cell_len("…")
+    if budget < ellipsis_width:
+        # Not even the bare placeholder fits -- nothing honest to return
+        # that respects the budget; this is the one case allowed to
+        # overflow (an unusably small budget).
+        return "…"
+    slash_width = cell_len("/")
+    endpoints_budget = budget - ellipsis_width - (2 * slash_width)
+    if endpoints_budget <= 0:
+        # Room for the ellipsis (and maybe the slashes) but nothing left
+        # for either endpoint component's own text.
+        return "…"
+
+    first_width = cell_len(first)
+    last_width = cell_len(last)
+    first_budget = endpoints_budget // 2
+    last_budget = endpoints_budget - first_budget
+    # A component that already fits its half-share doesn't need to eat
+    # into the other's -- redistribute the unused allowance so the
+    # tighter side gets more room instead of being trimmed needlessly.
+    if first_width <= first_budget:
+        last_budget += first_budget - first_width
+        first_budget = first_width
+    elif last_width <= last_budget:
+        first_budget += last_budget - last_width
+        last_budget = last_width
+
+    trimmed_first = _cell_trim_prefix(first, first_budget)
+    trimmed_last = _cell_trim_suffix(last, last_budget)
+    return f"{trimmed_first}/…/{trimmed_last}"
+
+
+# --------------------------------------------------------------------------
+# Diff hunk segmentation + annotate/feedback loop (task: turn-file-card
+# annotate loop, TASK-16800)
+# --------------------------------------------------------------------------
+
+#: Matches a unified-diff hunk header line verbatim, e.g. "@@ -1,4 +1,6 @@"
+#: or "@@ -1,4 +1,6 @@ def foo():" (git's optional trailing function
+#: context). Adapted from ``Tools/patch_tool_impls.py:58``'s
+#: ``_HUNK_HEADER`` -- copied locally rather than imported so this module's
+#: segmentation stays independent of the patch tool's own parser, which is
+#: not to be modified for this feature.
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+
+#: The delivery block's heading (spec §4). Shared verbatim between
+#: ``render_diff_feedback_block`` and its consumer (the bridge attach seam,
+#: Task 5) so the format can't drift between definition and use.
+_DIFF_FEEDBACK_HEADING = "## Diff feedback from the user (on your earlier file changes)"
+
+
+@dataclass(frozen=True)
+class DiffHunk:
+    """One hunk of a single file's unified diff, plus its shared prelude.
+
+    ``file_prelude`` (the ``diff --git``/``index``/``---``/``+++`` lines)
+    is identical across every hunk of the same file -- it is repeated on
+    each ``DiffHunk`` rather than factored out so a hunk is a
+    self-contained unit callers can pass around individually (e.g. one
+    hunk per note).
+    """
+
+    header: str
+    body_lines: tuple[str, ...]
+    file_prelude: str
+
+
+def split_unified_diff(text: str) -> list[DiffHunk]:
+    """Segment one file's unified-diff text into per-hunk blocks.
+
+    Always runs over the FULL diff text (spec §2) -- never a
+    display-truncated slice -- so hunk indices are stable regardless of any
+    display cap a caller later applies. Expects ``text`` to be a single
+    file's diff output (e.g. ``provider.diff_text(row, path)``); a
+    multi-file diff is not a supported input shape.
+
+    Args:
+        text: The unified diff text for one file, verbatim.
+
+    Returns:
+        One ``DiffHunk`` per ``@@ ... @@`` header found, in order. When
+        the diff has no hunk headers at all (a binary file, or a clean
+        rename with no content change), returns a single fallback
+        ``DiffHunk`` with an empty ``header``/``file_prelude`` and every
+        line of ``text`` as ``body_lines`` -- this keeps such diffs
+        annotatable as one unit instead of vanishing from segmentation.
+    """
+    lines = text.splitlines()
+    header_indices = [i for i, line in enumerate(lines) if _HUNK_HEADER.match(line)]
+    if not header_indices:
+        return [DiffHunk(header="", body_lines=tuple(lines), file_prelude="")]
+
+    file_prelude = "\n".join(lines[: header_indices[0]])
+    hunks: list[DiffHunk] = []
+    for position, start in enumerate(header_indices):
+        end = (
+            header_indices[position + 1]
+            if position + 1 < len(header_indices)
+            else len(lines)
+        )
+        hunks.append(
+            DiffHunk(
+                header=lines[start],
+                body_lines=tuple(lines[start + 1 : end]),
+                file_prelude=file_prelude,
+            )
+        )
+    return hunks
+
+
+#: Byte cap applied to a captured hunk excerpt (Qodo #5, PR #1779 fix
+#: round). The line cap (``hunk_excerpt``'s ``cap`` parameter) alone is not
+#: enough: a minified single-line file's ONE body line can carry far more
+#: bytes than the whole delivery block's cap, and `render_diff_feedback_
+#: block`'s per-note inclusion loop treats any note whose entry alone
+#: exceeds the block cap as an unconditional queue-blocker (see that
+#: function's own fix below). Bounding excerpt bytes at CAPTURE time keeps
+#: newly-saved notes well clear of that failure mode; the render-time
+#: truncation-to-fit guard below is what protects notes captured before
+#: this cap existed.
+_EXCERPT_BYTE_CAP = 4096
+_EXCERPT_BYTE_CAP_TAIL = "… truncated"
+#: Tail appended when `render_diff_feedback_block` truncates the OLDEST
+#: pending note's excerpt to guarantee it is always deliverable (Qodo #5).
+_EXCERPT_TRUNCATED_TO_FIT_TAIL = "… excerpt truncated to fit"
+
+
+def _byte_safe_truncate(text: str, max_bytes: int) -> str:
+    """Truncate ``text`` to at most ``max_bytes`` UTF-8 bytes.
+
+    Never splits a multi-byte codepoint: backs off byte-by-byte from a
+    raw slice of the UTF-8 encoding until the remainder decodes cleanly.
+
+    Args:
+        text: The text to truncate.
+        max_bytes: The maximum UTF-8 byte length of the result.
+
+    Returns:
+        The longest prefix of ``text`` that both decodes cleanly and fits
+        in ``max_bytes`` bytes. Empty when ``max_bytes <= 0``.
+    """
+    if max_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    truncated = encoded[:max_bytes]
+    while truncated:
+        try:
+            return truncated.decode("utf-8")
+        except UnicodeDecodeError:
+            truncated = truncated[:-1]
+    return ""
+
+
+def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
+    """Truncate ``text`` to fit ``budget_bytes`` UTF-8 bytes, tail included.
+
+    Prefers a line boundary: keeps whole lines from the start for as long
+    as they fit, then appends ``"\\n" + tail``. The one line that does NOT
+    fit whole is not simply dropped, though -- whatever budget remains
+    after the last whole line is spent on a byte-safe PARTIAL prefix of
+    it, so a body that is one huge line (e.g. a minified file's single
+    diff line -- the motivating case for this cap) still yields a useful,
+    budget-respecting excerpt instead of empty content past the header.
+
+    Args:
+        text: The text to cap.
+        budget_bytes: Maximum UTF-8 byte length of the result, tail
+            included.
+        tail: An honest elision marker appended (on its own line) when
+            truncation actually happens.
+
+    Returns:
+        ``text`` unchanged when it already fits ``budget_bytes``;
+        otherwise a truncated prefix plus ``"\\n" + tail``, guaranteed to
+        encode to at most ``budget_bytes`` UTF-8 bytes.
+    """
+    if len(text.encode("utf-8")) <= budget_bytes:
+        return text
+
+    tail_line = f"\n{tail}"
+    tail_bytes = len(tail_line.encode("utf-8"))
+    content_budget = budget_bytes - tail_bytes
+    if content_budget <= 0:
+        # No room for the tail alongside any content -- best effort: a
+        # bare hard truncation, no tail, still honoring the byte budget.
+        return _byte_safe_truncate(text, max(budget_bytes, 0))
+
+    lines = text.split("\n")
+    kept: list[str] = []
+    used = 0
+    for line in lines:
+        sep = "\n" if kept else ""
+        sep_bytes = len(sep)  # sep is ASCII ("" or "\n") -- 1 byte or 0
+        line_bytes = len(line.encode("utf-8"))
+        if used + sep_bytes + line_bytes <= content_budget:
+            kept.append(line)
+            used += sep_bytes + line_bytes
+            continue
+        # This line doesn't fit whole -- spend whatever budget remains on
+        # a byte-safe PARTIAL prefix of it rather than dropping its
+        # content outright.
+        remaining = content_budget - used - sep_bytes
+        if remaining > 0:
+            partial = _byte_safe_truncate(line, remaining)
+            if partial:
+                kept.append(partial)
+        break
+
+    return "\n".join(kept) + tail_line
+
+
+def hunk_excerpt(hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP) -> str:
+    """Render a capped, self-contained excerpt of one hunk.
+
+    This is the retention safety net (spec §1): captured once at note
+    creation, it keeps a note's display and delivery self-contained even
+    after the shadow repo prunes the snapshots the hunk came from.
+
+    Two independent caps apply, in order: ``cap`` bounds the number of
+    body LINES (as before); ``byte_cap`` then bounds the whole rendered
+    excerpt's UTF-8 BYTE size (Qodo #5, PR #1779 fix round) -- a line cap
+    alone does not bound a minified single-line file's excerpt, which can
+    carry far more bytes in that one line than the entire delivery
+    block's cap.
+
+    Args:
+        hunk: The hunk to excerpt.
+        cap: Maximum number of body lines to include before eliding.
+        byte_cap: Maximum UTF-8 byte size of the rendered excerpt.
+
+    Returns:
+        The header (when non-empty) followed by up to ``cap`` body lines,
+        newline-joined. When the body is longer than ``cap``, an honest
+        "… N more lines" tail line is appended. When the result (line cap
+        already applied) still exceeds ``byte_cap`` bytes, it is further
+        truncated at a line boundary where possible with an honest
+        "… truncated" tail.
+    """
+    parts: list[str] = []
+    if hunk.header:
+        parts.append(hunk.header)
+    body = hunk.body_lines
+    parts.extend(body[:cap])
+    if len(body) > cap:
+        parts.append(f"… {len(body) - cap} more lines")
+    text = "\n".join(parts)
+    return _cap_text_to_byte_budget(text, byte_cap, _EXCERPT_BYTE_CAP_TAIL)
+
+
+def _diff_feedback_note_entry(note: Mapping[str, Any]) -> str:
+    """Render one note's block entry (spec §4), sans the shared heading.
+
+    The excerpt is fenced with FOUR backticks, not the usual three
+    (final-review fix wave): the excerpt is a verbatim hunk body, and a
+    hunk from a markdown-file diff can itself contain a triple-backtick
+    line -- with a three-backtick fence that would prematurely close the
+    fence mid-excerpt and corrupt the rest of the model payload. A bare
+    diff line can start with a literal backtick but a *fenced code block*
+    delimiter inside a diff of a markdown file is exactly the case this
+    guards; four backticks is the standard "fence one level up" escape
+    used for exactly this nesting problem.
+    """
+    short_id = str(note["run_id"])[:8]
+    return (
+        f"### {note['path']} — {note['hunk_header']}   [run {short_id}]\n"
+        f"> {note['note']}\n"
+        f"````\n{note['hunk_excerpt']}\n````"
+    )
+
+
+def _oldest_note_entry_truncated_to_fit(
+    note: Mapping[str, Any], *, cap_bytes: int, held_after: int
+) -> "str | None":
+    """Shrink ONLY this note's excerpt so its entry fits under ``cap_bytes``.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): the oldest pending
+    note must always be deliverable, even one whose captured excerpt (a
+    legacy row from before ``hunk_excerpt`` grew its own byte cap) is
+    larger than the whole block cap. Only the excerpt is shrunk -- path,
+    hunk header, and note text are never touched -- and the shrink budget
+    already reserves room for the "… N more notes held" line the caller
+    will need to append when ``held_after`` notes remain uninspected.
+
+    Args:
+        note: The oldest pending note's row dict.
+        cap_bytes: The block's overall byte cap.
+        held_after: How many notes after this one will be left pending
+            (the caller always stops considering further notes once this
+            guard engages, so this count is fixed at call time).
+
+    Returns:
+        The rendered entry (heading NOT included) when a truncation makes
+        it fit; ``None`` when even a zero-length excerpt can't -- the
+        note's own fixed metadata alone already exceeds the budget, so
+        the caller falls back to the pre-fix excluded/held behavior.
+    """
+    heading_bytes = len(_DIFF_FEEDBACK_HEADING.encode("utf-8"))
+    sep_bytes = 1  # the "\n" joining the heading and this entry
+    if held_after > 0:
+        holdover_bytes = len(
+            f"\n\n… {held_after} more notes held for the next message".encode(
+                "utf-8"
+            )
+        )
+    else:
+        holdover_bytes = 0
+
+    # -1 for a strict-inequality safety margin, matching the rest of this
+    # module's "strictly under cap" per-note convention.
+    entry_budget = cap_bytes - heading_bytes - sep_bytes - holdover_bytes - 1
+    skeleton = _diff_feedback_note_entry({**note, "hunk_excerpt": ""})
+    skeleton_bytes = len(skeleton.encode("utf-8"))
+    excerpt_budget = entry_budget - skeleton_bytes
+    if excerpt_budget <= 0:
+        return None
+
+    truncated_excerpt = _cap_text_to_byte_budget(
+        str(note["hunk_excerpt"]), excerpt_budget, _EXCERPT_TRUNCATED_TO_FIT_TAIL
+    )
+    return _diff_feedback_note_entry({**note, "hunk_excerpt": truncated_excerpt})
+
+
+def render_diff_feedback_block(
+    notes: Sequence[dict], *, cap_bytes: int = 16384
+) -> "tuple[str, list[int]]":
+    """Render the auto-attached diff-feedback block (spec §4).
+
+    Notes are included oldest-first (callers pass ``ORDER BY id``) while
+    the running UTF-8 size of the block-so-far stays under ``cap_bytes``:
+    a note is included only if adding its full rendering keeps the total
+    strictly under the cap. The first note that would push the block over
+    the cap, and every note after it, are excluded and NOT stamped
+    delivered by the caller -- they stay pending and ride the next send.
+
+    Queue-blocker guard (Qodo #5, PR #1779 fix round): when the very
+    FIRST (oldest) note alone doesn't fit -- typically a legacy row whose
+    excerpt predates ``hunk_excerpt``'s own byte cap, since a freshly
+    captured excerpt is now bounded well under this block's cap -- its
+    excerpt is truncated to fit instead of excluding it outright, so the
+    oldest pending note is (almost) always deliverable and can never
+    permanently block every note behind it. Every note after it still
+    follows the pre-existing break-at-cap behavior (they stay pending,
+    riding the next send, holdover line as today).
+
+    The cap covers the WHOLE rendered block, including the trailing
+    "… N more notes held for the next message" line when one is needed --
+    that line is never allowed to push the total over ``cap_bytes`` on its
+    own. When nothing is excluded, no such line is appended and nothing is
+    reserved for one, so a cap that exactly fits every note's own bytes is
+    never needlessly short by the holdover line's size.
+
+    Args:
+        notes: ``change_notes`` row dicts, oldest first.
+        cap_bytes: Maximum UTF-8 byte size of the rendered block.
+
+    Returns:
+        A ``(block, included_ids)`` pair. ``included_ids`` holds exactly
+        the ``id`` of every note that made it into ``block``, in the same
+        order. When any notes were excluded by the cap, ``block`` ends
+        with a "… N more notes held for the next message" line. Empty
+        ``notes`` returns ``("", [])``.
+    """
+    if not notes:
+        return "", []
+
+    lines: list[str] = [_DIFF_FEEDBACK_HEADING]
+    included_count = 0
+    floor = 0
+    for index, note in enumerate(notes):
+        entry = _diff_feedback_note_entry(note)
+        candidate = "\n".join(lines + [entry])
+        if len(candidate.encode("utf-8")) < cap_bytes:
+            lines.append(entry)
+            included_count += 1
+            continue
+
+        if index == 0:
+            # Queue-blocker guard: this oldest note doesn't fit even alone
+            # -- try shrinking ITS excerpt (only) so it is deliverable
+            # anyway, rather than leaving it (and everything behind it)
+            # pending forever.
+            held_after = len(notes) - 1
+            truncated_entry = _oldest_note_entry_truncated_to_fit(
+                note, cap_bytes=cap_bytes, held_after=held_after
+            )
+            if truncated_entry is not None:
+                lines.append(truncated_entry)
+                included_count = 1
+                # Guaranteed (by construction, see the helper's budget
+                # math) to already fit under cap_bytes with the holdover
+                # line included -- never evict it below this floor.
+                floor = 1
+        # Every note after the oldest keeps the pre-existing break-at-cap
+        # behavior regardless of whether the guard above engaged.
+        break
+
+    if included_count == len(notes):
+        # Everything fit -- no holdover line, so nothing needed to be
+        # reserved for one either.
+        return "\n".join(lines), [int(note["id"]) for note in notes]
+
+    # At least one note was excluded by the loop above (which did not yet
+    # account for the holdover line's own bytes). Evict from the tail
+    # until the holdover-inclusive block actually fits under cap_bytes --
+    # each eviction both shrinks the notes portion and (usually) shrinks
+    # "held"'s digit count, so this converges quickly. ``floor`` is the
+    # irreducible bound (0 normally; 1 when the queue-blocker guard above
+    # already placed a guaranteed-to-fit truncated oldest note that must
+    # never be evicted) and is returned even if it still exceeds
+    # cap_bytes -- there is nothing left that may be evicted.
+    while True:
+        held = len(notes) - included_count
+        block = "\n".join(lines) + f"\n\n… {held} more notes held for the next message"
+        if len(block.encode("utf-8")) <= cap_bytes or included_count <= floor:
+            included_ids = [int(note["id"]) for note in notes[:included_count]]
+            return block, included_ids
+        included_count -= 1
+        lines.pop()
+
+
+def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
+    """Render the disclosure text for delivered diff-feedback notes.
+
+    Shared verbatim by live emission at run completion and by resume
+    re-derivation from delivered ``change_notes`` rows (spec §4) -- both
+    callers must render identical text for the same notes.
+
+    Args:
+        notes: ``change_notes`` row dicts to disclose, one line each.
+
+    Returns:
+        One "📝 Diff feedback attached — ``<path>`` ``<hunk_header>``:
+        ``"<note>"``" line per note, newline-joined. Empty ``notes``
+        returns ``""``.
+    """
+    return "\n".join(
+        f'📝 Diff feedback attached — {note["path"]} {note["hunk_header"]}: "{note["note"]}"'
+        for note in notes
+    )

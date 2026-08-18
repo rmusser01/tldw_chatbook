@@ -69,6 +69,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.trajectory import (
+    KIND_USER_FEEDBACK,
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
@@ -724,7 +725,18 @@ class TrajectoryScreen(ModalScreen[None]):
         if rec.content_preview:
             lines.append(f"content {rec.content_preview}")
         payload = rec.payload
-        if payload:
+        if payload and rec.kind == KIND_USER_FEEDBACK:
+            # task-17169: feedback payloads are action/quote/comment, none of
+            # the tool keys below. Falling through would print `tool —` and
+            # drop the record's entire content.
+            lines.append(f"feedback {payload.get('action') or '—'}")
+            quote = payload.get("quote")
+            if quote:
+                lines.append(f"quote {quote}")  # full, untruncated
+            comment = payload.get("comment")
+            if comment:
+                lines.append(f"comment {comment}")
+        elif payload:
             name = str(payload.get("name") or "—")
             lines.append(f"tool {name}")
             args = payload.get("args")

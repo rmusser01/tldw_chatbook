@@ -252,7 +252,19 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "parent_size_multiplier": 3,
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
-            # "reranking_strategy": "pointwise",
+            #
+            # There is NO "reranking_strategy" key here. One used to be
+            # listed, and it read nothing -- no code anywhere loaded it, so
+            # setting it selected exactly nothing (TASK-17600 F3). The
+            # strategy lives on a RAG PROFILE, as
+            # `reranking_config.strategy` in the profile's saved JSON under
+            # <user data dir>/rag_profiles/: `ProfileConfig` serialises the
+            # whole `RerankingConfig` and rebuilds it on load, so a saved or
+            # cloned profile keeps its strategy across restarts (pinned by
+            # Tests/RAG/test_config_profiles.py::
+            # test_a_saved_profile_round_trips_its_reranking_strategy). The
+            # Settings form edits that profile's provider/model/top-k but
+            # not its strategy.
             #
             # Reranking strategies: "pointwise" | "pairwise" | "listwise"
             # (each bills an LLM provider per call) or "cross_encoder" (a
@@ -740,6 +752,11 @@ MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD = 100000
 DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 160
 MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 20
 MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
+
+# Ephemeral side chat (Console selection menu): the default prompt template
+# for the "More Details" action. ``{selection}`` is the only placeholder the
+# side-chat service substitutes (Task-3 renders it via replace, not format).
+DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE = "Give me more details about: {selection}"
 
 
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
@@ -1301,6 +1318,22 @@ def load_settings(force_reload: bool = False) -> Dict:
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
+    # task-17652: status-row placement relative to the composer. Validation
+    # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
+    # normalizing here keeps a typo from ever reaching compose order.
+    _status_chips_position = final_console_settings_cli.get("status_chips_position")
+    if not (
+        isinstance(_status_chips_position, str)
+        and _status_chips_position.strip().lower() in ("above", "below")
+    ):
+        _status_chips_position = "above"
+    else:
+        _status_chips_position = _status_chips_position.strip().lower()
+    final_console_settings_cli["status_chips_position"] = _status_chips_position
+    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
+        final_console_settings_cli.get("status_chips_collapsed", False),
+        False,
+    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",
@@ -1328,6 +1361,20 @@ def load_settings(force_reload: bool = False) -> Dict:
     if not isinstance(workspace_root, str):
         workspace_root = ""
     final_console_settings_cli["workspace_root"] = workspace_root.strip()
+    # Ephemeral side chat (selection menu): strings need presence-validation
+    # only -- non-strings fall back, mirroring workspace_root above.
+    sidechat_model = final_console_settings_cli.get("sidechat_model", "")
+    if not isinstance(sidechat_model, str):
+        sidechat_model = ""
+    final_console_settings_cli["sidechat_model"] = sidechat_model.strip()
+    sidechat_prompt_template = final_console_settings_cli.get(
+        "sidechat_prompt_template", DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    )
+    if not isinstance(sidechat_prompt_template, str):
+        sidechat_prompt_template = DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    final_console_settings_cli["sidechat_prompt_template"] = (
+        sidechat_prompt_template.strip()
+    )
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
         background_effects = {}
@@ -2708,6 +2755,9 @@ compaction_summary_max_tokens = 1024
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
+# Ephemeral side chat (selection menu) — empty model = session model
+sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
+sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
@@ -3955,7 +4005,20 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_provider_default = "google"
 # relevance_analysis_llm = "openai"
 # final_answer_llm = "openai"
-# search_enable_subquery = false
+# search_enable_subquery = false   # generate sub-questions from the query and
+#   search those too. Costs one LLM call plus up to search_default_max_queries-1
+#   extra searches, each carrying its own per-result relevance calls. Qodo
+#   (PR 1772): with BOTH lanes active each generated facet costs TWO provider
+#   calls, not one -- a web search and an academic-provider search -- so the
+#   worst case is 2 x (search_default_max_queries - 1) extra calls per round,
+#   plus the per-result relevance and summarization calls each returned source
+#   then needs. Since task-17372 the facets ALSO drive academic-provider
+#   searches, so enabling this changes both what evidence is retrieved and how
+#   it is judged
+#   (the facets reach the relevance prompt either way). Before that fix it
+#   changed only the judging, which is why the recorded gate measurement for
+#   fan-out says nothing about retrieval -- see
+#   Docs/Development/research-report-eval-baseline.md.
 # search_default_max_queries = 5
 # search_result_max = 10
 # relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured

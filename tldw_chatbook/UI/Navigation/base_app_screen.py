@@ -231,7 +231,11 @@ class BaseAppScreen(Screen):
         # itself) correctly resolves.
         footer = AppFooterStatus(
             id="screen-footer-status",
-            show_token_count=self.screen_name == "chat",
+            # task-17653: the footer token counter is retired — the Console
+            # cost chip is the single token/cost surface, so no screen arms
+            # the counter (chat used to, leaving it one write away from
+            # duplicating the chip).
+            show_token_count=False,
         )
         # Screen-level recompose (settings' recompose=True reactives,
         # library/chat `refresh(recompose=True)` calls) re-runs THIS method

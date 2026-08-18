@@ -207,14 +207,23 @@ async def _run_question(
     verification = service.get_artifact(run["id"], "verification_summary.json") or {}
     payload = verification.get("content") or {}
     if not payload.get("citation_verification"):
-        print("  [no citation verification on the synthesis branch]")
-        return None
+        # Qodo (PR 1782): returning None here is what made failed runs vanish.
+        # A run with no citation verdict has no metrics to average, but it MUST
+        # still be counted, or the aggregate is computed over survivors and
+        # reads as if every run produced a report (task-17386).
+        failure = payload.get("synthesis_failed") or {}
+        stage = failure.get("stage") or "unknown"
+        error_type = failure.get("error_type") or "no citation verification"
+        print(f"  [no report: {stage} failed -- {error_type}]")
+        return {"__unscored__": {"stage": stage, "error_type": error_type}}
     # The full summary (not just the citation block) so gate counts flow
     # into gate_pass_rate (task-16333).
     return payload
 
 
-def _decorate_aggregate(aggregate: dict, *, args: argparse.Namespace) -> dict:
+def _decorate_aggregate(
+    aggregate: dict, *, args: argparse.Namespace, unscored_runs: list | None = None
+) -> dict:
     """Stamp the decomposition settings onto the emitted aggregate.
 
     task-17370: the recorded 0.29 and 0.42 gate numbers were both measured
@@ -230,6 +239,10 @@ def _decorate_aggregate(aggregate: dict, *, args: argparse.Namespace) -> dict:
             "max_iterations": max(1, int(getattr(args, "max_iterations", 1) or 1)),
             "deadline_s": getattr(args, "deadline_s", None),
             "llm_timeout_s": getattr(args, "llm_timeout_s", None),
+        },
+        "unscored_runs": {
+            "count": len(unscored_runs or []),
+            "reasons": list(unscored_runs or []),
         },
     }
 
@@ -300,12 +313,17 @@ async def main_async(args: argparse.Namespace) -> int:
         question_set = QUESTION_SETS[question_set_name]
         print(f"question set: {args.question_set}")
         payloads = []
+        # Runs that produced no report at all: kept so the aggregate can state
+        # them rather than quietly averaging over the survivors.
+        unscored: list[dict] = []
         for question in question_set[: args.questions]:
             print(f"Running: {question}")
             payload = await _run_question(
                 engine, service, question, max_iterations=args.max_iterations
             )
-            if payload is not None:
+            if payload is not None and "__unscored__" in payload:
+                unscored.append(payload["__unscored__"])
+            elif payload is not None:
                 metrics = score_research_report(payload)
                 cv = payload.get("citation_verification") or {}
                 gate = payload.get("gate") or {}
@@ -329,7 +347,9 @@ async def main_async(args: argparse.Namespace) -> int:
             "timeouts) before relying on this baseline."
         )
         return 1
-    aggregate = _decorate_aggregate(aggregate_metrics(payloads), args=args)
+    aggregate = _decorate_aggregate(
+        aggregate_metrics(payloads), args=args, unscored_runs=unscored
+    )
     print("\n=== Live baseline (mean over runs) ===")
     print(json.dumps(aggregate, indent=2))
     if args.json_out:

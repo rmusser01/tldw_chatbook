@@ -384,7 +384,9 @@ class ConsoleComposerBar(Horizontal):
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
     MAX_DRAFT_ROWS = 4
-    COMPOSER_CHROME_ROWS = 4
+    # TASK-17651: the dense-form composer has no border box or vertical
+    # padding — total height IS the draft row count (1-4).
+    COMPOSER_CHROME_ROWS = 0
     VOICE_CHIP_MIN_WIDTH = 24
     # Fits the 51-cell shared-executor busy copy plus the chip's cell of
     # horizontal padding on each side at ordinary Console widths.
@@ -477,8 +479,8 @@ class ConsoleComposerBar(Horizontal):
         super().__init__(**kwargs)
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
-        self.styles.height = 5
-        self.styles.min_height = 5
+        self.styles.height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
+        self.styles.min_height = self.MIN_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.collapse_large_pastes = coerce_bool_setting(collapse_large_pastes, True)
         self.paste_collapse_threshold = coerce_int_setting(
@@ -3599,6 +3601,32 @@ class ConsoleComposerBar(Horizontal):
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    def insert_quote(self, text: str) -> None:
+        """Insert a transcript selection as a block quote at the caret.
+
+        Public seam for the console selection menu's "Add to chat" action
+        (console selection phase 1): every non-empty line gains a ``> ``
+        prefix (blank lines become a bare ``>``, as a real block quote
+        renders), then the block splices in wherever the caret sits. The
+        caret always exists in the segment model -- it is not focus-bound
+        -- so an unfocused composer inserts at the end of the draft (the
+        phase spec's fallback). Delegates to ``insert_text`` so the quote
+        takes the ordinary typing path verbatim: undo entry (never
+        coalesced -- a multi-character insert always opens a fresh one),
+        segment lazy-init, paste-token boundary handling, and the standard
+        post-edit refresh chain.
+
+        Args:
+            text: The raw selection text to quote; blank-only input is a
+                no-op (there is nothing worth quoting).
+        """
+        if not text.strip():
+            return
+        quoted = "\n".join(
+            f"> {line}" if line.strip() else ">" for line in text.splitlines()
+        )
+        self.insert_text(quoted)
 
     def insert_pasted_text(self, text: str) -> None:
         """Insert pasted text at the caret, collapsing only large chunks for display.

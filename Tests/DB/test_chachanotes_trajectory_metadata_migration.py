@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
-    SchemaError,
     TrajectoryRowWrite,
 )
 
@@ -41,7 +39,7 @@ def _version(connection) -> int:
 def test_migrates_v37_to_v38_and_creates_table(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
     connection = db.get_connection()
-    assert _version(connection) == 38
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     cols = {row["name"] for row in connection.execute(
         "PRAGMA table_info(message_trajectory_metadata)"
     )}
@@ -217,7 +215,7 @@ def test_v37_database_upgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         seed.close()
     db = CharactersRAGDB(tmp_path / "seed.db", client_id="upgraded")
     connection = db.get_connection()
-    assert _version(connection) == 38
+    assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     cols = {row["name"] for row in connection.execute(
         "PRAGMA table_info(message_trajectory_metadata)"
     )}

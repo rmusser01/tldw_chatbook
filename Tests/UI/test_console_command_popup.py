@@ -316,14 +316,48 @@ async def test_enter_with_popup_closed_sends_normally():
 
 
 @pytest.mark.asyncio
-async def test_popup_anchor_clears_composer_with_chips_below():
-    """DS-09 (TASK-2154.15), post-swap geometry: the status chip strip now
-    sits BELOW the composer as the shell's bottom row, so an anchor that
-    chases the chips would drop the popup over the input row. The popup's
-    bottom edge must clear the composer's top edge, which also keeps the
-    chips (further down) out of the popup's reach."""
+async def test_popup_anchor_clears_chips_above_composer_by_default():
+    """task-17652: the chips top the composer cluster by default, so the
+    popup's clearance loop must treat the strip like the staged-evidence
+    and prompt-queue strips — bottoming out above it instead of painting
+    over the status row on every `/`."""
     app = _build_test_app()
     _configure_native_ready_console(app)
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        chips = console.query_one("#console-status-chips")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        await pilot.pause(0.2)
+        assert popup.is_open
+        assert chips.display and chips.region.height > 0
+        # The chips top the cluster, above the composer.
+        assert chips.region.y + chips.region.height <= composer.region.y
+        popup_bottom = popup.region.y + popup.region.height
+        assert popup_bottom <= chips.region.y, (
+            f"popup {popup.region} overlaps status chips {chips.region}"
+        )
+        assert popup_bottom <= composer.region.y, (
+            f"popup {popup.region} overlaps composer {composer.region}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_popup_anchor_clears_composer_with_chips_below():
+    """DS-09 (TASK-2154.15), now behind `status_chips_position = "below"`:
+    with the strip as the shell's bottom row, an anchor that chases the
+    chips would drop the popup over the input row. The popup's bottom edge
+    must clear the composer's top edge, which also keeps the chips
+    (further down) out of the popup's reach."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["status_chips_position"] = "below"
     host = _StyledConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

@@ -356,9 +356,16 @@ THE CODE, RETIRE THE PROMISE."**
 
 So, concretely:
 
-- `CrossEncoderReranker` stays implemented and stays selectable as
-  `reranking_strategy = "cross_encoder"`. The name is **not** retired from the
-  strategy vocabulary.
+- `CrossEncoderReranker` stays implemented and stays selectable. The name is
+  **not** retired from the strategy vocabulary.
+  **Correction (2026-08-18, TASK-17600 F3):** this line originally named the
+  lever as `reranking_strategy = "cross_encoder"`. That config key has zero
+  readers repo-wide — it selected nothing. The ruling stands, but the
+  mechanism that honours it is a RAG **profile**: `reranking_config.strategy`
+  on a saved or cloned profile, round-tripped through
+  `ProfileConfig.to_dict`/`from_dict` into
+  `<user data dir>/rag_profiles/<id>.json`. The dead key has been removed
+  from the config examples and the claim corrected in `RAG-DESIGN.md`.
 - Every claim or implication that it *helps* is gone, and the verdict above now
   travels with it: `RAG_Search/reranker.py` (module docstring, the `strategy`
   Literal, the class docstring's numbers), `RAG_Search/config_profiles.py`,

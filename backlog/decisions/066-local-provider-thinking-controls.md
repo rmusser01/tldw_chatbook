@@ -2,7 +2,7 @@
 
 Status: Proposed
 Date: 2026-08-15
-Related Task: [TASK-16812](../tasks/task-16812%20-%20Console-thinking-levels-and-budget-for-local-providers.md)
+Related Task: [TASK-17170](../tasks/task-17170%20-%20Console-thinking-levels-and-budget-for-local-providers.md)
 Related Spec: [Local Provider Thinking Controls — Design](../../Docs/superpowers/specs/2026-08-15-local-thinking-controls-design.md)
 Supersedes: N/A
 

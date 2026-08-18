@@ -323,6 +323,81 @@ class AgentRunsChangeReviewProvider:
         repo = self._service.repo_for_root(row["root"])
         return repo.diff_text(str(row["baseline_sha"]), str(row["end_sha"]), path)
 
+    def add_change_note(
+        self,
+        *,
+        run_id: str,
+        root: str,
+        path: str,
+        hunk_index: int,
+        hunk_header: str,
+        hunk_excerpt: str,
+        note: str,
+        snapshot_id: int | None = None,
+    ) -> int:
+        """Record a user-authored note anchored to one hunk of a turn's diff.
+
+        Thin delegate onto :meth:`AgentRunsDB.add_change_note` (TASK-16800
+        spec §1/§3) -- the turn file card writes notes through the
+        provider exactly like every other change-review read/write, never
+        touching the database directly.
+
+        Args:
+            run_id: The agent run whose diff this note is anchored to.
+            root: Canonical root path of the changed file.
+            path: The changed file's path (root-relative).
+            hunk_index: 0-based index of the hunk over the file's full diff.
+            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim.
+            hunk_excerpt: The hunk body captured at note time (already
+                capped/elided by the caller).
+            note: The user's note text.
+            snapshot_id: The owning ``change_snapshots`` row's own DB
+                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
+                which of two same-run/root/path windows this note's hunk
+                came from. ``None`` when the caller has no snapshot row
+                to anchor to.
+
+        Returns:
+            The newly created note's row id.
+        """
+        return self._db.add_change_note(
+            run_id=run_id,
+            root=root,
+            path=path,
+            hunk_index=hunk_index,
+            hunk_header=hunk_header,
+            hunk_excerpt=hunk_excerpt,
+            note=note,
+            snapshot_id=snapshot_id,
+        )
+
+    def delete_change_note(self, note_id: int) -> bool:
+        """Delete a pending (undelivered) note.
+
+        Thin delegate onto :meth:`AgentRunsDB.delete_change_note`.
+
+        Args:
+            note_id: The note's row id.
+
+        Returns:
+            True if a pending note was deleted; False if the note does
+            not exist or has already been delivered.
+        """
+        return self._db.delete_change_note(note_id)
+
+    def notes_for_run(self, run_id: str) -> list[dict]:
+        """Return a run's change notes, oldest first.
+
+        Thin delegate onto :meth:`AgentRunsDB.notes_for_run`.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            One dict per note row (all columns), oldest first.
+        """
+        return self._db.notes_for_run(run_id)
+
 
 class ChangeReviewScreen(Screen):
     """Changed-file tree + windowed diff viewer for one conversation."""

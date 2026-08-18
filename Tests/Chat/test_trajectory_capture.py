@@ -418,3 +418,161 @@ def test_concurrent_direct_db_upserts_produce_unique_seqs(tmp_path):
         assert len(set(seqs)) == 50
     finally:
         db.close()
+
+
+# --- selection feedback events (task-17169, phase 4) ---------------------------
+#
+# Console selection feedback (Request changes / LGTM / Comment) was ephemeral:
+# composed into the next user message and forgotten. Decision AC#4 was Option A
+# -- the ADR-066 trajectory sidecar, because feedback is a chronological run
+# event and the sidecar is local-only (a synced annotations table would drag in
+# sync-schema implications for what is really an audit record).
+
+
+def test_selection_feedback_persists_as_a_user_feedback_row(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Feedback")
+        conversation_id = store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="do it", persist=True
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="here is the patch",
+            persist=True,
+        )
+
+        assert store.record_feedback_event(
+            session.id,
+            anchor_message_id=assistant.id,
+            action="request-changes",
+            quote="here is the patch",
+            comment="use a context manager",
+        )
+
+        rows = [
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "user_feedback"
+        ]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.message_id == assistant.persisted_message_id
+        assert row.turn_id == store.get_message(assistant.id).turn_id
+        payload = json.loads(row.payload_json)
+        assert payload["action"] == "request-changes"
+        assert payload["quote"] == "here is the patch"
+        assert payload["comment"] == "use a context manager"
+    finally:
+        db.close()
+
+
+def test_feedback_without_a_comment_records_no_comment_key(tmp_path):
+    """LGTM and Request-changes carry no comment; the payload must not
+    fabricate an empty one for the viewer to render."""
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Feedback")
+        conversation_id = store.persist_session_if_needed(session.id)
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="ok", persist=True
+        )
+
+        store.record_feedback_event(
+            session.id,
+            anchor_message_id=assistant.id,
+            action="lgm",
+            quote="ok",
+            comment=None,
+        )
+
+        rows = [
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "user_feedback"
+        ]
+        assert json.loads(rows[0].payload_json) == {"action": "lgm", "quote": "ok"}
+    finally:
+        db.close()
+
+
+def test_feedback_on_an_unpersisted_session_is_skipped_not_raised(tmp_path):
+    """Ephemeral sessions have nothing to survive a restart -- the write is a
+    silent no-op, and it must never take down the dispatch that triggered it."""
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Ephemeral")
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="ok", persist=False
+        )
+
+        assert (
+            store.record_feedback_event(
+                session.id,
+                anchor_message_id=assistant.id,
+                action="lgm",
+                quote="ok",
+                comment=None,
+            )
+            is False
+        )
+    finally:
+        db.close()
+
+
+def test_feedback_for_an_unknown_anchor_never_raises(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Feedback")
+        store.persist_session_if_needed(session.id)
+
+        assert (
+            store.record_feedback_event(
+                session.id,
+                anchor_message_id="no-such-message",
+                action="comment",
+                quote="q",
+                comment="c",
+            )
+            is False
+        )
+    finally:
+        db.close()
+
+
+def test_feedback_survives_a_restart(tmp_path):
+    """AC#1: the whole point is durability. Reopen the DB from disk with a
+    fresh store and the feedback is still there."""
+    db_path = str(tmp_path / "chachanotes.sqlite")
+    db = CharactersRAGDB(db_path, "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.ensure_session(title="Feedback")
+        conversation_id = store.persist_session_if_needed(session.id)
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="ok", persist=True
+        )
+        store.record_feedback_event(
+            session.id,
+            anchor_message_id=assistant.id,
+            action="comment",
+            quote="ok",
+            comment="revisit this",
+        )
+    finally:
+        db.close()
+
+    reopened = CharactersRAGDB(db_path, "test_client")
+    try:
+        rows = [
+            row
+            for row in reopened.get_trajectory_rows(conversation_id)
+            if row.event_kind == "user_feedback"
+        ]
+        assert [json.loads(row.payload_json)["comment"] for row in rows] == [
+            "revisit this"
+        ]
+    finally:
+        reopened.close()

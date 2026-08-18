@@ -297,6 +297,38 @@ def test_clone_builtin_creates_writable_copy(tmp_path):
     assert m.get_profile("high_accuracy").rag_config.chunking.chunk_size != 300
 
 
+def test_a_saved_profile_round_trips_its_reranking_strategy(tmp_path):
+    """The reranking strategy is selectable HERE, and only here (TASK-17600 F3).
+
+    TASK-16965's owner ruling was "keep the code, retire the promise": the
+    `cross_encoder` strategy stays selectable. The docs then pointed at
+    `reranking_strategy = "cross_encoder"` in config.toml -- a key with ZERO
+    readers repo-wide, so following that instruction selected nothing. The
+    mechanism that does work is this one: `strategy` is a field of
+    `RerankingConfig`, `to_dict` writes `asdict(reranking_config)` and
+    `from_dict` rebuilds `RerankingConfig(**...)`, so a saved or cloned
+    profile carries it across a restart.
+
+    A GUARD, not a repair proof -- it passes before the docs change too.
+    That is exactly its job: it is the evidence the corrected doc is TRUE,
+    and it fails if a future refactor drops `strategy` from the serialised
+    shape and quietly makes the documented lever inert again.
+    """
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
+    m = _mgr(tmp_path)
+    clone = m.clone_profile("high_accuracy", "Cross Encoder Trial")
+    clone.reranking_config = RerankingConfig(strategy="cross_encoder")
+    m.save_profile(clone)
+
+    on_disk = _json.loads((tmp_path / "profiles" / f"{clone.id}.json").read_text())
+    assert on_disk["reranking_config"]["strategy"] == "cross_encoder"
+
+    reloaded = _mgr(tmp_path).get_profile(clone.id)
+    assert isinstance(reloaded.reranking_config, RerankingConfig)
+    assert reloaded.reranking_config.strategy == "cross_encoder"
+
+
 def test_rename_keeps_id_and_file(tmp_path):
     m = _mgr(tmp_path)
     c = m.clone_profile("hybrid_basic", "Before")

@@ -361,7 +361,14 @@ def test_aggregate_llm_failure_still_typed(monkeypatch):
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
-    assert set(out) == {"text", "evidence", "confidence", "chunks"}  # no "summary" key ever
+    # Typed shape holds and no "summary" key ever appears; task-17386 adds
+    # synthesis_failed so the run records WHY it has no citation verdict.
+    assert set(out) == {
+        "text", "evidence", "confidence", "chunks", "synthesis_failed",
+    }
+    assert "summary" not in out
+    assert out["synthesis_failed"]["error_type"] == "RuntimeError"
+    assert "RuntimeError" in out["text"]
 
 
 def test_aggregate_no_llm_fallback():
@@ -1438,3 +1445,24 @@ def test_real_summaries_are_not_mistaken_for_failures(summary_text):
     from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
 
     assert _is_summary_failure(summary_text) is False
+
+
+def test_verification_failure_is_not_labelled_a_synthesis_failure(monkeypatch):
+    """Qodo (PR 1782): verify_citations runs after the provider returns, inside
+    the same try, so a verification defect used to be recorded as a SYNTHESIS
+    failure -- corrupting the failure-class measurement the field exists for."""
+    monkeypatch.setattr(
+        WebSearch_APIs, "chat_api_call", lambda **kwargs: "a report citing [1]"
+    )
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+
+    def boom(*_args, **_kwargs):
+        raise ValueError("citation verifier defect")
+
+    monkeypatch.setattr(WebSearch_APIs.deep_search_citations, "verify_citations", boom)
+
+    out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
+
+    assert out["synthesis_failed"]["stage"] == "verification", out["synthesis_failed"]
+    assert out["synthesis_failed"]["error_type"] == "ValueError"

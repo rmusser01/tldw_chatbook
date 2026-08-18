@@ -755,11 +755,19 @@ def test_css_class_selector_matching_uses_token_boundaries():
 
 
 def test_console_composer_focus_uses_thin_input_treatment():
+    """task-17651: the composer follows the task-1586 dense-form convention.
+
+    Focus flips the one-column left edge to the thick action accent with a
+    focus background — never a border box (a Textual border box costs a row
+    above and below, which is exactly the chrome the flattening removed).
+    """
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, "#console-native-composer.console-composer-focused")
     assert "border: heavy" not in block
-    assert "border: solid $ds-input-focus-border;" in block
-    assert "border-bottom: solid $ds-input-focus-accent;" in block
+    assert "border-left: thick $ds-action-focus;" in block
+    assert "background: $ds-input-focus-bg;" in block
+    assert "border: solid" not in block
+    assert "border-bottom:" not in block
 
 
 def test_console_structural_separators_use_visible_column_line_token():
@@ -776,8 +784,11 @@ def test_console_structural_separators_use_visible_column_line_token():
     assert any(
         "border: round $ds-column-line;" in block for block in transcript_region_blocks
     )
-    assert "border: round $ds-column-line;" in composer
-    assert "border: round $ds-grid-line;" not in composer
+    # task-17651: the composer left the frame grammar — it is a dense-form
+    # field with a one-column left edge, never a border box.
+    assert "border: none;" in composer
+    assert "border-left: solid $ds-control-edge;" in composer
+    assert "border: round" not in composer
     assert "color: $ds-column-line;" in transcript_rule
     assert "color: $ds-grid-line;" not in transcript_rule
 
@@ -881,18 +892,31 @@ def test_console_settings_modal_select_overlay_is_readable():
 
 @pytest.mark.unit
 def test_console_transcript_focus_uses_stable_border_geometry():
+    """task-17651: no border in either state — stable geometry at zero rows.
+
+    The transcript's own frame is gone at every size (the compact-mode
+    drop generalized); its focus indicator is the region's inline column
+    recolor (the TASK-359 pane-stop painter), plus a scrollbar accent
+    here. Neither state may reintroduce a border or outline, which would
+    cost the rows the flattening reclaimed.
+    """
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
         base = css_block(text, "#console-native-transcript")
         focus = css_block(text, "#console-native-transcript:focus")
-        assert_stable_solid_border_geometry(base, focus)
-        assert "border: solid $ds-focus-accent;" in focus
-        assert "border-bottom: solid $ds-focus-accent;" in focus
-        assert "outline: heavy" not in focus
-        assert "$primary" not in focus
-        assert "$accent" not in focus
+        assert "border: none;" in base
+        assert "border: none;" in focus
+        assert "border: solid" not in base + focus
+        assert "border-bottom: solid" not in base + focus
+        # The opt-out from the global *:focus outline is load-bearing:
+        # without a border to absorb it, the reset's corner glyphs would
+        # overpaint the outermost transcript content rows.
+        assert "outline: none;" in focus
+        assert "outline: solid" not in base + focus
+        assert "outline: heavy" not in base + focus
+        assert "scrollbar-color: $ds-focus-accent;" in focus
 
 
 @pytest.mark.unit

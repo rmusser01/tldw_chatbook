@@ -58,9 +58,20 @@ def _speech_visible(message: ConsoleChatMessage) -> bool:
 def resolve_console_header_speech(
     message: ConsoleChatMessage,
     state: ConsoleSpeechPresentationState,
+    *,
+    selected: bool = False,
 ) -> ConsoleHeaderSpeechPresentation:
-    """Resolve the sole visible speech control for a Console message."""
+    """Resolve the header speech presentation for a Console message.
+
+    The header never hosts the idle Speak action: speak lives in the
+    selected-message action row with the other per-message options. The
+    header shows only active-playback lifecycle status (generating/playing)
+    and its terminal states (stopped/failed), which must stay visible even
+    when the message is deselected so playback remains controllable.
+    """
     if not _speech_visible(message):
+        return ConsoleHeaderSpeechPresentation(action=None)
+    if state == "idle":
         return ConsoleHeaderSpeechPresentation(action=None)
     if state == "generating":
         return ConsoleHeaderSpeechPresentation(
@@ -413,8 +424,15 @@ class ConsoleMessageActionService:
         ephemeral: bool = False,
         video_file_available: bool = False,
     ) -> list[ConsoleMessageAction]:
-        """Return contextual actions excluding header-owned Speak/Stop."""
-        actions = self.available_actions(
+        """Return the selected-message action row, including Speak/Stop.
+
+        Speak is a per-message option like copy/edit: it renders in the
+        action row of the SELECTED message and swaps to speak-stop while
+        that message is the active TTS speaking message. The header keeps
+        only active-playback lifecycle status (generating/playing/stopped/
+        failed) so playback stays controllable after deselection.
+        """
+        return self.available_actions(
             message,
             generation_variant_count=generation_variant_count,
             generation_browsed_index=generation_browsed_index,
@@ -423,11 +441,6 @@ class ConsoleMessageActionService:
             ephemeral=ephemeral,
             video_file_available=video_file_available,
         )
-        return [
-            action
-            for action in actions
-            if action.action_id not in {"speak", "speak-stop"}
-        ]
 
     def plain_action_row(self, message: ConsoleChatMessage) -> str:
         """Return a terminal-readable action row for plain transcript exports."""

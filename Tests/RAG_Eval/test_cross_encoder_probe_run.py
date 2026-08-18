@@ -106,9 +106,11 @@ EXPECTED_BACKEND = {
 }
 
 #: Arm A covers `plain` as a GUARD, not as a measurement: the census says it
-#: is the identity there, and the plan makes any movement in a plain cell a
-#: STOP rather than a result. Arm B does not -- a mode that cannot fill two
-#: slots at k=10 has nothing to promote from rank 11-20 either.
+#: is the identity there for all but one query (TASK-17755's prefix fallback
+#: took plain from 0 reorderable to 1), and the plan makes any movement in a
+#: plain cell a STOP rather than a result. Arm B does not -- a mode that
+#: still cannot fill two slots at k=10 in 59 of 60 queries has nothing to
+#: promote from rank 11-20 either.
 ARM_A_MODES: tuple[str, ...] = ("semantic", "plain", "hybrid")
 ARM_B_MODES: tuple[str, ...] = VERDICT_MODES
 
@@ -477,7 +479,10 @@ def test_the_cross_encoder_probe_over_the_real_fixtures(tmp_path, capsys, monkey
     The assertions pin **the instrument, never the outcome**: that the model
     ran, that the census is the one the verdict rests on, that every pass
     routed to the mode it claims, that arm A's before-column is the shipped
-    measurement, and that `plain` did not move. An assertion that reranking
+    measurement, and that no `plain` METRIC moved (TASK-17755 made plain
+    reorderable for exactly one query, so the row-order half of that pin is
+    now a census-consistency check rather than a flat zero). An assertion
+    that reranking
     HELPS would turn the arc's pre-authorised NULL into a red test, which is
     the opposite of what this probe is for.
     """
@@ -682,23 +687,64 @@ def test_the_cross_encoder_probe_over_the_real_fixtures(tmp_path, capsys, monkey
                 "measured nothing and its null is uninterpretable"
             )
     plain_census = census_by_key[("plain", ARM_A_DEPTH)]
-    assert plain_census.reorderable == 0, (
+    # RE-DERIVED 2026-08-18 (TASK-17755), which is what this assertion's own
+    # message demanded when it tripped. TASK-16071 and TASK-16965 both
+    # measured 0 here, and the reason was structural: the four-seam plain
+    # path ANDed every query term, so it returned either nothing (39 of 60)
+    # or exactly one row (21) and NEVER two. TASK-17755 gave that path the
+    # engine's `and_then_prefix` construction -- a per-sub-leg prefix
+    # fallback for a seam whose AND primary found nothing -- and the census
+    # moved to 37 zero-row / 22 one-row / 1 reorderable. That is the change
+    # working: two queries that returned nothing now return something, and
+    # one of them returns two rows.
+    #
+    # Still an EXACT equality, not a relaxed bound: the premise it guards
+    # ("a plain null is uninterpretable if plain could be reordered") is now
+    # true for 59 of 60 queries instead of 60, and the one exception is
+    # covered by MEASUREMENT rather than by census -- `row_order_changes`
+    # below asserts the reranker in fact left it alone. If that ratio drifts
+    # again, this trips again, on purpose.
+    assert plain_census.reorderable == 1, (
         f"plain now has {plain_census.reorderable} reorderable queries "
-        "(TASK-16071 and this arc's census both measured 0). The premise "
-        "that plain is the identity under a reranker no longer holds — STOP "
-        "and re-derive the census before reading any verdict above."
+        "(TASK-17755's census measured 1; TASK-16071 and TASK-16965 measured "
+        "0 before the `and_then_prefix` adoption). The premise that plain is "
+        "near-identity under a reranker has shifted again — STOP and "
+        "re-derive the census before reading any verdict above."
     )
-    assert plain_arm.row_order_changes == 0, (
-        "reranking MOVED a plain row. Per the plan that is a STOP-and-report, "
-        "not a result."
+    assert plain_arm.queries_reordered <= plain_census.reorderable, (
+        "reranking permuted a plain query the census says has fewer than two "
+        f"rows ({plain_arm.queries_reordered} queries reordered vs "
+        f"{plain_census.reorderable} reorderable). That is impossible for a "
+        "reranker and means the probe is wrong -- STOP-and-report, not a "
+        "result."
     )
+    # WHAT THIS PIN USED TO SAY, and why it does not any more (TASK-17755).
+    # It read `plain_arm.row_order_changes == 0`, and that held for a
+    # structural reason rather than a behavioural one: the plain path's
+    # AND-strict construction never returned two rows for any golden query,
+    # so no reranker could permute anything. TASK-17755's `and_then_prefix`
+    # adoption rescued two zero-row queries, one of them with several rows,
+    # and the cross-encoder duly permuted that one window (measured: 5 row
+    # positions, 1 query, 28 plain rows scored, 0 failed).
+    #
+    # The arc's actual CONCLUSION is untouched, and the loop below is where
+    # it lives: every plain metric still moves by exactly +0.000 -- the
+    # order-sensitive MRR and NDCG included, not just the set-valued
+    # P/R/F1 -- so reranking remains the identity on plain where it counts.
+    # What was lost is only the census's structural PROOF of that for one
+    # query out of sixty; it is now covered by measurement instead. The
+    # assertion above keeps the part that is still structural: a reranker
+    # cannot reorder a window it was never given, so more reordered queries
+    # than reorderable ones would indict the probe.
     for move in metric_moves(
         plain_arm.before, plain_arm.after, ("mrr", "ndcg", "precision", "recall", "f1")
     ):
         assert move.delta == 0.0, (
-            f"plain/{move.metric} moved by {move.delta:+.6f}; reranking is "
-            "provably the identity on plain by census, so a moved plain cell "
-            "means the probe is wrong, not that reranking works"
+            f"plain/{move.metric} moved by {move.delta:+.6f}. Reranking is "
+            "the identity on plain for 59 of 60 golden queries by census and "
+            "was MEASURED to be the identity on the 60th (TASK-17755), so a "
+            "moved plain cell means the probe is wrong, not that reranking "
+            "works"
         )
 
     assert isinstance(arc_verdict, Verdict), (

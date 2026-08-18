@@ -5046,3 +5046,101 @@ huggingface_hub constants bite in more than one place — `HF_HUB_OFFLINE` (see
 EVALUATES" above, where the blast radius is an unwanted download) and
 `HF_HUB_CACHE` (here, where the blast radius is a load you wanted and silently
 did not get, under any fixture that moves `HOME`).
+
+
+## When you find one inert declared surface, enumerate its whole namespace
+
+**TASK-16174 / TASK-17600, 2026-08-16..18.** Three separate arcs each found
+one config surface that was declared, switchable, sometimes documented — and
+implemented by nothing:
+
+1. `include_parent_docs` / `parent_size_threshold` /
+   `parent_inclusion_strategy`: shipped, set to `true` by three profiles,
+   **read by nothing** (TASK-16174 retired them).
+2. `result_reranking`: a middleware declared with `enabled = true`, listed by
+   the `high_accuracy` pipeline, handled by a bare `pass`.
+3. `reranking_strategy`: a config key with **zero readers**, which
+   TASK-16965's own design doc simultaneously told users was the lever for
+   selecting a reranking strategy.
+
+Each was found by accident, while doing something else. Nobody looked for the
+CLASS until the third one — and when TASK-17600 finally enumerated the
+namespace instead of the single filed name, `result_reranking` turned out to
+be **one of eight**: eleven middleware names were declared by pipelines and
+four implemented, with seven falling off an `if/elif` and no-opping silently.
+Two entire pipelines (`technical_docs`, `research_papers`) consisted of
+nothing but unimplemented middleware, and three names referenced no
+definition block at all.
+
+**What to do.** The first inert surface you find is a sample, not the
+population. Before closing, enumerate its whole namespace **in both
+directions** — declared-but-unimplemented AND implemented-but-undeclared —
+and write the enumeration as a test rather than a one-off grep, because the
+grep answers today and the test answers forever. Give that guard a
+self-check (`test_the_guard_can_see_the_names_it_is_guarding`): a namespace
+guard whose parser silently stops matching becomes a green test that
+guarantees nothing, which is the same failure it was written to prevent.
+
+**A corollary this cost us directly:** a doc can *create* the surface. The
+`reranking_strategy` claim was written by the arc that measured the feature,
+in the same commit series that carefully documented everything else
+truthfully — so include documentation in the sweep, and check that the lever
+a doc names is one the code actually reads.
+
+## A migration test that pins the current version number breaks on every later migration
+
+**The trap.** A migration test asserts what a *fresh* database looks like — and pins
+the schema version (or a table-set delta) as an exact literal. The assertion is true
+the day it is written and false the day the NEXT migration lands, in a test file
+nobody touches when they add their own migration.
+
+**What happened.** Task-17169's v39→v40 bump found three such tests **already red on
+dev**: the v37→v38 trajectory tests asserted a fresh DB is `== 38`, and
+`test_current_schema_version_is_39` had been left behind — the v38→v39 landing had
+broken them and shipped anyway (nobody runs another feature's migration tests when
+adding a schema version). The v40 bump then broke the visual-identity contract the
+same way twice over: its `== 39` pin, and an *exact-equality* table-set delta
+(`tables_after - tables_before == VISUAL_IDENTITY_TABLES`) — an upgrade from v38 runs
+*every* later migration, so v40's new table legitimately appeared in the delta.
+
+**The rule.** In a migration test, a version literal is only correct at the seeded
+*starting* point. Everything asserted about the *end state* must be version-relative:
+fresh/upgraded DBs assert `== CharactersRAGDB._CURRENT_SCHEMA_VERSION`, and a
+"migration X added tables T" claim is a superset check (`T <= delta`), never
+equality. If you are bumping the schema, run `Tests/DB/` and `Tests/ChaChaNotesDB/`
+in full — the tests your bump breaks are not in your feature's test files.
+
+## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
+
+**What happened.** Flattening the Console composer to a one-row dense-form bar
+(border box → `border-left` only) shipped green through every style-level
+assertion — `styles.border_left == ("thick", …)`, others empty — and then the
+painted row-map probe showed the row rendering `┌─ Composer ▾ …`: corner glyphs
+overpainting the bar's first two cells. The computed border styles were
+CORRECT; the glyphs came from `core/_reset.tcss`'s global `*:focus { outline:
+solid … }`, which had been landing on the focused composer all along but was
+absorbed invisibly by the old border box's padding rows. The transcript had the
+same latent hit: with its border removed, focusing it would have drawn the
+outline over its outermost CONTENT rows.
+
+Two mechanics worth keeping:
+
+1. **A border removal is also an outline activation.** The reset rule's own
+   comment documents that it obscures widgets that draw content on their
+   perimeter (the TASK-1160 DataTable case) — but the trap here is the inverse
+   direction: a widget that was previously SAFE becomes obscured the moment its
+   border/padding buffer is removed, with zero diff to any focus rule. When
+   removing a border box, grep the resets for `:focus` and add the
+   `outline: none` opt-out with a replacement cue in the same change.
+2. **Style probes cannot see this class of defect at all** — outline is not
+   border, and `styles.border_*` reads stay pristine while the paint is wrong.
+   Only the compositor row (`render_strips()`) showed it. The composer focus
+   test now pins the painted first cells (`│`/`█`, never `┌─`) alongside the
+   style reads; assert the paint whenever the mechanism under test is "what
+   the user sees at this cell".
+
+**A self-inflicted corollary:** the fix (`outline: none;`) then tripped this
+arc's own freshly written pin `assert "outline:" not in focus` — written
+minutes earlier to mean "no focus outline". Ban the specific values
+(`outline: solid`, `outline: heavy`) and PIN the opt-out explicitly; a
+substring ban on the property name bans the cure along with the disease.

@@ -300,6 +300,9 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
             top=False,
+            # TASK-17651: the workspace grid's own bottom border is the
+            # bottom stack's single separator; the region ends flush.
+            bottom=False,
         )
         with transcript_region:
             yield ProviderContinuationRecoveryCallout(

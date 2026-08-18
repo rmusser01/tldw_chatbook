@@ -879,6 +879,97 @@ sequence rule into RED/GREEN coverage, including negative controls for repeated,
 conflicting, misplaced, and JSON-type-distinct data. A first-event trace proves
 one incompatibility; only consuming the whole live stream proves the contract.
 
+## Pilot-mouse tests cannot certify real-terminal mouse flows (console text selection, 2026-08-15)
+
+**Incident.** The Console drag-text-selection feature passed 400+ pilot-driven
+widget tests (including a real-ChatScreen smoke test) and still did nothing in
+kitty, iTerm2, and Terminal.app. Three successive live-spike rounds each found a
+defect invisible to the synthetic suite: (1) real-terminal `MouseDown`/`MouseUp`
+events arrive with `event.widget` unset -- Textual's screen forwarding only
+assigns it on the translated `MouseMove` path -- so arming logic keyed on
+`event.control` no-oped while pilot events (which carry the widget) stayed
+green; (2) a menu anchored via `dock: top` + `styles.offset` painted translated
+by the offset but CLIPPED to the un-translated dock slot, and hit-tested at the
+un-translated region, so most buttons were invisible AND unclickable; (3) a
+drag's synthesized release Click can dispatch LATE, after an intervening press
+already consumed the suppression flag it relied on. Every fix shipped with a
+regression test that drives the REAL event shape (`widget=None`), the real
+anchor geometry, or the real message ordering.
+
+**What to do.** A mouse-interaction suite is not certified until the flow has
+run in a real terminal. When pilot tests pass but the live terminal disagrees,
+instrument the widget's event handlers to a scratch log and diff the real event
+shapes against the synthetic ones before touching logic. Anything anchored or
+positioned in Textual must use `position: absolute` + `absolute_offset` (the
+tooltip mechanism, where region/paint/clip agree) -- never `dock` plus
+`styles.offset`, whose paint and hit regions diverge. Interaction suppression
+meant for a synthesized follow-up event needs its own one-shot token, not a
+shared flag that other handlers consume.
+
+## `position: absolute` still eats 1fr budget in textual 8.2.8 — screen-mounted overlays need `overlay: screen` (console "black bar" spike, 2026-08-16)
+
+The user's screenshots of the Console all showed a black bar of dead rows under
+the composer whenever a selection was active. Three vision passes analyzed the
+selection menu (my most recent work) and called it correct — which it was; the
+menu was also the *cause*. Textual 8.2.8's vertical layout excludes
+`position: absolute` children from sibling stacking
+(`layouts/vertical.py`: `if not overlay and not absolute: y = next_y`) but
+still passes **every** child's height into `resolve_box_models`, the fr
+denominator — so the 9-row menu mounted on the screen silently subtracted 9
+rows from `#screen-content`'s `1fr`, floating the composer above dead rows.
+`overlay: screen` is the style that removes an overlay from the container's
+flow math entirely; `absolute + overlay: screen` keeps the anchor and frees
+the budget. Fixed in d2b4d2630.
+
+Two process failures made this cost hours: (1) every reproduction attempt
+measured layouts **without the menu open**, because the harness flows that
+mount the menu didn't have a 1fr sibling for it to rob — the defect's
+precondition (screen-mounted overlay + 1fr sibling) never existed in one
+place until the real app was booted with the menu mounted; the "Your own
+library may not contain the precondition" lesson above is the same trap.
+(2) I analyzed what I had most recently changed instead of what the user was
+pointing at. A temporary keybinding that dumps the live geometry of the whole
+bottom chain (F12 → regions/display/dock/height of every screen child) turned
+one angry screenshot into an exact attribution — screen-children dumps beat
+fixed-widget dumps because they can name a consumer you didn't think to ask
+about.
+
+## Mouse capture reroutes the synthesized Click to the capturer — pilot clicks bypass capture entirely (console "dead buttons"/"can't select messages" spike, 2026-08-16)
+
+Two live-only mouse defects, both invisible to pilot tests, both traced only
+after a user-run F12-style event dump:
+
+1. **The drag's synthesized release Click can arrive after `just_finished`
+   was already consumed.** The row guard's `or` chain short-circuited past
+   `consume_release_click()` and did not stop the event, so the artifact
+   click bubbled to the transcript's `on_click`, whose dismissal cleanup
+   (`_remove_selection_menu` → `row.clear_selection()`) erased the selection
+   the just-opened menu existed to act on. Every selection-dependent menu
+   action then read an empty quote and hit the silent blank-selection guard
+   — "buttons only work once", because the first menu of a session usually
+   won the message-queue race and later ones (after a modal round-trip
+   reordered the queues) reliably lost. One-shot suppression tokens must be
+   consumed at EVERY layer that can see the artifact, and the artifact must
+   be `stop()`ped where identified.
+2. **A plain click's synthesized Click routes to the mouse CAPTURER, not the
+   widget under the pointer.** Arming the selection drag captures the mouse
+   on press; the capture only releases when the MouseUp is *processed*, which
+   happens after the Click was already forwarded — so the click landed on
+   the transcript while the row the user clicked never saw it, and mouse
+   click-to-select a message never toggled in any real terminal. Pilot
+   `click()` computes the target itself and delivers directly, bypassing
+   capture — the same pilot-vs-real divergence class as the phase-1 arming
+   bug. Widgets that capture on press must re-dispatch clicks themselves:
+   the transcript's `on_click` walks `event.control` (the true target,
+   preserved on the synthesized event) up to the row and applies the row's
+   click semantics.
+
+Fixed in 78cd9aeba and 86f5807c9. The diagnostic pattern that cracked both:
+log events at the WIDGET level (menu received down/up, hit-test result,
+app-level `_mouse_down_widget`) and — when the chain completes but nothing
+happens — at the app's raw-event boundary. A fixed widget list cannot name a
+consumer you did not think to ask about; a screen-children dump can.
+
 ---
 
 ## A pytest probe outside the repo tree runs with NO conftest — no sandbox, no egress guard (TASK-16198, 2026-08-15)

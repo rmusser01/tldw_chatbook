@@ -3,7 +3,7 @@
 Date: 2026-08-15
 Status: Draft (pending user review)
 Related ADR: [ADR-066: Local provider thinking control wire formats](../../backlog/decisions/066-local-provider-thinking-controls.md)
-Related Task: [TASK-16812](../../backlog/tasks/task-16812%20-%20Console-thinking-levels-and-budget-for-local-providers.md)
+Related Task: [TASK-17170](../../backlog/tasks/task-17170%20-%20Console-thinking-levels-and-budget-for-local-providers.md)
 
 ## Context
 

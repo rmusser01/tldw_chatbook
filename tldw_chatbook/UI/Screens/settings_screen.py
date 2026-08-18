@@ -119,6 +119,7 @@ from ...config import (
     ConfigMutationResult,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
@@ -635,6 +636,8 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "paste_collapse_threshold",
         "max_parallel_runs",
         "tool_result_display_chars",
+        "sidechat_model",
+        "sidechat_prompt_template",
         *CONTEXT_MEMORY_CONFIG_KEYS,
     }
 )
@@ -703,6 +706,8 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "paste_collapse_threshold",
     "max_parallel_runs",
     "tool_result_display_chars",
+    "sidechat_model",
+    "sidechat_prompt_template",
     *CONTEXT_MEMORY_CONFIG_KEYS,
     "user_display_name",
     "streaming",
@@ -1184,9 +1189,26 @@ def _build_field_search_index() -> None:
                     "settings-console-stack-collapsed-rail-labels",
                     "Stacked vertical Context Inspector",
                 ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status row placement",
+                ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status chips above below composer",
+                ),
                 ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
                 ("settings-console-max-parallel-runs", "Max parallel agent runs"),
                 ("settings-console-tool-result-display-chars", "Display cap (chars)"),
+                ("settings-console-sidechat-model", "Side chat model"),
+                (
+                    "settings-console-sidechat-prompt-template",
+                    "Side chat prompt template",
+                ),
+                (
+                    "settings-console-sidechat-prompt-template",
+                    "More Details prompt",
+                ),
                 (
                     "settings-console-context-budget-mode",
                     "Conversation budget strategy",
@@ -2319,6 +2341,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_threshold = False
         self._syncing_console_max_parallel_runs = False
         self._syncing_console_tool_result_display_chars = False
+        self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
         self._syncing_console_rail_label_style = False
         self._syncing_console_defaults = False
@@ -3673,6 +3696,8 @@ class SettingsScreen(BaseAppScreen):
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
+                    "console.sidechat_model",
+                    "console.sidechat_prompt_template",
                     "console.background_effects.*",
                     "console.conversation_budget_*",
                     "console.compaction_*",
@@ -3872,6 +3897,23 @@ class SettingsScreen(BaseAppScreen):
             maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         )
 
+    def _loaded_console_sidechat_model(self) -> str:
+        # Side-chat phase 2 (task-2): empty string means "use the current
+        # session's model" -- the fallback lives in the side-chat service.
+        value = self._console_settings().get("sidechat_model", "")
+        return value.strip() if isinstance(value, str) else ""
+
+    def _loaded_console_sidechat_prompt_template(self) -> str:
+        # Mirrors the loader's coercion (config.py): non-strings fall back
+        # to the default; a blank string stays blank and the runtime side
+        # chat falls back to the default template.
+        value = self._console_settings().get(
+            "sidechat_prompt_template", DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+        )
+        if not isinstance(value, str):
+            return DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+        return value.strip()
+
     @staticmethod
     def _coerce_float_default(
         value: object,
@@ -3990,6 +4032,10 @@ class SettingsScreen(BaseAppScreen):
             "paste_collapse_threshold": self._loaded_paste_collapse_threshold(),
             "max_parallel_runs": self._loaded_console_max_parallel_runs(),
             "tool_result_display_chars": self._loaded_tool_result_display_chars(),
+            "sidechat_model": self._loaded_console_sidechat_model(),
+            "sidechat_prompt_template": (
+                self._loaded_console_sidechat_prompt_template()
+            ),
             "user_display_name": self._loaded_console_default_user_display_name(),
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
@@ -4273,6 +4319,61 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist render_remote_images.")
+
+    def _status_row_position_value(self) -> str:
+        """Return the live [console].status_chips_position value."""
+        from ..Console_Modules.status_row import resolve_status_chips_position
+
+        return resolve_status_chips_position(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+
+    def _status_row_position_button_label(self) -> str:
+        return (
+            "Above composer"
+            if self._status_row_position_value() == "above"
+            else "Below composer"
+        )
+
+    def _toggle_status_row_position(self) -> str:
+        """Flip status_chips_position: persist it AND poke the live config.
+
+        ADR-020-style immediate write (no category draft), the same shape
+        as the remote-images toggle (task-17652). The cached Console screen
+        re-applies the position on resume, so the change lands on return
+        without a restart.
+
+        Returns:
+            The new (post-toggle) position value.
+        """
+        from ..Console_Modules.status_row import (
+            STATUS_CHIPS_POSITION_ABOVE,
+            STATUS_CHIPS_POSITION_BELOW,
+            poke_console_setting,
+        )
+
+        next_value = (
+            STATUS_CHIPS_POSITION_BELOW
+            if self._status_row_position_value() == STATUS_CHIPS_POSITION_ABOVE
+            else STATUS_CHIPS_POSITION_ABOVE
+        )
+        self._persist_status_row_position(next_value)
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_position",
+            next_value,
+        )
+        return next_value
+
+    @work(thread=True)
+    def _persist_status_row_position(self, next_value: str) -> None:
+        """Write the status-row placement off the event loop (task-15470 shape)."""
+        try:
+            save_settings_to_cli_config(
+                {"console": {"status_chips_position": next_value}}
+            )
+        except Exception:
+            logger.warning("Failed to persist status_chips_position.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -6293,6 +6394,39 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 ("Saved as", "console.stack_collapsed_rail_labels"),
                 ("Applies", "After saving, when Console is next opened."),
+            )
+        if self._active_settings_field_id == "settings-console-sidechat-model":
+            return (
+                ("Purpose", "Model used by the ephemeral selection side chat."),
+                (
+                    "Consequences",
+                    (
+                        "Empty uses the current Console session's provider and "
+                        "model; side-chat replies are never persisted."
+                    ),
+                ),
+                ("Saved as", "console.sidechat_model"),
+                ("Applies", "Side chats opened after saving."),
+            )
+        if (
+            self._active_settings_field_id
+            == "settings-console-sidechat-prompt-template"
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Prompt sent by the selection menu's More Details action.",
+                ),
+                (
+                    "Consequences",
+                    (
+                        "{selection} inserts the selected transcript text; "
+                        "without it the selection is appended. Empty uses the "
+                        "built-in default."
+                    ),
+                ),
+                ("Saved as", "console.sidechat_prompt_template"),
+                ("Applies", "Side chats opened after saving."),
             )
         if (
             self._active_settings_field_id
@@ -12409,7 +12543,7 @@ class SettingsScreen(BaseAppScreen):
             )
             yield Static(
                 "Also in this category: rail presentation, paste handling, images, "
-                "agent limits, and generation defaults.",
+                "agent limits, selection side chat, and generation defaults.",
                 id="settings-console-behavior-section-index",
                 classes="settings-detail-row",
             )
@@ -12429,6 +12563,26 @@ class SettingsScreen(BaseAppScreen):
                 "Uses narrower 3-column handles by stacking upright letters. "
                 "Direction glyphs are omitted.",
                 id="settings-console-rail-label-style-help",
+                classes="settings-help-copy",
+            )
+            yield Static("Status row placement", classes="destination-section")
+            yield Static(
+                "Where the Console status chips sit relative to the composer.",
+                id="settings-console-status-row-position-label",
+            )
+            yield Button(
+                self._status_row_position_button_label(),
+                id="settings-console-status-row-position-toggle",
+                tooltip=(
+                    "Place the Provider/Model/Tools status row above or "
+                    "below the composer input. Takes effect when you "
+                    "return to Console."
+                ),
+            )
+            yield Static(
+                "Above keeps the chips directly under the conversation; "
+                "below closes the shell as a bottom status row.",
+                id="settings-console-status-row-position-help",
                 classes="settings-help-copy",
             )
             yield Static("Composer paste handling", classes="destination-section")
@@ -12501,6 +12655,39 @@ class SettingsScreen(BaseAppScreen):
                 "everything beyond this cap.",
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
+            )
+            yield Static("Selection side chat", classes="destination-section")
+            yield Static(
+                "Ephemeral chat about selected transcript text (More Details / "
+                "Ask in Side Chat). Nothing is persisted.",
+                id="settings-console-sidechat-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Side chat model", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("sidechat_model")
+                    ),
+                    id="settings-console-sidechat-model",
+                    classes="settings-compact-input",
+                    placeholder="empty = current session model",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Prompt template", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("sidechat_prompt_template")
+                    ),
+                    id="settings-console-sidechat-prompt-template",
+                    classes="settings-compact-input",
+                    placeholder=DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+                )
+            yield Static(
+                "Template used by More Details: {selection} inserts the selected "
+                "text; without it the selection is appended. An empty template "
+                "uses the built-in default.",
+                id="settings-console-sidechat-prompt-template-help",
             )
             yield Static(
                 "Conversation context and memory",
@@ -17249,6 +17436,8 @@ class SettingsScreen(BaseAppScreen):
                 "settings-console-paste-collapse-threshold",
                 "settings-console-max-parallel-runs",
                 "settings-console-tool-result-display-chars",
+                "settings-console-sidechat-model",
+                "settings-console-sidechat-prompt-template",
                 "settings-console-default-user-display-name",
             }
             self._active_settings_field_id = (
@@ -18200,6 +18389,19 @@ class SettingsScreen(BaseAppScreen):
             severity="information",
         )
 
+    @on(Button.Pressed, "#settings-console-status-row-position-toggle")
+    def handle_console_status_row_position_toggle(
+        self, event: Button.Pressed
+    ) -> None:
+        """Flip the status-row placement: immediate write, no category draft."""
+        event.stop()
+        next_value = self._toggle_status_row_position()
+        event.button.label = self._status_row_position_button_label()
+        self.app.notify(
+            f"Console status row will sit {next_value} the composer.",
+            severity="information",
+        )
+
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:
         if self._syncing_console_threshold:
@@ -18230,6 +18432,27 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_console_tool_result_display_chars:
             return
         self._stage_tool_result_display_chars_value(event.value)
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    @on(Input.Changed, "#settings-console-sidechat-model")
+    @on(Input.Changed, "#settings-console-sidechat-prompt-template")
+    def handle_console_sidechat_changed(self, event: Input.Changed) -> None:
+        """Stage a selection side-chat string preference (phase 2 task-2)."""
+        event.stop()
+        if self._syncing_console_sidechat:
+            return
+        key_by_id = {
+            "settings-console-sidechat-model": "sidechat_model",
+            "settings-console-sidechat-prompt-template": "sidechat_prompt_template",
+        }
+        key = key_by_id.get(event.input.id or "")
+        if key is None:
+            return
+        self._stage_console_default_value(key, event.value)
         self._console_behavior_result = "Console behavior settings staged."
         self._set_static_text(
             "#settings-console-behavior-result", self._console_behavior_result_text()
@@ -20700,6 +20923,19 @@ class SettingsScreen(BaseAppScreen):
                             dirty_values["tool_result_display_chars"]
                         )
                     )
+                if "sidechat_model" in dirty_values:
+                    # Plain strings: strip only, mirroring the loader's
+                    # presence-validation coercion (config.py). An empty model
+                    # legitimately means "use the session model".
+                    dirty_values["sidechat_model"] = str(
+                        dirty_values["sidechat_model"]
+                    ).strip()
+                if "sidechat_prompt_template" in dirty_values:
+                    # An empty template legitimately means "use the built-in
+                    # default" at runtime; no placeholder validation here.
+                    dirty_values["sidechat_prompt_template"] = str(
+                        dirty_values["sidechat_prompt_template"]
+                    ).strip()
                 if any(key in dirty_values for key in CONTEXT_MEMORY_CONFIG_KEYS):
                     normalized_context = normalize_context_memory_values(
                         self._current_context_memory_values()
@@ -21757,6 +21993,23 @@ class SettingsScreen(BaseAppScreen):
                 ).value = str(self._tool_result_display_chars_value())
             finally:
                 self._syncing_console_tool_result_display_chars = False
+        except QueryError:
+            pass
+        try:
+            self._syncing_console_sidechat = True
+            try:
+                self.query_one("#settings-console-sidechat-model", Input).value = (
+                    self._console_input_value(
+                        self._console_behavior_value("sidechat_model")
+                    )
+                )
+                self.query_one(
+                    "#settings-console-sidechat-prompt-template", Input
+                ).value = self._console_input_value(
+                    self._console_behavior_value("sidechat_prompt_template")
+                )
+            finally:
+                self._syncing_console_sidechat = False
         except QueryError:
             pass
         self._syncing_console_context_memory = True

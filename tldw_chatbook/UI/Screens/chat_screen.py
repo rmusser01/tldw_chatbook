@@ -51,8 +51,15 @@ from .provider_model_resolution import (
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
     CONSOLE_FRAME_BORDER,
-    CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
+)
+from ..Console_Modules.status_row import (
+    STATUS_CHIPS_POSITION_ABOVE,
+    apply_status_chips_position,
+    persist_status_chips_collapsed,
+    poke_console_setting,
+    resolve_status_chips_collapsed,
+    resolve_status_chips_position,
 )
 
 # The Console controller classes themselves are deliberately NOT imported
@@ -187,6 +194,7 @@ from ...Chat.console_prefill import (
     parse_prefill_args,
 )
 from ...Chat.console_generate_image import insert_style_token_into_draft
+from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_skill_resolver import (
     MENTION_SIGIL,
     SKILL_UNTRUSTED_REFUSE,
@@ -204,6 +212,7 @@ from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunMarker,
     ConsoleRunStatus,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
     MessageAttachment,
     ConsoleWorkspaceContext,
     derive_console_session_title,
@@ -355,6 +364,7 @@ from ...Chat.console_rail_state import (
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
+    DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     _get_effective_config_path,
@@ -435,6 +445,7 @@ from ...Widgets.Console.console_control_bar import (
     CONSOLE_CONTROL_BAR_HEIGHT,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
+from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -452,6 +463,16 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
+from ...Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
+from ...Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionMenu,
+    ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
+)
+from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
 from ...Widgets.Console.console_cost_modal import ConsoleCostModal
 from ...Widgets.Console.console_citation_sources_modal import (
@@ -597,13 +618,27 @@ _CHATDICT_STRATEGY = "sorted_evenly"
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
-# justifies an eager re-count.
-CONSOLE_ACTIVE_RUN_STATUSES = (
-    ConsoleRunStatus.VALIDATING,
-    ConsoleRunStatus.RETRYING,
-    ConsoleRunStatus.STREAMING,
-    ConsoleRunStatus.CHECKING_CITATIONS,
+# justifies an eager re-count, and by the selection feedback gating
+# (Request changes / LGTM). Derived from the canonical
+# ``FEEDBACK_ACTIVE_RUN_STATUSES`` (next to ``ConsoleRunStatus`` in
+# ``Chat/console_chat_models.py``) so the feedback gating and this
+# constant can never drift apart; other behaviors hang off this tuple,
+# so its membership must stay exactly the canonical four active states.
+# Sorted by value purely for a deterministic tuple; every consumer does
+# membership checks only.
+CONSOLE_ACTIVE_RUN_STATUSES: tuple[ConsoleRunStatus, ...] = tuple(
+    sorted(FEEDBACK_ACTIVE_RUN_STATUSES, key=lambda status: status.value)
 )
+# Console selection phase 3 (task 5): the bracketed header each feedback
+# action stamps on the composed next-user message (plan task 5 template:
+# header line, ``> ``-quoted selection, optional comment). Unknown action
+# strings fall back to the Comment header (mirrors the comment modal's
+# own ``_DEFAULT_HEADER`` fallback).
+CONSOLE_FEEDBACK_MESSAGE_HEADERS = {
+    ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES: "[Request changes]",
+    ConsoleSelectionFeedbackRequested.ACTION_LGM: "[LGTM]",
+    ConsoleSelectionFeedbackRequested.ACTION_COMMENT: "[Comment]",
+}
 # Plan-B Task 7 Finding A: the conversation-browser `[N Sub-Agents]` badge
 # count previously re-queried the DB once per visible row on every 0.2s
 # poll tick. The batched replacement is still cheap to cache; this TTL is
@@ -3431,7 +3466,9 @@ class ChatScreen(BaseAppScreen):
         self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
-        self._console_status_chips_collapsed = False
+        self._console_status_chips_collapsed = resolve_status_chips_collapsed(
+            getattr(app_instance, "app_config", None)
+        )
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
@@ -3652,6 +3689,18 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._console_citation_counts: dict[str, int] = {}
+        # task-17169 slice 2: review-note previews keyed by NATIVE message id
+        # (the transcript marker's input), plus the conversation the map was
+        # last loaded for -- reloads happen only on conversation change; live
+        # Comment writes update the map in place.
+        self._console_annotation_previews: dict[str, tuple[str, ...]] = {}
+        self._console_annotation_loaded_conversation: str | None = None
+        # Qodo (PR #1723): mutual exclusion for the selection-feedback flow.
+        # The worker is deliberately NOT exclusive (a superseding exclusive
+        # cancel would strand a mounted comment modal -- see the flow's
+        # docstring), so exclusion is this guard instead: re-triggers while
+        # a flow is in flight are ignored, never queued and never cancelled.
+        self._console_selection_feedback_inflight = False
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
@@ -8804,9 +8853,6 @@ class ChatScreen(BaseAppScreen):
             if popup is not None:
                 popup.hide()
         composer.set_collapsed(collapsed)
-        composer.styles.border = (
-            CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
-        )
         composer.refresh(layout=True)
         self.call_after_refresh(
             self._finish_console_composer_layout_change,
@@ -8827,6 +8873,21 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         self._console_status_chips_collapsed = collapsed
+        # task-17652: the collapse choice survives Console re-entry and app
+        # restart. Poke the live config synchronously (compose and __init__
+        # read it back) and move only the disk write off the event loop —
+        # never-raising, since a worker exception is fatal by default.
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_collapsed",
+            collapsed,
+        )
+        self.run_worker(
+            partial(persist_status_chips_collapsed, collapsed),
+            thread=True,
+            group="console-status-row-pref",
+            exclusive=True,
+        )
         self._console_status_chips_layout_revision += 1
         revision = self._console_status_chips_layout_revision
         status_chips.set_collapsed(collapsed)
@@ -12971,6 +13032,7 @@ class ChatScreen(BaseAppScreen):
         widget: Any,
         *,
         top: bool = True,
+        bottom: bool = True,
         variant: str = "solid",
     ) -> Any:
         """Apply a visible Textual-native workbench frame.
@@ -12993,7 +13055,7 @@ class ChatScreen(BaseAppScreen):
         Returns:
             The same `widget`, mutated in place with frame styling applied.
         """
-        return frame_console_region(widget, top=top, variant=variant)
+        return frame_console_region(widget, top=top, bottom=bottom, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -13823,7 +13885,7 @@ class ChatScreen(BaseAppScreen):
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
-                yield self._frame_console_region(left_handle)
+                yield self._frame_console_region(left_handle, bottom=False)
 
                 # The section-level values below are computed here, on the
                 # screen, exactly as they were computed inline before this
@@ -13924,7 +13986,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                yield self._frame_console_region(left_rail)
+                yield self._frame_console_region(left_rail, bottom=False)
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
@@ -14010,7 +14072,7 @@ class ChatScreen(BaseAppScreen):
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                yield self._frame_console_region(right_rail)
+                yield self._frame_console_region(right_rail, bottom=False)
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -14029,7 +14091,47 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle)
+                yield self._frame_console_region(right_handle, bottom=False)
+            # task-17652: the status row's side of the composer cluster is
+            # user-configurable ([console] status_chips_position). "above"
+            # (the default; owner ruling 2026-08-17) tops the cluster
+            # directly under the workspace grid; "below" restores the
+            # TASK-15704 bottom row. Built once here so both branches yield
+            # the same widget; the command popup's clearance loop handles
+            # both placements (see ConsoleCommandPopup.reposition).
+            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
+            # flag -- compose the cost chip correctly on the very first
+            # frame rather than waiting for a post-mount sync call.
+            # Best-effort: `_build_console_cost_state` already never raises
+            # on its own, but this call site still tolerates an unexpected
+            # failure rather than ever taking down the whole compose.
+            try:
+                initial_cost_state = self._build_console_cost_state()
+            except Exception:
+                logger.opt(exception=True).warning("cost_chip_state_failed")
+                initial_cost_state = None
+            status_chips_position = resolve_status_chips_position(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
+            status_chips = ConsoleStatusChips(
+                control_state,
+                scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
+                # F1 (final review): compose the chip correctly on the very
+                # first render instead of relying on a post-mount sync call
+                # that some code paths (screen recreation via
+                # restore_state) never make.
+                ephemeral=self._console_active_session_is_ephemeral(),
+                cost_state=initial_cost_state,
+                # FB-08 (TASK-2154.18): same first-frame precedent for the
+                # run chip -- returning to Console while a background run
+                # is still active must show it before the next sync tick.
+                run_copy=self._console_active_run_copy(),
+                id="console-status-chips",
+                classes="ds-panel",
+            )
+            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             # RAG-40: staged evidence belongs on the MAIN surface, directly
             # above the composer it is about to be prepended to -- not only
             # in an Inspector rail the staging path never opens.
@@ -14078,41 +14180,15 @@ class ChatScreen(BaseAppScreen):
                     composer.load_draft(store.session_draft(store.active_session_id))
                 except KeyError:
                     pass
-            yield self._frame_console_region(composer)
-            # The status chips close the shell as a bottom status row, below
-            # the composer: the composer cluster (staged evidence, prompt
-            # queue, composer) stays contiguous with the transcript, and the
-            # chips annotate the whole surface from underneath. The command
-            # popup anchors against this order (see ConsoleCommandPopup.
-            # reposition) -- keep the chips last among the visible rows.
-            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
-            # flag -- compose the cost chip correctly on the very first
-            # frame rather than waiting for a post-mount sync call.
-            # Best-effort: `_build_console_cost_state` already never raises
-            # on its own, but this call site still tolerates an unexpected
-            # failure rather than ever taking down the whole compose.
-            try:
-                initial_cost_state = self._build_console_cost_state()
-            except Exception:
-                logger.opt(exception=True).warning("cost_chip_state_failed")
-                initial_cost_state = None
-            yield ConsoleStatusChips(
-                control_state,
-                scope_state=retrieval_scope_state,
-                collapsed=self._console_status_chips_collapsed,
-                # F1 (final review): compose the chip correctly on the very
-                # first render instead of relying on a post-mount sync call
-                # that some code paths (screen recreation via
-                # restore_state) never make.
-                ephemeral=self._console_active_session_is_ephemeral(),
-                cost_state=initial_cost_state,
-                # FB-08 (TASK-2154.18): same first-frame precedent for the
-                # run chip -- returning to Console while a background run
-                # is still active must show it before the next sync tick.
-                run_copy=self._console_active_run_copy(),
-                id="console-status-chips",
-                classes="ds-panel",
-            )
+            # TASK-17651: the composer is a dense-form field, not a framed
+            # region — CSS owns its left-edge marker and focus treatment.
+            yield composer
+            # In "below" mode the chips close the shell as a bottom status
+            # row: the composer cluster (staged evidence, prompt queue,
+            # composer) stays contiguous with the transcript, and the chips
+            # annotate the whole surface from underneath.
+            if status_chips_position != STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
@@ -15317,6 +15393,70 @@ class ChatScreen(BaseAppScreen):
             repository,
         )
 
+    def _sync_console_annotation_discovery(self, store: Any) -> None:
+        """Load persisted review annotations when the active conversation changes.
+
+        task-17169 slice 2 (the restore half of the inline marker): the map is
+        keyed by NATIVE message id, so a reload maps each stored row's
+        persisted message id back through the store's messages. Annotations
+        are local-only and written solely through this screen, so a reload is
+        needed only when the conversation changes -- live writes keep the map
+        current in between. The DB read runs off-thread (repo lesson: never
+        sqlite on the UI loop's sync tick) with exit_on_error=False.
+        """
+        session = getattr(store, "_sessions", {}).get(
+            getattr(store, "active_session_id", None)
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if not conversation_id:
+            if self._console_annotation_loaded_conversation is not None:
+                self._console_annotation_loaded_conversation = None
+                self._console_annotation_previews = {}
+            return
+        conversation_id = str(conversation_id)
+        if conversation_id == self._console_annotation_loaded_conversation:
+            return
+        self._console_annotation_loaded_conversation = conversation_id
+        self._console_annotation_previews = {}
+        database = getattr(getattr(store, "persistence", None), "db", None)
+        if database is None:
+            return
+        self.run_worker(
+            self._load_console_annotation_previews(database, store, conversation_id),
+            exclusive=True,
+            group="console-annotation-previews",
+            exit_on_error=False,
+        )
+
+    async def _load_console_annotation_previews(
+        self, database: Any, store: Any, conversation_id: str
+    ) -> None:
+        """Worker body: read annotation rows and re-key them to native ids."""
+        try:
+            rows = await asyncio.to_thread(
+                database.get_transcript_annotations, conversation_id
+            )
+        except Exception:
+            logger.warning(
+                f"Console annotations: load failed for {conversation_id!r}",
+                exc_info=True,
+            )
+            return
+        if self._console_annotation_loaded_conversation != conversation_id:
+            return  # conversation switched while the read was in flight
+        native_by_persisted = {
+            message.persisted_message_id: message.id
+            for message in self._native_console_messages()
+            if message.persisted_message_id is not None
+        }
+        previews: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            native_id = native_by_persisted.get(row.get("message_id"))
+            if native_id is None:
+                continue
+            previews[native_id] = previews.get(native_id, ()) + (row["comment"],)
+        self._console_annotation_previews = previews
+
     def _sync_console_citation_count_discovery(self, messages: list[Any]) -> None:
         """Dispatch one count lookup worker when eligible inputs change."""
         signature = self._console_citation_signature(messages)
@@ -15611,6 +15751,8 @@ class ChatScreen(BaseAppScreen):
             # only -- the banner shows above the boundary message when it is on
             # the rendered path, and disappears (inert) otherwise.
             store = self._ensure_console_chat_store()
+            self._sync_console_annotation_discovery(store)
+            transcript.set_annotation_previews(self._console_annotation_previews)
             summary_boundary_id: str | None = None
             if store.active_session_id is not None:
                 _summary, summary_boundary_id = store.session_context_summary(
@@ -18070,6 +18212,20 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._open_change_review()
 
+    @on(ConsoleTurnFileCard.ReviewRequested)
+    def handle_console_turn_file_card_review_requested(
+        self, event: ConsoleTurnFileCard.ReviewRequested
+    ) -> None:
+        """Open the Change Review screen from a card's own `Review` button.
+
+        TASK-16800 (V1.5): the same opener recipe as `v` and the run
+        inspector's own button above, except the run id needs no lookup at
+        all -- the card that posted this message already knows exactly
+        which run it renders.
+        """
+        event.stop()
+        self._open_change_review(event.run_id)
+
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
         """Focus the pending approval card from the Console inspector seam."""
@@ -18938,32 +19094,46 @@ class ChatScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Swap the rail regions' inline frame to the accent while focused.
+        """Swap framed regions' inline borders to the accent while focused.
 
         TASK-359: F6's rail stop focuses the collapse button; the region
         border is inline-styled (single-frame contract), so this is the
         only place a visible pane-stop indicator can be painted.
+
+        TASK-17651: the transcript region joins the painter — the widget
+        inside it draws no border of its own any more, so the region's
+        column lines ARE the transcript's focus indicator. Edges are
+        written individually, never via the ``border`` shorthand: every
+        region here has a suppressed edge (rails: bottom; transcript
+        region: top and bottom — the workspace grid's border closes the
+        frame) that a shorthand write would silently resurrect.
         """
-        for rail_id in ("console-left-rail", "console-right-rail"):
+        for region_id, accent_edges in (
+            ("console-left-rail", ("left", "right", "top")),
+            ("console-right-rail", ("left", "right", "top")),
+            ("console-transcript-region", ("left", "right")),
+        ):
             try:
-                rail = self.query_one(f"#{rail_id}")
+                framed = self.query_one(f"#{region_id}")
             except QueryError:
                 continue
             focused_within = False
             node = event.widget
             while node is not None:
-                if node is rail:
+                if node is framed:
                     focused_within = True
                     break
                 node = node.parent
             border = (
                 CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
             )
-            # styles.border_top holds (str, Color) — compare against the
+            # styles.border_left holds (str, Color) — compare against the
             # parsed color, or the dedup guard never dedups (review #739).
-            current_kind, current_color = rail.styles.border_top
-            if current_kind != border[0] or current_color != Color.parse(border[1]):
-                rail.styles.border = border
+            current_kind, current_color = framed.styles.border_left
+            if current_kind == border[0] and current_color == Color.parse(border[1]):
+                continue
+            for edge in accent_edges:
+                setattr(framed.styles, f"border_{edge}", border)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.
@@ -19255,6 +19425,230 @@ class ChatScreen(BaseAppScreen):
         if event.is_insertion:
             self._dismiss_console_guidance()
 
+    @on(ConsoleSelectionQuoteRequested)
+    def _console_selection_quote_requested(
+        self, event: ConsoleSelectionQuoteRequested
+    ) -> None:
+        """Insert a transcript selection into the composer as a block quote.
+
+        Console selection phase 1: the transcript's floating menu posted
+        this after its "Add to chat" action; the quote lands at the
+        composer's caret (end of draft when unfocused). ``event.stop()``
+        because nothing above this screen subscribes -- the transcript
+        already consumed the originating ``AddToChat``.
+        """
+        event.stop()
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        composer.insert_quote(event.quote)
+        if not event.quote.strip():
+            # The row range was cleared while the menu was open (streaming
+            # replace, reconciliation): ``insert_quote`` is a no-op on
+            # blank input, and notifying "Added selection to composer"
+            # for an insert that never happened would be a lie (final
+            # review).
+            return
+        self.notify("Added selection to composer")
+
+    @on(ConsoleSideChatRequested)
+    def _console_side_chat_requested(self, event: ConsoleSideChatRequested) -> None:
+        """Open the ephemeral side-chat modal about a transcript selection.
+
+        Console selection phase 2: the transcript's floating menu posted
+        this after its "More Details" / "Ask in Side Chat" action. More
+        Details renders the configured prompt template with the capped
+        quote and auto-sends on mount; Ask opens the modal freeform. The
+        model resolves from ``[console] sidechat_model`` when set, else
+        falls back to the active session's provider selection (the modal's
+        identity line shows the request; the service applies the
+        precedence). Nothing is persisted: the side-chat service streams
+        through the provider gateway only, and the reply never leaves the
+        modal. ``event.stop()`` because nothing above this screen
+        subscribes -- the transcript already consumed the originating
+        menu action.
+        """
+        event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as ``_console_selection_quote_
+            # requested`` above: the row range was cleared while the menu
+            # was open (streaming replace, reconciliation), so there is
+            # nothing to ask about -- pushing the modal (or auto-sending
+            # a contentless More Details prompt) would be a lie (T5 final
+            # review).
+            return
+        sidechat_model = str(get_cli_setting("console", "sidechat_model", "") or "")
+        template = str(
+            get_cli_setting(
+                "console",
+                "sidechat_prompt_template",
+                DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
+            )
+            or ""
+        )
+        auto_send_prompt = (
+            render_prompt(template, event.quote)
+            if event.mode == ConsoleSideChatRequested.MODE_MORE_DETAILS
+            else None
+        )
+        self.app.push_screen(
+            ConsoleSideChatModal(
+                service=ConsoleSideChatService(self._ensure_console_provider_gateway()),
+                provider_selection=self._build_console_provider_selection(),
+                sidechat_model=sidechat_model,
+                quote=event.quote,
+                auto_send_prompt=auto_send_prompt,
+            )
+        )
+
+    @on(ConsoleSelectionFeedbackRequested)
+    def on_console_selection_feedback_requested(
+        self, event: ConsoleSelectionFeedbackRequested
+    ) -> None:
+        """Compose structured review feedback and route it via the prompt queue.
+
+        Console selection phase 3 (task 5): the transcript's floating menu
+        posted this after its "Request changes" / "LGTM" / "Comment"
+        action on a selection in agent output. The flow collects an
+        optional comment, composes the plan-task-5 template -- action
+        header line, ``> ``-quoted selection (blank lines a bare ``>``,
+        mirroring ``insert_quote``), optional comment appended verbatim --
+        and dispatches through ``_prompt_queue``, the ONLY send seam: it
+        queues behind an active run, sends immediately otherwise, and
+        owns every refusal toast. The composer draft is never touched
+        (the user may be mid-typed), and ``submit_draft`` is never called
+        (it refuses during runs).
+
+        Synchronous handler dispatching a worker because
+        ``push_screen_wait`` raises ``NoActiveWorker`` outside one (see
+        ``EvalsScreen._on_delete_bench_pressed``'s identical note); the
+        action/quote are captured here, before the worker's first line
+        runs. The modal returns the stripped comment — ``""`` for a
+        comment-less submit (feedback still flows, no comment block) —
+        or ``None`` for Cancel/Escape/backdrop, which abandons the whole
+        feedback (plan task 5: modal escape dispatches nothing).
+        ``event.stop()`` because nothing above this screen subscribes --
+        the transcript already consumed the originating menu action.
+        """
+        event.stop()
+        if not event.quote.strip():
+            # Same blank-selection window as the quote/side-chat guards:
+            # the row range was cleared while the menu was open.
+            return
+        if self._console_selection_feedback_inflight:
+            # Rapid double-trigger (double-Enter before the menu unmounts):
+            # one flow, one modal, one dispatch, one durable record. Phase 4
+            # raised the stakes from a duplicate chat message to duplicate
+            # sidecar/annotation rows, so the documented phase-3 limitation
+            # is now closed rather than accepted.
+            return
+        self._console_selection_feedback_inflight = True
+        action, quote = event.action, event.quote
+        self.run_worker(
+            self._console_selection_feedback_flow(
+                action, quote, event.anchor_message_id
+            ),
+            group="console-selection-feedback",
+        )
+
+    def _record_console_feedback_event(
+        self, action: str, quote: str, comment: str, anchor_message_id: str | None
+    ) -> None:
+        """Write the durable audit record for one dispatched feedback event.
+
+        task-17169 (phase 4): the feedback itself is ephemeral -- composed
+        into the next user message and gone. This lands it in the ADR-066
+        trajectory sidecar as an ``user_feedback`` event keyed to the
+        quoted row, so a run's review history survives a restart.
+
+        Called only for feedback that is actually dispatched (a cancelled
+        modal abandons the whole thing, so there is nothing to audit), and
+        only when the originating row supplied an anchor -- without one
+        there is no message to key the row to. It NEVER raises: the store
+        seam already swallows its own failures, and this guard covers the
+        lookup path too, because losing an audit record must not cost the
+        user the feedback they actually wrote.
+        """
+        if not anchor_message_id:
+            return
+        try:
+            controller = self._ensure_console_chat_controller()
+            session_id = controller.store.active_session_id
+            if not session_id:
+                return
+            controller.store.record_feedback_event(
+                session_id,
+                anchor_message_id=anchor_message_id,
+                action=action,
+                quote=quote,
+                comment=comment or None,
+            )
+            # Slice 2 of the both-homes decision (task-17169): a Comment with
+            # an actual note ALSO persists as a row-anchored annotation for
+            # the inline marker. Only Comment -- the spec's "Comment ...
+            # additionally persists an annotation" -- and only with text (an
+            # empty submit has nothing to mark the row with). Inside the same
+            # never-raises guard: neither durable write may cost the dispatch.
+            if action == ConsoleSelectionFeedbackRequested.ACTION_COMMENT and comment:
+                annotation_id = controller.store.record_feedback_annotation(
+                    session_id,
+                    anchor_message_id=anchor_message_id,
+                    quote=quote,
+                    comment=comment,
+                )
+                if annotation_id:
+                    # The inline marker updates immediately; the next sync
+                    # tick pushes the map to the mounted transcript.
+                    existing = self._console_annotation_previews.get(
+                        anchor_message_id, ()
+                    )
+                    self._console_annotation_previews[anchor_message_id] = (
+                        existing + (comment,)
+                    )
+        except Exception:
+            logger.warning(
+                "Console selection feedback: audit record failed for anchor "
+                f"{anchor_message_id!r}; the feedback itself was dispatched.",
+                exc_info=True,
+            )
+
+    async def _console_selection_feedback_flow(
+        self, action: str, quote: str, anchor_message_id: str | None = None
+    ) -> None:
+        """Comment modal, then compose and dispatch the feedback message.
+
+        Runs as a worker (see the handler above). NOT ``exclusive=True``:
+        this coroutine awaits ``push_screen_wait``, whose internal
+        ``asyncio.shield`` protects the wait -- not the already-mounted
+        modal -- from cancellation, so a superseding exclusive cancel
+        would strand a live modal with no owner for its result (the
+        ``EvalsScreen._on_delete_bench_pressed`` rationale).
+        """
+        try:
+            comment = await self.app.push_screen_wait(
+                ConsoleFeedbackCommentModal(action=action, quote=quote)
+            )
+            if comment is None:
+                return
+            lines = [CONSOLE_FEEDBACK_MESSAGE_HEADERS.get(action, "[Comment]")]
+            lines.extend(
+                f"> {line}" if line.strip() else ">" for line in quote.splitlines()
+            )
+            if comment:
+                lines.append(comment)
+            # Audit BEFORE the dispatch: the queue may block behind an active
+            # run, and the record is about what the user said, not about when
+            # the send drained.
+            self._record_console_feedback_event(
+                action, quote, comment, anchor_message_id
+            )
+            await self._prompt_queue.dispatch("\n".join(lines))
+        finally:
+            # Every exit path -- submit, cancel, or an error above -- releases
+            # the in-flight guard; a latched flag would silently kill the
+            # feature after its first use.
+            self._console_selection_feedback_inflight = False
+
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"
     ) -> None:
@@ -19347,9 +19741,44 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         event.prevent_default()
 
+    def _dismiss_console_selection_menus_outside_transcript(self, target: object) -> None:
+        """Fold selection menus when a click lands outside every transcript.
+
+        Console selection phase 1 (click-outside dismissal, screen half).
+        Clicks that stay INSIDE a transcript are handled there (rows stop
+        their own clicks; the transcript's ``on_click`` owns the in-area
+        dismissal), so this only fires for clicks that bubbled up from
+        elsewhere -- the composer, the control bar, the rail: the user
+        moved on, and a menu left floating over the transcript folds with
+        no side effects (ADR-068's dismiss contract). The ancestor walk is
+        the guard: a transcript-area click that somehow reached this
+        screen handler finds its ``ConsoleTranscript`` ancestor and is
+        left alone. Menus whose removal is already scheduled (Textual
+        marks them ``_pruning`` synchronously) are skipped so a repeated
+        dismissal stays single-shot per menu.
+
+        Args:
+            target: The clicked widget (``event.widget``/``event.control``).
+        """
+        node: object = target
+        while node is not None:
+            if isinstance(node, ConsoleTranscript):
+                return  # the transcript's own handlers own in-area dismissal
+            node = getattr(node, "parent", None)
+        # Menus mount on the screen now; route the dismissal through every
+        # transcript's centralized selection-UI cleanup (clears highlight +
+        # manager state), then remove any stragglers (e.g. menus mounted by
+        # harnesses without a transcript ancestor).
+        for transcript in self.query(ConsoleTranscript):
+            transcript._remove_selection_menu()
+        for menu in self.query(ConsoleSelectionMenu):
+            if not getattr(menu, "_pruning", False):
+                menu.remove()
+
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""
         target = getattr(event, "widget", None) or getattr(event, "control", None)
+        self._dismiss_console_selection_menus_outside_transcript(target)
         if getattr(target, "id", None) == "console-command-visible-text":
             return
         if getattr(target, "id", None) == "console-rail-system-line":
@@ -19486,6 +19915,9 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # task-17652: a Settings change to the status-row position must land
+        # on this cached screen without a recompose.
+        apply_status_chips_position(self)
         # task-15475: consume the mount's one-shot token. On the FIRST visit
         # this resume is the mount's own, and on_mount already dispatched the
         # skill-candidate worker and scheduled the task-resume sync; running
