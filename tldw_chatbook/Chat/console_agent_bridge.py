@@ -1070,6 +1070,43 @@ def _subagent_summaries_from_fleet(
     return tuple(fallback)
 
 
+class _LiveStepFeed:
+    """One run's live step feed: a total count plus a bounded recent tail.
+
+    TASK-18604. This was a plain list appended once per step and read in
+    exactly two ways -- `len(...)` for the rail's step counter and
+    `[-5:]` for the rail's recent-steps rows. Nothing ever read the middle,
+    yet the list grew one `AgentLiveStep` per step for the life of the run.
+    At the run budget's raised step ceiling that is 25,000 retained objects
+    per run to serve a 5-row display.
+
+    Keeping the count and the tail in one object rather than a deque plus a
+    parallel counter is deliberate: they are two views of one fact, and a
+    `deque(maxlen=...)` silently makes `len()` mean "how many we kept",
+    which is exactly the wrong number for a step counter.
+    """
+
+    __slots__ = ("count", "_tail")
+
+    #: Rows the rail actually renders. Kept a little above the 5 the
+    #: snapshot slices so a future widening does not silently truncate.
+    TAIL = 8
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._tail: "deque[AgentLiveStep]" = deque(maxlen=self.TAIL)
+
+    def append(self, step: "AgentLiveStep") -> None:
+        self.count += 1
+        self._tail.append(step)
+
+    def tail(self, n: int) -> "tuple[AgentLiveStep, ...]":
+        """The most recent ``n`` steps, oldest first."""
+        if n >= len(self._tail):
+            return tuple(self._tail)
+        return tuple(self._tail)[-n:]
+
+
 @dataclass(frozen=True)
 class AgentLiveSnapshot:
     """Rail-facing snapshot of one conversation's primary agent run.
@@ -3124,12 +3161,12 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
-        live_steps: list[AgentLiveStep] = []
+        live_steps = _LiveStepFeed()
         subagents: list[SubAgentSummary] = []
         #: run key -> that run's own live step feed. The primary's entry is
         #: `live_steps` itself, so every existing reader of that local is
         #: unchanged.
-        run_live_steps: dict[str, list[AgentLiveStep]] = {primary_live_key: live_steps}
+        run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
         self._publish_live(
             conversation_id,
             primary_live_key,
@@ -3167,7 +3204,7 @@ class ConsoleAgentBridge:
                 # regresses for a step that cannot be attributed.
                 else (run_id or primary_live_key)
             )
-            key_steps = run_live_steps.setdefault(live_key, [])
+            key_steps = run_live_steps.setdefault(live_key, _LiveStepFeed())
             key_steps.append(
                 # `time.monotonic()` HERE is the step's real start: this hook
                 # runs synchronously inside the runtime loop, before the work
@@ -3253,8 +3290,8 @@ class ConsoleAgentBridge:
                 live_key,
                 AgentLiveSnapshot(
                     status="running",
-                    step=len(key_steps),
-                    steps=tuple(key_steps[-5:]),
+                    step=key_steps.count,
+                    steps=key_steps.tail(5),
                     # PR2b Task 2: rebuilt from the fleet's REAL live state
                     # on every publish, not appended once and left stuck at
                     # the "running" default -- see
@@ -3726,8 +3763,8 @@ class ConsoleAgentBridge:
             primary_live_key,
             AgentLiveSnapshot(
                 status=outcome.status,
-                step=len(live_steps),
-                steps=tuple(live_steps[-5:]),
+                step=live_steps.count,
+                steps=live_steps.tail(5),
                 # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
                 # conversation_id)` -- deliberately: the `finally` block
                 # just above already ran `self._teardown_fleet_service`,

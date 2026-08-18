@@ -13,7 +13,10 @@ from typing import Any, Callable, Iterator
 import pytest
 import requests
 
-from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+from tldw_chatbook.Chat.console_agent_bridge import (
+    CONSOLE_MAX_TOTAL_TOKENS,
+    ConsoleAgentBridge,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -973,10 +976,16 @@ def test_qwencloud_partial_call_cancellation_never_executes(
 def test_qwencloud_responses_usage_enforces_agent_budget(
     tmp_path: Any,
 ) -> None:
+    # Derived from the shipped budget so this keeps testing "one turn that
+    # exhausts the budget" rather than "one turn of exactly 1,000,001
+    # tokens", and does not need editing again the next time the default
+    # moves. (On this branch the default is still CONSOLE_MAX_TOTAL_TOKENS;
+    # PR #1824's DEFAULT_CONSOLE_RUN_BUDGET supersedes it there.)
+    budget = CONSOLE_MAX_TOTAL_TOKENS
     usage = {
-        "input_tokens": 1_000_000,
+        "input_tokens": budget,
         "output_tokens": 1,
-        "total_tokens": 1_000_001,
+        "total_tokens": budget + 1,
     }
     body = _responses_tool_turn(
         [("fc_budget", "call_budget", '{"expression":"2+2"}')],
@@ -986,7 +995,7 @@ def test_qwencloud_responses_usage_enforces_agent_budget(
         outcome, _store = _run_joined_reply(tmp_path, server, "responses")
 
     assert outcome.status == "stuck"
-    assert outcome.total_tokens == 1_000_001
+    assert outcome.total_tokens == budget + 1
     assert len(server.requests) == 1
     assert outcome.steps[-1].kind == "error"
     assert outcome.steps[-1].summary == "token budget exhausted"
