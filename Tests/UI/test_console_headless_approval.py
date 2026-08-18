@@ -124,6 +124,28 @@ def _detached_rig(*, timeout_seconds: float | None = None):
     return runtime, controller, store, session, app
 
 
+def _never_visited_rig(*, timeout_seconds: float | None = 60.0):
+    """A controller that has NEVER had a Console visit at all.
+
+    The wake-at-launch shape (viewless FROM BIRTH): the runtime holds the
+    controller but no view has ever claimed it, so `begin_visit()` has
+    never run and `_shutdown_requested` is still the constructor's own
+    unset Event. Distinct from `_detached_rig`, whose visit genuinely
+    OPENED and ENDED (its Event is set).
+    """
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Headless")
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
+    app = _ThreadApp()
+    controller.app = app
+    if timeout_seconds is not None:
+        controller.mcp_approval_timeout_seconds = lambda: timeout_seconds
+    runtime = ConsoleRuntime(app=app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    return runtime, controller, store, session, app
+
+
 async def _leave(runtime) -> None:
     await asyncio.wait_for(runtime.leave_console(), timeout=5)
 
@@ -637,6 +659,117 @@ async def test_a_second_headless_round_after_a_leave_is_not_born_denied():
         round_id=_armed_round_ids(controller, session.id)[0],
     )
     second.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_leaving_console_denies_a_round_armed_before_any_visit_ever_opened():
+    """Qodo audit S2 (PR 1752): viewless FROM BIRTH is headless too.
+
+    `_bind_visit_cancel_signal` inferred "no visit open" from
+    `_shutdown_requested.is_set()`. On a controller that has NEVER had a
+    visit, the constructor's Event is unset, so a headless round (a
+    wake-at-launch turn hitting a risk-tagged tool) bound THAT Event
+    instead of `_headless_visit_cancel` -- and `begin_visit()` then
+    unconditionally REPLACES the attribute, so nothing in the process
+    could ever set the Event the round was polling. The round survived
+    the leave that this module's own docstring says must deny it
+    ("once the user HAS opened Console and left again, they have seen it
+    and declined to answer"), and only its own deadline could end it.
+
+    RED before the fix: after open-then-leave, the round was still
+    polling its orphaned Event.
+    """
+    runtime, controller, _store, session, _app = _never_visited_rig()
+    thread, box = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id), "the round never armed"
+    assert await _quiet(lambda: "decisions" in box, seconds=2.0), (
+        "the born-headless round self-denied instead of waiting for the user"
+    )
+
+    runtime.attach_view(_View())
+    await _leave(runtime)
+    thread.join(timeout=10)
+    assert not thread.is_alive(), (
+        "the round bound the constructor Event that begin_visit() orphaned "
+        "-- the leave could not reach it and only its deadline ever would"
+    )
+    assert box["decisions"] == {"write_file": "deny"}, box.get("decisions")
+
+
+@pytest.mark.asyncio
+async def test_app_exit_denies_a_round_armed_before_any_visit_ever_opened():
+    """The same orphaned binding also beat `begin_shutdown` (app exit).
+
+    Once a visit had opened (replacing the constructor Event), app exit
+    set the CURRENT `_shutdown_requested` and the headless-cancel Event --
+    neither of which the born-headless round had bound. A worker poll
+    that only dies at its own deadline, through the app's shutdown.
+    """
+    runtime, controller, _store, session, _app = _never_visited_rig()
+    thread, box = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id), "the round never armed"
+
+    runtime.attach_view(_View())
+    await asyncio.wait_for(runtime.dispose(), timeout=10)
+    thread.join(timeout=10)
+    assert controller._disposed is True
+    assert not thread.is_alive(), (
+        "app exit never reached the born-headless round"
+    )
+    assert box["decisions"] == {"write_file": "deny"}, box.get("decisions")
+
+
+@pytest.mark.asyncio
+async def test_a_born_headless_round_waits_and_app_exit_without_a_visit_denies_it():
+    """The mirror pin: with NO visit ever opened, `begin_shutdown` still
+    denies the born-headless round (whatever Event it bound, exit sets
+    it), and the round WAITS rather than self-denying before that."""
+    runtime, controller, _store, session, _app = _never_visited_rig()
+    thread, box = _arm(controller, session.id)
+    assert await _wait_for_round(controller, session.id), "the round never armed"
+    assert await _quiet(lambda: "decisions" in box, seconds=2.0), (
+        "the born-headless round self-denied instead of waiting"
+    )
+
+    await asyncio.wait_for(runtime.dispose(), timeout=10)
+    thread.join(timeout=10)
+    assert not thread.is_alive(), "exit-with-no-visit never reached the round"
+    assert box["decisions"] == {"write_file": "deny"}, box.get("decisions")
+
+
+@pytest.mark.asyncio
+async def test_the_binding_states_its_visit_lifecycle_not_an_event_inference():
+    """White-box identity pin for `_bind_visit_cancel_signal`'s three arms.
+
+    Written because mutation M3 (drop `begin_visit()`'s `_visit_open =
+    True`) SURVIVED the whole behavioural suite -- and rightly so: the
+    headless Event is set by BOTH teardown seams, so binding it for an
+    in-visit round is fail-closed all the same. What the mutant loses is
+    the CONTRACT: an in-visit round answers to its own visit's Event
+    (the arm-time capture discipline the module docstring rests on), and
+    a never-visited controller's round must NOT bind the constructor
+    Event that the first `begin_visit()` will orphan (the S2 defect).
+    Pin the identities so the distinction is a measured fact.
+    """
+    # Never visited: binds the headless Event, never the constructor one.
+    runtime, controller, _store, _session, _app = _never_visited_rig()
+    bound = controller._bind_visit_cancel_signal()
+    assert bound is not controller._shutdown_requested, (
+        "a never-visited controller handed out the constructor Event -- "
+        "the first begin_visit() will orphan it (the S2 defect)"
+    )
+    assert bound is controller._headless_visit_cancel
+
+    # Visit open: binds THIS visit's own Event.
+    runtime.attach_view(_View())
+    bound = controller._bind_visit_cancel_signal()
+    assert bound is controller._shutdown_requested
+
+    # Visit ended: back to the headless Event (the deferred arm).
+    await _leave(runtime)
+    bound = controller._bind_visit_cancel_signal()
+    assert bound is not controller._shutdown_requested
+    assert bound is controller._headless_visit_cancel
 
 
 @pytest.mark.asyncio
