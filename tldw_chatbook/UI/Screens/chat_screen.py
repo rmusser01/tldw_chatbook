@@ -14688,9 +14688,22 @@ class ChatScreen(BaseAppScreen):
         count can over-report by one in the rare case a wake turn is
         mid-flight at nav-away; ``fleet_teardown_split``'s own contract is
         deliberately left untouched.
+
+        Qodo audit S1 (PR 1680): the staging is gated on
+        ``leave_console_runtime``'s return. On an overlapping
+        ChatScreen→ChatScreen navigation (a fleet-completion deep link
+        clicked while already on Console), the incoming screen claims the
+        runtime in ``restore_state`` BEFORE this screen unmounts, so this
+        superseded screen's leave is a designed no-op (``ConsoleRuntime.
+        detach_view``) and the sessions keep running under the successor.
+        Staging unconditionally toasted "N session(s) cancelled when you
+        left Console" for work that was never cancelled -- and never left
+        Console. A leave that did not end the visit reports nothing.
         """
         killed, surviving = controller.fleet_teardown_split()
-        await leave_console_runtime(self.app_instance, view=self)
+        ended = await leave_console_runtime(self.app_instance, view=self)
+        if not ended:
+            return
         if killed:
             self.app_instance._console_fleet_teardown_notice = killed
         if surviving:
