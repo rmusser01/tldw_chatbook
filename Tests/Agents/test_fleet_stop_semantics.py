@@ -413,3 +413,120 @@ def test_probe_b_wait_agents_cancel_still_stops_children(db, monkeypatch):
         assert _child_row(db)["status"] == RUN_CANCELLED
     finally:
         release.set()
+
+
+# -- the teardown / app-exit audit (plan Task 5's audit bullet) ------------
+#
+# Audit result, measured at the merge-base and recorded honestly: NO
+# conversation-deletion or ephemeral-close path sets per-child cancel
+# Events today. The only Event-setting paths are `_cancel_fleet_handles`'
+# callers -- the end-of-turn settle (non-survivors), `wait_agents`' cancel
+# and budget branches, and the per-row `cancel_subagent` (which "Cancel
+# all agents" reuses per handle). Session close and both controller
+# teardowns (`shutdown`, `leave_console`) reach an in-flight fleet only
+# through `_signal_stop` -> the PARENT's cancel probe -- so with the
+# outlive default ON their children now survive those teardowns exactly
+# as `leave_console`'s own docstring already promised for earlier turns'
+# survivors. What must therefore stay true, pinned below: the EVENT path
+# remains fully effective on a decoupled child (that is the panel's and
+# Cancel-all's whole mechanism), and app exit still takes everything
+# because fleet children are daemon threads that die with the process.
+
+
+def test_a_survivor_of_a_stopped_turn_dies_on_its_own_cancel_event(
+    db, monkeypatch
+):
+    """The Event path survives the decoupling -- Cancel still works.
+
+    The parent-poll term is gone from a decoupled child's poll, so its
+    OWN Event is now the only cooperative stop there is. This is the
+    audit's load-bearing half: per-row Cancel, "Cancel all agents", the
+    settle under the kill switch, and any future teardown all speak this
+    path. A mutant that drops the Event term from the outlive-ON closure
+    (instead of just the parent term) dies here.
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def spawn_then_cancel():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        return "parent stopped"
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), spawn_then_cancel],
+        {"slow task": _two_turn_child(entered, release)},
+        allow_unconsumed=True,  # the cancelled child strands its 2nd turn
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=cancelled.is_set,
+        )
+        assert outcome.status == RUN_CANCELLED
+        handle = coordinator.snapshot()[0]
+        assert handle.status == RUN_RUNNING
+        # The user cancels the SURVIVOR itself -- the per-row path, the
+        # same seam `cancel_all_subagents` walks per handle.
+        assert service.cancel_subagent(handle.handle_id) is True
+        assert service._fleet_cancels[handle.handle_id].is_set()
+    finally:
+        release.set()
+    # Released from its provider call, the child notices ITS OWN Event at
+    # the next loop boundary and dies for real -- Event path intact.
+    _wait_until(coordinator.all_finished, "the cancelled child never stopped")
+    assert coordinator.snapshot()[0].status == RUN_CANCELLED
+    assert _child_row(db)["status"] == RUN_CANCELLED
+
+
+def test_app_exit_takes_everything_fleet_children_are_daemon_threads(
+    db, monkeypatch
+):
+    """The app-exit half of the audit: children die with the process.
+
+    App exit (`ConsoleRuntime.dispose` -> `controller.shutdown()`) cancels
+    in-flight TURNS through the parent probe; a decoupled child never
+    hears that. What guarantees "exit takes everything" is that every
+    fleet child runs on a ``daemon=True`` thread -- the interpreter does
+    not wait for it -- which was already the only guarantee earlier
+    turns' survivors had at exit BEFORE this task. Pinned here so a
+    future thread-pool refactor cannot silently turn a stopped turn's
+    survivor into a process-outliving non-daemon thread.
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            _after(entered, "parent answered early"),
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == RUN_DONE
+        threads = list(service._fleet_threads.values())
+        assert threads, "precondition: the child's thread is registered"
+        assert all(thread.daemon for thread in threads), (
+            "a fleet child on a non-daemon thread would outlive app exit"
+        )
+        assert any(thread.is_alive() for thread in threads), (
+            "precondition: the survivor is genuinely still running"
+        )
+    finally:
+        release.set()
+    _wait_until(coordinator.all_finished, "the released child never finished")
