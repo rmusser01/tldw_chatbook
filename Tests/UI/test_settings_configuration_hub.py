@@ -773,6 +773,8 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.max_parallel_runs",
+        # TASK-18600: the five user-facing agent run-budget limits.
+        "console.agent_max_*",
         # Side-chat phase 2 (task-2): ephemeral selection side-chat prefs.
         "console.sidechat_model",
         "console.sidechat_prompt_template",

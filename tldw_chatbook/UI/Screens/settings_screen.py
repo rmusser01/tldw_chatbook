@@ -117,17 +117,28 @@ from ...Chat.provider_catalog import (
 from ...config import (
     ConfigMutationResult,
     DEFAULT_CONFIG_FROM_TOML,
+    DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+    DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+    DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+    DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+    DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE,
     DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
+    MIN_CONSOLE_AGENT_MAX_STEPS,
+    MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+    MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+    MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
     ProviderSettingsError,
     _default_base_data_dir,
     apply_settings_mutation_to_cli_config,
     coerce_bool_setting,
+    coerce_float_setting,
     coerce_int_setting,
     get_cli_config_path,
     get_runtime_config_snapshot,
@@ -628,6 +639,134 @@ INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
 MODEL_CATALOG_FIELD_IDS = frozenset(
     MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
+# TASK-18600: the Console agent's run budget, driven by ONE spec table
+# rather than five copies of the per-setting boilerplate every other
+# numeric Console field uses. Five near-identical settings is where that
+# pattern stops paying for itself: the loaded/draft/normalise/stage/sync
+# quintet is identical for all of them and differs only in key, label,
+# floor, and whether the value is an int or a float.
+#
+# `console_agent_bridge.console_run_budget()` is the reader; it resolves
+# these same keys per run, so a save here reaches the next message with no
+# restart. Floors only, no ceilings -- a deliberately user-owned trade-off
+# (same call as max_parallel_runs above).
+@dataclass(frozen=True)
+class AgentBudgetField:
+    """One user-facing limit in the Agent run budget section.
+
+    Attributes:
+        key: The `[console]` config key, also the draft key.
+        label: The input's row label.
+        widget_id: DOM id of the Input, minus the leading '#'.
+        default: Shipped value, used as the placeholder and the fallback.
+        minimum: Inclusive floor. A value below it is refused at stage
+            time rather than silently clamped.
+        is_float: True for the two duration fields; ints elsewhere.
+        unit: Short noun for the validation message ("turns", "seconds").
+        help_text: Rendered under the field. These carry the parts of the
+            model a number cannot: which limit actually stops a run, and
+            what 0 really means.
+    """
+
+    key: str
+    label: str
+    widget_id: str
+    default: float
+    minimum: float
+    is_float: bool
+    unit: str
+    help_text: str
+
+
+AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
+    AgentBudgetField(
+        key="agent_max_total_tokens",
+        label="Token budget (per run)",
+        widget_id="settings-console-agent-max-total-tokens",
+        default=DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        is_float=False,
+        unit="tokens",
+        help_text=(
+            "The limit that actually stops a long run. Counts prompt + "
+            "completion for ONE run (one message), not the whole "
+            "conversation - and the whole conversation is re-sent every "
+            "turn, so spend grows quadratically: 25M is typically reached "
+            "around turn 250. Sub-agents each get this same ceiling rather "
+            "than a share of it, so one message's worst case is about 3x "
+            "it. 0 = unlimited, which removes your only runaway-spend "
+            "backstop: the loop detector only catches calls repeated with "
+            "identical arguments."
+        ),
+    ),
+    AgentBudgetField(
+        key="agent_max_wall_seconds",
+        label="Wall-clock limit (seconds)",
+        widget_id="settings-console-agent-max-wall-seconds",
+        default=DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        is_float=True,
+        unit="seconds",
+        help_text=(
+            "How long ONE run may take end to end. Stop works throughout. "
+            "Sub-agents are bounded separately by [agents] "
+            "child_max_wall_seconds, so raising this does not extend them."
+        ),
+    ),
+    AgentBudgetField(
+        key="agent_max_tool_call_seconds",
+        label="Per-tool-call limit (seconds)",
+        widget_id="settings-console-agent-max-tool-call-seconds",
+        default=DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        is_float=True,
+        unit="seconds",
+        help_text=(
+            "Ceiling on a SINGLE tool call - the real limit on long "
+            "crawls, ingests, and builds, which a large wall-clock budget "
+            "alone will not save. 0 = unlimited. A call reported as timed "
+            "out may still finish later on its own thread, so lowering "
+            "this below ~186s can double-execute an MCP tool."
+        ),
+    ),
+    AgentBudgetField(
+        key="agent_max_model_turns",
+        label="Model turns (backstop)",
+        widget_id="settings-console-agent-max-model-turns",
+        default=DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        minimum=MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        is_float=False,
+        unit="turns",
+        help_text=(
+            "Tool-calling rounds per message. A backstop, not the usual "
+            "limiter - at the default token budget a run stops on spend "
+            "first, long before this."
+        ),
+    ),
+    AgentBudgetField(
+        key="agent_max_steps",
+        label="Steps (backstop)",
+        widget_id="settings-console-agent-max-steps",
+        default=DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+        minimum=MIN_CONSOLE_AGENT_MAX_STEPS,
+        is_float=False,
+        unit="steps",
+        help_text=(
+            "Individual loop steps. One tool round costs 3 (think, call, "
+            "result) and the closing reply costs 1, so N turns need "
+            "3*(N-1)+1 steps. Set below that and this, not the turn "
+            "count, becomes your limiter."
+        ),
+    ),
+)
+
+AGENT_BUDGET_FIELDS_BY_KEY = {field.key: field for field in AGENT_BUDGET_FIELDS}
+AGENT_BUDGET_KEYS = tuple(field.key for field in AGENT_BUDGET_FIELDS)
+#: Shared CSS class on every budget Input, so one @on handler serves all
+#: five instead of five near-identical decorated methods.
+AGENT_BUDGET_INPUT_CLASS = "settings-agent-budget-input"
+
+
 CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
     {
         "collapse_large_pastes",
@@ -637,6 +776,7 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
         "tool_result_display_chars",
         "sidechat_model",
         "sidechat_prompt_template",
+        *AGENT_BUDGET_KEYS,
         *CONTEXT_MEMORY_CONFIG_KEYS,
     }
 )
@@ -648,6 +788,7 @@ CONSOLE_BEHAVIOR_CONSOLE_KEYS = frozenset(
 # deliberate (user-owned trade-off).
 DEFAULT_CONSOLE_MAX_PARALLEL_RUNS = CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 MIN_CONSOLE_MAX_PARALLEL_RUNS = 1
+
 CONSOLE_BACKGROUND_EFFECT_KEYS = frozenset(
     {
         "background_effects.enabled",
@@ -705,6 +846,7 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "paste_collapse_threshold",
     "max_parallel_runs",
     "tool_result_display_chars",
+    *AGENT_BUDGET_KEYS,
     "sidechat_model",
     "sidechat_prompt_template",
     *CONTEXT_MEMORY_CONFIG_KEYS,
@@ -2339,6 +2481,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_selection = False
         self._syncing_console_threshold = False
         self._syncing_console_max_parallel_runs = False
+        self._syncing_console_agent_budget = False
         self._syncing_console_tool_result_display_chars = False
         self._syncing_console_sidechat = False
         self._syncing_console_paste_toggle = False
@@ -3695,6 +3838,7 @@ class SettingsScreen(BaseAppScreen):
                     "console.collapse_large_pastes",
                     "console.paste_collapse_threshold",
                     "console.max_parallel_runs",
+                    "console.agent_max_*",
                     "console.sidechat_model",
                     "console.sidechat_prompt_template",
                     "console.background_effects.*",
@@ -3880,6 +4024,185 @@ class SettingsScreen(BaseAppScreen):
             ),
             DEFAULT_CONSOLE_MAX_PARALLEL_RUNS,
             minimum=MIN_CONSOLE_MAX_PARALLEL_RUNS,
+        )
+
+    def _loaded_agent_budget_value(self, field: AgentBudgetField) -> float:
+        """The saved (or shipped-default) value for one budget field.
+
+        Mirrors `console_agent_bridge.console_run_budget()`'s own
+        coercion, floors included, so Settings can never display a value
+        the run path would reject and silently replace.
+        """
+        raw = self._console_settings().get(field.key, field.default)
+        if field.is_float:
+            return coerce_float_setting(
+                raw, float(field.default), minimum=field.minimum
+            )
+        return coerce_int_setting(raw, int(field.default), minimum=int(field.minimum))
+
+    def _agent_budget_value(self, field: AgentBudgetField) -> float | str:
+        """The value to display: the staged draft if any, else the saved one.
+
+        Returns a `str` when the draft holds text that failed validation,
+        so the user's in-progress typing survives a re-render.
+        """
+        draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+        if draft is not None and field.key in draft.values:
+            return draft.values[field.key]
+        return self._loaded_agent_budget_value(field)
+
+    def _normalise_agent_budget_value(
+        self, field: AgentBudgetField, value: object
+    ) -> float:
+        """Coerce one budget field's input, or raise with a usable message.
+
+        Floors only -- no ceiling is enforced anywhere in this feature
+        (owner decision: these are user-owned trade-offs, same call as
+        `max_parallel_runs`). A below-floor value is REFUSED rather than
+        clamped: silently running at a number the user did not choose is
+        how a 2000-turn budget quietly becomes an 8-turn one.
+
+        Raises:
+            ValueError: With copy naming the field and its floor.
+        """
+        text_value = str(value).strip()
+        try:
+            parsed = float(text_value) if field.is_float else int(text_value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{field.label} must be a number of at least "
+                f"{self._format_agent_budget_number(field, field.minimum)}."
+            ) from None
+        if parsed != parsed or parsed in (float("inf"), float("-inf")):
+            raise ValueError(f"{field.label} must be a finite number.")
+        if parsed < field.minimum:
+            raise ValueError(
+                f"{field.label} must be at least "
+                f"{self._format_agent_budget_number(field, field.minimum)} "
+                f"{field.unit}."
+            )
+        return float(parsed) if field.is_float else int(parsed)
+
+    @staticmethod
+    def _format_agent_budget_number(field: AgentBudgetField, value: float) -> str:
+        """Render a budget number without a pointless trailing '.0'."""
+        if field.is_float:
+            return f"{value:g}"
+        return str(int(value))
+
+    def _stage_agent_budget_value(
+        self, field: AgentBudgetField, value: object
+    ) -> None:
+        category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        try:
+            staged_value: object = self._normalise_agent_budget_value(field, value)
+        except ValueError:
+            # Keep the raw text staged so the user's typing is not eaten
+            # mid-edit; the save path re-normalises and reports the error.
+            staged_value = str(value)
+        draft.set_value(
+            field.key,
+            self._loaded_agent_budget_value(field),
+            staged_value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    @staticmethod
+    def _humanise_seconds(seconds: float) -> str:
+        """Render a seconds count as a duration a human can sanity-check.
+
+        86400 is not a number anyone reads as "24 hours" at a glance, and
+        this field's whole purpose is letting someone set a very large one
+        deliberately. Rendered beside the input, live as they type.
+        """
+        try:
+            total = float(seconds)
+        except (TypeError, ValueError):
+            return ""
+        if total <= 0:
+            return "unlimited" if total == 0 else ""
+        minutes, secs = divmod(int(total), 60)
+        hours, minutes = divmod(minutes, 60)
+        days, hours = divmod(hours, 24)
+        parts = []
+        if days:
+            parts.append(f"{days}d")
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if secs and not days:
+            parts.append(f"{secs}s")
+        return " ".join(parts) or "0s"
+
+    def _agent_budget_hint(self, field: AgentBudgetField) -> str:
+        """The live, value-dependent prefix for one field's help line.
+
+        Carries what the raw number does not: 86400 rendered as "24h", 0
+        named as the unlimited case it actually is, and a validation error
+        stated in place instead of only at save time.
+        """
+        value = self._agent_budget_value(field)
+        try:
+            numeric = self._normalise_agent_budget_value(field, value)
+        except ValueError as exc:
+            return str(exc)
+        if field.is_float:
+            if numeric == 0:
+                return "0 = unlimited."
+            return f"= {self._humanise_seconds(numeric)}."
+        if field.key == "agent_max_total_tokens" and numeric == 0:
+            return "0 = unlimited - no runaway-spend backstop."
+        return ""
+
+    def _agent_budget_help_text(self, field: AgentBudgetField) -> str:
+        """One field's full help line: live hint first, then static copy.
+
+        Rendered into a single Static (not a hint widget beside the input)
+        so it uses the same `settings-detail-row` styling every other
+        Console help line already has, rather than needing a new class.
+        """
+        hint = self._agent_budget_hint(field)
+        return f"{hint} {field.help_text}".strip() if hint else field.help_text
+
+    def _agent_budget_step_floor_warning(self) -> str:
+        """Warn when the step backstop will bind before the turn cap.
+
+        A fence tool round costs 3 steps and the closing reply costs 1, so
+        N turns need `3*(N-1)+1` steps. Set steps below that and a run
+        stops on "step budget exhausted" well before the turn cap the user
+        actually configured -- a silent misconfiguration with a confusing
+        symptom. Non-blocking by design: it is a legitimate thing to want
+        (a hard step ceiling), just never a thing to want by accident.
+        """
+        turns_field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_model_turns"]
+        steps_field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_steps"]
+        try:
+            turns = int(
+                self._normalise_agent_budget_value(
+                    turns_field, self._agent_budget_value(turns_field)
+                )
+            )
+            steps = int(
+                self._normalise_agent_budget_value(
+                    steps_field, self._agent_budget_value(steps_field)
+                )
+            )
+        except ValueError:
+            return ""
+        needed = 3 * (turns - 1) + 1
+        if steps >= needed:
+            return ""
+        return (
+            f"Note: {steps} steps caps this run at about "
+            f"{max(1, (steps - 1) // 3 + 1)} tool-calling rounds, not "
+            f"{turns} - a tool round costs 3 steps, so {turns} turns need "
+            f"{needed}. The step backstop will stop runs before the turn "
+            "limit does."
         )
 
     def _loaded_tool_result_display_chars(self) -> int:
@@ -12637,6 +12960,44 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=str(DEFAULT_CONSOLE_MAX_PARALLEL_RUNS),
                     restrict=r"^[0-9]*$",
                 )
+            yield Static("Agent run budget", classes="destination-section")
+            yield Static(
+                "Limits on ONE agent run (one message you send). Raise them "
+                "for long, expensive sessions. The token budget is what "
+                "normally stops a long run - the turn and step limits are "
+                "backstops. Sub-agents inherit these, so a run that spawns "
+                "helpers can spend several times the token budget.",
+                id="settings-console-agent-budget-help",
+                classes="settings-detail-row",
+            )
+            for budget_field in AGENT_BUDGET_FIELDS:
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        budget_field.label, classes="settings-input-label"
+                    )
+                    yield Input(
+                        value=str(self._agent_budget_value(budget_field)),
+                        id=budget_field.widget_id,
+                        classes=(
+                            f"settings-compact-input {AGENT_BUDGET_INPUT_CLASS}"
+                        ),
+                        placeholder=self._format_agent_budget_number(
+                            budget_field, budget_field.default
+                        ),
+                        restrict=r"^[0-9]*\.?[0-9]*$"
+                        if budget_field.is_float
+                        else r"^[0-9]*$",
+                    )
+                yield Static(
+                    self._agent_budget_help_text(budget_field),
+                    id=f"{budget_field.widget_id}-help",
+                    classes="settings-detail-row",
+                )
+            yield Static(
+                self._agent_budget_step_floor_warning(),
+                id="settings-console-agent-budget-step-warning",
+                classes="settings-detail-row",
+            )
             yield Static("Agent tool-result display cap", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
                 yield Static("Display cap (chars)", classes="settings-input-label")
@@ -18417,6 +18778,49 @@ class SettingsScreen(BaseAppScreen):
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
+    @on(Input.Changed, f".{AGENT_BUDGET_INPUT_CLASS}")
+    def handle_console_agent_budget_changed(self, event: Input.Changed) -> None:
+        """One handler for all five budget inputs.
+
+        They share a CSS class and differ only by id, so a single
+        selector-matched handler replaces five near-identical decorated
+        methods. `_syncing_console_agent_budget` guards the same
+        write-back loop every other Console field guards against: the
+        revert/sync path assigns `.value`, which re-fires Input.Changed.
+        """
+        if self._syncing_console_agent_budget:
+            return
+        field = next(
+            (f for f in AGENT_BUDGET_FIELDS if f.widget_id == event.input.id),
+            None,
+        )
+        if field is None:
+            return
+        self._stage_agent_budget_value(field, event.value)
+        self._refresh_agent_budget_hints()
+        self._console_behavior_result = "Console behavior settings staged."
+        self._set_static_text(
+            "#settings-console-behavior-result", self._console_behavior_result_text()
+        )
+        self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    def _refresh_agent_budget_hints(self) -> None:
+        """Re-render every budget field's live hint and the step warning.
+
+        All five are refreshed on any change, not just the edited one: the
+        step-floor warning is a function of TWO fields, so editing either
+        must update it.
+        """
+        for budget_field in AGENT_BUDGET_FIELDS:
+            self._set_static_text(
+                f"#{budget_field.widget_id}-help",
+                self._agent_budget_help_text(budget_field),
+            )
+        self._set_static_text(
+            "#settings-console-agent-budget-step-warning",
+            self._agent_budget_step_floor_warning(),
+        )
+
     @on(Input.Changed, "#settings-console-max-parallel-runs")
     def handle_console_max_parallel_runs_changed(self, event: Input.Changed) -> None:
         if self._syncing_console_max_parallel_runs:
@@ -20914,6 +21318,19 @@ class SettingsScreen(BaseAppScreen):
                             dirty_values["paste_collapse_threshold"]
                         )
                     )
+                # Budget fields re-normalise here, not only at stage
+                # time: staging deliberately keeps unparsable text so the
+                # user's typing survives a re-render, which means an
+                # invalid value can still be sitting in the draft at save.
+                # The ValueError this raises is caught by the same handler
+                # that reports every other Console field's error.
+                for budget_field in AGENT_BUDGET_FIELDS:
+                    if budget_field.key in dirty_values:
+                        dirty_values[budget_field.key] = (
+                            self._normalise_agent_budget_value(
+                                budget_field, dirty_values[budget_field.key]
+                            )
+                        )
                 if "max_parallel_runs" in dirty_values:
                     dirty_values["max_parallel_runs"] = (
                         self._normalise_console_max_parallel_runs(
@@ -21988,6 +22405,18 @@ class SettingsScreen(BaseAppScreen):
                 self._syncing_console_max_parallel_runs = False
         except QueryError:
             pass
+        for budget_field in AGENT_BUDGET_FIELDS:
+            try:
+                self._syncing_console_agent_budget = True
+                try:
+                    self.query_one(f"#{budget_field.widget_id}", Input).value = str(
+                        self._agent_budget_value(budget_field)
+                    )
+                finally:
+                    self._syncing_console_agent_budget = False
+            except QueryError:
+                pass
+        self._refresh_agent_budget_hints()
         try:
             self._syncing_console_tool_result_display_chars = True
             try:
