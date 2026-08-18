@@ -427,13 +427,15 @@ def test_budget_exhausted_at_loop_top_yields_the_last_boundary():
         make_deps(call_model),
     )
     assert out.status == RUN_STUCK
-    # The one completed fence round is coherent and kept; the budget trip
-    # happened at the loop top, i.e. exactly at a boundary.
-    assert out.final_messages == [
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": fence_text},
-        {"role": "user", "content": f"{FENCE_TOOL_RESULT_PREFIX}calculator: 42"},
-    ]
+    # The plan's semantics, pinned deliberately: `coherent_len` advances at
+    # the DRAIN BOUNDARY (after the loop-top budget/cancel checks, before
+    # the model call), so a loop-top terminal return carries the boundary
+    # BEFORE the final completed round -- at most one fully-appended round
+    # is dropped. Conservative by design: the one blessed capture point is
+    # the same protocol-coherent line the steering drain earned, rather
+    # than a second capture point that would need its own restore-machinery
+    # proof. The transcript is exactly what the model saw at its last call.
+    assert out.final_messages == [{"role": "user", "content": "hi"}]
 
 
 # =========================================================================
@@ -607,6 +609,69 @@ def test_a_zero_count_cap_retains_nothing():
     h = _finished_handle(c)
     assert c.retain_transcript(h.handle_id, list(_TRANSCRIPT)) is False
     assert c.get_retained(h.handle_id) is None
+
+
+class _CountingLock:
+    """A drop-in for the coordinator's Lock that counts critical sections."""
+
+    def __init__(self):
+        self._inner = threading.Lock()
+        self.acquisitions = 0
+
+    def __enter__(self):
+        self._inner.acquire()
+        self.acquisitions += 1
+        return self
+
+    def __exit__(self, *_exc):
+        self._inner.release()
+        return False
+
+
+def test_finish_with_transcript_retains_atomically_in_one_critical_section():
+    """The retention race (Qodo finding on plan PR #1773), closed BY
+    CONSTRUCTION: `finish(..., transcript=...)` performs the terminal
+    transition AND the retention inside ONE critical section, so no
+    observer -- a `send_to_agent` continuation racing the child's teardown
+    -- can ever see a retainable child terminal-but-unretained. A
+    finish-then-retain two-step (two lock acquisitions) is exactly the
+    mutant this pin kills."""
+    c = _coord()
+    counting = _CountingLock()
+    c._lock = counting
+    h = c.reserve(task="child", agent=None)
+    before = counting.acquisitions
+    c.finish(h.handle_id, RUN_DONE, result="r", transcript=list(_TRANSCRIPT))
+    assert counting.acquisitions == before + 1, (
+        "finish-with-transcript took more than one critical section: the "
+        "terminal status and the retention are separately observable"
+    )
+    assert c.get_retained(h.handle_id) is not None
+
+
+def test_finish_with_transcript_respects_first_writer_wins():
+    """A user cancel that wins the race must veto retention: the child's
+    own straggling finish-with-transcript on an already-cancelled handle
+    is wholly ignored -- this is WHY retention cannot simply run before
+    finish (retainability depends on the first-writer-wins status)."""
+    c = _coord()
+    h = c.reserve(task="child", agent=None)
+    c.finish(h.handle_id, RUN_CANCELLED, error="user cancelled")
+    c.finish(h.handle_id, RUN_DONE, result="r", transcript=list(_TRANSCRIPT))
+    assert c.get(h.handle_id).status == RUN_CANCELLED
+    assert c.get_retained(h.handle_id) is None
+
+
+def test_finish_without_transcript_retains_nothing_and_leaves_the_mailbox():
+    """Every pre-existing finish caller (abandonment, thread-start
+    failure, plain finishes) passes no transcript: nothing is retained
+    and the undrained remnant keeps Task 1's survive-until-prune window."""
+    c = _coord()
+    h = c.reserve(task="child", agent=None)
+    c.post_steering(h.handle_id, STEERING_SOURCE_USER, "undelivered")
+    c.finish(h.handle_id, RUN_DONE, result="r")
+    assert c.get_retained(h.handle_id) is None
+    assert c.get(h.handle_id).queued_steering == 1
 
 
 def test_retained_messages_are_copies_not_aliases():
@@ -1103,6 +1168,63 @@ def test_a_finished_child_remains_continuable_after_prune_terminal(db):
     # The seed really carried the transcript (second call under the task).
     resumed_payload = chat.child_calls["pruned task"][1]["messages_payload"]
     assert {"role": "assistant", "content": "first answer"} in resumed_payload
+
+
+def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db):
+    """A REAL finished child with no retained transcript (here: cancelled
+    -- the cancel won the finish race, so its own finish-with-transcript
+    was ignored) must draw the honest not-retained refusal, NEVER the
+    unknown-id copy (the Qodo race pin's refusal half)."""
+    child_started = threading.Event()
+    release_child = threading.Event()
+    holder: dict = {}
+
+    def gated_child():
+        child_started.set()
+        assert release_child.wait(_JOIN_TIMEOUT)
+        return fence("calculator", {"expression": "1+1"})
+
+    def cancel_then_steer():
+        assert child_started.wait(_JOIN_TIMEOUT)
+        coordinator = holder["coordinator"]
+        handle = next(
+            h for h in coordinator.snapshot() if h.status == "running"
+        )
+        holder["handle_id"] = handle.handle_id
+        # The cancel path's coordinator-side effect: the handle goes
+        # terminal CANCELLED first; the child's own later finish (with
+        # transcript) loses first-writer-wins and retains nothing.
+        coordinator.finish(handle.handle_id, RUN_CANCELLED, error="cancelled")
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": handle.handle_id, "message": "please continue"},
+        )
+
+    def release_then_answer():
+        release_child.set()
+        return "turn answer"
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "doomed task"}),
+            cancel_then_steer,
+            release_then_answer,
+        ],
+        {"doomed task": [gated_child, "never delivered"]},
+        allow_unconsumed=True,
+    )
+    holder["coordinator"] = coordinator
+    run1, outcome = _run(service)
+    assert outcome.status == RUN_DONE
+    sends = _tool_results(db.get_run(run1), SEND_TO_AGENT_TOOL_NAME)
+    assert sends and "ERROR" in sends[0]
+    assert holder["handle_id"] in sends[0]
+    assert "no retained transcript" in sends[0]
+    assert "fresh sub-agent" in sends[0]
+    # NEVER the unknown-id copy for a child that was real.
+    assert "no sub-agent matches" not in sends[0]
+    assert coordinator.get_retained(holder["handle_id"]) is None
 
 
 def test_after_a_restart_the_error_says_the_transcript_is_gone(db):
