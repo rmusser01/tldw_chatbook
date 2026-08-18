@@ -2407,7 +2407,13 @@ class AgentService:
                     # under the kill switch this branch is the pre-Task-5
                     # cancel, byte-identical. Read here, at the moment of
                     # the Stop, matching `_surviving_handles`' settle-time
-                    # read -- the two must agree on the SAME Stop.
+                    # read -- the two must agree on the SAME Stop. The
+                    # note promises only what is true on EVERY path from
+                    # here (Qodo #1808 finding 4): `pending` is non-empty
+                    # by the loop guard, so children genuinely continue --
+                    # but result DELIVERY depends on the auto-wake key (a
+                    # completion is only ever marked when that is off),
+                    # so the copy does not promise delivery.
                     if _coerce_subagents_outlive_turn(
                         _setting(
                             SUBAGENTS_OUTLIVE_TURN_KEY,
@@ -2416,8 +2422,7 @@ class AgentService:
                     ):
                         note = (
                             "\n(The run was cancelled; sub-agents continue "
-                            "in the background and their results will be "
-                            "delivered when they finish.)"
+                            "in the background.)"
                         )
                         break
                     note = "\n(The run was cancelled; sub-agents were stopped.)"

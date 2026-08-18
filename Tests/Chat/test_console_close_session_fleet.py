@@ -88,7 +88,7 @@ def test_closing_an_ephemeral_session_cancels_its_fleet_too():
     same destruction (nothing was ever persisted to return to), so its
     fleet dies with it identically."""
     store = ConsoleChatStore()
-    session = store.new_session(title="temp", ephemeral=True)
+    session = store.create_session(title="temp", ephemeral=True)
     assert store.session_is_ephemeral(session.id)
     controller, bridge = _controller_with_bridge(store)
 

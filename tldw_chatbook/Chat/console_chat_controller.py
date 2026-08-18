@@ -3548,6 +3548,39 @@ class ConsoleChatController:
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)
+        # PR3b Task 5 (Qodo #1808 finding 3): closing a session is
+        # DESTRUCTIVE -- `ConsoleChatStore.close_session` purges every
+        # message and drops the session -- so its fleet must die with it.
+        # Navigation-away teardowns (`leave_console`/`shutdown`) preserve
+        # the conversation and its survivors rightly continue; here a
+        # surviving child would outlive its own conversation with no
+        # panel row left to cancel it from, a wake targeting a dead
+        # conversation, and a leaked unseen-mark. The conversation id is
+        # derived NOW, while the session still exists (persisted id when
+        # set -- the key the bridge's fleet state actually lives under),
+        # and every live child goes through the explicit whole-fleet
+        # path: `cancel_all_subagents` reuses the per-handle cancel, so
+        # approval-card revocation and cancelled-is-never-retained ride
+        # along. getattr-guarded and wrapped: a bare bridge double, no
+        # bridge, or a raising cancel must never break a close.
+        fleet_conversation_id = self._agent_conversation_id(session_id)
+        cancel_all = (
+            getattr(self._agent_bridge, "cancel_all_subagents", None)
+            if self._agent_bridge is not None
+            else None
+        )
+        if callable(cancel_all):
+            try:
+                cancelled_children = int(cancel_all(fleet_conversation_id))
+                if cancelled_children:
+                    logger.info(
+                        "close_session cancelled {} sub-agent(s) of the closed conversation",
+                        cancelled_children,
+                    )
+            except Exception:  # noqa: BLE001 -- teardown never fails on a fleet read
+                logger.warning(
+                    "close_session could not cancel the conversation's sub-agents"
+                )
         repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)

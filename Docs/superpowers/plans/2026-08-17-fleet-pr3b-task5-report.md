@@ -120,14 +120,29 @@ per-row `AgentService.cancel_subagent`. Session close
 (`shutdown`, `leave_console`) reach an in-flight fleet only through
 `_signal_stop` → the PARENT's cancel probe.
 
-Consequence under this change, stated plainly: closing a session (or
-navigating away, or controller shutdown) mid-turn cancels the TURN; its
-children now survive those teardowns — which is CONSISTENT, not novel:
-`leave_console`'s own docstring already promised "cross-turn fleet
-SURVIVORS keep running, untouched", and `_teardown_fleet_service`
-retains a survivor-owning service regardless of how its turn ended, so
-the panel keeps seeing and stopping them. The audit's two load-bearing
-consequences are pinned in the suite
+Consequence under this change, as originally landed: closing a session
+(or navigating away, or controller shutdown) mid-turn cancels the TURN;
+its children survived those teardowns. For NAVIGATION teardowns that is
+correct and stands (`leave_console`'s own docstring already promised
+"cross-turn fleet SURVIVORS keep running, untouched", and
+`_teardown_fleet_service` retains a survivor-owning service regardless
+of how its turn ended). For the DESTRUCTIVE close, Qodo's review
+(finding 3, below) correctly sharpened the audit's framing:
+`ConsoleChatStore.close_session` purges every message and drops the
+session, so a surviving child would outlive its own conversation — no
+panel row left to cancel it from, wake delivery targeting a dead
+conversation, a leaked unseen-mark. Fixed in-branch:
+`ConsoleChatController.close_session` now derives the durable
+conversation id while the session still exists and cancels the whole
+fleet through `cancel_all_subagents` (per-handle reuse, so revocation
+and cancelled-is-never-retained ride along), getattr-guarded and
+wrapped so a bare bridge or a raising cancel never breaks a close.
+Pinned in `Tests/Chat/test_console_close_session_fleet.py` (active
+close, ephemeral close, persisted-id derivation, degrade guard — the
+first three committed RED with `cancel_all_calls == []`).
+`fleet_teardown_split` needed no further copy change: it describes the
+NAVIGATION teardown split, and `close_session` is not one of its legs.
+The audit's two other load-bearing consequences are pinned in the suite
 (`test_fleet_stop_semantics.py`'s audit section):
 
 * **The Event path survives the decoupling** — a stopped turn's
@@ -314,6 +329,51 @@ all with read counts. Stated plainly, what that does NOT prove: a
 cross-suite, one-process app-lifetime interaction (state leaking
 between Console suites that only a whole-population single invocation
 would surface) is not covered by this gate.
+
+## Qodo review round (#1808) — four findings, verdict + action per item
+
+1. **Missing `Args:` on `on_console_agent_cancel_all`** — maintainability,
+   real. Fixed: Google-style `Args:` added to the handler docstring.
+2. **Hardcoded `console-agent-cancel-all` id in `left_rail.py`** —
+   maintainability, real. Fixed: hoisted to
+   `CONSOLE_AGENT_CANCEL_ALL_ID` in `Console_Modules/agent.py` beside
+   `CONSOLE_AGENT_FLEET_SECTION_ID` (the sibling pattern); the rail's
+   `id=`, the screen's `@on` selector, and the sync apply all read the
+   constant. The UI suite deliberately keeps the LITERAL, pinning the
+   DOM contract independently (the `test_console_fleet_panel.py`
+   precedent), so a silent rename still fails a test.
+3. **"Session close strands children" (High)** — REAL; the bot's
+   framing was stronger than this task's own audit and correct. Fixed
+   in-branch with red-first tests and a mutation check (skip the
+   fleet-cancel on close → the exact 3-red set returns); full detail
+   folded into the teardown-audit section above.
+4. **"Continuation note can lie"** — PARTIALLY real. Two of the bot's
+   candidate paths were already impossible by construction: the note is
+   emitted only inside the loop's non-empty-`pending` arm (children
+   provably still live at emission), and outlive OFF takes the other
+   branch with the stopped copy. What WAS real: the copy promised
+   "their results will be delivered when they finish", which is false
+   under `[agents] autowake_enabled = false` (a completion is only
+   marked, never delivered). Fixed: the note is now the plan's exact
+   copy — "(The run was cancelled; sub-agents continue in the
+   background.)" — promising only what every path guarantees; the
+   emission-guard reasoning is recorded in-line at the branch. Probe
+   (a2) pins the surviving copy. Residual dismissed with reason: on the
+   destructive-close path the note can be written moments before the
+   close's fleet-cancel (the probe cannot know WHY it fired), but that
+   note is written into the very transcript the close then purges — an
+   unobservable sentence, not a lie a user can read.
+
+While gating finding 3, its neighbor suite exposed two MORE
+pre-existing dev reds, attributed at untouched origin/dev `0e73851c4`
+in a throwaway worktree before being called anything (identical
+failures there):
+`test_console_chat_controller.py::test_controller_real_gateway_budgets_
+active_continuation_owner_atomically` and
+`::test_controller_bridge_agent_service_bound_private_history_on_real_
+send` (`AttributeError: 'list' object has no attribute
+'messages_payload'` — a gateway-fixture drift). Not this branch;
+routed to the owner.
 
 ## Concerns for Task 6
 

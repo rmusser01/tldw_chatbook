@@ -73,7 +73,7 @@ from ...Widgets.destination_rail import (
     DestinationRailSectionHeader,
 )
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
-from .agent import CONSOLE_AGENT_FLEET_SECTION_ID
+from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 
 
@@ -579,7 +579,7 @@ class ConsoleLeftRail(Vertical):
                 # switch for ended work would be a lie).
                 cancel_all_button = Button(
                     "Cancel all agents",
-                    id="console-agent-cancel-all",
+                    id=CONSOLE_AGENT_CANCEL_ALL_ID,
                     classes="console-workspace-action console-agent-cancel-all",
                     compact=True,
                 )

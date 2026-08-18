@@ -77,7 +77,10 @@ from ..Console_Modules.dictation import (
 from ..Console_Modules.hands_free import (
     ConsoleHandsFreeSession,
 )
-from ..Console_Modules.agent import CONSOLE_AGENT_FLEET_SECTION_ID
+from ..Console_Modules.agent import (
+    CONSOLE_AGENT_CANCEL_ALL_ID,
+    CONSOLE_AGENT_FLEET_SECTION_ID,
+)
 from ..Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
@@ -2166,7 +2169,7 @@ class ChatScreen(BaseAppScreen):
         if cancelled:
             self._request_console_agent_fleet_sync()
 
-    @on(Button.Pressed, "#console-agent-cancel-all")
+    @on(Button.Pressed, f"#{CONSOLE_AGENT_CANCEL_ALL_ID}")
     def on_console_agent_cancel_all(self, event: Button.Pressed) -> None:
         """Cancel every live child of the conversation (PR3b Task 5).
 
@@ -2177,6 +2180,11 @@ class ChatScreen(BaseAppScreen):
         cancel/approval-revoke path -- no second mechanism. A non-zero
         count requests one coalesced fleet resync so the rows and the
         affordance's own visibility reflect the stop on the next tick.
+
+        Args:
+            event: The press on the agent section's "Cancel all agents"
+                button (``CONSOLE_AGENT_CANCEL_ALL_ID``); stopped here --
+                the delegation is this handler's whole job.
         """
         event.stop()
         if self._agent._cancel_all_console_agents():
@@ -5051,7 +5059,9 @@ class ChatScreen(BaseAppScreen):
             # PR3b Task 5: the whole-fleet kill switch paints only while
             # a live child exists (derived beside the steering state so
             # the two surfaces move together).
-            cancel_all_button = self.query_one("#console-agent-cancel-all", Button)
+            cancel_all_button = self.query_one(
+                f"#{CONSOLE_AGENT_CANCEL_ALL_ID}", Button
+            )
             cancel_all_button.styles.display = (
                 "block" if cancel_all_visible else "none"
             )

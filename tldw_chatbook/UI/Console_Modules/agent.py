@@ -187,6 +187,14 @@ _AGENT_STATUS_GLYPHS: Dict[str, str] = {
 #: constant so the two sides can never drift apart.
 CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
 
+#: The "Cancel all agents" button's DOM id (PR3b Task 5) -- constructed
+#: in ``left_rail.py``'s ``compose()``, matched by ``chat_screen.py``'s
+#: ``@on`` selector, and written by its ``_sync_console_agent_section``
+#: apply; one constant, same drift rule as the section id above. The UI
+#: suite (``test_console_agent_cancel_all.py``) deliberately pins the
+#: LITERAL instead, so a silent rename here still fails a test.
+CONSOLE_AGENT_CANCEL_ALL_ID = "console-agent-cancel-all"
+
 #: Leading glyph for the turn-activity line's tool state. Same glyph the
 #: transcript's completed TOOL markers use (``format_agent_step_marker``),
 #: so "what is running now" and "what ran" read as one vocabulary.
