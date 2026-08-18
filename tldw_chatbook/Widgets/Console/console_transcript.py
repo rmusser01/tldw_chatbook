@@ -88,7 +88,10 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 
-CONSOLE_TRANSCRIPT_RULE = "─" * 200
+# TASK-17658: rule separators paint via the stylesheet's hatch fill
+# (.console-transcript-rule), which spans any terminal width — the old
+# fixed 200-dash string stopped short on very wide terminals.
+CONSOLE_TRANSCRIPT_RULE = ""
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 #: Console selection phase 3: run statuses during which review feedback
 #: (Request changes / LGTM) can be queued behind the active run via the

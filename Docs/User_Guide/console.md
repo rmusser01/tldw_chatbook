@@ -439,4 +439,7 @@ rows with the draft, the workbench frame closes at the grid's single
 bottom border (the transcript and region no longer draw their own bottom
 edges), and the conversation gained seven content rows; transcript
 keyboard focus is carried by the region's column lines and the scrollbar
-accent.*
+accent. Verified against TASK-17657 — 2026-08-17 (headless probes, both
+status-row placements): one deliberate blank row now sits below the
+composer so it reads apart from the footer/status row; compact mode
+(under 35 rows) drops the gap.*

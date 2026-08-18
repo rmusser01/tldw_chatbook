@@ -3953,7 +3953,11 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: $ds-console-composer-height;
     max-height: 4;
     padding: 0 1;
-    margin: 0;
+    /* TASK-17657: DELIBERATE one-row gap below the composer (owner call) —
+       the bar groups with the conversation above it, not the status/footer
+       cluster below. Not the TASK-17650 phantom: this row is pinned by the
+       single-separator contract test. Compact mode drops it. */
+    margin: 0 0 1 0;
     layout: horizontal;
     align: left middle;
     border: none;
@@ -4277,6 +4281,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 1;
     min-height: 1;
     color: $ds-column-line;
+    /* TASK-17658: the separator is a hatch fill, not a fixed-length dash
+       string — it reaches edge to edge at any terminal width. */
+    hatch: horizontal $ds-column-line;
 }
 
 .console-transcript-message {
@@ -5055,6 +5062,12 @@ ConsoleCitationSourcesModal {
 #console-shell.-console-compact #console-native-transcript,
 #console-shell.-console-compact #console-native-transcript:focus {
     border: none;
+}
+
+/* TASK-17657: the composer's breathing-room row is a luxury compact mode
+   cannot afford — same grammar as the tab strip's dropped margin. */
+#console-shell.-console-compact #console-native-composer {
+    margin: 0;
 }
 
 #console-setup-modal {
