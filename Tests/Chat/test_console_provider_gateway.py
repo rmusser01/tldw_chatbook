@@ -2112,6 +2112,11 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "completed_usage_payloads",
         "_active_usage_payloads",
         "_usage_lock",
+        "run_tag",
+        "exchange_capture_enabled",
+        "completed_exchanges",
+        "_active_exchanges",
+        "_exchange_lock",
     ]
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
@@ -2120,6 +2125,11 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "completed_usage_payloads",
         "_active_usage_payloads",
         "_usage_lock",
+        "run_tag",
+        "exchange_capture_enabled",
+        "completed_exchanges",
+        "_active_exchanges",
+        "_exchange_lock",
     )
     assert not hasattr(signals, "__dict__")
     assert signals.synthetic_fallback_emitted is False
@@ -2131,11 +2141,30 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
 
     # Content-free repr: usage payloads are provider-reported token counts,
     # not transcript text, but they are still per-request data that has no
-    # business landing in a log line, so every field stays repr=False.
+    # business landing in a log line, so every field stays repr=False. The
+    # exchange-capture fields follow the same rule -- `run_tag` (an opaque
+    # uuid) and `exchange_capture_enabled` (a bool) are harmless and stay
+    # visible, but `completed_exchanges`/`_active_exchanges` hold raw
+    # request/response text and stay repr=False.
     rendered = repr(signals)
-    assert rendered == "ConsoleProviderStreamSignals()"
+    assert rendered == (
+        f"ConsoleProviderStreamSignals(run_tag={signals.run_tag!r}, "
+        "exchange_capture_enabled=True)"
+    )
     signals.record_usage_payload({"prompt_tokens": 4242})
-    assert repr(signals) == "ConsoleProviderStreamSignals()"
+    call = signals.new_usage_call()
+    call.begin_exchange(
+        provider="anthropic", model="m", endpoint=None,
+        request={"messages_payload": [{"role": "user", "content": "SENSITIVE_EXCHANGE_TEXT"}]},
+        omitted_keys=("api_key",),
+    )
+    call.record_exchange_content("SENSITIVE_EXCHANGE_TEXT")
+    call.close_exchange()
+    assert repr(signals) == (
+        f"ConsoleProviderStreamSignals(run_tag={signals.run_tag!r}, "
+        "exchange_capture_enabled=True)"
+    )
+    assert "SENSITIVE_EXCHANGE_TEXT" not in repr(signals)
     for governed_text in (
         NO_PROVIDER_CONTENT_COPY,
         UNSUPPORTED_PROVIDER_RESPONSE_COPY,
@@ -6074,3 +6103,79 @@ def test_aclose_still_sweeps_a_finished_turns_idle_loop():
         idle_loop.close()
 
     assert scheduled == [(idle_client, idle_loop)]
+
+
+class TestSignalsExchangeCapture:
+    @staticmethod
+    def _begin(call, label="hi"):
+        call.begin_exchange(
+            provider="anthropic", model="m", endpoint=None,
+            request={"messages_payload": [{"role": "user", "content": label}]},
+            omitted_keys=("api_key",),
+        )
+
+    def test_per_call_boundaries_never_merge(self):
+        aggregate = ConsoleProviderStreamSignals()
+        call0 = aggregate.new_usage_call()
+        self._begin(call0, "call0")
+        call0.record_exchange_content("hel")
+        call0.record_exchange_content("lo")
+        call0.close_exchange()
+        call1 = aggregate.new_usage_call()
+        self._begin(call1, "call1")
+        call1.record_exchange_content("again")
+        call1.close_exchange()
+        captures = aggregate.exchange_captures()
+        assert [c.seq for c in captures] == [0, 1]
+        assert captures[0].response["content"] == "hello"
+        assert captures[1].response["content"] == "again"
+        assert captures[0].run_tag == captures[1].run_tag == aggregate.run_tag
+
+    def test_in_flight_tail_reports_stopped(self):
+        aggregate = ConsoleProviderStreamSignals()
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        call.record_exchange_content("part")
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].status == "stopped"
+        assert captures[0].response["content"] == "part"
+
+    def test_close_moves_never_copies(self):
+        aggregate = ConsoleProviderStreamSignals()
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        call.close_exchange()
+        call.close_exchange()  # second close is a no-op
+        assert len(aggregate.exchange_captures()) == 1
+
+    def test_tool_calls_recorded(self):
+        aggregate = ConsoleProviderStreamSignals()
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        call.record_exchange_tool_calls([{"id": "t1", "function": {"name": "get_time"}}])
+        call.close_exchange()
+        assert aggregate.exchange_captures()[0].response["tool_calls"][0]["id"] == "t1"
+
+    def test_close_attaches_this_calls_normalized_usage(self):
+        aggregate = ConsoleProviderStreamSignals()
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        call.record_usage_payload({"prompt_tokens": 10, "completion_tokens": 5})
+        call.close_exchange()
+        cap = aggregate.exchange_captures()[0]
+        assert cap.usage_json is not None
+        from tldw_chatbook.Chat.provider_usage import ProviderUsage
+        usage = ProviderUsage.from_json(cap.usage_json)
+        assert usage is not None and usage.total_tokens == 15
+
+    def test_disabled_records_nothing(self):
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=False)
+        call = aggregate.new_usage_call()
+        self._begin(call)
+        call.record_exchange_content("x")
+        call.close_exchange()
+        assert aggregate.exchange_captures() == []
+
+    def test_run_tags_differ_across_signals_objects(self):
+        assert ConsoleProviderStreamSignals().run_tag != ConsoleProviderStreamSignals().run_tag

@@ -7,11 +7,13 @@ import contextlib
 import json
 import math
 import threading
+import uuid
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import GeneratorType, MappingProxyType
 from typing import Any, AsyncIterator, Callable, Literal, cast
 from urllib.parse import urlparse, urlunparse
@@ -28,6 +30,11 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_exchange_capture import (
+    ExchangeCapture,
+    build_request_capture,
+    stub_binary_strings,
+)
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
@@ -232,6 +239,47 @@ class ConsoleProviderStreamSignals:
             self._active_usage_payloads.pop(token, None)
             self.completed_usage_payloads.append(dict(payload))
 
+    run_tag: str = field(default_factory=lambda: uuid.uuid4().hex)
+    exchange_capture_enabled: bool = True
+    completed_exchanges: list["ExchangeCapture"] = field(default_factory=list, repr=False)
+    _active_exchanges: dict[object, dict[str, Any]] = field(
+        default_factory=dict, init=False, repr=False)
+    _exchange_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False)
+
+    def _begin_scoped_exchange(self, token: object, flight: dict[str, Any]) -> None:
+        with self._exchange_lock:
+            self._active_exchanges[token] = flight
+
+    def _mutate_scoped_exchange(self, token: object, key: str, items: list) -> None:
+        with self._exchange_lock:
+            flight = self._active_exchanges.get(token)
+            if flight is not None:
+                flight[key].extend(items)
+
+    def _complete_scoped_exchange(
+        self, token: object, status: str,
+        usage_payload: dict[str, Any] | None,
+    ) -> None:
+        with self._exchange_lock:
+            flight = self._active_exchanges.pop(token, None)
+            if flight is None:
+                return
+            self.completed_exchanges.append(_flight_capture(
+                self.run_tag, len(self.completed_exchanges), flight,
+                status, usage_payload))
+
+    def exchange_captures(self) -> list["ExchangeCapture"]:
+        """Completed calls + in-flight tails (as "stopped") — tails cover
+        aborted streams whose generator never reached its own close-out,
+        mirroring usage_payloads()."""
+        with self._exchange_lock:
+            captures = list(self.completed_exchanges)
+            for flight in self._active_exchanges.values():
+                captures.append(_flight_capture(
+                    self.run_tag, len(captures), flight, "stopped", None))
+            return captures
+
 
 @dataclass(slots=True)
 class ConsoleProviderCallSignals:
@@ -293,6 +341,33 @@ class ConsoleProviderCallSignals:
                 dict(self._usage_payload) if self._usage_payload is not None else None
             )
 
+    def begin_exchange(self, *, provider: str, model: str, endpoint: str | None,
+                       request: dict, omitted_keys: tuple[str, ...]) -> None:
+        """Open this call's capture. ONE stream_chat invocation == one
+        exchange; close_exchange in stream_chat's finally is the close site."""
+        if not self._aggregate.exchange_capture_enabled:
+            return
+        self._aggregate._begin_scoped_exchange(self._token, {
+            "provider": provider, "model": model, "endpoint": endpoint,
+            "request": request, "omitted_keys": omitted_keys,
+            "content": [], "tool_calls": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def record_exchange_content(self, text: str) -> None:
+        if text:
+            self._aggregate._mutate_scoped_exchange(self._token, "content", [text])
+
+    def record_exchange_tool_calls(self, calls: "Sequence[Mapping[str, Any]]") -> None:
+        self._aggregate._mutate_scoped_exchange(
+            self._token, "tool_calls", [dict(c) for c in calls])
+
+    def close_exchange(self, status: str = "complete") -> None:
+        """Publish this call's capture exactly once (token pop = move
+        semantics; a second close finds nothing)."""
+        self._aggregate._complete_scoped_exchange(
+            self._token, status, self.usage_snapshot())
+
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
 
@@ -322,6 +397,32 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     status_code = getattr(exc, "status_code", None)
     status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
     return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
+
+
+def _flight_capture(run_tag: str, seq: int, flight: dict[str, Any],
+                    status: str, usage_payload: dict[str, Any] | None) -> ExchangeCapture:
+    """Build the immutable capture for one call's in-flight record.
+
+    Normalizes THIS call's usage payload on its own (never a cross-call
+    merge — the same disjoint-buckets rule the aggregate documents).
+    """
+    usage_json = None
+    if usage_payload:
+        try:
+            usage = ProviderUsage.from_provider_payload(
+                usage_payload, provider=flight["provider"], model=flight["model"])
+            usage_json = usage.to_json() if usage is not None else None
+        except Exception:
+            usage_json = None
+    return ExchangeCapture(
+        run_tag=run_tag, seq=seq, created_at=flight["created_at"],
+        provider=flight["provider"], model=flight["model"],
+        endpoint=flight["endpoint"], request=flight["request"],
+        response={"content": "".join(flight["content"]),
+                  "tool_calls": list(flight["tool_calls"])},
+        status=status, usage_json=usage_json,
+        omitted_keys=flight["omitted_keys"],
+    )
 
 
 def _provider_error_copy_with_model_recovery(
