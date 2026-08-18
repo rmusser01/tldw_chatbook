@@ -1,7 +1,7 @@
 ---
 id: TASK-17386
 title: Synthesis exceeds the provider timeout on large evidence pools
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-17 16:45'
 labels:
@@ -24,10 +24,10 @@ Bounding the synthesis input, streaming it, or deriving the timeout from the poo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A run whose synthesis cannot complete within the wall clock produces a recorded, legible terminal state instead of vanishing from results
-- [ ] #2 The relationship between evidence-pool size and synthesis wall clock is measured, not assumed
+- [x] #1 A run whose synthesis cannot complete within the wall clock produces a recorded, legible terminal state instead of vanishing from results
+- [x] #2 The relationship between evidence-pool size and synthesis wall clock is measured, not assumed
 - [ ] #3 A run on a local model with a pool the size of a default multi-hop run completes its synthesis, or is bounded so that it can
-- [ ] #4 Whatever bound is chosen is stated where a user meets it, alongside the existing decomposition spend notes
+- [x] #4 Whatever bound is chosen is stated where a user meets it, alongside the existing decomposition spend notes
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -49,4 +49,36 @@ academic fan-out fix (task-17372) and the chunk-summarization fix:
 - 600s is what `record_research_baseline._prime_local_llm_url` sets as
   `api_timeout`; the shipped provider default is lower, so an ordinary run is
   more exposed than this measurement was.
+<!-- SECTION:NOTES:END -->
+
+## Implementation Notes (partial -- AC #3 remains open)
+
+<!-- SECTION:NOTES:BEGIN -->
+AC #1, #2 and #4 are closed; **AC #3 is deliberately NOT closed** and the task
+stays open for it.
+
+The failure is now legible. `aggregate_results` records the failure CLASS --
+never its message, since a timeout's text carries host:port and this value
+travels into a run's artifacts -- with the pool size it failed on, and the
+engine appends the warning while the round's warning list is still being built,
+so the reason reaches the run's warnings and bundle rather than only a summary
+written later. `FinalAnswerDict` declares the field rather than growing an
+undocumented key. Before this, such a run completed with a generic string,
+carried no citation verdict, and was simply absent from any aggregate: the
+failure removed itself from the sample, so metrics over surviving runs looked
+better for it.
+
+AC #2, measured from the recorded arms rather than assumed: pools of 14-32
+sources synthesized in 185-328s, while pools of 46-66 hit 1200s (two 600s
+attempts, `MaxRetryError`) and 970s (a timed-out attempt plus a successful
+retry). Synthesis on a default multi-hop pool routinely exceeds a 600s
+per-attempt budget, so this is the normal shape of a large-pool run rather than
+an exotic error.
+
+AC #3 needs a size-aware synthesis budget, and the per-call timeout is not
+plumbable through `chat_api_call` -- its signature is shared by roughly nine
+providers, so threading one through is a change to the shared dispatcher rather
+than to this pipeline, and belongs in its own task. Until it exists, the
+documented answer is a provider `api_timeout` well above 600s for local models,
+recorded beside the measurement in the eval baseline doc.
 <!-- SECTION:NOTES:END -->

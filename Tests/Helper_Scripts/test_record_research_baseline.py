@@ -169,3 +169,54 @@ def test_emitted_aggregate_records_the_llm_timeout():
     out = recorder._decorate_aggregate({"gate_pass_rate": 0.5}, args=args)
 
     assert out["decomposition"]["llm_timeout_s"] == 240.0
+
+
+# --- unscored runs must be counted, not dropped (Qodo, PR 1782) ---------------
+# Recording synthesis_failed on the RUN was only half the fix: the recorder
+# still returned None for any payload without citation_verification, so a run
+# that produced no report never reached the aggregate at all and the means were
+# computed over survivors -- the exact distortion task-17386 exists to stop.
+
+
+def test_a_run_without_a_report_is_counted_not_dropped():
+    """The payload has no metrics to average, but the aggregate must say it
+    happened, and say which stage failed."""
+    payload = {
+        "synthesis_failed": {
+            "stage": "synthesis",
+            "error_type": "ReadTimeoutError",
+            "evidence_count": 46,
+            "chunk_count": 6,
+        }
+    }
+
+    class _Service:
+        def launch_run(self, **kwargs):
+            return {"id": "run-1"}
+
+        def get_artifact(self, run_id, name):
+            return {"content": payload}
+
+    class _Engine:
+        async def execute_run(self, run_id):
+            return {"id": run_id, "status": "completed"}
+
+    out = asyncio.run(recorder._run_question(_Engine(), _Service(), "Q"))
+
+    assert out is not None, "a failed-synthesis run must not be dropped"
+    assert out["__unscored__"]["stage"] == "synthesis"
+    assert out["__unscored__"]["error_type"] == "ReadTimeoutError"
+
+
+def test_aggregate_states_how_many_runs_produced_no_report():
+    aggregate = recorder._decorate_aggregate(
+        {"sample_count": 2.0, "gate_pass_rate": 0.5},
+        args=SimpleNamespace(
+            max_queries=3, max_iterations=2, deadline_s=1200, llm_timeout_s=None
+        ),
+        unscored_runs=[{"stage": "synthesis", "error_type": "ReadTimeoutError"}],
+    )
+
+    assert aggregate["sample_count"] == 2.0
+    assert aggregate["unscored_runs"]["count"] == 1
+    assert aggregate["unscored_runs"]["reasons"][0]["stage"] == "synthesis"
