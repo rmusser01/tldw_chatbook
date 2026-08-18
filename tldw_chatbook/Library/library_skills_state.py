@@ -58,6 +58,11 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         # The run_skill_script runtime tool (same drift-guard rationale as
         # skill_file/install_skill above).
         "run_skill_script",
+        # The fleet's send_to_agent runtime tool (supervisor-fleet PR 3b) --
+        # caught by the four-source guard TASK-13214 rebuilt, which is what
+        # it was rebuilt FOR: the previous shape short-circuited on the first
+        # failing subset, so each new name hid behind the last one.
+        "send_to_agent",
         # The /research Console command (task-16481) -- the drift guard's
         # third sighting (TASK-13214): it was MASKED behind the video-command
         # gap until the guard learned to report all sources at once.
