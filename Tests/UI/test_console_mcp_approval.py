@@ -1193,8 +1193,11 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     `_stop_requested` flag to exercise that; F5 removed `_stop_requested`
     from the bridge's poll (a single session's Stop must not cross-cancel
     an unrelated session's approval round any more), so the equivalent
-    "global" signal is now the never-reset `_shutdown_requested` (set only
-    by `shutdown()`)."""
+    "global" signal is the production app-exit path `begin_shutdown()`, which
+    sets the visit Event AND cancels headless-bound rounds -- a raw
+    `_shutdown_requested.set()` poke stopped reaching never-visited
+    controllers' rounds when the Qodo-S2 fix (PR #1799) made those bind the
+    headless cancel signal. Drive the seam, not the flag."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
     controller.app = _FakeApp()
@@ -1203,7 +1206,7 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._shutdown_requested.set()
+        controller.begin_shutdown()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -1331,7 +1334,7 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
 
     def _cancel_soon() -> None:
         time.sleep(0.05)
-        controller._shutdown_requested.set()
+        controller.begin_shutdown()
 
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
@@ -3116,7 +3119,7 @@ def test_shutdown_still_denies_a_survivors_round():
     )
     time.sleep(0.15)
 
-    controller._shutdown_requested.set()
+    controller.begin_shutdown()
     worker.join(timeout=3.0)
 
     assert not worker.is_alive(), "teardown left a survivor's round parked"

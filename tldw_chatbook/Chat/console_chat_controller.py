@@ -6079,9 +6079,19 @@ class ConsoleChatController:
 
         self._disposed = True
         self._visit_open = False
-        self.prompt_queue_coordinator.shutdown()
-        self._shutdown_requested.set()
-        self._cancel_headless_rounds()
+        # The queue tombstone keeps its contract of running BEFORE any
+        # teardown cancellation -- but it must never be able to SKIP that
+        # cancellation. Its shutdown asserts queue-owner-thread affinity
+        # (QueueThreadViolation from any other thread), and an exit path
+        # whose safety signals sit after a raise-capable call would leave
+        # every armed approval round waiting for a deadline instead of
+        # denying. Found via a test that drove begin_shutdown off-thread:
+        # the round timed out at 30s because the signals were never set.
+        try:
+            self.prompt_queue_coordinator.shutdown()
+        finally:
+            self._shutdown_requested.set()
+            self._cancel_headless_rounds()
 
     def _cancel_headless_rounds(self) -> None:
         """Deny every round armed while no Console visit was open.
