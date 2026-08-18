@@ -19,7 +19,14 @@ priority: high
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Console cannot complete a turn against several current Anthropic models because the request builder decides two model-gated questions with ad-hoc name checks that only know about Claude Sonnet 5.
 
-Provenance: raised during the PR 3b steering live pass and then established by CODE READING, not by an observed 400. The agent that filed it was killed by an unrelated harness model limit mid-pass, so its "failed live" framing is unconfirmed and must not be cited as evidence. The analysis below is independently checkable against the source; a live reproduction is still owed and is the first acceptance criterion.
+Provenance: raised during the PR 3b steering live pass and then established by CODE READING, not by an observed 400. The agent that filed it was killed by an unrelated harness model limit mid-pass, so its "failed live" framing is unconfirmed and must not be cited as evidence. The analysis below is independently checkable against the source. **A live reproduction WAS in fact captured** before the filing agent was killed, and its pane is preserved (`steer-t6-live/panes/A1-sent.txt`): a scratch-profile Console configured `provider="anthropic", model="claude-opus-5"` with the shipped default temperature failed its first send with
+
+    Agent run failed: provider returned HTTP 400 (Provider error from anthropic: bad
+    request. Status: 400. Selected model: claude-opus-5. The provider rejected this
+    request. Confirm the model is still available, or choose another model from the
+    model picker.)
+
+and the same session succeeded immediately after switching only the model to `claude-sonnet-5` (the one family both gates know). The 400 body was not captured, so WHICH of the two rejected parameters the provider named is still unestablished — that is the part a fresh reproduction still owes.
 
 Two independent gates in LLM_Calls/LLM_API_Calls.py both omit the Claude 5 Opus/Fable tier:
 

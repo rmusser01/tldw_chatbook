@@ -1248,3 +1248,25 @@ quit-denies path, and nothing was written to disk while it waited.*
 (task-17662: the status chips sit above the composer since the
 bottom-stack programme; a Settings ▸ Console Behavior toggle can move
 them below).*
+
+*Steering, continuation and the new Stop contract added against dev @
+cf5db6f50 — 2026-08-18 (fleet PR 3b close-out). **Driven live in tmux**
+on an isolated scratch profile against a real Anthropic model
+(`claude-sonnet-5`): the drill-in steering bar accepted a typed message
+and the child's own run record carried it as
+`[Steering from user] …` and obeyed it; the supervisor's `send_to_agent`
+returned the "queued; … delivered before its next model turn … was not
+cancelled or restarted" copy verbatim and the child's record carried
+`[Steering from supervisor] …`; `send_to_agent` to a FINISHED child
+answered "resumed … as a NEW run: started …, seeded with its retained
+transcript (35 messages)" and the resumed child's drill-in header read
+`Sub-agent · running · resumed from <old id>`; a Stop mid-`wait_agents`
+printed "(The run was cancelled; sub-agents continue in the
+background.)" and its survivor finished `done` (never `cancelled`) and
+auto-woke the supervisor; a message steered while an approval card was
+pending sat visible as `steering queued (1)` beside `Approvals: 1
+pending` and reached the child only after the round was answered;
+**Cancel all agents** killed two live children in one press and left the
+rail on the next sync; and closing the session cancelled its live child
+immediately. The rest of this page's content is unchanged from the prior
+stamps.*
