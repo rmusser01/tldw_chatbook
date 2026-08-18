@@ -33,9 +33,27 @@ def _now_iso() -> str:
 
 
 class AgentRunsDB(BaseDB):
-    """Run records for the agent runtime (vertical-slice spec data model)."""
+    """Run records for the agent runtime (vertical-slice spec data model).
 
-    _CURRENT_SCHEMA_VERSION = 3
+    SCHEMA VERSIONING (task-15669 resolution, folded into the v11
+    migration per the fleet PR3b coordinator ruling #3): this DB has no
+    migration framework -- ``_initialize_schema`` runs CREATE TABLE IF NOT
+    EXISTS plus guarded idempotent ALTERs, and appends one
+    ``INSERT OR IGNORE INTO schema_version`` row per version. For years
+    ``_CURRENT_SCHEMA_VERSION`` sat at 3 while the version table grew
+    (4..10), because each migration followed the append pattern without
+    touching the constant. From v11 on the CONTRACT is: the constant
+    equals the HIGHEST version row a freshly created database records,
+    and every new migration bumps BOTH (the constant here, and a new
+    ``INSERT OR IGNORE`` row at the end of ``_initialize_schema``) --
+    ``Tests/DB/test_agent_runs_db.py::test_schema_version_constant_
+    agrees_with_the_version_table`` fails if they ever diverge again.
+    An existing older file still opens unchanged: the guarded ALTERs are
+    the effective migration, and the version table is a write-only audit
+    trail (nothing branches on it at runtime).
+    """
+
+    _CURRENT_SCHEMA_VERSION = 11
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -199,7 +217,15 @@ class AgentRunsDB(BaseDB):
                     assistant_message_id TEXT,
                     agent_definition TEXT,
                     definition_fingerprint TEXT,
-                    wake_delivered_at TEXT
+                    wake_delivered_at TEXT,
+                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is
+                    -- a CONTINUATION of a finished sub-agent -- a NEW run
+                    -- seeded from the old one's retained in-memory
+                    -- transcript via send_to_agent -- this records the
+                    -- run it resumed from. NULL for every ordinary run.
+                    -- Lineage only: parent_run_id still points at the
+                    -- RESUMING turn's primary, never at the old run.
+                    resumed_from_run_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -355,6 +381,15 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT"
                 )
+            # v10->v11 (fleet PR3b Task 4): continuation lineage -- the
+            # run a resumed sub-agent was seeded from. Same idempotent-
+            # ALTER mechanism as every column above; NULL (no DEFAULT) is
+            # exactly right for every pre-existing row (an ordinary,
+            # non-resumed run).
+            if "resumed_from_run_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -433,6 +468,12 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (10)"
+            )
+            # v11 is ALSO where _CURRENT_SCHEMA_VERSION was re-synced to
+            # the version table (task-15669; see the class docstring for
+            # the from-now-on contract).
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (11)"
             )
 
     def record_change_snapshot(
@@ -866,6 +907,7 @@ class AgentRunsDB(BaseDB):
         assistant_message_id: str | None = None,
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
+        resumed_from_run_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -887,6 +929,9 @@ class AgentRunsDB(BaseDB):
             definition_fingerprint: The fingerprint hash of the agent
                 definition used for this run, for audit trail purposes;
                 ``None`` if not applicable.
+            resumed_from_run_id: For a CONTINUATION of a finished
+                sub-agent (fleet PR3b Task 4): the run id this run was
+                seeded from. ``None`` for every ordinary run.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -898,8 +943,9 @@ class AgentRunsDB(BaseDB):
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
-                    assistant_message_id, agent_definition, definition_fingerprint)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?)""",
+                    assistant_message_id, agent_definition, definition_fingerprint,
+                    resumed_from_run_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -912,6 +958,7 @@ class AgentRunsDB(BaseDB):
                     assistant_message_id,
                     agent_definition,
                     definition_fingerprint,
+                    resumed_from_run_id,
                 ),
             )
         return run_id
