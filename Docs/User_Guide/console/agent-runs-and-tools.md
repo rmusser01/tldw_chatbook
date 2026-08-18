@@ -1001,6 +1001,19 @@ helpers can spend about three times the number you set. Their wall-clock is
 the exception — that comes from `[agents] child_max_wall_seconds`, so
 raising the run's wall limit does not extend theirs.
 
+**The token budget counts what a turn cost, not what it sent.** When your
+provider serves part of the prompt from its cache — which Anthropic does by
+default, and a long agent run is almost entirely cache reads by
+construction — those tokens are billed at roughly a tenth of the uncached
+rate, and the budget now counts them at roughly a tenth too. Cache *writes*
+cost more than uncached input and are counted at their own higher rate. A
+model with no published rates gets no discount. Output tokens are counted
+one-for-one regardless, so the budget's strictness on output is unchanged.
+
+In practice this means a cached run goes considerably further on the same
+number than the raw token count would suggest — which is the point, since
+the raw count was never what you were being charged.
+
 **Raise the per-tool-call limit if you are running long tools.** A 24-hour
 run budget will not save a crawl, ingest, or build that takes longer than
 the per-tool-call ceiling; that is the limit that kills it. Lowering this
