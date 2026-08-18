@@ -49,6 +49,70 @@ def test_add_change_note_returns_id_and_round_trips_all_fields(db):
     assert row["note"] == "use the cached value here"
     assert row["created_at"]
     assert row["delivered_at"] is None
+    # TASK-18060 Task 1 (audit v11): an old-signature call (no anchor_kind/
+    # diff_line_* kwargs) is byte-compatible with every V1.5 caller -- it
+    # must still round-trip, now reading the new columns at their
+    # backward-compatible defaults.
+    assert row["anchor_kind"] == "hunk"
+    assert row["diff_line_index"] is None
+    assert row["diff_line_text"] is None
+
+
+def test_add_change_note_diff_line_round_trips_index_and_text(db):
+    """TASK-18060 Task 1 (spec §4): a `diff_line` note anchors to a
+    specific line over the file's full diff text (0-based `diff_line_index`)
+    and captures the anchored line verbatim in `diff_line_text`, alongside
+    the hunk the line falls in (hunk fields ALSO populated per spec §4's
+    deliberate convergence -- the card's existing hunk-note filter renders
+    line comments under their hunk with no card changes)."""
+    run_id = _make_run(db)
+    note_id = db.add_change_note(
+        run_id=run_id,
+        root="/repo",
+        path="a.py",
+        hunk_index=0,
+        hunk_header="@@ -1,4 +1,6 @@",
+        hunk_excerpt="-old\n+new",
+        note="why this line?",
+        anchor_kind="diff_line",
+        diff_line_index=5,
+        diff_line_text="+new",
+    )
+    row = db.notes_for_run(run_id)[0]
+    assert row["id"] == note_id
+    assert row["anchor_kind"] == "diff_line"
+    assert row["diff_line_index"] == 5
+    assert row["diff_line_text"] == "+new"
+    # The hunk fields still carry the line's own hunk (spec §4 convergence).
+    assert row["hunk_index"] == 0
+    assert row["hunk_header"] == "@@ -1,4 +1,6 @@"
+    assert row["hunk_excerpt"] == "-old\n+new"
+
+
+def test_add_change_note_file_note_round_trips_sentinels(db):
+    """TASK-18060 Task 1 (spec §4): a `file` note (whole-file comment) uses
+    the `hunk_index=-1, hunk_header=''` sentinels -- never a real hunk --
+    so the card's hunk-note filter (hunk_index + hunk_header + snapshot_id)
+    never accidentally renders a file note under a hunk."""
+    run_id = _make_run(db)
+    note_id = db.add_change_note(
+        run_id=run_id,
+        root="/repo",
+        path="a.py",
+        hunk_index=-1,
+        hunk_header="",
+        hunk_excerpt="",
+        note="this whole file needs a rewrite",
+        anchor_kind="file",
+    )
+    row = db.notes_for_run(run_id)[0]
+    assert row["id"] == note_id
+    assert row["anchor_kind"] == "file"
+    assert row["hunk_index"] == -1
+    assert row["hunk_header"] == ""
+    assert row["hunk_excerpt"] == ""
+    assert row["diff_line_index"] is None
+    assert row["diff_line_text"] is None
 
 
 def test_notes_for_run_oldest_first(db):
@@ -291,6 +355,49 @@ def test_mark_notes_delivered_empty_list_is_noop(db):
     stamped = db.mark_notes_delivered([])
     assert stamped == []
     assert db.notes_for_run(run_id)[0]["delivered_at"] is None
+
+
+def test_change_note_counts_for_conversation_groups_by_root_path_across_runs(db):
+    """TASK-18060 Task 1 (spec §1/§4): `change_note_counts_for_conversation`
+    mirrors `pending_notes_for_conversation`'s JOIN-through-agent_runs shape
+    but counts ALL notes (pending + delivered), grouped by (root, path),
+    across however many runs the conversation has had -- one parameterized
+    query, keyed `{(root, path): count}`. Another conversation's notes must
+    not leak into the count."""
+    run_a = _make_run(db, conversation_id="conv1")
+    run_b = _make_run(db, conversation_id="conv1")
+    other_conv_run = _make_run(db, conversation_id="conv2")
+
+    note_1 = db.add_change_note(
+        run_id=run_a, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="one",
+    )
+    db.add_change_note(
+        run_id=run_a, root="/r", path="a.py", hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
+    )
+    db.add_change_note(
+        run_id=run_b, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -3,1 +3,1 @@", hunk_excerpt="z", note="three",
+    )
+    db.add_change_note(
+        run_id=run_b, root="/r", path="b.py", hunk_index=0,
+        hunk_header="@@ -4,1 +4,1 @@", hunk_excerpt="w", note="four",
+    )
+    db.add_change_note(
+        run_id=other_conv_run, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -5,1 +5,1 @@", hunk_excerpt="v", note="other-conv",
+    )
+    # Delivered notes still count -- "ALL the conversation's notes".
+    db.mark_notes_delivered([note_1])
+
+    counts = db.change_note_counts_for_conversation("conv1")
+    assert counts == {("/r", "a.py"): 3, ("/r", "b.py"): 1}
+
+
+def test_change_note_counts_for_conversation_empty_when_no_notes(db):
+    _make_run(db, conversation_id="conv1")
+    assert db.change_note_counts_for_conversation("conv1") == {}
 
 
 # --- Migration: change_notes DDL + audit version 8 --------------------
@@ -566,6 +673,138 @@ def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path
         reopened.close()
 
 
+def test_migration_adds_anchor_kind_and_diff_line_columns_and_appends_audit_version_11(
+    tmp_path,
+):
+    """TASK-18060 Task 1 (spec §4): same idempotent-ALTER precedent as the
+    v9/v10 migration tests above, now for the three anchor-extension
+    columns (`anchor_kind`, `diff_line_index`, `diff_line_text`) -- a file
+    whose `change_notes` table predates them must pick them up without
+    losing existing rows, with `anchor_kind` backfilling to `'hunk'` (every
+    pre-existing row's true anchor kind) and the reopened instance's API
+    must keep working against it.
+    """
+    db_path = tmp_path / "migrate_v11.db"
+
+    first = AgentRunsDB(db_path, client_id="t")
+    run_id = first.create_run(conversation_id="c", agent_kind="primary")
+    pre_migration_note_id = first.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+    )
+    first.close()
+
+    # Simulate a pre-v11 file: recreate change_notes with the OLD
+    # (12-column, no anchor_kind/diff_line_index/diff_line_text) shape and
+    # remove the version-11 audit row. Same DROP-and-recreate approach as
+    # the v9/v10 tests above (`ALTER TABLE ... DROP COLUMN` hits the same
+    # SQLite schema-reconstruction quirk against this table's commented
+    # DDL).
+    raw = sqlite3.connect(str(db_path))
+    try:
+        old_rows = raw.execute(
+            "SELECT id, run_id, root, path, hunk_index, hunk_header, "
+            "hunk_excerpt, note, created_at, delivered_at, "
+            "delivered_by_run_id, snapshot_id FROM change_notes"
+        ).fetchall()
+        raw.execute("DROP TABLE change_notes")
+        raw.execute(
+            """
+            CREATE TABLE change_notes (
+                id INTEGER PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                root TEXT NOT NULL,
+                path TEXT NOT NULL,
+                hunk_index INTEGER NOT NULL,
+                hunk_header TEXT NOT NULL,
+                hunk_excerpt TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                delivered_at TEXT,
+                delivered_by_run_id TEXT,
+                snapshot_id INTEGER
+            )
+            """
+        )
+        raw.executemany(
+            "INSERT INTO change_notes "
+            "(id, run_id, root, path, hunk_index, hunk_header, hunk_excerpt, "
+            "note, created_at, delivered_at, delivered_by_run_id, "
+            "snapshot_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            old_rows,
+        )
+        raw.execute("DELETE FROM schema_version WHERE version = 11")
+        raw.commit()
+    finally:
+        raw.close()
+
+    raw = sqlite3.connect(str(db_path))
+    try:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
+        assert "anchor_kind" not in columns
+        assert "diff_line_index" not in columns
+        assert "diff_line_text" not in columns
+        versions = {row[0] for row in raw.execute("SELECT version FROM schema_version")}
+        assert 11 not in versions
+    finally:
+        raw.close()
+
+    reopened = AgentRunsDB(db_path, client_id="t")
+    try:
+        raw = sqlite3.connect(str(db_path))
+        try:
+            columns = {
+                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
+            }
+            assert "anchor_kind" in columns
+            assert "diff_line_index" in columns
+            assert "diff_line_text" in columns
+            versions = {
+                row[0] for row in raw.execute("SELECT version FROM schema_version")
+            }
+            assert 11 in versions
+        finally:
+            raw.close()
+
+        # The pre-existing row survived the ALTER, backfilling anchor_kind
+        # to 'hunk' (its true, honest anchor kind -- every note ever saved
+        # before this migration WAS a hunk note) and reading NULL for the
+        # two new nullable columns, and the API still works against it.
+        pre_row = reopened.notes_for_run(run_id)[0]
+        assert pre_row["id"] == pre_migration_note_id
+        assert pre_row["anchor_kind"] == "hunk"
+        assert pre_row["diff_line_index"] is None
+        assert pre_row["diff_line_text"] is None
+
+        post_note_id = reopened.add_change_note(
+            run_id=run_id, root="/r", path="b.py", hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
+            anchor_kind="diff_line", diff_line_index=3, diff_line_text="+z",
+        )
+        post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
+        assert post_row["anchor_kind"] == "diff_line"
+        assert post_row["diff_line_index"] == 3
+        assert post_row["diff_line_text"] == "+z"
+
+        # Reopening a THIRD time (double-open idempotent) must not
+        # duplicate the schema_version audit row or fail the ALTERs again.
+        third = AgentRunsDB(db_path, client_id="t")
+        try:
+            raw = sqlite3.connect(str(db_path))
+            try:
+                version_11_rows = raw.execute(
+                    "SELECT COUNT(*) FROM schema_version WHERE version = 11"
+                ).fetchone()[0]
+                assert version_11_rows == 1
+            finally:
+                raw.close()
+            assert third.notes_for_run(run_id)[0]["anchor_kind"] == "hunk"
+        finally:
+            third.close()
+    finally:
+        reopened.close()
+
+
 def test_add_change_note_snapshot_id_defaults_to_none(db):
     run_id = _make_run(db)
     note_id = db.add_change_note(
@@ -600,6 +839,10 @@ def test_migration_reopening_twice_is_idempotent(tmp_path):
                 "SELECT COUNT(*) FROM schema_version WHERE version = 8"
             ).fetchone()[0]
             assert version_8_rows == 1  # INSERT OR IGNORE -- never duplicated
+            version_11_rows = raw.execute(
+                "SELECT COUNT(*) FROM schema_version WHERE version = 11"
+            ).fetchone()[0]
+            assert version_11_rows == 1  # TASK-18060 Task 1: also never duplicated
 
             tables = [
                 row[0]

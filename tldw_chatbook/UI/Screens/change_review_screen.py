@@ -334,28 +334,44 @@ class AgentRunsChangeReviewProvider:
         hunk_excerpt: str,
         note: str,
         snapshot_id: int | None = None,
+        anchor_kind: str = "hunk",
+        diff_line_index: int | None = None,
+        diff_line_text: str | None = None,
     ) -> int:
-        """Record a user-authored note anchored to one hunk of a turn's diff.
+        """Record a user-authored note anchored to a turn's diff.
 
         Thin delegate onto :meth:`AgentRunsDB.add_change_note` (TASK-16800
-        spec §1/§3) -- the turn file card writes notes through the
-        provider exactly like every other change-review read/write, never
-        touching the database directly.
+        spec §1/§3, anchor kinds extended by TASK-18060 Task 1 / review-rail
+        spec §4) -- the turn file card and the Review screen's comment
+        affordances write notes through the provider exactly like every
+        other change-review read/write, never touching the database
+        directly.
 
         Args:
             run_id: The agent run whose diff this note is anchored to.
             root: Canonical root path of the changed file.
             path: The changed file's path (root-relative).
-            hunk_index: 0-based index of the hunk over the file's full diff.
-            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim.
+            hunk_index: 0-based index of the hunk over the file's full diff,
+                or ``-1`` for a ``"file"`` note's sentinel.
+            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim,
+                or ``""`` for a ``"file"`` note's sentinel.
             hunk_excerpt: The hunk body captured at note time (already
-                capped/elided by the caller).
+                capped/elided by the caller), or ``""`` for a ``"file"``
+                note.
             note: The user's note text.
             snapshot_id: The owning ``change_snapshots`` row's own DB
                 ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
                 which of two same-run/root/path windows this note's hunk
                 came from. ``None`` when the caller has no snapshot row
                 to anchor to.
+            anchor_kind: ``"hunk"`` (default), ``"file"``, or
+                ``"diff_line"`` (TASK-18060 Task 1). The default keeps
+                every existing caller of this delegate byte-compatible.
+            diff_line_index: 0-based index over the file's full diff text,
+                required for ``"diff_line"`` notes and ``None`` otherwise.
+            diff_line_text: The anchored line, captured verbatim at
+                note-creation time, required for ``"diff_line"`` notes and
+                ``None`` otherwise.
 
         Returns:
             The newly created note's row id.
@@ -369,6 +385,9 @@ class AgentRunsChangeReviewProvider:
             hunk_excerpt=hunk_excerpt,
             note=note,
             snapshot_id=snapshot_id,
+            anchor_kind=anchor_kind,
+            diff_line_index=diff_line_index,
+            diff_line_text=diff_line_text,
         )
 
     def delete_change_note(self, note_id: int) -> bool:
