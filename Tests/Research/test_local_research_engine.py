@@ -13,6 +13,7 @@ import pytest
 
 from tldw_chatbook.Research_Interop.local_research_engine import LocalResearchEngine
 from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
 
 
 def _make_service() -> LocalResearchService:
@@ -1368,3 +1369,79 @@ def test_a_sub_question_equal_to_the_question_is_not_searched_twice():
     asyncio.run(engine.execute_run(run["id"]))
 
     assert paper_queries == ["q", "facet one"], paper_queries
+
+
+# --- _academic_queries directly (Qodo, PR 1772) --------------------------------
+# The helper was only exercised through full runs, so its cap, dedup and
+# budget arithmetic were inferred from end-to-end behaviour rather than pinned.
+
+
+def _queries_engine():
+    return LocalResearchEngine(_make_service(), search_fn=lambda q, p: ({}, {}))
+
+
+def test_academic_queries_keeps_primary_queries_and_appends_facets():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, reserved = engine._academic_queries(
+        ["q"], ["facet a", "facet b"], {"search_default_max_queries": 5}, ledger
+    )
+
+    assert queries == ["q", "facet a", "facet b"]
+    assert reserved == 2
+
+
+def test_academic_queries_reserves_without_settling():
+    """Reserve-before/settle-after: planning must not record spend."""
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({"max_searches": 10})
+
+    _queries, reserved = engine._academic_queries(
+        ["q"], ["facet a"], {"search_default_max_queries": 5}, ledger
+    )
+
+    assert reserved == 1
+    snapshot = ledger.snapshot()
+    # The reservation is visible, but nothing is settled as spent yet.
+    assert snapshot.get("searches_settled", 0) == 0, snapshot
+
+
+def test_academic_queries_stops_at_the_remaining_budget():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({"max_searches": 2})
+    ledger.reserve_searches(1)
+    ledger.settle_searches(1)
+
+    queries, reserved = engine._academic_queries(
+        ["q"], ["facet a", "facet b", "facet c"],
+        {"search_default_max_queries": 9}, ledger,
+    )
+
+    assert reserved <= 1, reserved
+    assert queries[0] == "q"
+
+
+def test_academic_queries_dedupes_across_primaries_and_facets():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, reserved = engine._academic_queries(
+        ["q", "  Q "], ["  q  ", "facet a", "FACET A"],
+        {"search_default_max_queries": 9}, ledger,
+    )
+
+    assert queries == ["q", "facet a"], queries
+    assert reserved == 1
+
+
+def test_academic_queries_falls_back_when_the_cap_is_unusable():
+    engine = _queries_engine()
+    ledger = BudgetLedger.from_limits({})
+
+    queries, _reserved = engine._academic_queries(
+        ["q"], ["a", "b", "c", "d", "e", "f", "g"],
+        {"search_default_max_queries": "not-a-number"}, ledger,
+    )
+
+    assert len(queries) == 5, queries  # DEFAULT_MAX_QUERIES

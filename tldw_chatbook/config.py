@@ -3969,9 +3969,14 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # final_answer_llm = "openai"
 # search_enable_subquery = false   # generate sub-questions from the query and
 #   search those too. Costs one LLM call plus up to search_default_max_queries-1
-#   extra searches, each carrying its own per-result relevance calls. Since
-#   task-17372 the generated facets ALSO drive academic-provider searches, so
-#   enabling this changes both what evidence is retrieved and how it is judged
+#   extra searches, each carrying its own per-result relevance calls. Qodo
+#   (PR 1772): with BOTH lanes active each generated facet costs TWO provider
+#   calls, not one -- a web search and an academic-provider search -- so the
+#   worst case is 2 x (search_default_max_queries - 1) extra calls per round,
+#   plus the per-result relevance and summarization calls each returned source
+#   then needs. Since task-17372 the facets ALSO drive academic-provider
+#   searches, so enabling this changes both what evidence is retrieved and how
+#   it is judged
 #   (the facets reach the relevance prompt either way). Before that fix it
 #   changed only the judging, which is why the recorded gate measurement for
 #   fan-out says nothing about retrieval -- see
