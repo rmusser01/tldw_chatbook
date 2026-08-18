@@ -5046,3 +5046,43 @@ huggingface_hub constants bite in more than one place — `HF_HUB_OFFLINE` (see
 EVALUATES" above, where the blast radius is an unwanted download) and
 `HF_HUB_CACHE` (here, where the blast radius is a load you wanted and silently
 did not get, under any fixture that moves `HOME`).
+
+
+## When you find one inert declared surface, enumerate its whole namespace
+
+**TASK-16174 / TASK-17600, 2026-08-16..18.** Three separate arcs each found
+one config surface that was declared, switchable, sometimes documented — and
+implemented by nothing:
+
+1. `include_parent_docs` / `parent_size_threshold` /
+   `parent_inclusion_strategy`: shipped, set to `true` by three profiles,
+   **read by nothing** (TASK-16174 retired them).
+2. `result_reranking`: a middleware declared with `enabled = true`, listed by
+   the `high_accuracy` pipeline, handled by a bare `pass`.
+3. `reranking_strategy`: a config key with **zero readers**, which
+   TASK-16965's own design doc simultaneously told users was the lever for
+   selecting a reranking strategy.
+
+Each was found by accident, while doing something else. Nobody looked for the
+CLASS until the third one — and when TASK-17600 finally enumerated the
+namespace instead of the single filed name, `result_reranking` turned out to
+be **one of eight**: eleven middleware names were declared by pipelines and
+four implemented, with seven falling off an `if/elif` and no-opping silently.
+Two entire pipelines (`technical_docs`, `research_papers`) consisted of
+nothing but unimplemented middleware, and three names referenced no
+definition block at all.
+
+**What to do.** The first inert surface you find is a sample, not the
+population. Before closing, enumerate its whole namespace **in both
+directions** — declared-but-unimplemented AND implemented-but-undeclared —
+and write the enumeration as a test rather than a one-off grep, because the
+grep answers today and the test answers forever. Give that guard a
+self-check (`test_the_guard_can_see_the_names_it_is_guarding`): a namespace
+guard whose parser silently stops matching becomes a green test that
+guarantees nothing, which is the same failure it was written to prevent.
+
+**A corollary this cost us directly:** a doc can *create* the surface. The
+`reranking_strategy` claim was written by the arc that measured the feature,
+in the same commit series that carefully documented everything else
+truthfully — so include documentation in the sweep, and check that the lever
+a doc names is one the code actually reads.

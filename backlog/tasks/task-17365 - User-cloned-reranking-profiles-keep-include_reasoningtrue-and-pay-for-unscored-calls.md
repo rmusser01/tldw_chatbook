@@ -3,7 +3,7 @@ id: TASK-17365
 title: >-
   User-cloned reranking profiles keep include_reasoning=true and pay for
   unscored calls
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-17'
@@ -42,16 +42,30 @@ originals.
 
 ## Acceptance Criteria (the what)
 
-- [ ] A decision is recorded, either arm acceptable: user profiles carrying
+- [x] A decision is recorded, either arm acceptable: user profiles carrying
       `include_reasoning = true` alongside a small `max_tokens` are migrated
       on load, OR `max_tokens` is made strategy/reasoning-aware so the
       combination cannot truncate (the review's alternative: >= 400 tokens
       when reasoning is on)
-- [ ] Whichever arm ships, a saved profile with
+- [x] Whichever arm ships, a saved profile with
       `include_reasoning = true, max_tokens = 100` no longer produces a
       billed-but-unscored call
-- [ ] A test drives the chosen path with a faked provider seam (no live
+- [x] A test drives the chosen path with a faked provider seam (no live
       calls) and asserts the reranked rows come back scored
-- [ ] If migration is the arm: it is idempotent, and a profile the user
+- [x] If migration is the arm: it is idempotent, and a profile the user
       deliberately set to a large `max_tokens` with reasoning on is left
       alone
+
+## Implementation Notes
+
+**A floor, not a migration.** A migration would mutate a user's saved profile
+behind their back and would have to guess whether a large `max_tokens` was
+deliberate; a floor cannot guess wrong. When `include_reasoning` is on, the
+effective budget is raised at the single consumption site to a value that
+fits reasoning plus the JSON — a deliberate 4000 stays 4000, and a config
+without reasoning is untouched, both pinned.
+
+This reaches exactly the profiles TASK-16965's AC#11 could not: built-ins
+never persist, so a profile a user CLONED from `high_accuracy` or
+`research_papers` kept `include_reasoning = true` and would truncate its JSON
+into a billed-but-unscored call.

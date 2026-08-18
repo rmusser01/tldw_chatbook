@@ -3,7 +3,7 @@ id: TASK-17265
 title: >-
   Reranker system prompt never reaches anthropic or google — passed in-band,
   never as system_message
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-17'
@@ -58,7 +58,39 @@ suggests is to pass `system_message=` in addition to the in-band copy.
 
 ## Acceptance Criteria (the what)
 
-- [ ] #1 The reranker's system prompt reaches the model on anthropic and google — asserted at the provider-handler boundary (fake transport, no live call) by inspecting the assembled payload, not just the reranker's own call site
-- [ ] #2 Providers that accept an in-band system turn (openai and the local family) still receive exactly one system instruction — no duplicated or conflicting system text on the wire
-- [ ] #3 A test pins the reranker's dispatch as carrying the system prompt in a form each of the sampled providers actually forwards, alongside the existing seam guard in `Tests/RAG_Search/test_reranker_degraded_paths.py`
-- [ ] #4 No live provider call is made to satisfy any of the above
+- [x] #1 The reranker's system prompt reaches the model on anthropic and google — asserted at the provider-handler boundary (fake transport, no live call) by inspecting the assembled payload, not just the reranker's own call site
+- [x] #2 Providers that accept an in-band system turn (openai and the local family) still receive exactly one system instruction — no duplicated or conflicting system text on the wire
+- [x] #3 A test pins the reranker's dispatch as carrying the system prompt in a form each of the sampled providers actually forwards, alongside the existing seam guard in `Tests/RAG_Search/test_reranker_degraded_paths.py`
+- [x] #4 No live provider call is made to satisfy any of the above
+
+## Implementation Notes
+
+The reranker built its instruction as an **in-band** `{"role": "system"}`
+entry and never passed `system_message=`. `chat_with_anthropic` discards a
+system-role message in `messages` (Anthropic wants a top-level `system`) and
+`chat_with_google` skips non-user/assistant roles — so on those two providers
+the JSON contract the reranker depends on never arrived.
+
+**Fix: pass `system_message=`, drop the in-band entry.** All 29 providers map
+`system_message` in `PROVIDER_PARAM_MAP` and all 29 handlers reference their
+mapped parameter (measured before implementing), so no provider can be
+stranded — and AC#2 holds by construction, since only one system instruction
+is ever sent.
+
+**AC#1's evidence is at the wire, not the call site.** Tests fake
+`requests.Session.post` at class level, so the reranker's assembly,
+`chat_api_call`'s param translation and the provider handler's payload
+construction all execute for real. Pre-fix RED with the actual payload keys:
+anthropic had **no top-level `system`**; google had **no `system_instruction`**.
+Post-fix both carry the shipped registry prompt, and `chat_with_google`'s own
+debug line flips `has_system_prompt` False → True. Faking `chat_api_call`
+instead — what the sibling seam guard does — structurally could not have seen
+this bug.
+
+**A test-teeth finding worth keeping:** the openai and local-family
+"exactly one system instruction" tests were green *pre*-fix, so they are
+guards rather than repair proofs. Reinstating the in-band copy on top of the
+fix (the "pass both" shape) REDs the llama_cpp test but **not** openai, which
+de-duplicates — so the openai test alone would have licensed a duplicate.
+Sampled 4 providers at the wire; the other 25 rest on the source-level fact,
+which is labelled as not-wire-evidence.
