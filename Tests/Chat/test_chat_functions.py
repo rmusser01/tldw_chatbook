@@ -1332,7 +1332,11 @@ class TestProviderRequestPayloads:
 
         captured = {}
         warnings = []
-        monkeypatch.setattr(LLM_API_Calls.logger, "warning", warnings.append)
+        monkeypatch.setattr(
+            LLM_API_Calls.logger,
+            "warning",
+            lambda message, *args, **kwargs: warnings.append(str(message) % args),
+        )
         monkeypatch.setattr(
             LLM_API_Calls,
             "load_settings",
@@ -1376,9 +1380,11 @@ class TestProviderRequestPayloads:
         assert "temperature" not in payload
         assert "top_p" not in payload
         assert "top_k" not in payload
+        # TASK-18414: the suppression is no longer a Sonnet-5 name check, so the
+        # warning names the model that rejects the parameters instead.
         assert warnings == [
-            "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
-            "requires default sampling."
+            "Anthropic: omitting temperature/top_p/top_k because model "
+            "claude-sonnet-5 rejects sampling parameters."
         ]
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high", "xhigh", "max"])
