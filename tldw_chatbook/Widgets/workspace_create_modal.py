@@ -17,6 +17,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.Utils.input_validation import sanitize_string
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
@@ -121,14 +122,43 @@ class WorkspaceCreateModal(
         # create_workspace()/add_folder_binding() twice before the modal
         # actually pops off the screen stack.
         self._committed = False
+        # Finding 7: once a workspace has actually been created, a Create
+        # press retries only the remaining folder bindings -- the
+        # name/sanitize/create_workspace logic below is skipped entirely.
+        self._created_workspace_id: str | None = None
+        self._created_workspace_name: str = ""
+        self._make_active_result: bool = True
+        self._bound_folders: tuple[str, ...] = ()
+        # (path -> message) for whatever is still failing after the most
+        # recent bind attempt; used to build the partial result if the user
+        # cancels instead of retrying.
+        self._failed_folder_messages: dict[str, str] = {}
         # Captured once so recompose()s triggered by add/remove-folder don't
         # clobber a user-edited name back to the original suggestion.
-        _, self._suggested_name = next_local_workspace_identity(self._registry)
+        try:
+            _, self._suggested_name = next_local_workspace_identity(self._registry)
+        except WorkspaceRegistryServiceError:
+            # Finding 6a: a raise here (list_workspaces() failing) must not
+            # crash the modal before it can even mount -- fall back to an
+            # empty suggestion and surface the failure inline so the user
+            # can still type a name and retry.
+            self._suggested_name = ""
+            self._error = (
+                "Workspace registry could not be read — you can still type "
+                "a name and retry."
+            )
         self._name_value = self._suggested_name
         self._folder_path_value = ""
         self._make_active_value = True
 
     def compose(self) -> ComposeResult:
+        """Build the name/folder-binding form and its action buttons.
+
+        Returns:
+            The modal's widget tree: header, explainer, name input, folder
+            add/list controls, inline error area, make-active checkbox, and
+            the Cancel/Create action row.
+        """
         with Vertical(id="workspace-create-modal"):
             yield Static("New Workspace", classes="console-modal-header")
             yield Static(
@@ -179,6 +209,30 @@ class WorkspaceCreateModal(
     async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
         await self.request_safe_cancel(source="button")
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        """Route Cancel/Escape/backdrop to a partial result once created.
+
+        Finding 7: a workspace that already exists (folder-binding retry in
+        progress) is a fact, not something Cancel can undo -- deliver the
+        current state as a result instead of ``None`` so callers still sync
+        their workspace list/active-workspace UI.
+        """
+        if self._created_workspace_id is None:
+            await super()._perform_safe_cancel(source=source)
+            return
+        self.dismiss_safe_once(
+            WorkspaceCreateResult(
+                workspace_id=self._created_workspace_id,
+                name=self._created_workspace_name,
+                bound_folders=self._bound_folders,
+                failed_folders=tuple(
+                    (folder, self._failed_folder_messages.get(folder, ""))
+                    for folder in self._folders
+                ),
+                make_active=self._make_active_result,
+            )
+        )
 
     @on(Button.Pressed, "#workspace-create-browse")
     def _browse(self, event: Button.Pressed) -> None:
@@ -258,6 +312,68 @@ class WorkspaceCreateModal(
         event.stop()
         self._create()
 
+    def _bind_folders(
+        self, workspace_id: str, folders: list[str]
+    ) -> tuple[list[str], list[tuple[str, str]]]:
+        """Attempt to bind each folder, collecting per-folder failures.
+
+        Args:
+            workspace_id: The workspace to bind folders onto.
+            folders: Folder locators to attempt to bind, in order.
+
+        Returns:
+            A ``(bound, failed)`` pair: successfully bound folder paths, and
+            ``(path, error message)`` pairs for the ones that failed.
+        """
+        bound: list[str] = []
+        failed: list[tuple[str, str]] = []
+        for folder in folders:
+            try:
+                self._registry.add_folder_binding(workspace_id, folder)
+                bound.append(folder)
+            except WorkspaceRegistryServiceError as exc:
+                failed.append((folder, str(exc)))
+        return bound, failed
+
+    def _finish_or_retry_bindings(
+        self, newly_bound: list[str], failed: list[tuple[str, str]]
+    ) -> None:
+        """Dismiss on full success, otherwise leave the modal open to retry.
+
+        Finding 7: a per-folder binding failure must not discard the
+        already-created workspace or the successful bindings -- it renders
+        the failures inline, narrows ``self._folders`` to just the
+        remainder, and resets ``_committed`` so a subsequent Create press
+        retries only what is still outstanding.
+
+        Args:
+            newly_bound: Folders that just succeeded in this attempt.
+            failed: ``(path, error message)`` pairs that just failed.
+        """
+        all_bound = tuple(self._bound_folders) + tuple(newly_bound)
+        if failed:
+            self._bound_folders = all_bound
+            self._folders = [folder for folder, _message in failed]
+            self._failed_folder_messages = dict(failed)
+            self._error = "\n".join(
+                f"{folder}: {message}" for folder, message in failed
+            )
+            self._committed = False
+            self._stash_form_state()
+            self.refresh(recompose=True)
+            return
+        self._bound_folders = all_bound
+        self._failed_folder_messages = {}
+        self.dismiss_safe_once(
+            WorkspaceCreateResult(
+                workspace_id=self._created_workspace_id,
+                name=self._created_workspace_name,
+                bound_folders=all_bound,
+                failed_folders=(),
+                make_active=self._make_active_result,
+            )
+        )
+
     def _create(self) -> None:
         # Finding 1: guard against a double-submit (rapid Enter-Enter on the
         # name Input, or a double-click on Create) re-running the side
@@ -268,9 +384,39 @@ class WorkspaceCreateModal(
         if self._committed:
             return
         self._committed = True
-        name = self.query_one("#workspace-create-name", Input).value.strip()
-        workspace_id, generated_name = next_local_workspace_identity(self._registry)
+
+        if self._created_workspace_id is not None:
+            # Finding 7 retry path: the workspace already exists -- only
+            # re-attempt the folders that are still outstanding. Name/
+            # sanitize/create_workspace logic below is intentionally skipped.
+            bound, failed = self._bind_folders(
+                self._created_workspace_id, list(self._folders)
+            )
+            self._finish_or_retry_bindings(bound, failed)
+            return
+
+        # Finding 2: validate the name at the boundary before it reaches the
+        # registry. Control characters or an overlong name are rejected
+        # inline rather than silently truncated/stripped into the DB; a
+        # blank name still falls back to the generated suggestion below.
+        raw_name = self.query_one("#workspace-create-name", Input).value.strip()
+        sanitized_name = sanitize_string(raw_name, 100).strip()
+        if raw_name and (sanitized_name != raw_name or not sanitized_name):
+            self._committed = False
+            self._set_error(
+                "Workspace name is too long or contains unsupported characters."
+            )
+            return
+        name = sanitized_name
+
+        # Finding 6b: identity generation (next_local_workspace_identity)
+        # can also raise WorkspaceRegistryServiceError -- it must be inside
+        # this try so a raise resets _committed instead of permanently
+        # locking the Create button for the rest of the session.
         try:
+            workspace_id, generated_name = next_local_workspace_identity(
+                self._registry
+            )
             self._registry.create_workspace(
                 workspace_id=workspace_id,
                 name=name or generated_name,
@@ -282,22 +428,12 @@ class WorkspaceCreateModal(
             self._committed = False
             self._set_error(str(exc))
             return
-        bound: list[str] = []
-        failed: list[tuple[str, str]] = []
-        for folder in self._folders:
-            try:
-                self._registry.add_folder_binding(workspace_id, folder)
-                bound.append(folder)
-            except WorkspaceRegistryServiceError as exc:
-                failed.append((folder, str(exc)))
-        self.dismiss_safe_once(
-            WorkspaceCreateResult(
-                workspace_id=workspace_id,
-                name=name or generated_name,
-                bound_folders=tuple(bound),
-                failed_folders=tuple(failed),
-                make_active=self.query_one(
-                    "#workspace-create-make-active", Checkbox
-                ).value,
-            )
-        )
+
+        self._created_workspace_id = workspace_id
+        self._created_workspace_name = name or generated_name
+        self._make_active_result = self.query_one(
+            "#workspace-create-make-active", Checkbox
+        ).value
+
+        bound, failed = self._bind_folders(workspace_id, list(self._folders))
+        self._finish_or_retry_bindings(bound, failed)

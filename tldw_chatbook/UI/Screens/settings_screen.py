@@ -18101,7 +18101,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-create")
     def handle_workspace_create(self, event: Button.Pressed) -> None:
-        """Open the shared create dialog (spec 2026-08-17 §4.3)."""
+        """Open the shared create dialog (spec 2026-08-17 §4.3).
+
+        Args:
+            event: The Create-workspace button press event.
+        """
         event.stop()
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:

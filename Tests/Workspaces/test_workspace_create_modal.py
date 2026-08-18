@@ -10,12 +10,47 @@ from tldw_chatbook.Widgets.workspace_create_modal import (
     WorkspaceCreateModal,
     WorkspaceCreateResult,
 )
-from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from tldw_chatbook.Workspaces.registry_service import (
+    LocalWorkspaceRegistryService,
+    WorkspaceRegistryServiceError,
+)
 
 
 def _registry(tmp_path):
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="create-modal-tests")
     return LocalWorkspaceRegistryService(db)
+
+
+class _RaisingListWorkspacesRegistry:
+    """Wraps a real registry but fails ``list_workspaces()`` (Qodo finding
+    6a): simulates a registry read failure surfacing during modal
+    construction, before the modal is even pushed/mounted."""
+
+    def __init__(self, inner: LocalWorkspaceRegistryService) -> None:
+        self._inner = inner
+
+    def list_workspaces(self, *args, **kwargs):
+        raise WorkspaceRegistryServiceError("registry read failed")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _FlakyBindRegistry:
+    """Wraps a real registry; ``add_folder_binding()`` fails until armed to
+    succeed (Qodo finding 7's retry-capable binding-failure behavior)."""
+
+    def __init__(self, inner: LocalWorkspaceRegistryService) -> None:
+        self._inner = inner
+        self.should_fail = True
+
+    def add_folder_binding(self, workspace_id, path, **kwargs):
+        if self.should_fail:
+            raise WorkspaceRegistryServiceError("Folder does not exist")
+        return self._inner.add_folder_binding(workspace_id, path, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 
 class _HarnessApp(App[None]):
@@ -225,3 +260,157 @@ async def test_remove_folder_clears_stale_error(tmp_path):
         await pilot.pause()
         error = modal.query_one("#workspace-create-error", Static)
         assert str(error.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_overlong_name_shows_inline_error_and_creates_nothing(tmp_path):
+    """Finding 2: a name sanitize_string(raw, 100) would truncate/strip must
+    be rejected inline at the boundary rather than silently mangled into the
+    registry."""
+    registry = _registry(tmp_path)
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "x" * 300
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+        assert app.screen is modal
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "too long" in str(error.renderable)
+        assert app.result == "unset"
+    assert registry.list_workspaces() == ()
+
+
+@pytest.mark.asyncio
+async def test_registry_read_failure_still_mounts_usable_modal(tmp_path):
+    """Finding 6a: next_local_workspace_identity() raising during __init__
+    (list_workspaces() failing) must not crash the modal before it can even
+    mount -- it falls back to an empty suggested name and shows an inline
+    error so the user can still type a name and retry."""
+    stub = _RaisingListWorkspacesRegistry(_registry(tmp_path))
+    app = _HarnessApp(stub)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, WorkspaceCreateModal)
+        name_input = modal.query_one("#workspace-create-name", Input)
+        assert name_input.value == ""
+        assert name_input.placeholder == "Workspace name"
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "registry could not be read" in str(error.renderable)
+
+
+@pytest.mark.asyncio
+async def test_identity_failure_at_create_resets_committed_for_retry(
+    tmp_path, monkeypatch
+):
+    """Finding 6b: next_local_workspace_identity() raising inside _create()
+    used to run AFTER _committed was set True and OUTSIDE the try/except
+    that resets it, permanently locking the Create button for the session.
+    It must now reset _committed so a subsequent Create succeeds."""
+    import tldw_chatbook.Widgets.workspace_create_modal as wcm_module
+
+    registry = _registry(tmp_path)
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, WorkspaceCreateModal)
+
+        def _raise(_registry_service):
+            raise WorkspaceRegistryServiceError("boom")
+
+        monkeypatch.setattr(wcm_module, "next_local_workspace_identity", _raise)
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+        assert app.screen is modal
+        assert app.result == "unset"
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "boom" in str(error.renderable)
+
+        monkeypatch.undo()
+        # NOTE: a second pilot.click() on the *same* button in quick
+        # succession is silently dropped by Textual's own ~0.2s "-active"
+        # press-effect debounce (see test_add_folder_empty_input_clears_
+        # stale_error above) -- use Button.press() to bypass it.
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
+    assert isinstance(app.result, WorkspaceCreateResult)
+    assert len(registry.list_workspaces()) == 1
+
+
+@pytest.mark.asyncio
+async def test_folder_binding_failure_keeps_modal_open_and_retries(tmp_path):
+    """Finding 7: a per-folder add_folder_binding() failure must not
+    dismiss the modal or lose the already-created workspace -- it renders
+    the failure inline, and a subsequent Create press retries only the
+    remaining folder(s) without creating a second workspace."""
+    inner = _registry(tmp_path)
+    stub = _FlakyBindRegistry(inner)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(stub)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.result == "unset"
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "Folder does not exist" in str(error.renderable)
+        assert len(inner.list_workspaces()) == 1
+
+        stub.should_fail = False
+        # NOTE: a second pilot.click() on the *same* button in quick
+        # succession is silently dropped by Textual's own ~0.2s "-active"
+        # press-effect debounce (see test_add_folder_empty_input_clears_
+        # stale_error above) -- use Button.press() to bypass it.
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    created = inner.list_workspaces()
+    assert len(created) == 1
+    assert result.workspace_id == created[0].workspace_id
+    assert result.bound_folders == (str(project.resolve()),)
+    assert result.failed_folders == ()
+
+
+@pytest.mark.asyncio
+async def test_escape_after_partial_create_returns_partial_result(tmp_path):
+    """Finding 7: cancel after a partial create is a fact, not something
+    Cancel/Escape can undo -- it must deliver the partial result instead of
+    None so callers still sync their workspace list."""
+    inner = _registry(tmp_path)
+    stub = _FlakyBindRegistry(inner)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(stub)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+        assert app.result == "unset"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    assert result.name == "Video Tool"
+    created = inner.list_workspaces()
+    assert len(created) == 1
+    assert result.workspace_id == created[0].workspace_id
