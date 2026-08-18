@@ -262,6 +262,60 @@ class AgentRunsDB(BaseDB):
                 -- soft-deleted row releases its name for re-creation.
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_definitions_name
                     ON agent_definitions(name) WHERE deleted = 0;
+
+                -- v8 (TASK-16800 annotate loop, spec §1): user-authored
+                -- feedback notes anchored to a specific hunk of a turn's
+                -- diff. DURABILITY NOTE (carries the v5 note forward):
+                -- this DB holds durable USER-AUTHORED CONTENT -- notes
+                -- extend that -- any "clear run history" tooling must not
+                -- treat this table as disposable. No denormalized
+                -- conversation_id: agent_runs already carries
+                -- conversation_id NOT NULL, so pending_notes_for_conversation
+                -- joins through change_notes.run_id = agent_runs.id --
+                -- one source of truth, and the card never needs to learn
+                -- the conversation id at insert time.
+                CREATE TABLE IF NOT EXISTS change_notes (
+                    id INTEGER PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    root TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    hunk_index INTEGER NOT NULL,
+                    hunk_header TEXT NOT NULL,
+                    hunk_excerpt TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    delivered_at TEXT,
+                    -- v9 (TASK-16800 Task 6 fix round): which run's
+                    -- COMPLETION actually stamped this note delivered --
+                    -- distinct from `run_id` above, which anchors the note
+                    -- to the run whose DIFF it critiques. A note written
+                    -- against an earlier run's diff is commonly delivered
+                    -- on a LATER run's completion, so resume re-derivation
+                    -- needs this to place the disclosure row at the
+                    -- delivering run's position (matching live emission)
+                    -- instead of fragmenting/mis-anchoring at the
+                    -- annotated run. NULL until stamped, and NULL forever
+                    -- on rows stamped by code that predates this column.
+                    delivered_by_run_id TEXT,
+                    -- v10 (Qodo #6, PR #1779 fix round): the exact
+                    -- change_snapshots row (its own DB `id`) this note's
+                    -- hunk was read from. Two windows on the SAME run+
+                    -- root+path (a turn's own window and its surviving
+                    -- sub-agents' post-turn window, PR3a-1 Task 6c) can
+                    -- theoretically carry the same hunk_header at the
+                    -- same hunk_index (identical position/line-count
+                    -- edits against different baselines produce
+                    -- byte-identical "@@ ... @@" headers, since a header
+                    -- encodes only positions/counts, never content) --
+                    -- (run_id, hunk_index, hunk_header) alone can't then
+                    -- say which window's diff was actually annotated.
+                    -- NULL for legacy rows saved before this column
+                    -- existed; the card falls back to hunk_index+
+                    -- hunk_header matching for those.
+                    snapshot_id INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_change_notes_pending
+                    ON change_notes(run_id) WHERE delivered_at IS NULL;
                 """
             )
             # v1->v2: this DB has no migration framework -- _initialize_schema
@@ -327,6 +381,34 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_snapshots ADD COLUMN "
                     "kind TEXT NOT NULL DEFAULT 'turn'"
                 )
+            # v8->v9 (TASK-16800 Task 6 fix round): a file created while
+            # change_notes existed but before delivered_by_run_id did
+            # keeps its old 10-column table -- same idempotent-ALTER
+            # mechanism as every column above. No DEFAULT: every
+            # pre-existing row correctly reads as NULL (unknown delivering
+            # run), which is exactly the legacy fallback resume
+            # re-derivation is built to handle.
+            note_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(change_notes)"
+                ).fetchall()
+            }
+            if "delivered_by_run_id" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN delivered_by_run_id TEXT"
+                )
+            # v9->v10 (Qodo #6, PR #1779 fix round): a file created while
+            # change_notes existed but before snapshot_id did keeps its
+            # old 11-column table -- same idempotent-ALTER mechanism as
+            # every column above. No DEFAULT: every pre-existing row
+            # correctly reads as NULL (unknown snapshot), which is exactly
+            # the legacy hunk_index+hunk_header fallback the card's
+            # matching is built to handle.
+            if "snapshot_id" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -342,6 +424,15 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (8)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (9)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (10)"
             )
 
     def record_change_snapshot(
@@ -525,6 +616,237 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def add_change_note(
+        self,
+        *,
+        run_id: str,
+        root: str,
+        path: str,
+        hunk_index: int,
+        hunk_header: str,
+        hunk_excerpt: str,
+        note: str,
+        snapshot_id: int | None = None,
+    ) -> int:
+        """Record a user-authored note anchored to one hunk of a turn's diff.
+
+        TASK-16800 (spec §1). The anchor is ``(run_id, root, path,
+        hunk_index, hunk_header)``; ``hunk_excerpt`` is captured once, at
+        note-creation time, from the full diff text the card already has
+        -- it is the retention safety net that keeps display and delivery
+        self-contained even after shadow-repo snapshot pruning.
+
+        Args:
+            run_id: The agent run whose diff this note is anchored to.
+            root: Canonical root path of the changed file.
+            path: The changed file's path (root-relative).
+            hunk_index: 0-based index of the hunk over the FULL diff.
+            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim.
+            hunk_excerpt: The hunk body captured at note time (already
+                capped/elided by the caller).
+            note: The user's note text.
+            snapshot_id: The owning ``change_snapshots`` row's own DB
+                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
+                which of TWO same-``run_id``/root/path windows (a turn's
+                own window and its surviving sub-agents' post-turn
+                window, PR3a-1 Task 6c) this note's hunk actually came
+                from, for the rare case where both windows happen to
+                produce the exact same ``hunk_index``/``hunk_header``
+                (identical position/line-count edits against different
+                baselines yield byte-identical headers, since a header
+                encodes only positions/counts, never content). ``None``
+                (the default) only by callers that predate this column or
+                have no snapshot row to anchor to.
+
+        Returns:
+            The newly created note's row id.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO change_notes
+                    (run_id, root, path, hunk_index, hunk_header,
+                     hunk_excerpt, note, created_at, delivered_at,
+                     snapshot_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    run_id,
+                    root,
+                    path,
+                    hunk_index,
+                    hunk_header,
+                    hunk_excerpt,
+                    note,
+                    _now_iso(),
+                    snapshot_id,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def delete_change_note(self, note_id: int) -> bool:
+        """Delete a pending (undelivered) note.
+
+        Delivered notes are record -- once ``delivered_at`` is set a note
+        can no longer be deleted, matching the card's "delivered notes
+        lose the delete affordance" rule.
+
+        Args:
+            note_id: The note's row id.
+
+        Returns:
+            True if a pending note was deleted; False if the note does
+            not exist or has already been delivered.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM change_notes WHERE id = ? AND delivered_at IS NULL",
+                (note_id,),
+            )
+            return cursor.rowcount > 0
+
+    def notes_for_run(self, run_id: str) -> list[dict]:
+        """Return a run's change notes, oldest first.
+
+        Args:
+            run_id: The agent run id.
+
+        Returns:
+            One dict per note row (all columns), oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM change_notes WHERE run_id = ? ORDER BY id",
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_notes_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's undelivered notes, oldest first.
+
+        Joins through ``change_notes.run_id = agent_runs.id`` rather than
+        a denormalized conversation id column (spec §1) -- ``agent_runs``
+        is the one source of truth for which conversation a run belongs
+        to, and notes span however many runs a conversation has had.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Pending (``delivered_at IS NULL``) note rows across every run
+            of the conversation, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cn.* FROM change_notes cn
+                JOIN agent_runs ar ON ar.id = cn.run_id
+                WHERE ar.conversation_id = ? AND cn.delivered_at IS NULL
+                ORDER BY cn.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delivered_notes_for_conversation(self, conversation_id: str) -> list[dict]:
+        """Return a conversation's delivered notes, oldest first.
+
+        TASK-16800 Task 6 fix round: the batched counterpart to
+        ``pending_notes_for_conversation`` (same join shape, same
+        precedent as the TASK-1972 no-N+1 fix for ``change_snapshots``)
+        -- resume re-derivation needs every delivered note across every
+        run of the conversation in ONE query, not one ``notes_for_run``
+        call per re-derived run.
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            Delivered (``delivered_at IS NOT NULL``) note rows across
+            every run of the conversation, oldest first. Each row carries
+            ``delivered_by_run_id`` -- NULL for notes stamped before that
+            column existed.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cn.* FROM change_notes cn
+                JOIN agent_runs ar ON ar.id = cn.run_id
+                WHERE ar.conversation_id = ? AND cn.delivered_at IS NOT NULL
+                ORDER BY cn.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_notes_delivered(
+        self, note_ids: Sequence[int], delivered_by_run_id: str | None = None
+    ) -> list[int]:
+        """Stamp exactly the given notes as delivered.
+
+        Spec §4: the delivery seam captures the precise id list it
+        attached to the outbound message and stamps only that list at run
+        completion -- never "all pending for the conversation". A note
+        created after the list was captured (the mid-run race) is not in
+        ``note_ids`` and so stays pending, riding the next send.
+
+        Qodo #4 (PR #1779 fix round): the UPDATE's own
+        ``AND delivered_at IS NULL`` guard means a note already stamped by
+        a concurrent delivery (elsewhere) is silently skipped rather than
+        re-stamped -- correct for the DB, but the caller previously had no
+        way to know that skip happened, so the bridge's completion seam
+        disclosed every id it captured regardless of what actually got
+        stamped. Concurrent replies on one conversation are architecturally
+        serialized today, so that race is not currently reachable in
+        practice, but this makes the seam self-defending rather than
+        relying on that invariant holding forever.
+
+        Args:
+            note_ids: The note ids to stamp delivered.
+            delivered_by_run_id: The id of the run whose completion is
+                doing this delivery (TASK-16800 Task 6 fix round) --
+                distinct from each note's own ``run_id`` (the run whose
+                diff it critiques). Stamped verbatim onto every row in
+                ``note_ids``, alongside the same ``delivered_at``
+                timestamp, so resume re-derivation can anchor the
+                disclosure at the run that actually delivered it. Left
+                ``None`` (the default) only by callers that predate this
+                column or do not know/care which run is delivering.
+
+        Returns:
+            The subset of ``note_ids`` that this call ACTUALLY stamped
+            (i.e. were still pending at the moment of the UPDATE) -- never
+            more than ``note_ids``, and possibly fewer when a concurrent
+            caller already delivered one of them first. Order is not
+            significant to callers, all of which only ever test set
+            membership against it.
+        """
+        ids = [int(note_id) for note_id in note_ids]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        stamp = _now_iso()
+        with self.transaction() as conn:
+            conn.execute(
+                f"UPDATE change_notes SET delivered_at = ?, "
+                f"delivered_by_run_id = ? "
+                f"WHERE id IN ({placeholders}) AND delivered_at IS NULL",
+                (stamp, delivered_by_run_id, *ids),
+            )
+            # Portable (works against any bundled SQLite -- no RETURNING
+            # dependency): re-select, in the SAME transaction/connection,
+            # exactly the rows this UPDATE just wrote. `delivered_at =
+            # stamp` alone (a value only this call could have produced)
+            # already uniquely identifies them; `delivered_by_run_id IS ?`
+            # is belt-and-suspenders (SQLite's `IS` compares correctly
+            # against a NULL-bound parameter too).
+            rows = conn.execute(
+                f"SELECT id FROM change_notes WHERE id IN ({placeholders}) "
+                f"AND delivered_at = ? AND delivered_by_run_id IS ?",
+                (*ids, stamp, delivered_by_run_id),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:

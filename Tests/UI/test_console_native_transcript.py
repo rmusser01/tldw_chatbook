@@ -834,9 +834,14 @@ async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild
         # ConsoleTranscript, which is unrelated to what this test pins; the
         # expand mechanism itself is already covered by
         # Tests/UI/test_console_turn_file_card.py.
+        from tldw_chatbook.Chat.console_display_state import DiffHunk
+
         body = card.query(".console-turn-file-diff").first()
         body.display = True
-        card._diff_cache[0] = "SENTINEL_DIFF_TEXT"
+        sentinel_hunks = [
+            DiffHunk(header="", body_lines=("SENTINEL_DIFF_TEXT",), file_prelude="")
+        ]
+        card._hunk_cache[0] = sentinel_hunks
 
         # Move selection ONTO the card row (same direct-state + refresh
         # pattern this file's other rebuild-avoidance tests use above).
@@ -850,7 +855,7 @@ async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild
         assert card.query(".console-turn-file-diff").first().display, (
             "expanded diff collapsed on selection"
         )
-        assert card._diff_cache.get(0) == "SENTINEL_DIFF_TEXT", (
+        assert card._hunk_cache.get(0) == sentinel_hunks, (
             "diff cache dropped on selection"
         )
 
@@ -865,7 +870,7 @@ async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild
         assert card.query(".console-turn-file-diff").first().display, (
             "expanded diff lost on deselection"
         )
-        assert card._diff_cache.get(0) == "SENTINEL_DIFF_TEXT", (
+        assert card._hunk_cache.get(0) == sentinel_hunks, (
             "diff cache dropped on deselection"
         )
 
