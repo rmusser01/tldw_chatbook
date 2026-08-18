@@ -3,9 +3,11 @@ id: TASK-17265
 title: >-
   Reranker system prompt never reaches anthropic or google — passed in-band,
   never as system_message
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
+updated_date: '2026-08-17 23:58'
 labels:
   - rag
   - llm-calls
@@ -13,6 +15,15 @@ dependencies:
   - TASK-17065
 priority: medium
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Read reranker.py:299-350 and PROVIDER_PARAM_MAP's differing system_message targets (anthropic->system_prompt, google->system_message, llama_cpp->system_prompt).
+2. RED: new Tests/RAG_Search/test_reranker_system_prompt.py driving the REAL rerank() with requests.Session.post faked, asserting the assembled wire payload for anthropic/google/openai/llama_cpp.
+3. Implement: drop the in-band {'role':'system'} entry; pass system_message= to chat_api_call (omit when falsy).
+4. GREEN + ruff + counts + gate; commit and push.
+<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
