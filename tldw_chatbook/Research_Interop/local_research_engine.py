@@ -19,9 +19,12 @@ lazy-import pattern so the module import stays cheap.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import inspect
 import json
 import re
+import uuid
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -86,6 +89,16 @@ AnalyzeFn = Callable[..., Awaitable[Any]]
 GapFn = Callable[[dict[str, Any]], Awaitable[list[str]]]
 
 
+class _LeaseLost(Exception):
+    """Internal control-flow signal: this executor no longer owns the run.
+
+    Raised by the fence before a persisting write. A displaced executor that
+    is still inside a long provider call returns normally, so without the
+    fence it would write artifacts and settle budget for a run another
+    executor now owns (task-18060).
+    """
+
+
 class _RunPaused(Exception):
     """Internal control-flow signal: the run was paused between phases."""
 
@@ -120,6 +133,18 @@ class LocalResearchEngine:
         completion_handoff: "Callable[[dict[str, Any]], Any] | None" = None,
     ) -> None:
         self.service = local_service
+        #: Identity of this executor, and its lease state for the duration of
+        #: execute_run (task-18060).
+        self.worker_id = f"engine-{uuid.uuid4().hex[:12]}"
+        #: How long a lease is granted for, and how often it is renewed. The
+        #: keep-alive is a TIMER rather than a progress hook: the synthesis
+        #: phase emits no progress for its whole duration (measured ~970s), so
+        #: a lease renewed only by progress events would expire inside the most
+        #: expensive phase and invite a second executor into it.
+        self.lease_seconds = 120.0
+        self.keepalive_seconds = 30.0
+        self._lease_id: str | None = None
+        self._run_id: str | None = None
         self.search_fn = search_fn or self._default_search_fn
         # task-17371: the pipeline's own required params are pre-flighted
         # before a run spends anything -- but ONLY when the real pipeline is
@@ -285,6 +310,33 @@ class LocalResearchEngine:
             "that does not need them)."
         )
 
+    def _require_lease(self) -> None:
+        """Refuse to persist anything if this executor lost its lease.
+
+        Raises:
+            _LeaseLost: When another executor now holds the run.
+        """
+        if self._lease_id is None or self._run_id is None:
+            return
+        if not self.service.holds_lease(self._run_id, lease_id=self._lease_id):
+            raise _LeaseLost("execution lease lost")
+
+    async def _keepalive(self, run_id: str) -> None:
+        """Renew the lease on a timer for as long as a phase is in flight.
+
+        Args:
+            run_id: The leased run.
+        """
+        while True:
+            await asyncio.sleep(max(0.01, float(self.keepalive_seconds)))
+            lease_id = self._lease_id
+            if lease_id is None:
+                return
+            if not self.service.renew_lease(
+                run_id, lease_id=lease_id, lease_seconds=self.lease_seconds
+            ):
+                return
+
     def _get_run(self, run_id: str) -> dict[str, Any]:
         run = self.service.get_run(run_id)
         if run is None:
@@ -417,6 +469,23 @@ class LocalResearchEngine:
         self._active_policy = policy
         self._active_academic_providers = overrides.get("academic_providers")
 
+        # task-18060: exactly one executor may run a run. The window's
+        # exclusive-worker guard is per-session and cannot see another process,
+        # so the lease is what actually prevents duplicate searches and spend.
+        self._run_id = run_id
+        self._lease_id = self.service.claim_run(
+            run_id, worker_id=self.worker_id, lease_seconds=self.lease_seconds
+        )
+        if self._lease_id is None:
+            self._run_id = None
+            logger.info(f"Research run {run_id} is leased by another executor")
+            return self.service.update_run_progress(
+                run_id,
+                progress_message="another executor holds this run's lease",
+                event="lease_declined",
+            )
+        keepalive = asyncio.create_task(self._keepalive(run_id))
+
         try:
             if self._uses_default_search_fn:
                 self._require_pipeline_params(run_params)
@@ -438,11 +507,27 @@ class LocalResearchEngine:
             logger.warning(f"Research run {run_id} stopped by budget: {exceeded}")
             self._save_ledger(run_id, ledger)
             return self.service.fail_run(run_id, error_msg=str(exceeded))
+        except _LeaseLost:
+            # Deliberately NOT fail_run: another executor owns this run now and
+            # is responsible for its terminal state. Writing one here would be
+            # the displaced executor overwriting the live one's work.
+            logger.warning(f"Research run {run_id} lease lost mid-flight")
+            return self._get_run(run_id)
         except Exception as exc:
             logger.opt(exception=True).error(f"Research run {run_id} failed: {exc}")
             self._save_ledger(run_id, ledger)
             return self.service.fail_run(run_id, error_msg=str(exc))
         finally:
+            keepalive.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await keepalive
+            if self._lease_id is not None:
+                # Releasing on every invocation is safe: a clean release resets
+                # the reclaim budget, so a paused-and-resumed run does not
+                # spend its crash allowance (task-18060).
+                self.service.release_lease(run_id, lease_id=self._lease_id)
+                self._lease_id = None
+            self._run_id = None
             self._active_ledger = None
             self._active_run_params = None
             self._active_policy = None
@@ -584,6 +669,7 @@ class LocalResearchEngine:
         return queries, reserved_extras
 
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="budget_ledger.json",
@@ -764,6 +850,7 @@ class LocalResearchEngine:
             # Record what was collected BEFORE enforcement: the collection
             # happened, and a budget stop on processing must preserve the
             # evidence of it (partial-artifact contract, task-16323).
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="plan.json",
@@ -775,6 +862,7 @@ class LocalResearchEngine:
                     "iterations": iteration,
                 },
             )
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="collection_summary.json",
@@ -968,6 +1056,7 @@ class LocalResearchEngine:
         )
         if claims:
             supported = sum(1 for c in claims if c.get("status") == "supported")
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="claims.json",

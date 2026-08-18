@@ -1490,3 +1490,45 @@ def test_a_failed_synthesis_is_recorded_on_the_run():
     assert content.get("synthesis_failed", {}).get("error_type") == "ReadTimeoutError"
     warnings = " ".join(str(w) for w in (content.get("warnings") or []))
     assert "synthesis produced no report" in warnings, content.get("warnings")
+
+
+def test_a_second_engine_declines_a_leased_run():
+    """task-18060: two executors must not run one run. The window's
+    exclusive-worker guard is per-session and cannot see a second process."""
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    first = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    second = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    service.claim_run(run["id"], worker_id=first.worker_id, lease_seconds=60)
+    final = asyncio.run(second.execute_run(run["id"]))
+
+    assert final["status"] != "completed"
+    assert "lease" in str(final.get("progress_message") or "").lower()
+
+
+def test_a_long_silent_phase_keeps_its_lease():
+    """The synthesis phase emits no progress for its whole duration, so a
+    lease renewed only by progress events would expire inside it."""
+    service = _make_service()
+    search_fn, _analyze, _calls = _make_pipeline("q")
+
+    async def slow_analyze(wsr, sqd, params, cancel_event=None):
+        await asyncio.sleep(0.3)
+        return {
+            "final_answer": {"text": "Answer citing [1].", "evidence": [],
+                             "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+        }
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=slow_analyze
+    )
+    engine.lease_seconds = 0.1
+    engine.keepalive_seconds = 0.02
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed", final.get("progress_message")
