@@ -5225,3 +5225,16 @@ interpreted:
 - **Before filing a defect from an aggregate, reproduce it against
   production wiring.** One grep for the attribute in `app.py` would have
   ended this in under a minute.
+
+**The same seam collapses a THIRD state into that zero**, found by a reviewer
+on the correction PR: `_search_prompts` ends `except Exception: return True,
+[]`, so a seam that *threw* is reported as available-and-empty. Wiring the
+dependency therefore does not make the metric unambiguous — a zero still
+means no-match **or** threw. When a function's return type encodes status
+(`(bool, list)`), check what the exception path returns before trusting
+either value; a `warning` log is not a substitute, because nothing reads it.
+
+The general form: **any code path that converts a failure into a
+well-formed empty result destroys the distinction the caller needs.** Grep
+for `except` blocks that `return` an empty container whenever a measurement
+built on them surprises you.
