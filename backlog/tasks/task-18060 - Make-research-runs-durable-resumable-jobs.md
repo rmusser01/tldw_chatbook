@@ -29,15 +29,18 @@ This supersedes the earlier framing of the same criterion, which set out to deri
 - [ ] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded
 - [ ] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost
 - [ ] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever
+- [ ] #1c A phase that reports no progress for longer than the lease is not taken over
+- [ ] #1d An executor that lost its lease cannot write artifacts or settle budget, not merely cannot finish the run
 - [ ] #2 A resumed run restores the budget it already spent instead of being granted it again
 - [ ] #3 A resumed run continues from its last completed phase without repeating searches it already paid for
 - [ ] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did
 - [ ] #5 A run interrupted by an application exit continues on the next launch without user intervention
 - [ ] #6 A run parked for checkpoint review is not re-entered by the scheduler on every tick
-- [ ] #7 A completed run announces itself in the conversation that requested it, however it was launched
+- [ ] #7 A completed run announces itself EXACTLY ONCE in the conversation that requested it, however it was launched and however many times it was taken over
 - [ ] #8 A completed run's report is reachable from the artifacts screen
 - [ ] #9 A synthesis that takes longer than any single provider timeout completes, and a user-set runtime limit that cannot cover the work refuses before spending
 - [ ] #10 The documentation states that runs resume at next launch and do not progress while the application is closed
+- [ ] #11 A terminal or cancelled run leaves no scheduler task behind
 <!-- AC:END -->
 
 ## Implementation Plan
