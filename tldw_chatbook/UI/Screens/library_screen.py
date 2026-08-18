@@ -30763,6 +30763,23 @@ class LibraryScreen(BaseAppScreen):
                     await asyncio.shield(retrieval_task)
                 except asyncio.CancelledError as error:
                     cancellation = cancellation or error
+                    # TASK-16450. Clear the delivered request before looping.
+                    # The repeated-cancel PATH is reachable -- Textual's
+                    # `cancel_group` selects by group/node with no state
+                    # filter and `Worker.cancel()` has no already-cancelled
+                    # guard, so every new exclusive search re-cancels a worker
+                    # that is still draining. It does NOT hot-spin (measured:
+                    # Tests/Library/test_library_rag_drain_loop.py -- one
+                    # iteration per delivered cancellation, then a normal
+                    # block), so this is hygiene rather than a bug fix: it
+                    # keeps `cancelling()` from staying elevated on a task
+                    # that goes on to complete normally, which is what any
+                    # enclosing cancel scope reads. The retain-and-re-raise
+                    # contract above is unaffected -- `cancellation` is
+                    # already captured.
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
             outcome = retrieval_task.result()
             if cancellation is not None:
                 raise cancellation
