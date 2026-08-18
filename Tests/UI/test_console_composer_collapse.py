@@ -845,9 +845,12 @@ async def test_console_composer_default_geometry_is_single_row():
 
         assert composer.region.height == 1
 
-        composer.load_draft("x " * 400)
+        # task-17654: the draft cap is 8 rows; a huge draft pins the max
+        # and growth stays demand-driven — it returns to 1 as the draft
+        # shrinks.
+        composer.load_draft("x " * 1200)
         await pilot.pause()
-        assert composer.region.height == 4
+        assert composer.region.height == 8
 
         composer.load_draft("short")
         await pilot.pause()
@@ -1001,8 +1004,8 @@ async def test_console_composer_geometry_is_bounded_then_exactly_one_row():
     async with app.run_test(size=(140, 42)) as pilot:
         composer = app.query_one("#console-native-composer", ConsoleComposerBar)
 
-        # task-17651: dense-form composer — 1-4 rows, no chrome.
-        assert 1 <= composer.region.height <= 4
+        # task-17651/17654: dense-form composer — 1-8 rows, no chrome.
+        assert 1 <= composer.region.height <= 8
 
         composer.set_collapsed(True)
         await pilot.pause()
@@ -1012,7 +1015,7 @@ async def test_console_composer_geometry_is_bounded_then_exactly_one_row():
         composer.set_collapsed(False)
         await pilot.pause()
 
-        assert 1 <= composer.region.height <= 4
+        assert 1 <= composer.region.height <= 8
 
 
 @pytest.mark.asyncio

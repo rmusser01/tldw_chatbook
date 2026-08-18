@@ -71,7 +71,7 @@ Top to bottom:
   send consumes it); lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md).
 - **Composer row** — a slim one-row bar (it grows with your draft, up to
-  four rows) marked by a one-column edge on its left that brightens and
+  eight rows, and shrinks back as the draft empties) marked by a one-column edge on its left that brightens and
   thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
@@ -447,4 +447,7 @@ composer so it reads apart from the footer/status row; compact mode
 (headless probes, both placements): a matching blank row now sits above
 the composer too, so the bar floats clear of the status row; the
 prompt-queue shelf and staged evidence sit immediately above that gap;
-compact mode drops both rows.*
+compact mode drops both rows. Verified
+against TASK-17654 — 2026-08-17 (headless probe at 150×44): the draft
+now grows to eight rows (was four), head-elided with "... " while
+windowed, and returns to one row as the draft empties.*
