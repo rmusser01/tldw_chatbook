@@ -238,3 +238,44 @@ async def test_maybe_offer_chains_installed_names_ledger_and_navigation(
         "imported",
         discovery_b.fingerprint,
     )
+
+
+@pytest.mark.asyncio
+async def test_maybe_offer_reentrancy_guard_blocks_concurrent_calls(
+    tmp_path, monkeypatch
+):
+    """Two back-to-back offer calls while the first modal is still open.
+
+    ``_OfferHarnessApp.on_mount`` fires the first (and only, in this test)
+    call automatically; a second call while that modal is up must be a
+    no-op -- no second modal stacked on top -- and the re-entrancy flag
+    must clear once the (single-discovery) chain's last modal dismisses.
+    """
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    service = _StubSkillsScopeService()
+    app = _OfferHarnessApp(service, (discovery,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        assert isinstance(app.screen, ProjectSkillsImportModal)
+        first_modal = app.screen
+        assert app._project_skills_offer_active is True
+
+        # Second call while the flow is still active: must be a no-op.
+        maybe_offer_project_skills_import(app, (discovery,))
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is first_modal
+
+        await pilot.click("#project-skills-never")
+        await pilot.pause()
+        await pilot.pause()
+
+    assert getattr(app, "_project_skills_offer_active", False) is False
+
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    assert ledger.decision_for(discovery.root) == ("never", discovery.fingerprint)

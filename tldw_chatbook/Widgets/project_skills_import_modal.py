@@ -390,9 +390,38 @@ async def _offer_next_project_skills_discovery(
         _record_project_skills_decision(discovery, decision)
         if decision == "review":
             app.post_message(NavigateToScreen("skills"))
-        maybe_offer_project_skills_import(app, remaining)
+        # Continue the SAME already-active chain directly rather than
+        # routing back through the public entry point below -- the
+        # re-entrancy guard there would see ``_project_skills_offer_active``
+        # still True (it stays True for the whole chain, cleared only at
+        # the terminal step here) and mistake this continuation for a
+        # second concurrent caller, dropping it.
+        if not remaining:
+            app._project_skills_offer_active = False
+            return
+        app.run_worker(
+            _run_project_skills_offer_chain(app, remaining),
+            exclusive=False,
+        )
 
     app.push_screen(modal, _on_dismiss)
+
+
+async def _run_project_skills_offer_chain(
+    app: Any, discoveries: tuple[ProjectSkillsDiscovery, ...]
+) -> None:
+    """Worker body for one offer flow; clears the re-entrancy flag on failure.
+
+    An exception here (e.g. ``push_screen`` raising) would otherwise leave
+    ``_project_skills_offer_active`` stuck True forever, permanently
+    blocking every future offer for this app -- this is the "on worker
+    failure" half of the re-entrancy guard's clear condition.
+    """
+    try:
+        await _offer_next_project_skills_discovery(app, discoveries)
+    except Exception:
+        app._project_skills_offer_active = False
+        logger.opt(exception=True).debug("project-skills offer chain failed")
 
 
 def maybe_offer_project_skills_import(
@@ -408,16 +437,26 @@ def maybe_offer_project_skills_import(
     (``ProjectSkillsPromptLedger``, keyed by ``discovery.root``), and a
     "review" decision also posts a navigation request to the Skills screen.
 
+    Re-entrancy: while one offer flow is already running for ``app``
+    (tracked via ``app._project_skills_offer_active``, set here when the
+    flow starts and cleared when the chain's last modal dismisses or the
+    worker fails), a second call is a no-op. This stops two independent
+    callers -- e.g. the startup offer and a workspace-create offer -- from
+    both trying to push a modal for the same app at once.
+
     Args:
         app: The running ``TldwCli`` app (or a test double exposing
             ``skills_scope_service``, ``push_screen``, ``post_message``, and
             ``run_worker``).
         discoveries: Discoveries to offer, one modal at a time.
     """
+    if getattr(app, "_project_skills_offer_active", False):
+        return
     discoveries = tuple(discoveries)
     if not discoveries:
         return
+    app._project_skills_offer_active = True
     app.run_worker(
-        _offer_next_project_skills_discovery(app, discoveries),
+        _run_project_skills_offer_chain(app, discoveries),
         exclusive=False,
     )

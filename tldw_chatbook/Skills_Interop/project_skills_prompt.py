@@ -9,6 +9,12 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tldw_chatbook.Skills_Interop.project_skills_discovery import (
+    ProjectSkillsDiscovery,
+    discover_project_skills,
+    find_project_dir_with_skills,
+)
+
 _LEDGER_FILENAME = "project_prompts.json"
 
 
@@ -84,3 +90,34 @@ def should_offer_project_skills_prompt(
     if decision == "never":
         return False
     return recorded_fingerprint != fingerprint
+
+
+def startup_discovery_for(
+    start: Path, *, enabled: bool, ledger_dir: Path
+) -> ProjectSkillsDiscovery | None:
+    """Pure gate deciding whether to offer a project's .SKILLS/ import at startup.
+
+    Combines Task 1's ancestor-walk discovery with the ledger gating above
+    into the one seam the app-startup worker calls, so ``app.py`` itself
+    stays a thin caller. Returns ``None`` (never offer) when: the kill
+    switch (``enabled``) is off; no project directory with a recognizable
+    ``.SKILLS``/``.skills`` folder is found walking up from ``start``; that
+    folder has no usable entries; or the ledger (built fresh from
+    ``ledger_dir``, keeping the ledger path defined in this one module)
+    says this exact fingerprint has already been shown and dismissed with
+    "never", or seen unchanged after "declined"/"imported".
+    """
+    if not enabled:
+        return None
+    project_dir = find_project_dir_with_skills(start)
+    if project_dir is None:
+        return None
+    discovery = discover_project_skills(project_dir)
+    if discovery is None or not discovery.entries:
+        return None
+    ledger = ProjectSkillsPromptLedger(ledger_dir)
+    if not should_offer_project_skills_prompt(
+        True, ledger.decision_for(discovery.root), discovery.fingerprint
+    ):
+        return None
+    return discovery
