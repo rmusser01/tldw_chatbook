@@ -163,6 +163,16 @@ async def test_cap_enforced_at_twelve_rows_with_honest_tail_count():
         tail = pilot.app.query_one("#console-changed-files-tail", Static)
         assert str(tail.renderable) == "+3 more — open Review"
 
+        # Regression pin: the header's file count and +A -D totals cover
+        # the FULL 15-entry set, not just the 12 rendered rows -- each
+        # entry defaults to +5/-2, so a header that (wrongly) summed only
+        # the visible rows would read "Changed files (12) ... +60 -24"
+        # instead of the honest full-set totals below.
+        header = pilot.app.query_one("#console-changed-files-header", Static)
+        header_text = str(header.renderable)
+        assert "Changed files (15)" in header_text
+        assert "+75" in header_text and "−30" in header_text
+
 
 @pytest.mark.asyncio
 async def test_pruned_rows_render_a_dim_honest_tail_line():

@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_display_state import (
     middle_elide_path,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 #: TASK-16800's note badge glyph, shared verbatim with the turn file card
 #: (``ConsoleTurnFileCard._GLYPH_NOTE``) -- one vocabulary, one ASCII
@@ -66,7 +67,7 @@ class ConsoleChangedFilesState:
     pruned_rows: int = 0
 
 
-class ConsoleChangedFilesSection(Vertical):
+class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
     """Rail section listing a conversation's cross-turn changed files.
 
     One compact ``Button`` row per file (status letter, cell-elided path,
@@ -77,6 +78,15 @@ class ConsoleChangedFilesSection(Vertical):
     (``display = False``, zero children) when the conversation has no
     changed files and no pruned history -- the rail must not grow a
     permanent empty box for a conversation that has not touched a file.
+
+    ``RecomposeCaptureGuard`` (task-627/637) is mixed in because
+    ``update_state`` self-recomposes a widget with interactive ``Button``
+    children: without it, a recompose landing mid-click on one of those
+    rows would leak ``App.mouse_captured`` onto a now-detached widget and
+    silently swallow every mouse event app-wide from then on -- the exact
+    shape every other Console rail-section widget with this same
+    recompose-over-Buttons pattern already guards against (e.g.
+    ``ConsoleRunInspector``, ``ConsoleStagedContextTray``).
     """
 
     DEFAULT_CSS = """
