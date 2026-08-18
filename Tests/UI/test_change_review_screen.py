@@ -91,14 +91,27 @@ def review_fixture(tmp_path):
 class _Harness(App[None]):
     CSS_PATH = str(BUNDLE)
 
-    def __init__(self, provider, initial_run_id: str | None = None) -> None:
+    def __init__(
+        self,
+        provider,
+        initial_run_id: str | None = None,
+        initial_path: str | None = None,
+        initial_snapshot_id: int | None = None,
+    ) -> None:
         super().__init__()
         self._provider = provider
         self._initial_run_id = initial_run_id
+        self._initial_path = initial_path
+        self._initial_snapshot_id = initial_snapshot_id
 
     def on_mount(self) -> None:
         self.push_screen(
-            ChangeReviewScreen(self._provider, initial_run_id=self._initial_run_id)
+            ChangeReviewScreen(
+                self._provider,
+                initial_run_id=self._initial_run_id,
+                initial_path=self._initial_path,
+                initial_snapshot_id=self._initial_snapshot_id,
+            )
         )
 
 
@@ -825,3 +838,218 @@ async def test_unknown_initial_run_id_falls_back_to_the_latest_turn(review_fixtu
         assert "new.txt" in text
         select = screen.query_one("#change-review-turn-select", Select)
         assert select.value == run2
+
+
+# -- Task 3 (console-review-rail): initial_path / initial_snapshot_id -------
+
+
+@pytest.mark.asyncio
+async def test_initial_path_opens_focused_on_that_file(review_fixture):
+    """The rail's click-through opens the Review screen already focused on
+    the clicked file -- not the turn's default first leaf. Turn 2's tree
+    order is Added/Modified/Deleted/Renamed, so the default leaf is
+    ``new.txt`` (Added); picking ``edit.txt`` (Modified) proves
+    ``initial_path`` actually won."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "initial leaf focused",
+        )
+        text = await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt's diff",
+        )
+        assert "after" in text
+        _row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt", (
+            f"expected edit.txt focused via initial_path, got {change.path!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_unknown_initial_path_falls_back_to_the_first_leaf(review_fixture):
+    """A stale/unknown path (e.g. the file was reverted between the rail's
+    cache and the click) must degrade to today's default -- the turn's
+    first leaf -- not an empty or stuck pane."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(
+        provider, initial_run_id=run2, initial_path="no-such-file.txt"
+    )
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "a leaf focused despite the unknown path",
+        )
+        assert screen._focused_leaf == 0
+        _row, change = screen._leaves[0]
+        assert change.path == "new.txt", (
+            f"expected the default first leaf (new.txt), got {change.path!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_initial_snapshot_id_disambiguates_two_windows_on_same_path(tmp_path):
+    """TASK-18060 Task 3 (review-rail spec §2/§3): a run's ``change_snapshots``
+    can hold rows from TWO windows -- the turn's own window and its
+    surviving sub-agents' post-turn window -- and both can cover the SAME
+    path with DIFFERENT diff content (same fixture shape as
+    ``test_console_turn_file_card.py``'s
+    ``test_real_provider_two_windows_on_same_root_no_duplicates_own_diffs``).
+    Path-only selection is ambiguous here -- it can only ever reach the
+    FIRST-recorded window's leaf. ``initial_snapshot_id`` must pick the
+    leaf whose OWN row id matches, reaching either window on demand.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "shared.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    # Window 1: the turn's own window -- recorded FIRST.
+    _record_window(
+        CHANGE_KIND_TURN,
+        lambda: (root / "shared.txt").write_text("ALPHA_ONLY_MARKER\n"),
+    )
+    # Window 2: the post-turn window -- same run, same root, same path,
+    # recorded SECOND -- its baseline is window 1's end state.
+    _record_window(
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        lambda: (root / "shared.txt").write_text("BRAVO_ONLY_MARKER\n"),
+    )
+
+    rows = db.change_snapshots_for_run_review(run_id)
+    assert len(rows) == 2, f"fixture must produce exactly two windows, got {rows}"
+    window1_id, window2_id = int(rows[0]["id"]), int(rows[1]["id"])
+    assert window1_id != window2_id
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+
+    async def _opened_diff(snapshot_id: int) -> str:
+        app = _Harness(
+            provider,
+            initial_run_id=run_id,
+            initial_path="shared.txt",
+            initial_snapshot_id=snapshot_id,
+        )
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _wait_for(
+                pilot,
+                lambda: app.screen
+                if isinstance(app.screen, ChangeReviewScreen)
+                else None,
+                "review screen",
+            )
+            await _wait_for(
+                pilot, lambda: screen._leaves or None, "leaves loaded"
+            )
+            assert len(screen._leaves) == 2, (
+                "both windows' leaves for shared.txt must both be present"
+            )
+            text = await _wait_for(
+                pilot,
+                lambda: (
+                    lambda t: t
+                    if ("ALPHA_ONLY_MARKER" in t or "BRAVO_ONLY_MARKER" in t)
+                    else None
+                )(screen.diff_pane_text()),
+                "a window's diff rendered",
+            )
+            return text
+
+    window1_diff = await _opened_diff(window1_id)
+    assert "ALPHA_ONLY_MARKER" in window1_diff, window1_diff
+    assert "BRAVO_ONLY_MARKER" not in window1_diff, window1_diff
+
+    window2_diff = await _opened_diff(window2_id)
+    assert "BRAVO_ONLY_MARKER" in window2_diff, window2_diff
+
+
+@pytest.mark.asyncio
+async def test_turn_switch_after_initial_selection_reverts_to_first_file(
+    review_fixture,
+):
+    """The initials are constructor state consumed exactly ONCE: a later
+    turn switch (``select_turn``, the Select's own handler) must fall back
+    to the turn's first leaf like any ordinary switch -- not silently
+    re-apply the stale ``initial_path``."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "initial leaf focused",
+        )
+        _row, change = screen._leaves[screen._focused_leaf]
+        assert change.path == "edit.txt", "initial_path did not win on open"
+
+        # Switch away, then back -- the initials must not survive either hop.
+        screen.select_turn(run1)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run1
+            or None,
+            "switched to run1",
+        )
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched back to run2",
+        )
+        await pilot.pause()
+        assert screen._focused_leaf == 0, (
+            "a later turn switch must focus the first leaf, not stay pinned"
+        )
+        _row2, change2 = screen._leaves[0]
+        assert change2.path != "edit.txt"

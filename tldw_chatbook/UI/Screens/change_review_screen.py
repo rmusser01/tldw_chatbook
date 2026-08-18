@@ -492,6 +492,8 @@ class ChangeReviewScreen(Screen):
         self,
         provider: AgentRunsChangeReviewProvider,
         initial_run_id: str | None = None,
+        initial_path: str | None = None,
+        initial_snapshot_id: int | None = None,
     ) -> None:
         """Args are stored; all loading happens in ``on_mount``.
 
@@ -502,10 +504,26 @@ class ChangeReviewScreen(Screen):
                 call: the opener's ``call_after_refresh`` fired before this
                 screen had composed (NoMatches on the Select) -- the test
                 that pinned the opener caught it.
+            initial_path: File to focus once the initial turn loads, or
+                ``None`` for the turn's first leaf (today's default).
+                TASK-18060 Task 3 (review-rail spec §3) -- the rail's
+                click-through recipe. Same constructor-state rationale as
+                ``initial_run_id``: consumed exactly once by ``_load_turn``'s
+                tail, then cleared, so a later turn switch reverts to the
+                first leaf. An unmatched path degrades to the first leaf
+                rather than an empty pane.
+            initial_snapshot_id: When given alongside ``initial_path``,
+                prefer the leaf whose owning ``change_snapshots`` row id
+                equals this -- disambiguates two windows of the SAME run
+                that cover the same path (spec §2's same-run
+                turn/subagent-post-turn overlap). ``None`` matches the
+                first leaf whose path matches, same as today.
         """
         super().__init__()
         self._provider = provider
         self._initial_run_id = initial_run_id
+        self._initial_path = initial_path
+        self._initial_snapshot_id = initial_snapshot_id
         self._turns: list[ReviewTurn] = []
         self._active_turn: ReviewTurn | None = None
         #: Flattened (row, ChangedFile) leaves in tree order, for j/k.
@@ -734,7 +752,25 @@ class ChangeReviewScreen(Screen):
         totals.update(f"{len(self._leaves)} files  +{adds} −{dels}")
 
         if self._leaves:
-            self._focus_leaf(0)
+            # TASK-18060 Task 3: the initials are constructor state consumed
+            # exactly ONCE -- cleared here so a later turn switch (this same
+            # method, via select_turn/Select.Changed) reverts to the first
+            # leaf like today.
+            initial_path = self._initial_path
+            initial_snapshot_id = self._initial_snapshot_id
+            self._initial_path = None
+            self._initial_snapshot_id = None
+            # A path that doesn't exist in this turn (stale rail cache, a
+            # revert since) degrades to the first leaf rather than an empty
+            # pane -- select_file itself stays a no-op on an unmatched path
+            # so its legacy behavior (external callers with no fallback
+            # expectation) is untouched.
+            if initial_path is not None and any(
+                change.path == initial_path for _row, change in self._leaves
+            ):
+                self.select_file(initial_path, snapshot_id=initial_snapshot_id)
+            else:
+                self._focus_leaf(0)
         else:
             self._show_empty("No file changes in this turn.")
 
@@ -779,12 +815,25 @@ class ChangeReviewScreen(Screen):
 
     # -- file focus / diff pane -------------------------------------------
 
-    def select_file(self, path: str) -> None:
-        """Focus the first leaf whose change path matches ``path``.
+    def select_file(self, path: str, snapshot_id: int | None = None) -> None:
+        """Focus the leaf matching ``path``, preferring an exact snapshot.
 
         Args:
             path: Root-relative path from the active turn.
+            snapshot_id: When given, prefer the leaf whose OWNING
+                ``change_snapshots`` row id equals this (TASK-18060 Task 3)
+                -- a run can hold two windows (its own turn window and a
+                surviving sub-agent's post-turn window) covering the SAME
+                path, and path-only matching can only ever reach the
+                first-recorded one. Falls back to the first path match when
+                no leaf's row id matches -- legacy callers that pass no
+                snapshot id keep today's behavior exactly.
         """
+        if snapshot_id is not None:
+            for index, (row, change) in enumerate(self._leaves):
+                if change.path == path and row.get("id") == snapshot_id:
+                    self._focus_leaf(index)
+                    return
         for index, (_row, change) in enumerate(self._leaves):
             if change.path == path:
                 self._focus_leaf(index)
