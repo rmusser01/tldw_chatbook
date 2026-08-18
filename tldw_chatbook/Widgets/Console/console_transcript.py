@@ -70,7 +70,13 @@ from tldw_chatbook.Widgets.Console.console_selection import (
     SelectionManager,
     TextSelection,
     cap_quote,
+    line_end_offset,
+    line_start_offset,
+    next_line_offset,
     offset_for_cell,
+    prev_line_offset,
+    word_back_offset,
+    word_forward_offset,
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
@@ -2328,19 +2334,30 @@ def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> in
     return _markdown_cell_to_offset(text, height, cell_x, cell_y)
 
 
+#: Character/word/line-granularity motion keys (plain + markdown rows only;
+#: diff rows only take ``_KB_LINE_KEYS`` and the ``o`` swap).
+_KB_CHAR_KEYS = frozenset({"h", "l", "w", "b", "0", "$"})
+#: Line-granularity motion keys -- valid on every eligible row kind.
+_KB_LINE_KEYS = frozenset({"j", "k"})
+
+_KB_DIFF_SELECTION_HINT = "j/k lines · o swap · Enter menu · Esc cancel"
+_KB_CHAR_SELECTION_HINT = (
+    "h/l chars · w/b words · 0/$ line · j/k lines · o swap · Enter menu · Esc cancel"
+)
+
+
 def _kb_selection_hint_text(
     row: "ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow",
 ) -> str:
-    """Status-line copy for keyboard text-selection mode (phase 5 skeleton).
+    """Status-line copy for keyboard text-selection mode (phase 5).
 
-    Task 3 fills in the real motion-key copy once the mode actually moves;
-    this only distinguishes the (currently unreachable via keyboard entry,
-    but protocol-eligible) diff-row granularity from the plain/markdown
-    rows' so the seam is ready.
+    Diff rows only take the line-granularity motions (`j`/`k`/`o`); plain
+    and markdown rows take the full char/word/line motion set. Task 3's
+    final copy per the SDD brief's Interfaces block.
     """
     if isinstance(row, ConsoleToolDiffRow):
-        return "Text selection (diff) -- Esc to exit"
-    return "Text selection -- Esc to exit"
+        return _KB_DIFF_SELECTION_HINT
+    return _KB_CHAR_SELECTION_HINT
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -4350,6 +4367,84 @@ class ConsoleTranscript(VerticalScroll):
         except NoMatches:
             return None
 
+    def _kb_apply_motion(self, key: str) -> None:
+        """Move the keyboard text-selection cursor (console selection phase 5, Task 3).
+
+        ``key`` is the resolved motion character (``h``/``l``/``w``/``b``/
+        ``0``/``$``/``j``/``k``/``o``) -- the caller (the mode's ``on_key``
+        branch) has already interception-stopped the raw event and mapped
+        it from ``event.character`` for printable keys.
+
+        ``self._kb_anchor`` stays fixed (except across ``o``, which swaps
+        it with the end); every motion moves ``self._kb_end``, the active
+        cursor. The manager stays the single source the menu path reads by
+        re-running ``begin_drag``/``extend_drag`` on every motion rather
+        than mutating its offsets directly (the brief's NOTE) -- mouse
+        drags never touch ``_kb_anchor``/``_kb_end``, so the two paths
+        cannot fight over the same fields.
+
+        Diff rows only take line-granularity motions (``j``/``k``/``o``);
+        char/word motions are inert on them (selection unchanged) -- the
+        row's own ``set_selection_range`` still line-snaps whatever range
+        keyboard ``j``/``k`` produces.
+
+        A floor keeps ``end`` from ever landing on (or being walked past)
+        ``anchor`` -- an empty selection has nothing to quote -- by
+        clamping the candidate to ``anchor + 1``/``anchor - 1`` whenever a
+        motion would cross it; repeated presses past the floor simply stop
+        moving rather than oscillating.
+        """
+        row = self._kb_selection_row
+        if row is None or self._kb_anchor is None or self._kb_end is None:
+            return
+        is_diff_row = isinstance(row, ConsoleToolDiffRow)
+        if is_diff_row and key in _KB_CHAR_KEYS:
+            return  # diff rows: char/word/line-start/line-end motions do not apply
+        anchor = self._kb_anchor
+        end = self._kb_end
+        if key == "o":
+            anchor, end = end, anchor
+        elif key in _KB_CHAR_KEYS or key in _KB_LINE_KEYS:
+            text = row.get_display_text()
+            if key == "h":
+                candidate = max(end - 1, 0)
+                forward = False
+            elif key == "l":
+                candidate = min(end + 1, len(text))
+                forward = True
+            elif key == "w":
+                candidate = word_forward_offset(text, end)
+                forward = True
+            elif key == "b":
+                candidate = word_back_offset(text, end)
+                forward = False
+            elif key == "0":
+                candidate = line_start_offset(text, end)
+                forward = False
+            elif key == "$":
+                candidate = line_end_offset(text, end)
+                forward = True
+            elif key == "j":
+                candidate = next_line_offset(text, end)
+                forward = True
+            else:  # key == "k"
+                candidate = prev_line_offset(text, end)
+                forward = False
+            # Floor: never let the active end reach or cross the anchor.
+            if forward and end < anchor and candidate >= anchor:
+                candidate = anchor - 1
+            elif not forward and end > anchor and candidate <= anchor:
+                candidate = anchor + 1
+            end = candidate
+        else:
+            return
+        if end == anchor:
+            return
+        self._kb_anchor, self._kb_end = anchor, end
+        self.selection_manager.begin_drag(row.id, anchor)
+        self.selection_manager.extend_drag(row.id, end)
+        row.set_selection_range(*sorted((anchor, end)))
+
     def _paint_debug_dump(self, label: str) -> None:
         """task-623 live probe: append DOM truth about action rows to the file
         named by ``TLDW_TRANSCRIPT_PAINT_LOG``. No-op unless the env var is
@@ -5078,22 +5173,31 @@ class ConsoleTranscript(VerticalScroll):
                 event.stop()
                 event.prevent_default()
                 return
-            if event.key in {"j", "k", "down", "up", "enter"}:
-                # Review fix (Important): these keys are the pre-existing
-                # message-navigation/confirm BINDINGS below. Left unclaimed,
-                # `j`/`k`/`down`/`up` would move `selected_message_id` to a
-                # DIFFERENT message while `_kb_selection_row` (and the
-                # manager state, and the hint) stayed pinned to the OLD row
-                # -- a silent mode/message-selection desync -- and `enter`
-                # would toggle message selection out from under the mode.
-                # Consumed as no-ops for now: Task 3 replaces `j`/`k` with
-                # real line motions and `enter` with the mode's own finish
-                # action. Every other key still falls through below (Task 3
-                # owns the broader interception rule for the rest).
+            if event.is_printable or event.key in {"enter", "up", "down"}:
+                # Interception rule (corrected after Task 2's review found
+                # the fall-through desync): every printable single
+                # character, plus enter/up/down, is claimed here while the
+                # mode is armed. Left unclaimed, `j`/`k`/`down`/`up` would
+                # move `selected_message_id` to a DIFFERENT message while
+                # `_kb_selection_row` (and the manager state, and the hint)
+                # stayed pinned to the OLD row -- a silent mode/message-
+                # selection desync -- `enter` would toggle message
+                # selection out from under the mode (Task 4 wires the
+                # mode's own Enter-finish action; this stays a no-op for
+                # it), and any other unclaimed letter (e.g. `c`) would fire
+                # its normal BINDING (Copy) instead of staying inert.
+                # Page-up/page-down and the mouse wheel are NOT claimed --
+                # they still scroll the transcript while the mode is on.
                 event.stop()
                 event.prevent_default()
+                motion_key = event.character if event.is_printable else event.key
+                if (
+                    motion_key in _KB_CHAR_KEYS
+                    or motion_key in _KB_LINE_KEYS
+                    or motion_key == "o"
+                ):
+                    self._kb_apply_motion(motion_key)
                 return
-            # Task 3 wires the motion keys (h/l/w/b/0/$/j/k) here.
         if event.key in {"down", "j"}:
             self.action_select_next()
             event.stop()

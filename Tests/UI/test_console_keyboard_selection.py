@@ -2,11 +2,11 @@
 
 ``s`` arms keyboard-driven text selection on the currently j/k-selected
 message row -- a keyboard-only entry into the same ``SelectionManager`` the
-mouse drag already drives (phase 1). This is the mode's SKELETON only:
-enter/exit, Escape layering ahead of the existing clear-selection binding,
-mouse takeover, and the row-destruction guard. Entry seeds a one-character
-selection at the row's start; Task 3 wires the h/l/w/b/0/$/j/k motion keys
-that move it, and Task 4 wires the copy/quote actions.
+mouse drag already drives (phase 1). Task 2 built the mode's skeleton
+(enter/exit, Escape layering ahead of the existing clear-selection binding,
+mouse takeover, and the row-destruction guard). Task 3 (this file's newer
+tests) wires the h/l/w/b/0/$/j/k/o motion keys that move the selection, and
+Task 4 wires the copy/quote actions on Enter.
 """
 
 import pytest
@@ -20,9 +20,14 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSelectionMenu
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
+    ConsoleToolDiffRow,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
+
+_DIFF_PATH = "/tmp/a.py"
+_DIFF_OLD = "alpha\nbeta\ngamma\n"
+_DIFF_NEW = "alpha\nBETA\ngamma\ndelta\n"
 
 
 class _KeyboardSelectionApp(App[None]):
@@ -37,6 +42,19 @@ class _KeyboardSelectionApp(App[None]):
                     role=ConsoleMessageRole.ASSISTANT,
                     content="second message",
                     id="m2",
+                ),
+                # USER rows never take the assistant-markdown path (see
+                # ``ConsoleTranscript._render_row``), so these are always
+                # ``ConsoleTranscriptMessage`` (plain) regardless of the
+                # ``[chat_defaults] assistant_markdown`` toggle -- Task 3's
+                # plain-row motion tests need that guarantee.
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER, content="answer text", id="p1"
+                ),
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.USER,
+                    content="line one\nline two\nline three",
+                    id="p2",
                 ),
             ]
         )
@@ -215,18 +233,22 @@ async def test_row_destruction_guard_exits_mode_without_crash():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", ["j", "k", "down", "up", "enter"])
+@pytest.mark.parametrize("key", ["down", "up", "enter"])
 async def test_message_nav_and_confirm_keys_are_no_ops_in_mode(key):
-    """Task 3 owns real motions; until then these keys must not desync the mode.
+    """`down`/`up`/`enter` stay inert in the mode -- `j`/`k` graduated to real
+    line motions in Task 3 (see ``test_j_k_move_by_line_preserving_column``
+    and ``test_j_is_inert_at_text_end_on_a_single_line_row``) and are no
+    longer part of this no-op contract.
 
-    Before this fix, only `escape` was intercepted by the mode branch, so
-    `j`/`k`/`down`/`up`/`enter` fell through to the pre-existing BINDINGS
-    chain: `j`/`k`/`down`/`up` moved `selected_message_id` to a different
-    message while `_kb_selection_row` (and the manager state, and the hint)
-    stayed pinned to the OLD row -- a silent mode/message-selection desync.
-    `enter` toggled message selection (and would open the selection menu
-    once one exists), which must not fire while keyboard text-selection
-    mode owns the keyboard.
+    Before Task 2's fix, only `escape` was intercepted by the mode branch,
+    so `down`/`up`/`enter` fell through to the pre-existing BINDINGS chain:
+    `down`/`up` moved `selected_message_id` to a different message while
+    `_kb_selection_row` (and the manager state, and the hint) stayed pinned
+    to the OLD row -- a silent mode/message-selection desync. `enter`
+    toggled message selection (and would open the selection menu once one
+    exists), which must not fire while keyboard text-selection mode owns
+    the keyboard -- Task 4 wires the mode's own Enter-finish action; until
+    then it stays a no-op here too.
     """
     app = _KeyboardSelectionApp()
     async with app.run_test(size=(40, 30)) as pilot:
@@ -248,3 +270,254 @@ async def test_message_nav_and_confirm_keys_are_no_ops_in_mode(key):
         hint = transcript.query_one("#console-kb-selection-hint")
         assert hint.display is True
         assert not app.query(ConsoleSelectionMenu)
+
+
+# --- Task 3: motion keys -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_l_and_h_extend_and_shrink_by_char_on_plain_rows():
+    """`l`/`h` walk the active end one character at a time, floored at 1 unit
+    away from the anchor -- repeated `h` presses past the floor stop moving
+    rather than reaching (or crossing) it."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "p1")
+        assert isinstance(row, ConsoleTranscriptMessage)
+        transcript.selected_message_id = "p1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        await pilot.press("l", "l", "l")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 4)
+
+        await pilot.press("h")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 3)
+
+        # Past the floor: several more `h` presses must stop at (0, 1), not
+        # cross the anchor (which would make the selection empty/reversed).
+        await pilot.press("h", "h", "h", "h", "h")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 1)
+        assert transcript._kb_anchor == 0
+        assert transcript._kb_end == 1
+
+
+@pytest.mark.asyncio
+async def test_w_b_0_dollar_move_the_active_end():
+    """`w`/`b` jump by word, `0`/`$` jump to the current line's bounds -- all
+    move the active end, floored away from the fixed anchor exactly like
+    `h`/`l` (`0` from a position that maps back to the anchor's own line
+    start is floored to `anchor + 1` rather than landing on the anchor)."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "p1")
+        transcript.selected_message_id = "p1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        await pilot.press("w")  # "answer |text" -> start of "text"
+        await pilot.pause()
+        assert transcript.selection_manager.state.selection.end == 7
+
+        await pilot.press("w")  # already the last word -> end of text
+        await pilot.pause()
+        assert transcript.selection_manager.state.selection.end == 11
+
+        await pilot.press("b")  # back to the start of "text"
+        await pilot.pause()
+        assert transcript.selection_manager.state.selection.end == 7
+
+        await pilot.press("0")  # line start == anchor (0) -> floored to 1
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 1)
+
+        await pilot.press("$")  # line end -> end of text
+        await pilot.pause()
+        assert transcript.selection_manager.state.selection.end == 11
+
+
+@pytest.mark.asyncio
+async def test_j_k_move_by_line_preserving_column():
+    """`j`/`k` walk the active end by whole lines on multi-line text,
+    preserving the column where the target line allows it."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "p2")
+        transcript.selected_message_id = "p2"
+        await pilot.press("s")
+        await pilot.pause()
+        assert transcript._kb_end == 1  # column 1 on "line one"
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert transcript._kb_end == 10  # column 1 on "line two"
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert transcript._kb_end == 19  # column 1 on "line three"
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert transcript._kb_end == 10
+
+        await pilot.press("k")
+        await pilot.pause()
+        assert transcript._kb_end == 1
+
+
+@pytest.mark.asyncio
+async def test_j_is_inert_at_text_end_on_a_single_line_row():
+    """`j` on a row with no next line clamps forward to the text's end (the
+    line-motion helper's designed last-line behaviour, task-1 tested); once
+    the active end is already there, a further `j` is a genuine no-op --
+    there is nowhere left to go."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "p1")
+        transcript.selected_message_id = "p1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        await pilot.press("$")
+        await pilot.pause()
+        assert transcript.selection_manager.state.selection.end == 11
+
+        await pilot.press("j")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 11)
+        assert transcript._kb_anchor == 0
+        assert transcript._kb_end == 11
+
+
+@pytest.mark.asyncio
+async def test_o_swaps_anchor_and_end_so_mid_text_spans_are_reachable():
+    """`o` swaps anchor and end so a later forward motion can move what WAS
+    the anchor, reaching a selection whose start is off the row's origin --
+    unreachable with the anchor permanently pinned at 0."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        await _mounted_row(pilot, "p1")
+        transcript.selected_message_id = "p1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        await pilot.press("l", "l", "l")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 4)
+
+        await pilot.press("o")
+        await pilot.pause()
+        assert (transcript._kb_anchor, transcript._kb_end) == (4, 0)
+        # The sorted selection is unchanged by the swap itself.
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 4)
+
+        await pilot.press("w")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert sel.start > 0
+        assert (sel.start, sel.end) == (3, 4)
+
+
+@pytest.mark.asyncio
+async def test_markdown_rows_take_char_motions():
+    """Live-spike fact (Task 2): markdown rows store the selection range as
+    raw character offsets, not snapped to whole source lines -- `l`/`w`
+    motions land exactly where the pure helpers say, unlike diff rows."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        assert isinstance(row, ConsoleMarkdownMessage)
+        transcript.selected_message_id = "m1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        await pilot.press("l", "l", "l")
+        await pilot.pause()
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 4)
+        # Stored as-is on the row -- no whole-line snapping.
+        assert row._selection_line_range == (0, 4)
+
+
+@pytest.mark.asyncio
+async def test_mode_keys_do_not_leak_to_bindings():
+    """An unrecognized single character (e.g. `c`, the Copy binding) is
+    claimed and dropped by the mode -- it must not fall through to its
+    normal BINDING while keyboard text-selection mode owns the keyboard."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "p1")
+        transcript.selected_message_id = "p1"
+        await pilot.press("s")
+        await pilot.pause()
+
+        calls: list[str] = []
+        transcript.action_invoke_selected_action = calls.append
+
+        await pilot.press("c")
+        await pilot.pause()
+
+        assert calls == []
+        assert transcript._kb_selection_row is row
+        sel = transcript.selection_manager.state.selection
+        assert (sel.start, sel.end) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_char_keys_are_inert_on_diff_rows():
+    """Diff rows only take line-granularity motions (`j`/`k`/`o`); char/word
+    motions leave the selection untouched. Mode entry cannot reach a diff
+    row today (out of scope for Task 2's entry -- see
+    ``_enter_keyboard_selection``'s docstring), so this wires the mode state
+    directly onto a mounted ``ConsoleToolDiffRow`` and drives
+    ``_kb_apply_motion`` the same way the mode's ``on_key`` branch would."""
+
+    class _DiffApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTranscript(id="console-native-transcript")
+
+    app = _DiffApp()
+    async with app.run_test(size=(60, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        diff_row = ConsoleToolDiffRow("d1", (_DIFF_PATH, _DIFF_OLD, _DIFF_NEW))
+        await transcript.mount(diff_row)
+        await pilot.pause()
+
+        transcript._kb_selection_row = diff_row
+        transcript._kb_anchor, transcript._kb_end = 0, 1
+        transcript.selection_manager.begin_drag(diff_row.id, 0)
+        transcript.selection_manager.extend_drag(diff_row.id, 1)
+        diff_row.set_selection_range(0, 1)
+        before_range = diff_row._selection_range
+
+        transcript._kb_apply_motion("l")
+        assert transcript._kb_anchor == 0
+        assert transcript._kb_end == 1
+        assert diff_row._selection_range == before_range
+
+        transcript._kb_apply_motion("j")
+        assert transcript._kb_end == 15
+        # Grows by one whole (snapped) diff line -- both unified-diff header
+        # lines are now in the projection's stored range.
+        assert diff_row._selection_range == (0, 27)
+        assert diff_row.get_selection_text() == "--- /tmp/a.py\n+++ /tmp/a.py"
+
+        transcript._kb_apply_motion("o")
+        assert (transcript._kb_anchor, transcript._kb_end) == (15, 0)
