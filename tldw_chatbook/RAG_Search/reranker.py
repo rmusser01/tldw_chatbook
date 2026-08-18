@@ -106,6 +106,30 @@ class RerankOutcome:
         return self.failed > 0
 
 
+#: Smallest token budget a reranking call may run with when
+#: ``include_reasoning`` is on (TASK-17365).
+#:
+#: The shipped ``max_tokens = 100`` is sized for ``{"score": 0.9}`` and
+#: nothing else. Turn reasoning on and the model writes its explanation
+#: first, leaving ~60 tokens for the JSON: the object truncates before its
+#: closing brace, ``json.loads`` raises, and the row comes back
+#: ``scored=False`` -- after the provider has been billed in full. For
+#: listwise that is the WHOLE rerank, not one row.
+#:
+#: TASK-17065 (AC#11) turned the flag off on the two shipped read-only
+#: profiles, and built-ins never persist, so every install picked that up.
+#: A profile a user CLONED beforehand did not: ``ProfileConfig`` round-trips
+#: ``asdict(reranking_config)`` to the user's own JSON, where no shipped
+#: default reaches it.
+#:
+#: This is a FLOOR, not a migration. A migration would have to rewrite a
+#: file the user owns and GUESS whether a large ``max_tokens`` was
+#: deliberate; a floor cannot guess wrong -- it only raises a budget too
+#: small to hold what the config already asked the model to produce, leaves
+#: every deliberate value alone, and covers profiles cloned after it ships.
+REASONING_TOKEN_FLOOR = 400
+
+
 @dataclass
 class RerankingConfig:
     """Configuration for reranking operations."""
@@ -114,6 +138,10 @@ class RerankingConfig:
     model_provider: str = "openai"
     model_name: str = "gpt-3.5-turbo"
     temperature: float = 0.0  # Use deterministic scoring
+    # Sized for `{"score": 0.9}`. With `include_reasoning` on it is raised to
+    # `REASONING_TOKEN_FLOOR` at the call site (`_effective_max_tokens`) --
+    # 100 tokens cannot hold an explanation AND the JSON, and the truncated
+    # object is billed but unscorable (TASK-17365).
     max_tokens: int = 100
 
     # Reranking settings.
@@ -295,6 +323,28 @@ class BaseReranker(ABC):
                 retries += 1
                 await asyncio.sleep(1 * retries)
 
+    def _effective_max_tokens(self) -> int:
+        """The token budget this call actually runs with (TASK-17365).
+
+        ``max(configured, REASONING_TOKEN_FLOOR)`` when ``include_reasoning``
+        is on, the configured value otherwise. ``max`` is the whole point:
+        this is a floor, so a deliberate ``max_tokens = 4000`` comes through
+        as 4000 and only a budget too small to hold the explanation the
+        config asked for is raised.
+
+        It applies here, at the one place the budget is consumed, so it
+        covers every strategy and -- more importantly -- every profile,
+        including the ones a user cloned before TASK-17065 fixed the
+        built-ins and any they clone afterwards. See
+        ``REASONING_TOKEN_FLOOR`` for why this is not a migration.
+
+        Returns:
+            The ``max_tokens`` value to send to ``chat_api_call``.
+        """
+        if self.config.include_reasoning:
+            return max(self.config.max_tokens, REASONING_TOKEN_FLOOR)
+        return self.config.max_tokens
+
     async def _call_llm_impl(
         self, prompt: str, system_prompt: Optional[str] = None
     ) -> str:
@@ -371,7 +421,7 @@ class BaseReranker(ABC):
                     messages_payload=messages_payload,
                     model=self.config.model_name,
                     temp=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
+                    max_tokens=self._effective_max_tokens(),
                     **system_kwarg,
                     # STATED, not inherited. Every handler currently
                     # DECLARES `streaming=False`, so the config is never

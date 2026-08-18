@@ -252,7 +252,19 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "parent_size_multiplier": 3,
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
-            # "reranking_strategy": "pointwise",
+            #
+            # There is NO "reranking_strategy" key here. One used to be
+            # listed, and it read nothing -- no code anywhere loaded it, so
+            # setting it selected exactly nothing (TASK-17600 F3). The
+            # strategy lives on a RAG PROFILE, as
+            # `reranking_config.strategy` in the profile's saved JSON under
+            # <user data dir>/rag_profiles/: `ProfileConfig` serialises the
+            # whole `RerankingConfig` and rebuilds it on load, so a saved or
+            # cloned profile keeps its strategy across restarts (pinned by
+            # Tests/RAG/test_config_profiles.py::
+            # test_a_saved_profile_round_trips_its_reranking_strategy). The
+            # Settings form edits that profile's provider/model/top-k but
+            # not its strategy.
             #
             # Reranking strategies: "pointwise" | "pairwise" | "listwise"
             # (each bills an LLM provider per call) or "cross_encoder" (a

@@ -1,14 +1,26 @@
 ---
-id: task-17600
-title: >-
-  result_reranking middleware ships enabled=true and is handled by a bare pass
-status: To Do
-assignee: []
+id: TASK-17600
+title: result_reranking middleware ships enabled=true and is handled by a bare pass
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
-labels: [rag, config]
+updated_date: '2026-08-18 00:13'
+labels:
+  - rag
+  - config
 dependencies: []
 priority: medium
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED: Tests/RAG_Search/test_pipeline_middleware_contract.py -- parse the shipped rag_pipelines.toml's pipeline before/after lists with tomllib and pipeline_loader.py's 'middleware_id ==' branches with ast, per phase, and fail on (a) declared-but-unimplemented, (b) a branch whose body is a bare pass, (c) implemented-but-undeclared, (d) a declared name with no [middleware.*] block. Must be RED now on the seven.
+2. DELETE the promises (do NOT wire): result_reranking + the seven unimplemented names from the pipelines that declare them, and every [middleware.*] block left with no implementation and no consumer. Wiring result_reranking would switch reranking ON for every high_accuracy user and TASK-16965 measured it net-harmful; that reason goes in the diff. An emptied middleware list loses its key rather than shipping [].
+3. F3: reranking_strategy reads nothing -- delete it from config.py's and rag_v2_example.toml's commented examples and correct RAG-DESIGN.md:2371 to name the mechanism that actually works (a saved/cloned profile's reranking_config.strategy, which round-trips through ProfileConfig.to_dict/from_dict).
+4. GREEN; batteries counts READ; ruff; gate verbatim with the vacuity caveat.
+<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 

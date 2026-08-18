@@ -86,9 +86,21 @@ chunk_overlap = 128
 enable_rerank = true
 reranker_model = "cohere"
 
+# Only names `PipelineLoader._apply_*_middleware` actually implements may
+# appear here; Tests/RAG_Search/test_pipeline_middleware_contract.py fails
+# on a name that does not (TASK-17600).
+#
+# `result_reranking` used to be listed after `citation_enhancement`. It was
+# REMOVED, not wired: its handler was a bare `pass`, and the one reranking
+# strategy anyone has measured on this repo's gated instrument came out net
+# HARMFUL on the averaged row (TASK-16965). Wiring it would have switched
+# reranking on for everyone who picks this pipeline BECAUSE it promises
+# accuracy -- spending provider calls to make retrieval worse on the
+# strength of a name. Reranking stays a per-profile choice
+# (`RerankingConfig.strategy`), off by default.
 [pipelines.high_accuracy.middleware]
 before = ["query_expansion"]
-after = ["result_reranking", "citation_enhancement"]
+after = ["citation_enhancement"]
 
 # Composite Pipelines
 [pipelines.adaptive]
@@ -141,9 +153,15 @@ preserve_tables = true
 clean_artifacts = true
 hybrid_alpha = 0.4  # Vector-leg weight (0 = FTS only, 1 = vector only); favors exact term matching
 
+# `code_syntax_enhancer` (before) and `code_formatter`/`table_renderer`
+# (after) were declared here and implemented nowhere -- they fell off the
+# end of `_apply_before_middleware`/`_apply_after_middleware`'s `if/elif`
+# and no-op'd silently. Removed rather than stubbed (TASK-17600); the
+# `after` key is gone entirely rather than left as `[]`, which would still
+# read as a stage. What survives is `technical_term_detector`, the one name
+# here with a handler.
 [pipelines.technical_docs.middleware]
-before = ["code_syntax_enhancer", "technical_term_detector"]
-after = ["code_formatter", "table_renderer"]
+before = ["technical_term_detector"]
 
 [pipelines.research_papers]
 name = "Research Paper Search"
@@ -160,11 +178,21 @@ chunk_type = "hierarchical"
 include_citations = true
 clean_artifacts = true
 
-[pipelines.research_papers.middleware]
-before = ["citation_parser", "abstract_extractor"]
-after = ["citation_formatter", "result_clustering"]
+# This pipeline had a middleware table naming four middlewares --
+# `citation_parser`, `abstract_extractor`, `citation_formatter`,
+# `result_clustering` -- and NONE of them existed: no handler branch, and
+# for three of them not even a `[middleware.*]` block, so the loader skipped
+# them before dispatch. The whole table is removed rather than emptied
+# (TASK-17600). The pipeline keeps its parameters, which are real: its
+# hierarchical chunking and citation inclusion are what actually made it
+# different from `semantic`.
 
 # Middleware Definitions
+#
+# Every name a pipeline lists above must have a block here AND a branch in
+# `PipelineLoader._apply_before_middleware`/`_apply_after_middleware`.
+# Tests/RAG_Search/test_pipeline_middleware_contract.py enforces both
+# directions, including that the branch does more than `pass` (TASK-17600).
 [middleware.query_expansion]
 name = "Query Expansion"
 type = "before_search"
@@ -177,29 +205,17 @@ model = "gpt-3.5-turbo"
 max_expansions = 3
 include_synonyms = true
 
-# NOT a quality claim, and -- read this before wiring it up -- currently a
-# NO-OP. `PipelineLoader._apply_after_middleware` (RAG_Search/pipeline_loader.py)
-# handles "result_reranking" with a bare `pass`, so `enabled = true` and the
-# model below buy nothing today, on `high_accuracy` or anywhere else.
-#
-# If anyone implements it: cross-encoder reranking is the ONE reranking
-# strategy that has been measured on this repo's gated eval instrument
-# (TASK-16965), and it came out net HARMFUL on the averaged row -- large
-# gains on weak-retrieval query categories (hybrid `scoped` MRR
-# 0.163 -> 0.929), paid for by demoting already-correct top hits on
-# categories retrieval already got right. It is the default of nothing and
-# the recommendation of nothing. Numbers and method:
-# Docs/superpowers/qa/2026-08-17-cross-encoder/report.md
-[middleware.result_reranking]
-name = "Advanced Result Re-ranking"
-type = "after_search"
-enabled = true
-description = "Re-ranks results with a cross-encoder (measured net-harmful on average; see TASK-16965)"
-
-[middleware.result_reranking.config]
-model = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-batch_size = 32
-score_threshold = 0.5
+# `[middleware.result_reranking]` was defined here: `enabled = true`, a
+# cross-encoder model name, a batch size and a score threshold -- and a
+# handler that was a bare `pass`. DELETED, not implemented (TASK-17600).
+# Cross-encoder reranking is the one strategy measured on this repo's gated
+# eval instrument, and it came out net HARMFUL on the averaged row: large
+# gains where retrieval is weak (hybrid `scoped` MRR 0.163 -> 0.929) paid
+# for by demoting already-correct top hits elsewhere
+# (Docs/superpowers/qa/2026-08-17-cross-encoder/report.md). Turning it on
+# for every `high_accuracy` user is precisely what that measurement forbids.
+# Reranking remains available where a user opts into it per profile
+# (`RerankingConfig.strategy`), off by default.
 
 [middleware.citation_enhancement]
 name = "Citation Enhancement"
@@ -212,16 +228,10 @@ format = "inline"  # or "footnote", "bibliography"
 include_page_numbers = true
 include_timestamps = true
 
-[middleware.code_syntax_enhancer]
-name = "Code Syntax Enhancement"
-type = "before_search"
-enabled = true
-description = "Enhances queries with programming language context"
-
-[middleware.code_syntax_enhancer.config]
-detect_language = true
-add_language_keywords = true
-expand_abbreviations = true
+# `[middleware.code_syntax_enhancer]` was defined here -- `enabled = true`,
+# with language-detection settings -- and had no handler branch at all, so
+# `_apply_before_middleware` fell straight past it. Deleted along with its
+# only declaration (TASK-17600).
 
 [middleware.technical_term_detector]
 name = "Technical Term Detection"

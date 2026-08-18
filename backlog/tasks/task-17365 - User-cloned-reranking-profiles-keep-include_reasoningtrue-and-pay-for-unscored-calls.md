@@ -1,15 +1,28 @@
 ---
-id: task-17365
+id: TASK-17365
 title: >-
   User-cloned reranking profiles keep include_reasoning=true and pay for
   unscored calls
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
-labels: [rag, settings, config]
+updated_date: '2026-08-18 00:13'
+labels:
+  - rag
+  - settings
+  - config
 dependencies: []
 priority: medium
 ---
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED: Tests/RAG_Search/test_reranker_token_floor.py -- the effective max_tokens at the ONE consumption site (_call_llm_impl's chat_api_call kwarg) is >= the floor when include_reasoning is on; a deliberate 4000 is UNTOUCHED (floor, not assignment); no reasoning => 100 stays 100; plus an end-to-end truncation test (fake seam truncates to the budget) proving rows come back scored.
+2. Implement a REASONING_TOKEN_FLOOR (400) applied at reranker.py's single max_tokens site. NO migration: a migration mutates a user's saved profile behind their back and must guess whether a large max_tokens was deliberate; a floor cannot guess wrong.
+3. GREEN; Tests/RAG_Search/ counts READ; ruff.
+<!-- SECTION:PLAN:END -->
 
 ## Description (the why)
 
