@@ -89,6 +89,13 @@ TOKENS_PER_CHAR_ESTIMATES = {
 CJK_TOKENS_PER_CHAR = 1.0  # each CJK code point is >= ~1 token
 ESTIMATE_HEADROOM = 1.2  # documented headroom so estimates lean high (safe)
 
+#: Fixed contribution for a non-text part of a multimodal message (an image /
+#: attachment block in the OpenAI part-list shape). 85 is the published
+#: low-detail image cost for GPT-4V-family models — a deliberate floor, not a
+#: per-provider truth; the estimator's contract everywhere else is likewise a
+#: conservative estimate, never an exact count (TASK-17610).
+NON_TEXT_PART_TOKEN_ESTIMATE = 85
+
 _CJK_RANGES = (
     (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
     (0x3040, 0x30FF),  # Hiragana + Katakana
@@ -136,22 +143,67 @@ def _chars_estimate(text: str, provider: str) -> int:
     )
 
 
-def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
-    """Estimate the token count of a text string with one consistent strategy.
+def _flatten_message_content(content: Any) -> "tuple[str, int]":
+    """Normalize message ``content`` into countable text + non-text part count.
+
+    Message content is usually a plain string, but multimodal/attachment turns
+    carry the OpenAI part-list shape (``[{"type": "text", "text": ...},
+    {"type": "image_url", ...}]``). Iterating that list as if it were a string
+    crashed the char estimator (``ord()`` on dict items — TASK-17610).
+
+    Args:
+        content: A message's ``content`` value in any shape.
+
+    Returns:
+        ``(text, non_text_parts)`` — the concatenated text of every string
+        part (dict parts contribute their ``"text"`` value when it is a
+        string), and the count of parts that carry no countable text (each
+        later contributes :data:`NON_TEXT_PART_TOKEN_ESTIMATE`).
+    """
+    if isinstance(content, str):
+        return content, 0
+    if isinstance(content, list):
+        texts: list[str] = []
+        non_text = 0
+        for part in content:
+            if isinstance(part, str):
+                texts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+            else:
+                non_text += 1
+        return "\n".join(texts), non_text
+    # Any other shape (None, dict, number): count its string form — same
+    # conservative-floor posture as the rest of the estimator.
+    return ("" if content is None else str(content)), 0
+
+
+def estimate_tokens(text: Any, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
+    """Estimate the token count of message content with one consistent strategy.
 
     Tiers: a custom tokenizer (only when one is actually installed), else
     tiktoken (when available), else a conservative chars-based floor. Never uses
-    a whitespace word count.
+    a whitespace word count. Non-string content (the multimodal part-list
+    shape) is normalized first: text parts are estimated normally and each
+    non-text part contributes :data:`NON_TEXT_PART_TOKEN_ESTIMATE`.
 
     Args:
-        text: The text to estimate.
+        text: The text (or part-list content) to estimate.
         model: Model name (selects the tiktoken encoding / custom tokenizer).
         provider: Provider name (case-insensitive); selects the chars-path ratio
             and the custom tokenizer's provider patterns.
 
     Returns:
-        Estimated token count (0 for empty text).
+        Estimated token count (0 for empty content).
     """
+    non_text_parts = 0
+    if not isinstance(text, str):
+        text, non_text_parts = _flatten_message_content(text)
+        if non_text_parts:
+            return (
+                estimate_tokens(text, model, provider)
+                + non_text_parts * NON_TEXT_PART_TOKEN_ESTIMATE
+            )
     if not text:
         return 0
     if CUSTOM_TOKENIZERS_AVAILABLE and custom_tokenizers_available():
