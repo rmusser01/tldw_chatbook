@@ -3,11 +3,11 @@ id: TASK-18414
 title: >-
   Console cannot drive claude-opus-5: the anthropic handler sends temperature to
   models that reject sampling params (only Sonnet 5 is special-cased)
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-18 16:20'
-updated_date: '2026-08-18 23:54'
+updated_date: '2026-08-18 23:59'
 labels:
   - llm
   - console
