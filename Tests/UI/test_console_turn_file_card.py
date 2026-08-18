@@ -13,6 +13,7 @@ from textual.widgets import Button
 
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Console.console_turn_file_card import (
+    MAX_MOUNTED_HUNKS,
     ConsoleTurnFileCard,
 )
 
@@ -88,6 +89,44 @@ class _MultiHunkProvider(_FakeProvider):
     def diff_text(self, row, path):
         self.diff_text_calls += 1
         return _multi_hunk_diff_text(self._n_hunks, self._body_lines_per_hunk)
+
+
+class _NotesCapableMultiHunkProvider(_MultiHunkProvider):
+    """A ``_MultiHunkProvider`` that also offers the notes trio, with one
+    pre-existing note pinned to a hunk PAST the mount ceiling -- used to
+    assert the elision tail cheaply flags when an elided hunk carries a
+    note (TASK-17611, AC#1).
+    """
+
+    def __init__(self, *, elided_note_hunk_index: int, **kwargs):
+        super().__init__(**kwargs)
+        self._elided_note_hunk_index = elided_note_hunk_index
+
+    def notes_for_run(self, run_id):
+        idx = self._elided_note_hunk_index
+        start = idx * 10 + 1
+        header = (
+            f"@@ -{start},{self._body_lines_per_hunk} "
+            f"+{start},{self._body_lines_per_hunk} @@ hunk_{idx}_marker"
+        )
+        return [
+            {
+                "id": 1,
+                "note": "watch this one",
+                "delivered_at": None,
+                "root": "/ws",
+                "path": "a.py",
+                "hunk_index": idx,
+                "hunk_header": header,
+                "snapshot_id": None,
+            }
+        ]
+
+    def add_change_note(self, **kwargs):
+        raise NotImplementedError("not exercised by this test")
+
+    def delete_change_note(self, note_id):
+        raise NotImplementedError("not exercised by this test")
 
 
 class _Host(App):
@@ -234,6 +273,111 @@ async def test_expand_hunk_past_old_cap_still_present():
         # each hunk's block carries an honest "more lines" tail rather than
         # silently vanishing.
         assert "more lines" in str(hunks[0].render())
+
+
+@pytest.mark.asyncio
+async def test_expand_past_hunk_ceiling_mounts_capped_blocks_and_honest_tail():
+    """TASK-17611 (AC#1): a file with more hunks than ``MAX_MOUNTED_HUNKS``
+    stops mounting one block per hunk past the cap and shows an honest
+    "... N more hunks" tail instead of an unbounded number of widget
+    groups.
+    """
+    n_hunks = MAX_MOUNTED_HUNKS + 10
+    provider = _MultiHunkProvider(n_hunks=n_hunks, body_lines_per_hunk=1)
+
+    class _CeilingHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _CeilingHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        hunks = list(body.query(".console-turn-file-hunk"))
+        assert len(hunks) == MAX_MOUNTED_HUNKS, (
+            "must stop mounting per-hunk blocks at the ceiling, not mount "
+            "one per hunk unbounded"
+        )
+        tails = list(body.query(".console-turn-file-hunk-tail"))
+        assert len(tails) == 1, "exactly one honest elision tail, not zero/many"
+        tail_text = str(tails[0].render())
+        assert "10 more hunks" in tail_text
+        assert "Review" in tail_text
+
+
+@pytest.mark.asyncio
+async def test_hunk_ceiling_tail_flags_when_an_elided_hunk_carries_a_note():
+    """TASK-17611 (AC#1): the ceiling's "N more hunks" tail must not hide
+    the note affordance dishonestly -- when at least one elided hunk
+    carries an existing note, the tail says so.
+    """
+    n_hunks = MAX_MOUNTED_HUNKS + 10
+    provider = _NotesCapableMultiHunkProvider(
+        elided_note_hunk_index=MAX_MOUNTED_HUNKS,  # first hunk past the cap
+        n_hunks=n_hunks,
+        body_lines_per_hunk=1,
+    )
+
+    class _CeilingNotesHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _CeilingNotesHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        tail = body.query_one(".console-turn-file-hunk-tail")
+        tail_text = str(tail.render())
+        assert "10 more hunks" in tail_text
+        assert "1 carrying note" in tail_text
+
+
+@pytest.mark.asyncio
+async def test_hunk_ceiling_budgets_per_hunk_lines_by_mounted_count_not_total():
+    """Qodo round (TASK-17611): ``per_hunk_cap`` must divide
+    ``diff_display_max_lines`` by how many hunks are actually MOUNTED
+    (bounded by ``MAX_MOUNTED_HUNKS``), not the file's total hunk count --
+    a file with many more hunks than the ceiling must not starve the 50
+    hunks that DO get mounted of their fair per-hunk line budget.
+    """
+    n_hunks = 200
+    body_lines_per_hunk = 20
+    diff_display_max_lines = 200
+    provider = _MultiHunkProvider(
+        n_hunks=n_hunks,
+        body_lines_per_hunk=body_lines_per_hunk,
+        diff_display_max_lines=diff_display_max_lines,
+    )
+
+    class _BudgetHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _BudgetHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        hunks = list(body.query(".console-turn-file-hunk"))
+        assert len(hunks) == MAX_MOUNTED_HUNKS
+
+        # cap // MOUNTED (200 // 50 == 4 lines/hunk) is the correct
+        # budget -- the pre-fix bug divided by the file's TOTAL hunk count
+        # instead (200 // 200 == 1 line/hunk), starving every mounted
+        # block down to its first body line alone. Hunk index 1 (not 0,
+        # to sidestep the first hunk's extra prelude text) must show its
+        # 4th body line (index 3) and an honest "16 more lines" tail --
+        # neither is reachable under the old total-count division, which
+        # would cap it to 1 line and a "19 more lines" tail instead.
+        second_hunk_text = str(hunks[1].render())
+        assert "hunk1_body_line3" in second_hunk_text, (
+            "per-hunk line budget must be computed from the MOUNTED hunk "
+            "count, not the file's total hunk count"
+        )
+        assert "hunk1_body_line4" not in second_hunk_text
+        assert "16 more lines" in second_hunk_text
 
 
 @pytest.mark.asyncio
@@ -614,6 +758,75 @@ async def test_toggle_all_loads_uncached_diffs_serialized_never_concurrently():
         assert provider.max_active == 1, (
             "expand-all loaded more than one diff concurrently"
         )
+
+
+@pytest.mark.asyncio
+async def test_toggle_all_label_reflects_manually_expanded_rows_not_just_toggle_state():
+    """TASK-17611 (AC#2): the header's expand/collapse-all label must
+    derive from the LIVE DOM state whenever it changes, not only when the
+    toggle button itself is pressed -- expanding every row one at a time
+    (via each row's own button) must flip the header to "collapse" too,
+    and collapsing one of them back must flip it back to "expand".
+    """
+    # Raw chevron literals (not imported from the module under test): the
+    # card is running in the DEFAULT (non-ASCII) glyph mode here, where
+    # `resolve_glyph` is identity, so the rendered label carries these
+    # unicode characters verbatim.
+    _CHEVRON_CLOSED = "▸"
+    _CHEVRON_OPEN = "▾"
+
+    async with _Host().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        toggle_btn = card.query_one(".console-turn-file-toggle-all-btn", Button)
+
+        # Baseline: nothing expanded yet -- collapsed/"expand all" state.
+        assert str(toggle_btn.render()).startswith(_CHEVRON_CLOSED)
+        assert toggle_btn.tooltip == "Expand every file's diff"
+
+        rows = list(card.query(".console-turn-file-row"))
+        assert len(rows) == 2
+
+        # Expand the FIRST row individually (never touching the header
+        # toggle) -- one of two rows expanded is still a "mixed" state,
+        # so the header must still read "expand all".
+        rows[0].focus()
+        await pilot.press("enter")
+        for _ in range(60):
+            bodies = list(card.query(".console-turn-file-diff"))
+            if bodies and bodies[0].display:
+                break
+            await pilot.pause(0.02)
+        assert str(toggle_btn.render()).startswith(_CHEVRON_CLOSED), (
+            "one of two rows expanded is still a mixed state -- header "
+            "must not claim everything is expanded"
+        )
+
+        # Expand the SECOND row individually too -- now every row is
+        # expanded, and the header must reflect that live DOM state even
+        # though the toggle button itself was never pressed.
+        rows[1].focus()
+        await pilot.press("enter")
+        for _ in range(60):
+            bodies = list(card.query(".console-turn-file-diff"))
+            if bodies and all(body.display for body in bodies):
+                break
+            await pilot.pause(0.02)
+        assert str(toggle_btn.render()).startswith(_CHEVRON_OPEN), (
+            "every row expanded individually must flip the header to "
+            "'collapse all', not leave it stuck on 'expand all'"
+        )
+        assert toggle_btn.tooltip == "Collapse every file's diff"
+
+        # Collapse the first row back individually -- back to mixed, so
+        # the header must flip back to "expand all" too.
+        rows[0].focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+        assert str(toggle_btn.render()).startswith(_CHEVRON_CLOSED), (
+            "collapsing one row individually must un-stick the header "
+            "from a stale 'collapse all' state"
+        )
+        assert toggle_btn.tooltip == "Expand every file's diff"
 
 
 @pytest.mark.asyncio

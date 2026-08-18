@@ -15,6 +15,7 @@ import asyncio
 from typing import Any, Callable
 
 from loguru import logger
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click, Key, Resize
@@ -34,11 +35,40 @@ from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 _CHEVRON_CLOSED = "▸"
 _CHEVRON_OPEN = "▾"
+#: TASK-17611 (AC#3): the card's note/delete glyphs, routed through
+#: ``resolve_glyph`` for terminal-fallback safety like the chevrons above.
+#: NOT ``format_diff_feedback_disclosure``'s "📝" prefix (console_display_
+#: state.py) -- that text becomes a plain TOOL transcript marker with no
+#: card-side render hook, and it is shared verbatim by live emission and
+#: resume re-derivation (see that function's own docstring); resolving it
+#: at format time would make a persisted marker's glyph depend on whatever
+#: ASCII-mode setting happened to be active when it was (re)rendered,
+#: breaking that byte-identical contract. Every other transcript marker in
+#: this codebase stays raw for the same reason (see ``format_agent_step_
+#: marker``'s docstring) -- 📝 is consistent with that convention, not an
+#: oversight.
+_GLYPH_NOTE = "✎"
+_GLYPH_DELETE = "✕"
 
 #: Note text cap (TASK-16800 spec §1) -- matches the `Input`'s own
 #: `max_length` so the widget-level typing limit and this boundary check
 #: can never drift apart.
 NOTE_MAX_LENGTH = 2000
+
+#: TASK-17611 (AC#1): ceiling on how many of one row's hunks
+#: ``_mount_hunk_blocks`` actually mounts widgets for. Each hunk mounts
+#: ~3-4 widgets (a diff ``Static``, an actions ``Horizontal``, a notes
+#: ``Vertical``, plus a ``✎ note`` button when notes are capable) -- an
+#: unusually large file (a generated lockfile, a vendored dump) can carry
+#: thousands of hunks, and mounting one widget group per hunk with no cap
+#: would make expanding it lock up the UI. Past this cap, a single honest
+#: trailing ``Static`` reports how many more hunks exist instead of
+#: mounting them -- the full diff (every hunk, unbounded) is still one
+#: click away via the header's ``Review`` button. 50 is generous for the
+#: overwhelming common case (a real code-review-sized diff has a handful
+#: to a few dozen hunks per file) while still bounding the pathological
+#: one.
+MAX_MOUNTED_HUNKS = 50
 
 
 def _validate_note_text(raw: str) -> "str | None":
@@ -132,6 +162,11 @@ class ConsoleTurnFileCard(Vertical):
     ConsoleTurnFileCard .console-turn-file-hunk {
         height: auto;
         margin-bottom: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-tail {
+        height: auto;
+        margin-bottom: 1;
+        text-style: italic;
     }
     ConsoleTurnFileCard .console-turn-file-hunk-actions {
         height: auto;
@@ -455,6 +490,7 @@ class ConsoleTurnFileCard(Vertical):
         if body.display:
             body.display = False
             row.label = self._row_label_text(entry, expanded=False)
+            self._refresh_toggle_all_button()
             return
         if idx not in self._hunk_cache:
             snapshot_row = self._row_for_entry.get(idx)
@@ -482,6 +518,7 @@ class ConsoleTurnFileCard(Vertical):
                 return
         body.display = True
         row.label = self._row_label_text(entry, expanded=True)
+        self._refresh_toggle_all_button()
 
     @staticmethod
     async def _read_hunks(
@@ -532,12 +569,30 @@ class ConsoleTurnFileCard(Vertical):
                 caller).
         """
         cap = int(getattr(provider, "diff_display_max_lines", 2000))
-        # Per-hunk display cap (ruling): every hunk gets its own block even
-        # when its body is elided, so hunks past the old single-Static's
-        # global cap are still present (and, later, annotatable) --
-        # floor-guarded so a diff with more hunks than cap lines still shows
-        # at least 1 body line each.
-        per_hunk_cap = max(1, cap // max(1, len(hunks)))
+        # TASK-17611 (AC#1): a diff with an unusually large number of hunks
+        # (a generated lockfile, a vendored dump) would otherwise mount
+        # ~3-4 widgets PER HUNK with no bound -- past `MAX_MOUNTED_HUNKS`,
+        # stop mounting per-hunk blocks and report the elision honestly
+        # instead (below the loop). `hunks` itself is unchanged -- indices
+        # into it (`hunk_idx`, `_hunk_cache`) stay valid for every already-
+        # mounted hunk and for the elided-notes check below.
+        mounted_hunks = hunks[:MAX_MOUNTED_HUNKS]
+        # Qodo round (TASK-17611): the per-hunk budget must be derived from
+        # how many hunks are actually MOUNTED (`len(mounted_hunks)`), not
+        # the total hunk count -- dividing by the total meant a file with
+        # 1,000 hunks and the default 2,000-line cap mounted only
+        # `MAX_MOUNTED_HUNKS` (50) blocks, each capped to ~2 body lines
+        # (2000 // 1000), when the 50 mounted blocks could honestly afford
+        # ~40 lines each (2000 // 50). The elided hunks past the ceiling
+        # contribute nothing to what is actually on screen, so they must
+        # not shrink the budget for the ones that are.
+        #
+        # Per-hunk display cap (ruling): every MOUNTED hunk gets its own
+        # block even when its body is elided, so hunks past the old
+        # single-Static's global cap are still present (and, later,
+        # annotatable) -- floor-guarded so a diff with more hunks than cap
+        # lines still shows at least 1 body line each.
+        per_hunk_cap = max(1, cap // max(1, len(mounted_hunks)))
         # Qodo #6 (PR #1779 fix round): this entry's own snapshot row id,
         # used by `_note_matches_snapshot` below to disambiguate two
         # same-header windows on the same root+path.
@@ -547,7 +602,7 @@ class ConsoleTurnFileCard(Vertical):
             if current_snapshot_row is not None
             else None
         )
-        for hunk_idx, hunk in enumerate(hunks):
+        for hunk_idx, hunk in enumerate(mounted_hunks):
             await body.mount(
                 Static(
                     self._styled_diff(
@@ -567,7 +622,15 @@ class ConsoleTurnFileCard(Vertical):
             await body.mount(notes_box)
             if self._notes_capable:
                 note_btn = Button(
-                    "✎ note",
+                    # `Text(...)`, not a bare f-string: the ASCII fallback
+                    # for `_GLYPH_NOTE` is "[N]" (see ASCII_GLYPH_
+                    # FALLBACKS), and `Button.label` markup-parses a plain
+                    # str -- "[N] note" would be read as an (unknown,
+                    # unclosed) style tag "N" and the "[N]" text itself
+                    # would silently vanish from the rendered label. A
+                    # pre-built `Text` is never markup-parsed, so this is
+                    # correct in both default and ASCII glyph mode.
+                    Text(f"{resolve_glyph(_GLYPH_NOTE)} note"),
                     classes="console-turn-file-note-btn",
                     compact=True,
                 )
@@ -603,6 +666,36 @@ class ConsoleTurnFileCard(Vertical):
                 ]
                 for note in existing_notes:
                     await notes_box.mount(self._build_note_row(note))
+
+        elided_count = len(hunks) - len(mounted_hunks)
+        if elided_count > 0:
+            # Cheap affordance-honesty check (AC#1): count elided hunks
+            # that carry an existing note -- the same matching rule
+            # `existing_notes` above uses per-hunk, just scoped to the
+            # elided range. `self._notes_by_key` is already loaded in
+            # memory (populated once at row-load time), so this is a
+            # bounded scan over one file's notes, not a new read.
+            elided_note_count = 0
+            if self._notes_capable:
+                for note in self._notes_by_key.get((entry.root, entry.path), []):
+                    note_hunk_idx = int(note.get("hunk_index", -1))
+                    if (
+                        MAX_MOUNTED_HUNKS <= note_hunk_idx < len(hunks)
+                        and note.get("hunk_header") == hunks[note_hunk_idx].header
+                        and _note_matches_snapshot(note, current_snapshot_id)
+                    ):
+                        elided_note_count += 1
+            tail_text = f"… {elided_count} more hunks (open Review for the full diff)"
+            if elided_note_count:
+                noun = "note" if elided_note_count == 1 else "notes"
+                tail_text = f"{tail_text} — {elided_note_count} carrying {noun}"
+            await body.mount(
+                Static(
+                    tail_text,
+                    classes="console-turn-file-hunk-tail",
+                    markup=False,
+                )
+            )
 
     async def _toggle_all(self, button: Button) -> None:
         """Header expand/collapse-all: a plain state-derived toggle.
@@ -713,6 +806,31 @@ class ConsoleTurnFileCard(Vertical):
         else:
             button.label = f"{resolve_glyph(_CHEVRON_CLOSED)} All"
             button.tooltip = "Expand every file's diff"
+
+    def _refresh_toggle_all_button(self) -> None:
+        """Re-derive the header toggle-all button's label from live DOM state.
+
+        TASK-17611 (AC#2): ``_toggle_all``/``_expand_all``/``_collapse_all``
+        already set the button correctly for a HEADER-driven toggle, but a
+        user who expands (or collapses) rows one at a time via their own
+        row buttons never touched those paths -- the header chevron used
+        to sit stale at "expand all" even once every row was, in fact,
+        already expanded. Called from ``on_button_pressed`` after every
+        single-row expand/collapse so the label can never drift from what
+        is actually on screen, using the exact same "all bodies visible"
+        rule ``_toggle_all`` itself reads.
+        """
+        try:
+            toggle_buttons = list(self.query(".console-turn-file-toggle-all-btn"))
+            if not toggle_buttons:
+                return
+            bodies = list(self.query(".console-turn-file-diff"))
+            all_expanded = bool(bodies) and all(body.display for body in bodies)
+            self._update_toggle_all_button(toggle_buttons[0], expanded=all_expanded)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Turn file card toggle-all label refresh failed."
+            )
 
     def _row_label_text(self, entry: TurnFileEntry, *, expanded: bool) -> str:
         """Build one row's label, middle-eliding the path to the card's width.
@@ -1074,7 +1192,13 @@ class ConsoleTurnFileCard(Vertical):
         ]
         if not delivered:
             delete_btn = Button(
-                "✕", classes="console-turn-file-note-delete", compact=True
+                # `Text(...)` for the same markup-safety reason as the
+                # note button above -- defense in depth even though
+                # today's "x" fallback has no bracket characters to trip
+                # over.
+                Text(resolve_glyph(_GLYPH_DELETE)),
+                classes="console-turn-file-note-delete",
+                compact=True,
             )
             delete_btn.note_id = int(note["id"])
             delete_btn.active_effect_duration = 0

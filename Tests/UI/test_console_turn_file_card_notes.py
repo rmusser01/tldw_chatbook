@@ -214,6 +214,58 @@ async def test_escape_cancels_note_input_without_saving(notes_fixture):
         assert db.notes_for_run(run_id) == []
 
 
+@pytest.fixture
+def ascii_mode():
+    """Enable ASCII glyph fallback mode for one test, restoring it after.
+
+    TASK-17611 (AC#3): mirrors ``Tests/Chat/test_console_glyphs.py``'s own
+    ``ascii_mode`` fixture -- ``set_ascii_glyph_mode`` is process-global
+    state, so it must always be reset even on a failing assertion.
+    """
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    set_ascii_glyph_mode(True)
+    yield
+    set_ascii_glyph_mode(False)
+
+
+@pytest.mark.asyncio
+async def test_note_and_delete_buttons_route_through_resolve_glyph(
+    notes_fixture, ascii_mode
+):
+    """TASK-17611 (AC#3): the hunk's ``note`` button and a note's ``delete``
+    button both resolve their glyph through ``resolve_glyph`` -- in ASCII
+    mode they render the SAME bracketed/bare fallback ``resolve_glyph``
+    already maps ``✎``/``✕`` to everywhere else in this app (see
+    ``Tests/Chat/test_console_glyphs.py``), not the raw unicode glyph.
+    """
+    db, service, provider, root, run_id = notes_fixture
+
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+
+        note_btn = body.query_one(".console-turn-file-note-btn", Button)
+        assert str(note_btn.render()) == "[N] note"
+        assert "✎" not in str(note_btn.render())
+
+        note_input = await _open_note_input(pilot, body)
+        note_input.value = "ascii glyph check"
+        note_input.focus()
+        await pilot.press("enter")
+
+        delete_btn = None
+        for _ in range(60):
+            buttons = body.query(".console-turn-file-note-delete")
+            if buttons:
+                delete_btn = buttons.first()
+                break
+            await pilot.pause(0.02)
+        assert delete_btn is not None, "note row never rendered after save"
+        assert str(delete_btn.render()) == "x"
+        assert "✕" not in str(delete_btn.render())
+
+
 @pytest.mark.asyncio
 async def test_delete_removes_pending_note(notes_fixture):
     """The ✕ button on a pending note deletes it, off-thread, and its row

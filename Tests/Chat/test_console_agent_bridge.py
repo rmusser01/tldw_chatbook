@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
     SubAgentSummary,
     _StreamingModelAdapter,
+    _append_to_last_user_message,
     _openai_usage_from_provider_call,
     compose_agent_system_prompt,
     format_agent_step_marker,
@@ -3505,6 +3506,107 @@ def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
     # Seeded onto the ONE shared object -- never two independently-seeded
     # copies (Task 4's invariant, re-verified here under a non-empty seed).
     assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+# -- _append_to_last_user_message (Qodo round, TASK-17611): direct unit
+# tests for the shared attach helper `run_reply`'s two attach seams both
+# call -- previously only exercised indirectly through `run_reply` itself
+# (see `test_run_reply_appends_bundle_block_copy_safely` just below, and
+# the diff-feedback-focused suite in `Tests/Chat/
+# test_console_diff_feedback_delivery.py`). ---------------------------
+
+
+def test_append_to_last_user_message_attaches_to_the_last_eligible_message():
+    """Multiple user messages present -- the block lands on the LAST one,
+    not the first."""
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "second"},
+    ]
+    result, attached = _append_to_last_user_message(messages, "BLOCK")
+    assert attached is True
+    assert result[-1]["content"] == "second\n\nBLOCK"
+    assert result[0]["content"] == "first"
+
+
+def test_append_to_last_user_message_skips_list_content_and_picks_earlier_str_message():
+    """The LAST message is role=="user" but carries LIST content (a
+    vision/attachment turn) -- ineligible as a carrier, so the backward
+    scan continues past it and attaches to an EARLIER string-content user
+    message instead."""
+    messages = [
+        {"role": "user", "content": "earlier string"},
+        {"role": "user", "content": [{"type": "text", "text": "vision turn"}]},
+    ]
+    result, attached = _append_to_last_user_message(messages, "BLOCK")
+    assert attached is True
+    assert result[1]["content"] == [{"type": "text", "text": "vision turn"}]
+    assert result[0]["content"] == "earlier string\n\nBLOCK"
+
+
+def test_append_to_last_user_message_falsy_block_is_a_noop():
+    """A falsy (empty-string) block never scans at all -- the input list
+    is returned unchanged, same object identity."""
+    messages = [{"role": "user", "content": "hi"}]
+    result, attached = _append_to_last_user_message(messages, "")
+    assert attached is False
+    assert result is messages
+
+
+def test_append_to_last_user_message_no_carrier_leaves_list_untouched():
+    """No eligible carrier anywhere (a system message plus a list-content
+    user message) -- `attached` is False and the caller's list/dicts are
+    completely untouched, same object identity."""
+    messages = [
+        {"role": "system", "content": "no user turn here"},
+        {"role": "user", "content": [{"type": "text", "text": "vision only"}]},
+    ]
+    result, attached = _append_to_last_user_message(messages, "BLOCK")
+    assert attached is False
+    assert result is messages
+    assert result[0]["content"] == "no user turn here"
+    assert result[1]["content"] == [{"type": "text", "text": "vision only"}]
+
+
+def test_append_to_last_user_message_copy_on_write():
+    """The caller's own list and its message dict are never mutated: when
+    it attaches, a NEW list is returned with a NEW dict at the matched
+    index -- the original list/dict stay exactly as they were."""
+    original_message = {"role": "user", "content": "hi"}
+    messages = [original_message]
+
+    result, attached = _append_to_last_user_message(messages, "BLOCK")
+
+    assert attached is True
+    assert result is not messages
+    assert len(messages) == 1
+    assert messages[0] is original_message
+    assert original_message["content"] == "hi"
+    assert result[0] is not original_message
+    assert result[0]["content"] == "hi\n\nBLOCK"
+
+
+def test_append_to_last_user_message_stacks_two_sequential_calls_in_order():
+    """`run_reply`'s bundle-block and diff-feedback-block attach seams call
+    this helper twice, back to back, on the same message -- the second
+    call's block must land after the first's, both after the original
+    content, and the caller's original list/dict must stay untouched
+    after BOTH calls, not just the first."""
+    original_message = {"role": "user", "content": "hi"}
+    messages = [original_message]
+
+    after_bundle, attached_1 = _append_to_last_user_message(messages, "BUNDLE")
+    after_feedback, attached_2 = _append_to_last_user_message(
+        after_bundle, "FEEDBACK"
+    )
+
+    assert attached_1 is True
+    assert attached_2 is True
+    assert after_feedback[-1]["content"] == "hi\n\nBUNDLE\n\nFEEDBACK"
+    assert messages == [original_message]
+    assert messages[0] is original_message
+    assert original_message["content"] == "hi"
 
 
 def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
