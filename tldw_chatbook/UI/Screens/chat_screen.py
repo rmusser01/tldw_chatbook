@@ -454,6 +454,10 @@ from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
+from ...Widgets.Console.console_agent_steering_bar import (
+    ConsoleAgentSteeringBar,
+    ConsoleAgentSteeringState,
+)
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionState,
@@ -2162,6 +2166,25 @@ class ChatScreen(BaseAppScreen):
         if cancelled:
             self._request_console_agent_fleet_sync()
 
+    @on(ConsoleAgentSteeringBar.SteeringSubmitted)
+    def on_console_agent_steering_submitted(
+        self, message: ConsoleAgentSteeringBar.SteeringSubmitted
+    ) -> None:
+        """Queue USER steering for the drilled-in child (PR3b Task 3).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.steer_subagent`` (which
+        owns resolution + boundary validation), and a successful post
+        requests one coalesced fleet-section resync so the queued-count
+        line reflects the new entry on the next tick.
+        """
+        message.stop()
+        queued = self._agent._steer_console_agent_drilldown_child(
+            message.target_id, message.text
+        )
+        if queued:
+            self._request_console_agent_fleet_sync()
+
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
         """Collapse the Console context rail and persist the preference."""
@@ -3575,7 +3598,17 @@ class ChatScreen(BaseAppScreen):
         # `_sync_console_agent_section` itself -- it is that DOM write's
         # memo and nothing else's (wave-4 console decomposition, task 3).
         self._console_agent_section_last: (
-            tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool] | None
+            tuple[
+                str,
+                str,
+                ConsoleInspectorSectionState,
+                str,
+                bool,
+                bool,
+                bool,
+                ConsoleAgentSteeringState,
+            ]
+            | None
         ) = None
         # PR2b Task 5: coalescing flag for `_request_console_agent_fleet_
         # sync` -- mirrors `_console_control_bar_sync_scheduled` exactly
@@ -4967,6 +5000,7 @@ class ChatScreen(BaseAppScreen):
             back_visible,
             section_open,
             full_log_visible,
+            steering_state,
         ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
@@ -4985,6 +5019,11 @@ class ChatScreen(BaseAppScreen):
             back_button.styles.display = "block" if back_visible else "none"
             full_log_button = self.query_one("#console-agent-view-full-log", Button)
             full_log_button.styles.display = "block" if full_log_visible else "none"
+            # PR3b Task 3: the drill-in steering bar applies its own
+            # visibility/queued-line writes from the derived state.
+            self.query_one(
+                "#console-agent-steering-bar", ConsoleAgentSteeringBar
+            ).sync_state(steering_state)
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -13915,6 +13954,9 @@ class ChatScreen(BaseAppScreen):
                     agent_drilldown_active=bool(self._console_agent_drilldown_run_id),
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
+                    ),
+                    agent_steering_state=(
+                        self._agent._console_agent_steering_state()
                     ),
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
