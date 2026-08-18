@@ -20,7 +20,7 @@ PR #1809) updates only the registry (`set_active_workspace`) and toasts
 "Console now targets it". Console's deeper runtime state (chat store context,
 active session, native UI) is only synchronized by Console-internal paths
 (`_activate_console_session_for_workspace` at switch/create/archive). The rail
-reflects the registry on the next Console visit (live-verified in TASK-17650),
+reflects the registry on the next Console visit (live-verified in TASK-18704),
 but no resume-time seam activates the matching session the way an in-Console
 switch does. Qodo flagged this on PR #1809 (finding 5); it is a pre-existing
 design gap shared by the Library path, not a regression of the modal work —

@@ -241,12 +241,12 @@ nothing is created, no matter what you had typed or added.
 —
 *Verified against dev @ ff435772c — 2026-07-31*
 *Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
-(task-17650: "New" now opens the shared "New Workspace" dialog — prefilled
+(task-18704: "New" now opens the shared "New Workspace" dialog — prefilled
 name, optional validated folder bindings with Browse…, a "Switch to this
 workspace" checkbox default on, and Escape/Cancel creating nothing —
 instead of instant "Workspace N" creation; the walkthrough split into
 create-and-switch / create-without-switching / cancel tasks to match).*
 *Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+(task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" in the dialog, and a chained import prompt
 follows workspace creation).*

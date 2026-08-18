@@ -1,5 +1,5 @@
 ---
-id: TASK-17651
+id: TASK-18705
 title: >-
   Project skills (.SKILLS/) folder discovery and prompt-driven import
 status: Done
@@ -11,7 +11,7 @@ labels:
   - ux
 priority: high
 dependencies:
-  - TASK-17650
+  - TASK-18704
 ---
 
 ## Description (the why)
@@ -39,11 +39,11 @@ Plan: `Docs/superpowers/plans/2026-08-17-project-skills-import.md`.
 
 Execute `Docs/superpowers/plans/2026-08-17-project-skills-import.md` (6 tasks:
 discovery → ledger → import modal → startup trigger → create-modal chaining →
-ADR/docs + live verification). Starts only after TASK-17650 is on dev.
+ADR/docs + live verification). Starts only after TASK-18704 is on dev.
 
 ## Implementation Notes
 
-Shipped as 9 commits (`e511355df`..`964cb04df`, TASK-17651's 6 plan tasks
+Shipped as 9 commits (`e511355df`..`964cb04df`, TASK-18705's 6 plan tasks
 plus 3 self-caught fix rounds):
 
 - **Task 1 (discovery)** — `tldw_chatbook/Skills_Interop/project_skills_discovery.py`:

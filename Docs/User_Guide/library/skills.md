@@ -282,7 +282,7 @@ one-press toggles with their full option set now on the label —
 "User can invoke: ✓ yes ⇄ no" — so the option space is on screen.)*
 
 *Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-17651: documented the new "Project skills (`.SKILLS/`)" convention —
+(task-18705: documented the new "Project skills (`.SKILLS/`)" convention —
 per-project discovery at startup and workspace creation, the fingerprint
 gated prompt ledger, the quarantine/trust-review expectation, and the
 `[skills] project_skills_prompt_enabled` kill-switch.)*
