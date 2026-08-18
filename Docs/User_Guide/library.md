@@ -404,12 +404,12 @@ behavior — the Search / RAG canvas's per-source count follows Settings ▸
 RAG's Default results, 15 on the shipped default profile, not a fixed 5;
 no code changed here).*
 *Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
-(task-17650: **Create local workspace** now opens the shared "New
+(task-18704: **Create local workspace** now opens the shared "New
 Workspace" dialog — the same one Console and Settings use — instead of
 creating a zero-input workspace instantly; documented its name prefill,
 optional validated folder bindings, Browse… picker, and default-on
 "Switch to this workspace" checkbox).*
 *Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+(task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" and a chained import prompt follows
 Create).*

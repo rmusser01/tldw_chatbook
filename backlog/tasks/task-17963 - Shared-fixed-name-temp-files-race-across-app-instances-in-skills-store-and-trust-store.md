@@ -11,12 +11,12 @@ labels:
   - reliability
 priority: medium
 dependencies:
-  - TASK-17651
+  - TASK-18705
 ---
 
 ## Description (the why)
 
-TASK-17651's live verification and its own new prompt ledger
+TASK-18705's live verification and its own new prompt ledger
 (`ProjectSkillsPromptLedger.record()` in
 `tldw_chatbook/Skills_Interop/project_skills_prompt.py`) had to route around a
 pre-existing atomic-write pattern used elsewhere in the skills subsystem: a
@@ -28,7 +28,7 @@ open/write can clobber the first's in-flight temp file), raising
 `FileNotFoundError` or silently corrupting the write.
 
 Two pre-existing sites still have this pattern and were deliberately left
-untouched by TASK-17651 (out of that task's scope):
+untouched by TASK-18705 (out of that task's scope):
 
 - `tldw_chatbook/Skills_Interop/local_skills_service.py:303`
   (`LocalSkillsService._save_index`, `temp_path =

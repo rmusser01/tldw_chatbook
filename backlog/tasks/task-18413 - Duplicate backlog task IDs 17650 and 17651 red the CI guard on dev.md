@@ -1,7 +1,7 @@
 ---
 id: TASK-18413
 title: Duplicate backlog task IDs 17650 and 17651 red the CI guard on dev
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18'
 labels: [backlog-hygiene, ci]
@@ -111,19 +111,62 @@ it means.
 
 ## Acceptance Criteria (the what)
 
-- [ ] The later-filed pair (workspace modal, project skills) is renumbered to
-      fresh ids taken by **leapfrog** from the max across ALL remotes and
-      worktrees, not from the local max — the practice that caused this
-- [ ] The repair starts from a **generated** file list (the grep in this
-      task), never a hand-curated one — a keyword filter already dropped two
-      sites when this task was first written
-- [ ] Every reference is re-pointed **by meaning, not by pattern**: each
-      workspace/skills site is read and updated; the Console sites
-      (production comments, both `.tcss` files, `DESIGN.md`, tasks
-      17652/17654/17655/17656/17657) are left untouched
-- [ ] The five ambiguous test files are resolved by reading the tests, and
-      which programme each meant is recorded
-- [ ] ADR-069's links resolve, including the URL-encoded filename form
-- [ ] `No duplicate backlog task IDs` passes on a PR into `dev`
-- [ ] The frontmatter `id:` field and the filename agree for every renamed
-      file (the guard checks both independently)
+- [x] Renumbered to **18704** (workspace modal) and **18705** (project
+      skills), leapfrogged from 18604 — the max across origin/dev, every
+      local branch and every worktree, not the local max.
+- [x] Started from the generated list in this task, then every site was
+      READ before editing. No pattern-wide substitution was used anywhere.
+- [x] **20 references re-pointed, 59 Console references left untouched**, each
+      classified by reading it. The decisive case: `lessons-testing-evidence.md`
+      holds TWO `TASK-17651` entries with OPPOSITE meanings — "Removing a
+      widget's border box…" is the Console composer (untouched) and "A gate
+      built in halves…" is the `.SKILLS/` import (re-pointed). A `sed` would
+      have corrupted one of them.
+- [x] All five read and resolved: **all mean the Console pair** —
+      `test_console_composer_collapse` (zero chrome rows),
+      `test_console_internals_decomposition` (dense-form composer),
+      `test_console_status_row_collapse` (phantom footer row),
+      `test_non_obscuring_focus_contract` (composer focus edge),
+      `test_workbench_visual_snapshots` (grid bottom edge). None touched.
+      `task-17656` was ambiguous from its text too and is likewise Console.
+- [x] Both ADR-069 links updated and verified to resolve on disk after
+      percent-decoding (the `task-18705%20-%20…` form included).
+- [x] Both halves of the guard pass locally across **2,175** task files:
+      zero duplicate filename ids, zero duplicate frontmatter ids. The check
+      itself was verified to have teeth (an injected duplicate is detected) —
+      `uniq -d` exits 0 either way, so a naive `&&` test always reports clean.
+- [x] `task-18704` → `id: TASK-18704`; `task-18705` → `id: TASK-18705`.
+
+
+## Implementation Notes
+
+**The guard is green: 2,175 task files, zero duplicate ids on either half.**
+
+**Which pair moved, and why.** The Console programme filed 17650-17655 at
+18:00:58 on 2026-08-17 (`68b6e3a87`); the workspace-modal/project-skills pair
+filed the same two ids **fourteen minutes later** at 18:14:57 (`979a6914a`).
+The later arrival was renumbered, which also happened to be the side with
+**no production-source references** — all 18 source/CSS comments mean the
+Console pair.
+
+**20 references re-pointed, 59 left untouched**, every one classified by
+reading it rather than by pattern. The case that justifies the whole approach:
+`backlog/docs/lessons-testing-evidence.md` contains **two `TASK-17651` entries
+with opposite meanings** — "Removing a widget's border box activates the
+global focus outline" is the *Console composer*, and "A gate built in halves
+is no gate" is the *`.SKILLS/` import*. One was re-pointed, one was not. Any
+file-wide substitution corrupts one of them.
+
+All five test files flagged as ambiguous in the filing turned out to mean the
+Console pair once read (composer chrome rows, dense-form geometry, phantom
+footer row, focus edge, workbench grid), as did `task-17656`.
+
+**Verification:** both guard halves re-implemented so they can actually fail
+(`uniq -d` exits 0 regardless, so the original `&&` form reported "clean"
+unconditionally — checked with an injected duplicate); every re-pointed
+reference resolves; ADR-069's percent-encoded link resolves on disk; no
+dependency dangles as a result of this change. One pre-existing dangling dep
+(`TASK-2800` in `task-2818`) is present on dev and untouched.
+
+**Files:** 2 renamed (`git mv`, history preserved), 5 sibling tasks, ADR-069,
+4 User Guide pages, 1 lessons entry, this task. No production source changed.

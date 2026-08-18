@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-18
-Related Task: [backlog/tasks/task-17651 - Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md](../tasks/task-17651%20-%20Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md)
+Related Task: [backlog/tasks/task-18705 - Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md](../tasks/task-18705%20-%20Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md)
 Supersedes: N/A
 
 ## Decision
@@ -146,6 +146,6 @@ best-effort and must never crash the app or block startup on failure.
 ## Links
 
 - [ADR-009: Local Skill Trust Boundary](009-local-skill-trust-boundary.md)
-- [TASK-17651](../tasks/task-17651%20-%20Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md)
+- [TASK-18705](../tasks/task-18705%20-%20Project-skills-SKILLS-folder-discovery-and-prompt-driven-import.md)
 - [Workspace create modal + project skills design spec](../../Docs/superpowers/specs/2026-08-17-workspace-create-modal-and-project-skills-design.md) §5
 - [Project skills import implementation plan](../../Docs/superpowers/plans/2026-08-17-project-skills-import.md)

@@ -1,5 +1,5 @@
 ---
-id: TASK-17650
+id: TASK-18704
 title: >-
   Shared workspace creation modal across Console, Settings, and Library
 status: Done

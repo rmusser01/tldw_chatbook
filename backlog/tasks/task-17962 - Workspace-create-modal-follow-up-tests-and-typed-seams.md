@@ -10,14 +10,14 @@ labels:
   - testing
 priority: medium
 dependencies:
-  - TASK-17650
+  - TASK-18704
 ---
 
 ## Description (the why)
 
-The TASK-17650 final whole-branch review closed with a set of deliberately
+The TASK-18704 final whole-branch review closed with a set of deliberately
 deferred coverage and typing gaps (its Recommendations §3). They are known,
-ledgered, and none blocks the shipped behavior — but PR B (TASK-17651) reads
+ledgered, and none blocks the shipped behavior — but PR B (TASK-18705) reads
 more fields off `WorkspaceCreateResult`, so these seams should be pinned and
 typed before that work builds on them.
 
