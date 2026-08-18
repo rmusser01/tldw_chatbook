@@ -17,6 +17,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
@@ -49,7 +50,9 @@ class WorkspaceCreateResult:
     project_skills: tuple = ()
 
 
-class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
+class WorkspaceCreateModal(
+    SafeModalDismissMixin, ModalScreen["WorkspaceCreateResult | None"]
+):
     """Collect a workspace name + optional folder bindings."""
 
     DEFAULT_CSS = """
@@ -104,7 +107,8 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Cancel")]
+    SAFE_MODAL_CONTENT = "#workspace-create-modal"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
     AUTO_FOCUS = "#workspace-create-name"
 
     def __init__(self, *, registry_service: LocalWorkspaceRegistryService) -> None:
@@ -112,6 +116,11 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
         self._registry = registry_service
         self._folders: list[str] = []
         self._error = ""
+        # Finding 1: one-shot guard against a double-submit (rapid
+        # Enter-Enter, or a double-click race on Create) running
+        # create_workspace()/add_folder_binding() twice before the modal
+        # actually pops off the screen stack.
+        self._committed = False
         # Captured once so recompose()s triggered by add/remove-folder don't
         # clobber a user-edited name back to the original suggestion.
         _, self._suggested_name = next_local_workspace_identity(self._registry)
@@ -166,13 +175,10 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
                 yield Button("Cancel", id="workspace-create-cancel", compact=True)
                 yield Button("Create", id="workspace-create-confirm", compact=True)
 
-    def action_dismiss(self) -> None:
-        self.dismiss(None)
-
     @on(Button.Pressed, "#workspace-create-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#workspace-create-browse")
     def _browse(self, event: Button.Pressed) -> None:
@@ -215,6 +221,7 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
         event.stop()
         raw = self.query_one("#workspace-create-folder-path", Input).value.strip()
         if not raw:
+            self._set_error("")
             return
         try:
             resolved = validate_folder_binding_path(raw, self._folders)
@@ -237,6 +244,7 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
             return
         if 0 <= index < len(self._folders):
             del self._folders[index]
+            self._error = ""
             self._stash_form_state()
             self.refresh(recompose=True)
 
@@ -251,6 +259,15 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
         self._create()
 
     def _create(self) -> None:
+        # Finding 1: guard against a double-submit (rapid Enter-Enter on the
+        # name Input, or a double-click on Create) re-running the side
+        # effects below before the modal has actually popped off the screen
+        # stack -- without this, a second queued call would create another
+        # workspace (auto-generated names don't collide across calls) and
+        # then crash with ScreenStackError trying to dismiss twice.
+        if self._committed:
+            return
+        self._committed = True
         name = self.query_one("#workspace-create-name", Input).value.strip()
         workspace_id, generated_name = next_local_workspace_identity(self._registry)
         try:
@@ -260,6 +277,9 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
                 description="Created from the workspace setup dialog.",
             )
         except WorkspaceRegistryServiceError as exc:
+            # Nothing was committed -- let the user fix the name/folder and
+            # retry rather than permanently locking the dialog.
+            self._committed = False
             self._set_error(str(exc))
             return
         bound: list[str] = []
@@ -270,7 +290,7 @@ class WorkspaceCreateModal(ModalScreen["WorkspaceCreateResult | None"]):
                 bound.append(folder)
             except WorkspaceRegistryServiceError as exc:
                 failed.append((folder, str(exc)))
-        self.dismiss(
+        self.dismiss_safe_once(
             WorkspaceCreateResult(
                 workspace_id=workspace_id,
                 name=name or generated_name,

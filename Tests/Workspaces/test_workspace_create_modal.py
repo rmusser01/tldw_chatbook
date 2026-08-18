@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Checkbox, Input, Static
+from textual.widgets import Button, Checkbox, Input, Static
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
@@ -138,3 +138,90 @@ async def test_make_active_checkbox_carried_on_result(tmp_path):
         await pilot.click("#workspace-create-confirm")
         await pilot.pause()
     assert app.result.make_active is False
+
+
+@pytest.mark.asyncio
+async def test_double_submit_creates_exactly_one_workspace_no_crash(tmp_path):
+    """Finding 1: rapid Enter-Enter (or a double-click race on Create) must
+    not create a duplicate workspace, and must not raise ScreenStackError
+    from a second dismiss landing after the modal has already popped.
+
+    Leaving the name Input blank exercises the real race: each call falls
+    back to a freshly-computed auto-generated name ("Workspace 1", then
+    "Workspace 2"), so the registry's duplicate-name rejection does not
+    incidentally save the unguarded code from creating two workspaces.
+    """
+    registry = _registry(tmp_path)
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert isinstance(modal, WorkspaceCreateModal)
+        modal.query_one("#workspace-create-name", Input).value = ""
+        # Simulates the second queued Enter/click landing before the screen
+        # has actually popped off the stack.
+        modal._create()
+        modal._create()
+        await pilot.pause()
+    assert isinstance(app.result, WorkspaceCreateResult)
+    workspaces = registry.list_workspaces()
+    assert len(workspaces) == 1
+
+
+@pytest.mark.asyncio
+async def test_add_folder_empty_input_clears_stale_error(tmp_path):
+    """Finding 5: an invalid-folder error must not linger once the field is
+    cleared and Add is pressed again on blank input.
+
+    Uses Button.press() rather than pilot.click() for the second press:
+    Textual's own Button._on_click() skips press() while the button still
+    carries its ~0.2s "-active" press-effect class, so two pilot.click()s on
+    the same button in quick succession silently drop the second one -- an
+    unrelated Textual debounce, not the seam this test is pinning.
+    """
+    app = _HarnessApp(_registry(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(
+            tmp_path / "missing"
+        )
+        modal.query_one("#workspace-create-folder-add", Button).press()
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "does not exist" in str(error.renderable)
+
+        modal.query_one("#workspace-create-folder-path", Input).value = ""
+        modal.query_one("#workspace-create-folder-add", Button).press()
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert str(error.renderable) == ""
+
+
+@pytest.mark.asyncio
+async def test_remove_folder_clears_stale_error(tmp_path):
+    """Finding 5: removing a bound folder must not leave a prior invalid-
+    folder error rendered."""
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        modal.query_one("#workspace-create-folder-add", Button).press()
+        await pilot.pause()
+
+        modal.query_one("#workspace-create-folder-path", Input).value = str(
+            tmp_path / "missing"
+        )
+        modal.query_one("#workspace-create-folder-add", Button).press()
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "does not exist" in str(error.renderable)
+
+        modal.query_one("#workspace-create-folder-remove-0", Button).press()
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert str(error.renderable) == ""
