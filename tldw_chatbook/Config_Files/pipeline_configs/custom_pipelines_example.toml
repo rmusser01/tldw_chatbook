@@ -1,5 +1,16 @@
 # Example Custom Pipeline Configurations
 # Copy this file and modify for your own custom pipelines
+#
+# WARNING about the `middleware` lists below: the names in them are
+# ILLUSTRATIVE. A middleware only runs if `PipelineLoader` has a branch for
+# its id in `_apply_before_middleware`/`_apply_after_middleware`; a name with
+# no branch is skipped in total silence -- no error, no warning, no log line.
+# Implemented today: `query_expansion` and `technical_term_detector`
+# (before), `citation_enhancement` (after). Nothing loads THIS file (it is a
+# copy-me example), but the shipped `rag_pipelines.toml` did once declare
+# eleven names against four implementations, which is what TASK-17600
+# removed and what
+# Tests/RAG_Search/test_pipeline_middleware_contract.py now prevents there.
 
 # Example 1: Domain-Specific Pipeline for Medical Documents
 [pipelines.medical_search]

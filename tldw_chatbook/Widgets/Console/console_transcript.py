@@ -239,6 +239,22 @@ def _message_role_label(message: ConsoleChatMessage) -> str:
     return role.title()
 
 
+#: Statuses an assistant row holds while its turn is still in flight. The
+#: store starts an empty assistant row at "pending" and only promotes it to
+#: "streaming" on the first streamed chunk (``append_stream_chunk``), which
+#: a tool-calling agent turn never produces -- so the activity line must
+#: cover both or it would never appear on the very turns it exists for.
+_IN_FLIGHT_MESSAGE_STATUSES = frozenset({"pending", "streaming"})
+
+
+def _row_is_in_flight(message: ConsoleChatMessage) -> bool:
+    """Whether this row belongs to a turn that has not finished yet."""
+    return (
+        message.role is ConsoleMessageRole.ASSISTANT
+        and message.status in _IN_FLIGHT_MESSAGE_STATUSES
+    )
+
+
 def _message_body(
     message: ConsoleChatMessage,
     presentation: ConsoleMessagePresentation | None = None,
@@ -249,6 +265,15 @@ def _message_body(
         content = message.variants.current.content
     else:
         content = message.content
+    if _row_is_in_flight(message) and not content.strip() and message.live_activity:
+        # The live turn-activity line, when the poll has one for this row.
+        # Note the WIDER status gate than the placeholder below: measured on
+        # a real agent turn with a tool held in flight, the in-flight row is
+        # "pending" (the store only reaches "streaming" on the first streamed
+        # chunk, and a tool-calling turn's assistant row never streams -- the
+        # fence gate seals it). That is why this row used to render as a bare
+        # "Assistant" for the whole multi-round turn.
+        return message.live_activity
     if message.status == "streaming" and not content.strip():
         # Between send-accepted and the first streamed token the assistant row
         # has no content; show a visible generating state instead of an empty
@@ -317,7 +342,16 @@ def _citation_notice(message: ConsoleChatMessage) -> str:
 
 
 def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
-    """Return True when the rendered body is the pre-first-token placeholder."""
+    """Return True when the rendered body is a render-only in-flight line.
+
+    Two bodies qualify: the pre-first-token ``Generating…`` placeholder and
+    the live turn-activity line that replaces it while an agent turn works.
+    Both are render-derived (never stored content), both render dim, and
+    both already say "this turn is running" -- so neither may also grow the
+    ``Streaming…`` status line under it.
+    """
+    if _row_is_in_flight(message) and body and body == message.live_activity:
+        return True
     return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
 
 
@@ -941,13 +975,21 @@ def _assistant_markdown_header(
         )
     role_label = _speaker_label(message, presentation)
     suffix = ""
-    if message.status == "streaming":
+    if _row_is_in_flight(message):
         body = _assistant_markdown_body(message, presentation)
-        # task-2154.16 (FB-01): same wording as the plain renderer's dim
-        # status line -- never the raw "[streaming]" content token.
-        suffix = (
-            f"  {CONSOLE_GENERATING_PLACEHOLDER}" if not body.strip() else "  Streaming…"
-        )
+        if not body.strip() and message.live_activity:
+            # The owner's shape: "Assistant  ⚙ read_file · 4s" -- the live
+            # line rides the row's own header, so no new widget is mounted
+            # and no sibling can be pushed off screen by one.
+            suffix = f"  {message.live_activity}"
+        elif message.status == "streaming":
+            # task-2154.16 (FB-01): same wording as the plain renderer's dim
+            # status line -- never the raw "[streaming]" content token.
+            suffix = (
+                f"  {CONSOLE_GENERATING_PLACEHOLDER}"
+                if not body.strip()
+                else "  Streaming…"
+            )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
     return Content.assemble(role_label, (suffix, "dim"))
@@ -2410,6 +2452,12 @@ class ConsoleTranscript(VerticalScroll):
         #: deliberately dropped when the transcript is rebuilt for another
         #: session rather than following the user across conversations.
         self._expanded_tool_output_ids: set[str] = set()
+        #: This poll tick's live turn-activity line ("⚙ read_file · 4s"),
+        #: or "" when no turn is in flight. Pure view state, re-supplied by
+        #: the screen on every 0.2s sync tick via `apply_turn_activity`;
+        #: never derived here and never stored on the message the store
+        #: owns (see `_with_turn_activity`).
+        self._turn_activity: str = ""
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -4932,6 +4980,11 @@ class ConsoleTranscript(VerticalScroll):
 
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
+        # Hoisted: which row (if any) carries this tick's activity line is a
+        # property of the message list, not of any one row.
+        activity_target_id = (
+            self._turn_activity_target_id() if self._turn_activity else None
+        )
         for message in self._messages:
             if (
                 message.id in self._pruned_message_ids
@@ -4943,6 +4996,7 @@ class ConsoleTranscript(VerticalScroll):
                 # on the other boundary.
                 continue
             message = self._with_expanded_tool_output(message)
+            message = self._with_turn_activity(message, activity_target_id)
             selected = message.id == self.selected_message_id
             rows.append(
                 _TranscriptRow(
@@ -5519,6 +5573,11 @@ class ConsoleTranscript(VerticalScroll):
             message.image_mime_type,
             None if message.image_data is None else len(message.image_data),
             message.citation_presentation,
+            # Load-bearing: the activity line is stamped on a `replace()`
+            # copy whose every OTHER field is identical tick to tick, so a
+            # token without it would hit this cache and the elapsed figure
+            # would freeze at the first value it ever rendered.
+            message.live_activity,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )
@@ -5545,6 +5604,85 @@ class ConsoleTranscript(VerticalScroll):
             self._signature_compute_counts.get(message.id, 0) + 1
         )
         return signature
+
+    def _turn_activity_target_id(self) -> str | None:
+        """Id of the row the activity line would render on, or ``None``.
+
+        The last in-flight assistant row with no content yet -- the one
+        ``_message_body`` would otherwise render blank (or, once streaming
+        starts, as ``Generating…``). A row that already has text is showing
+        the real reply and must never be overwritten by a status line.
+        """
+        for message in reversed(self._messages):
+            if _row_is_in_flight(message):
+                content = (
+                    message.variants.current.content
+                    if message.variants is not None
+                    else message.content
+                )
+                return message.id if not content.strip() else None
+        return None
+
+    def apply_turn_activity(self, activity: str) -> str:
+        """Store this poll tick's live activity line; return what will show.
+
+        Returns the EFFECTIVE value -- ``""`` whenever no row is eligible --
+        because the screen folds this return into its transcript refresh
+        key. A stale ``running`` snapshot (a run that died without a
+        terminal publish) therefore cannot tick that key once a second on
+        an otherwise idle transcript: task-15664 AC#2 forbids repainting on
+        a timer when nothing is live, and this is the check that keeps that
+        true no matter what the bridge last published.
+
+        Args:
+            activity: The derived line (``console_turn_activity_text``), or
+                ``""`` when nothing is live.
+
+        Returns:
+            The line that will actually render, or ``""``.
+        """
+        effective = activity if activity and self._turn_activity_target_id() else ""
+        # Unconditional, including the empty case: found by mutation, a row
+        # that stays in flight after its run dies (no terminal publish) is
+        # exactly where a retained line would sit forever, frozen at its
+        # last elapsed -- the frozen look this feature exists to remove.
+        self._turn_activity = effective
+        return effective
+
+    def _with_turn_activity(
+        self, message: ConsoleChatMessage, target_id: str | None
+    ) -> ConsoleChatMessage:
+        """Return ``message`` carrying this tick's activity line, when it owns it.
+
+        Applied at the ONE walk that plans rows -- the same seam, and for the
+        same reason, as ``_with_expanded_tool_output``: the row renderable,
+        its cached signature and its action row must all see the identical
+        message, or a row would render one thing while its signature claimed
+        another and never repaint.
+
+        **Exactly one row, deliberately.** Found by mutation: stamping every
+        message instead of just the in-flight one is invisible to every
+        display assertion (a row with content never renders the line, and
+        only assistant rows can) yet puts ``live_activity`` into EVERY row's
+        signature -- so the whole transcript re-derives and re-syncs once a
+        second for the entire turn.
+
+        Returns ``message`` UNCHANGED (same object) when there is nothing to
+        show, so a transcript with no live turn is byte-for-byte what it was
+        before this feature existed.
+
+        Args:
+            message: The transcript message about to be rendered.
+            target_id: The row that owns the line this pass, hoisted out of
+                the loop by the caller (``_turn_activity_target_id``), or
+                ``None`` when no row does.
+
+        Returns:
+            ``message``, or a render-only copy carrying ``live_activity``.
+        """
+        if target_id is None or message.id != target_id:
+            return message
+        return replace(message, live_activity=self._turn_activity)
 
     def _with_expanded_tool_output(
         self, message: ConsoleChatMessage
@@ -5621,6 +5759,16 @@ class ConsoleTranscript(VerticalScroll):
             message.status,
             selected,
             variants_signature,
+            # Found by mutation: a MARKDOWN row (the default assistant
+            # renderer) carries the activity line in its HEADER, which this
+            # signature never renders -- it renders the PLAIN row. So with
+            # this field absent the elapsed still ticked, but only as a side
+            # effect of `_message_render_text` happening to embed the same
+            # text; disabling the plain renderer's activity branch froze the
+            # markdown row's elapsed at the first value it painted, with
+            # every display test still green. Named explicitly here so the
+            # two renderers cannot silently depend on each other again.
+            message.live_activity,
             presentation.revision_token,
             self._console_speech_state(message.id),
         )

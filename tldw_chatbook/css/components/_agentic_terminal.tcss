@@ -2985,6 +2985,9 @@ with stray left-edge border fragments), and padding 0 1 so the full
     layout: horizontal;
     border: none;
     padding: 0 1;
+    /* TASK-17650: cancel .ds-panel's bottom margin — it rendered as a
+       permanent blank row between the chips and the footer. */
+    margin: 0;
 }
 
 /* TASK-15704: both mounted presentations stay one row high. The fixed restore

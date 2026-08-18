@@ -54,6 +54,14 @@ from ..Console_Modules.frame import (
     CONSOLE_QUIET_FRAME_BORDER,
     frame_console_region,
 )
+from ..Console_Modules.status_row import (
+    STATUS_CHIPS_POSITION_ABOVE,
+    apply_status_chips_position,
+    persist_status_chips_collapsed,
+    poke_console_setting,
+    resolve_status_chips_collapsed,
+    resolve_status_chips_position,
+)
 
 # The Console controller classes themselves are deliberately NOT imported
 # here: `..Console_Modules.wiring.build_console_controllers` constructs every
@@ -438,6 +446,7 @@ from ...Widgets.Console.console_control_bar import (
     CONSOLE_CONTROL_BAR_HEIGHT,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
+from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -3435,7 +3444,9 @@ class ChatScreen(BaseAppScreen):
         self._task_resume_state = TaskResumeState()
         self._console_composer_collapsed = False
         self._console_composer_layout_revision = 0
-        self._console_status_chips_collapsed = False
+        self._console_status_chips_collapsed = resolve_status_chips_collapsed(
+            getattr(app_instance, "app_config", None)
+        )
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
@@ -8827,6 +8838,21 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         self._console_status_chips_collapsed = collapsed
+        # task-17652: the collapse choice survives Console re-entry and app
+        # restart. Poke the live config synchronously (compose and __init__
+        # read it back) and move only the disk write off the event loop —
+        # never-raising, since a worker exception is fatal by default.
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_collapsed",
+            collapsed,
+        )
+        self.run_worker(
+            partial(persist_status_chips_collapsed, collapsed),
+            thread=True,
+            group="console-status-row-pref",
+            exclusive=True,
+        )
         self._console_status_chips_layout_revision += 1
         revision = self._console_status_chips_layout_revision
         status_chips.set_collapsed(collapsed)
@@ -14027,6 +14053,46 @@ class ChatScreen(BaseAppScreen):
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle)
+            # task-17652: the status row's side of the composer cluster is
+            # user-configurable ([console] status_chips_position). "above"
+            # (the default; owner ruling 2026-08-17) tops the cluster
+            # directly under the workspace grid; "below" restores the
+            # TASK-15704 bottom row. Built once here so both branches yield
+            # the same widget; the command popup's clearance loop handles
+            # both placements (see ConsoleCommandPopup.reposition).
+            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
+            # flag -- compose the cost chip correctly on the very first
+            # frame rather than waiting for a post-mount sync call.
+            # Best-effort: `_build_console_cost_state` already never raises
+            # on its own, but this call site still tolerates an unexpected
+            # failure rather than ever taking down the whole compose.
+            try:
+                initial_cost_state = self._build_console_cost_state()
+            except Exception:
+                logger.opt(exception=True).warning("cost_chip_state_failed")
+                initial_cost_state = None
+            status_chips_position = resolve_status_chips_position(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
+            status_chips = ConsoleStatusChips(
+                control_state,
+                scope_state=retrieval_scope_state,
+                collapsed=self._console_status_chips_collapsed,
+                # F1 (final review): compose the chip correctly on the very
+                # first render instead of relying on a post-mount sync call
+                # that some code paths (screen recreation via
+                # restore_state) never make.
+                ephemeral=self._console_active_session_is_ephemeral(),
+                cost_state=initial_cost_state,
+                # FB-08 (TASK-2154.18): same first-frame precedent for the
+                # run chip -- returning to Console while a background run
+                # is still active must show it before the next sync tick.
+                run_copy=self._console_active_run_copy(),
+                id="console-status-chips",
+                classes="ds-panel",
+            )
+            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             # RAG-40: staged evidence belongs on the MAIN surface, directly
             # above the composer it is about to be prepended to -- not only
             # in an Inspector rail the staging path never opens.
@@ -14076,40 +14142,12 @@ class ChatScreen(BaseAppScreen):
                 except KeyError:
                     pass
             yield self._frame_console_region(composer)
-            # The status chips close the shell as a bottom status row, below
-            # the composer: the composer cluster (staged evidence, prompt
-            # queue, composer) stays contiguous with the transcript, and the
-            # chips annotate the whole surface from underneath. The command
-            # popup anchors against this order (see ConsoleCommandPopup.
-            # reposition) -- keep the chips last among the visible rows.
-            # task-5 (PR3 cost ticker): same F1 precedent as the ephemeral
-            # flag -- compose the cost chip correctly on the very first
-            # frame rather than waiting for a post-mount sync call.
-            # Best-effort: `_build_console_cost_state` already never raises
-            # on its own, but this call site still tolerates an unexpected
-            # failure rather than ever taking down the whole compose.
-            try:
-                initial_cost_state = self._build_console_cost_state()
-            except Exception:
-                logger.opt(exception=True).warning("cost_chip_state_failed")
-                initial_cost_state = None
-            yield ConsoleStatusChips(
-                control_state,
-                scope_state=retrieval_scope_state,
-                collapsed=self._console_status_chips_collapsed,
-                # F1 (final review): compose the chip correctly on the very
-                # first render instead of relying on a post-mount sync call
-                # that some code paths (screen recreation via
-                # restore_state) never make.
-                ephemeral=self._console_active_session_is_ephemeral(),
-                cost_state=initial_cost_state,
-                # FB-08 (TASK-2154.18): same first-frame precedent for the
-                # run chip -- returning to Console while a background run
-                # is still active must show it before the next sync tick.
-                run_copy=self._console_active_run_copy(),
-                id="console-status-chips",
-                classes="ds-panel",
-            )
+            # In "below" mode the chips close the shell as a bottom status
+            # row: the composer cluster (staged evidence, prompt queue,
+            # composer) stays contiguous with the transcript, and the chips
+            # annotate the whole surface from underneath.
+            if status_chips_position != STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             yield ConsoleCommandPopup()
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
@@ -15651,6 +15689,13 @@ class ChatScreen(BaseAppScreen):
                 transcript.pending_selection_id = self._pending_console_swipe_selection
                 self._pending_console_swipe_selection = None
             transcript.set_messages(messages)
+            # Live turn-activity line. `apply_turn_activity` hands back the
+            # EFFECTIVE value ("" unless a row is actually in flight), which
+            # is what joins the refresh key below -- so an idle transcript
+            # can never repaint once a second off a stale run snapshot.
+            turn_activity = transcript.apply_turn_activity(
+                self._agent.console_turn_activity()
+            )
             visible_citation_counts = {
                 message_id: count
                 for message_id, count in self._console_citation_counts.items()
@@ -15747,6 +15792,7 @@ class ChatScreen(BaseAppScreen):
                 # before-boundary) must force a refresh so the banner appears
                 # or clears even when the message set is otherwise unchanged.
                 summary_boundary_id,
+                turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
                 tuple(sorted(self._console_speech_states.items())),
@@ -18125,6 +18171,20 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._open_change_review()
 
+    @on(ConsoleTurnFileCard.ReviewRequested)
+    def handle_console_turn_file_card_review_requested(
+        self, event: ConsoleTurnFileCard.ReviewRequested
+    ) -> None:
+        """Open the Change Review screen from a card's own `Review` button.
+
+        TASK-16800 (V1.5): the same opener recipe as `v` and the run
+        inspector's own button above, except the run id needs no lookup at
+        all -- the card that posted this message already knows exactly
+        which run it renders.
+        """
+        event.stop()
+        self._open_change_review(event.run_id)
+
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
         """Focus the pending approval card from the Console inspector seam."""
@@ -19800,6 +19860,9 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # task-17652: a Settings change to the status-row position must land
+        # on this cached screen without a recompose.
+        apply_status_chips_position(self)
         # task-15475: consume the mount's one-shot token. On the FIRST visit
         # this resume is the mount's own, and on_mount already dispatched the
         # skill-candidate worker and scheduled the task-resume sync; running

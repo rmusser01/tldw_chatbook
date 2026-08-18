@@ -278,7 +278,14 @@ async def test_console_has_one_canonical_visible_state_action_strip():
 
 
 @pytest.mark.asyncio
-async def test_console_status_chips_sit_below_composer():
+async def test_console_status_chips_sit_above_composer_by_default():
+    """task-17652 owner ruling: the status row tops the composer cluster.
+
+    Default position "above": the chips render directly under the workspace
+    grid and ABOVE the staged-evidence/prompt-queue/composer cluster, which
+    stays contiguous down to the footer (the shelf-adjacency pin in
+    test_console_prompt_queue still holds against the composer).
+    """
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -288,12 +295,63 @@ async def test_console_status_chips_sit_below_composer():
         chips = console.query_one("#console-status-chips")
         grid = console.query_one("#console-workspace-grid")
         composer = console.query_one("#console-native-composer")
-        # Below the chat/rail grid AND below the composer: the chips close
-        # the shell as a bottom status row so the composer cluster stays
-        # contiguous with the transcript.
+        assert chips.region.y >= grid.region.y + grid.region.height
+        assert chips.region.y + chips.region.height <= composer.region.y
+        assert _is_displayed(chips)
+
+
+@pytest.mark.asyncio
+async def test_console_status_chips_position_below_setting():
+    """`[console] status_chips_position = "below"` restores the bottom row.
+
+    The pre-task-17652 order (TASK-15704): chips close the shell below the
+    composer, annotating the whole surface from underneath.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["status_chips_position"] = "below"
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        chips = console.query_one("#console-status-chips")
+        grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
         assert chips.region.y >= grid.region.y + grid.region.height
         assert composer.region.y + composer.region.height <= chips.region.y
         assert _is_displayed(chips)
+
+
+@pytest.mark.asyncio
+async def test_apply_status_chips_position_moves_mounted_strip():
+    """task-17652: a cached Console applies a changed position without recompose.
+
+    ChatScreen survives navigation, so a Settings change must move the
+    mounted strip in place (this is what on_screen_resume calls).
+    """
+    from tldw_chatbook.UI.Console_Modules.status_row import (
+        apply_status_chips_position,
+    )
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        chips = console.query_one("#console-status-chips")
+        composer = console.query_one("#console-native-composer")
+        assert chips.region.y + chips.region.height <= composer.region.y
+
+        app.app_config.setdefault("console", {})["status_chips_position"] = "below"
+        assert apply_status_chips_position(console) is True
+        await pilot.pause()
+        assert composer.region.y + composer.region.height <= chips.region.y
+
+        app.app_config["console"]["status_chips_position"] = "above"
+        assert apply_status_chips_position(console) is True
+        await pilot.pause()
+        assert chips.region.y + chips.region.height <= composer.region.y
 
 
 @pytest.mark.asyncio
@@ -546,11 +604,19 @@ async def test_prompts_provider_recovery_uses_existing_console_settings_seam() -
 
 @pytest.mark.asyncio
 async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
-    """Task-400: staged sources render in the Inspector, not the left rail."""
+    """Task-400: staged sources render in the Inspector, not the left rail.
+
+    task-16480: widened from 120x40 to 140x42 -- 6476d84f0 (compact rail
+    focus) made the width-aware rail reveal deliberately close the left
+    rail at 120 columns (its own resize-reflow tests encode that), so the
+    rail-contract assertions now run at a width where the rail is present.
+    The contract itself (rail keeps Conversations; staged context lives in
+    the Inspector) is unchanged.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(120, 40)) as pilot:
+    async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 

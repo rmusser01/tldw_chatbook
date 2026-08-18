@@ -266,6 +266,7 @@ from .settings_appearance_defaults import (
 from .settings_library_rag_defaults import (
     CONSOLE_DIRECT_LIBRARY_TOOLS_COPY,
     DEFAULT_RERANKER_PROVIDER,
+    RERANKER_ATTEMPTS_PER_CANDIDATE,
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
     library_rag_reranker_provider_options,
@@ -1187,6 +1188,14 @@ def _build_field_search_index() -> None:
                 (
                     "settings-console-stack-collapsed-rail-labels",
                     "Stacked vertical Context Inspector",
+                ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status row placement",
+                ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status chips above below composer",
                 ),
                 ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
                 ("settings-console-max-parallel-runs", "Max parallel agent runs"),
@@ -4310,6 +4319,61 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist render_remote_images.")
+
+    def _status_row_position_value(self) -> str:
+        """Return the live [console].status_chips_position value."""
+        from ..Console_Modules.status_row import resolve_status_chips_position
+
+        return resolve_status_chips_position(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+
+    def _status_row_position_button_label(self) -> str:
+        return (
+            "Above composer"
+            if self._status_row_position_value() == "above"
+            else "Below composer"
+        )
+
+    def _toggle_status_row_position(self) -> str:
+        """Flip status_chips_position: persist it AND poke the live config.
+
+        ADR-020-style immediate write (no category draft), the same shape
+        as the remote-images toggle (task-17652). The cached Console screen
+        re-applies the position on resume, so the change lands on return
+        without a restart.
+
+        Returns:
+            The new (post-toggle) position value.
+        """
+        from ..Console_Modules.status_row import (
+            STATUS_CHIPS_POSITION_ABOVE,
+            STATUS_CHIPS_POSITION_BELOW,
+            poke_console_setting,
+        )
+
+        next_value = (
+            STATUS_CHIPS_POSITION_BELOW
+            if self._status_row_position_value() == STATUS_CHIPS_POSITION_ABOVE
+            else STATUS_CHIPS_POSITION_ABOVE
+        )
+        self._persist_status_row_position(next_value)
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_position",
+            next_value,
+        )
+        return next_value
+
+    @work(thread=True)
+    def _persist_status_row_position(self, next_value: str) -> None:
+        """Write the status-row placement off the event loop (task-15470 shape)."""
+        try:
+            save_settings_to_cli_config(
+                {"console": {"status_chips_position": next_value}}
+            )
+        except Exception:
+            logger.warning("Failed to persist status_chips_position.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -9278,17 +9342,16 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return ""
 
-    def _refresh_provider_picker(self, query: str | None = None) -> None:
-        try:
-            picker = self.query_one("#settings-provider-picker", OptionList)
-            status = self.query_one("#settings-provider-search-status", Static)
-        except QueryError:
-            return
-        search_query = self._provider_picker_query() if query is None else query
-        groups = self._provider_picker_groups(search_query)
-        picker.clear_options()
-        picker.add_options(self._provider_picker_options(groups))
+    def _apply_provider_picker_highlight(self, picker: OptionList) -> None:
+        """Highlight the current provider's option, else the first selectable.
 
+        task-16480: factored out of ``_refresh_provider_picker`` so the
+        COMPOSE-time picker can carry the right highlight too -- the
+        ``call_after_refresh`` refresh added in a1405b154 fires before the
+        category body (and the picker) is mounted, its QueryError is
+        swallowed, and the fresh picker used to keep the compose default
+        (first selectable) instead of the configured provider.
+        """
         current_provider = str(
             self._provider_display_setting_values().get("provider") or ""
         )
@@ -9309,6 +9372,18 @@ class SettingsScreen(BaseAppScreen):
         picker.highlighted = (
             selected_index if selected_index is not None else first_selectable
         )
+
+    def _refresh_provider_picker(self, query: str | None = None) -> None:
+        try:
+            picker = self.query_one("#settings-provider-picker", OptionList)
+            status = self.query_one("#settings-provider-search-status", Static)
+        except QueryError:
+            return
+        search_query = self._provider_picker_query() if query is None else query
+        groups = self._provider_picker_groups(search_query)
+        picker.clear_options()
+        picker.add_options(self._provider_picker_options(groups))
+        self._apply_provider_picker_highlight(picker)
 
         normalized_query = search_query.strip()
         if normalized_query and not self._provider_picker_has_catalog_matches(groups):
@@ -9638,7 +9713,24 @@ class SettingsScreen(BaseAppScreen):
                 # staged the new provider's env var against the old
                 # provider's original.
                 with credential_input.prevent(Input.Changed):
-                    credential_input.value = self._provider_credential_env_var(provider)
+                    credential_value = self._provider_credential_env_var(provider)
+                    # task-16480: prevent() silences only THIS write. The
+                    # widget-lifecycle (recompose/category-return) echo
+                    # re-populates the input un-prevented, so the queue must
+                    # be armed for navigation-applied credentials the same
+                    # way the endpoint sync arms its own. Armed ONLY while a
+                    # navigation context is active (Qodo review, PR #1760):
+                    # an always-armed queue could swallow a later genuine
+                    # user edit that returns the field to the queued value,
+                    # and this sync runs on every provider switch.
+                    if (
+                        credential_input.value != credential_value
+                        and self._navigation_provider
+                    ):
+                        self._provider_credential_env_var_suppress_queue.append(
+                            credential_value
+                        )
+                    credential_input.value = credential_value
                 credential_input.placeholder = self._provider_credential_placeholder(
                     provider
                 )
@@ -11835,11 +11927,17 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-search",
                     placeholder="Search providers by name or ID",
                 )
-                yield OptionList(
+                picker = OptionList(
                     *self._provider_picker_options(self._provider_picker_groups()),
                     id="settings-provider-picker",
                     compact=True,
                 )
+                # task-16480: compose-time highlight so the configured
+                # provider is selected on the very first paint; the
+                # post-refresh highlight arrives too early (pre-mount) to
+                # serve as the only source.
+                self._apply_provider_picker_highlight(picker)
+                yield picker
                 yield Static(
                     "Choose a provider or enter a provider ID.",
                     id="settings-provider-search-status",
@@ -12467,6 +12565,26 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-rail-label-style-help",
                 classes="settings-help-copy",
             )
+            yield Static("Status row placement", classes="destination-section")
+            yield Static(
+                "Where the Console status chips sit relative to the composer.",
+                id="settings-console-status-row-position-label",
+            )
+            yield Button(
+                self._status_row_position_button_label(),
+                id="settings-console-status-row-position-toggle",
+                tooltip=(
+                    "Place the Provider/Model/Tools status row above or "
+                    "below the composer input. Takes effect when you "
+                    "return to Console."
+                ),
+            )
+            yield Static(
+                "Above keeps the chips directly under the conversation; "
+                "below closes the shell as a bottom status row.",
+                id="settings-console-status-row-position-help",
+                classes="settings-help-copy",
+            )
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -13049,30 +13167,52 @@ class SettingsScreen(BaseAppScreen):
     def _library_rag_rerank_cost_disclosure(values: Mapping[str, object]) -> str:
         """The Reranking fold's cost disclosure (TASK-3502 AC#2).
 
-        Pointwise reranking -- the shipped strategy -- issues ONE provider
-        call per candidate, so enabling it silently multiplies a search's
-        spend by the rerank top-k. That was stated nowhere before the user
-        committed to the toggle. Static honest text, deliberately NOT a
-        live price estimate: this repo owns no per-provider pricing table
-        for the reranker's models, and a wrong number would be worse than
-        an honest ceiling.
+        Pointwise reranking -- what this toggle creates (a bare
+        ``RerankingConfig()``) and the strategy this fold can edit --
+        issues ONE provider call per candidate, so enabling it silently
+        multiplies a search's spend by the rerank top-k. That was stated
+        nowhere before the user committed to the toggle. Static honest
+        text, deliberately NOT a live price estimate: this repo owns no
+        per-provider pricing table for the reranker's models, and a wrong
+        number would be worse than an honest ceiling.
+
+        The retry factor is part of the ceiling (TASK-17065 final review
+        F1): ``BaseReranker._call_llm`` retries EVERY exception, twice by
+        default, so the honest worst case is ``top_k x 3`` -- measured, 3
+        candidates against an erroring provider issue 9 calls and 20 issue
+        60. The other two strategies are not reachable from this fold: a
+        built-in preset may carry ``listwise`` (exactly 1 call per search,
+        so this line over-states there) or ``pairwise`` (a merge sort:
+        40-69 comparisons at top_k=20, so it would under-state); see
+        Docs/User_Guide/settings/rag.md, which states all three shapes.
 
         Args:
             values: The category's current (draft-aware) field values.
 
         Returns:
             One sentence naming the provider the calls are billed to and
-            the configured per-search call ceiling.
+            the configured per-search call ceiling, retries included.
         """
         provider = (
             str(values.get("reranker_provider") or "").strip()
             or DEFAULT_RERANKER_PROVIDER
         )
         top_k = values.get("reranker_top_k")
+        try:
+            retry_ceiling = int(top_k) * RERANKER_ATTEMPTS_PER_CANDIDATE
+        except (TypeError, ValueError):
+            # The box holds free text mid-edit; disclose the base ceiling
+            # rather than crash the fold on a half-typed number.
+            retry_ceiling = None
+        retries = (
+            f", or {retry_ceiling} if calls fail and are retried"
+            if retry_ceiling is not None
+            else ""
+        )
         return (
             f"Reranking scores each result with a separate {provider} call "
-            f"— up to {top_k} calls per search, billed at that provider's "
-            "rates."
+            f"— up to {top_k} calls per search{retries}, billed at that "
+            "provider's rates."
         )
 
     def _update_library_rag_rerank_disclosure(
@@ -18246,6 +18386,19 @@ class SettingsScreen(BaseAppScreen):
             "Linked images in replies will now render."
             if enabled
             else "Linked images in replies will stay ignored.",
+            severity="information",
+        )
+
+    @on(Button.Pressed, "#settings-console-status-row-position-toggle")
+    def handle_console_status_row_position_toggle(
+        self, event: Button.Pressed
+    ) -> None:
+        """Flip the status-row placement: immediate write, no category draft."""
+        event.stop()
+        next_value = self._toggle_status_row_position()
+        event.button.label = self._status_row_position_button_label()
+        self.app.notify(
+            f"Console status row will sit {next_value} the composer.",
             severity="information",
         )
 

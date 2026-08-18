@@ -1,3 +1,5 @@
+from typing import Any
+
 from textual.app import ComposeResult
 from textual.containers import Container
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
@@ -13,14 +15,24 @@ from tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card import (
 class ChatTaskCards(Container):
     """Inline task-surface wrapper for approvals, skill-install/script, and resume."""
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the surface hidden.
+
+        task-17500: construction state, not an ``on_mount`` write. The
+        screen's mount-time ``sync_task_resume_state`` (a 0.05s timer) and
+        this widget's own Mount handler had no ordering contract, so a
+        sync that landed first had its ``display = True`` clobbered by the
+        late mount hide -- the same race family as the approval card's
+        deferred batch-body hide, which produced the live title-only card.
+        """
+        super().__init__(*args, **kwargs)
+        self.display = False
+
     def compose(self) -> ComposeResult:
         yield ChatApprovalCard(id="chat-approval-card")
         yield SkillInstallConfirmCard(id="chat-skill-install-card")
         yield SkillScriptConfirmCard(id="chat-skill-script-card")
         yield ChatResumePanel(id="chat-resume-panel")
-
-    def on_mount(self) -> None:
-        self.display = False
 
     def sync_state(self, task_state) -> None:
         """Sync the approval, skill-install/script, and resume cards from task state.

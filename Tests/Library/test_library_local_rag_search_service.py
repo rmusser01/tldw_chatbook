@@ -1572,7 +1572,7 @@ class TestLibraryRagAnswerRealRuntime:
     "tag,detail",
     [
         ("reranking_degraded", "3/5 scorings failed"),
-        ("reranking_skipped", "No API key found for provider: openai"),
+        ("reranking_skipped", "provider call failed (fake)"),
     ],
 )
 async def test_reranking_disclosure_tag_survives_into_the_panels_result_rows(

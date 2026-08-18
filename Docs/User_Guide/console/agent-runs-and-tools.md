@@ -31,6 +31,17 @@ refused with a message like "2 agents already running (…). Wait for one to
 finish or interrupt it." Runs live only while Console stays open — see
 [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
 
+**In the reply row itself** — while the turn works, the unfinished
+`Assistant` row shows a live activity line in place of its (empty) text, so
+a long tool call never looks frozen: `⚙ read_file · 4s` names the tool that
+is running and how long it has been running, `Thinking… · 6s` means the
+tool finished and the model is composing the next round, and `Generating…`
+is the wait for the model's first response of the turn. The elapsed figure
+advances while you watch. The line is live-only — it vanishes the moment
+the reply's own text arrives, and a conversation you reopen later shows the
+completed `Tool` rows below instead. A sub-agent's work never appears here;
+it belongs to the **Sub-agents** panel in the left rail.
+
 **In the transcript** — inline `Tool` rows appear between your message and the
 reply:
 
@@ -206,17 +217,60 @@ already streaming.
 
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
-counts ("✎ Edited 3 files  +92 −468"), then one row per changed file. Press
-**Enter** or click a row to expand its diff in place — expanding is
-per-row and the diff loads (and is cached) the first time you open it, so
-collapsing and reopening a row is instant. The card never mutates
-anything; there is no undo or revert control on it.
+counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle, a
+**Review** button, then one row per changed file. Press **Enter** or click
+a row to expand its diff in place — expanding is per-row and the diff
+loads (and is cached) the first time you open it, so collapsing and
+reopening a row is instant. Long paths are middle-elided to fit the row
+(the start and end stay visible, with `…` in between); the row's tooltip
+always shows the full, un-elided path. The card never mutates anything
+directly; there is no undo or revert control on it.
 
-**`v`** still opens the full **Review** screen for that turn — the same
-key as before the card shipped. Reach it from the selected transcript row
-or the run inspector's **Review changes** action. Revert-all and the other
-destructive actions live only on that screen, behind a confirm, never as a
-one-keystroke action in the transcript.
+The header's chevron toggle expands or collapses every row at once. The
+first expand-all loads whatever diffs aren't cached yet one at a time (not
+all in parallel), so a turn with many changed files doesn't launch a burst
+of concurrent git work — collapsing again just hides the bodies, it never
+throws away what was loaded.
+
+Click **Review** (or press **`v`**, unchanged from before the card
+shipped) to open the full **Review** screen scoped to *this card's own
+turn* — no need to reselect it once the screen opens. Reach the same
+screen from the selected transcript row or the run inspector's **Review
+changes** action. Revert-all and the other destructive actions live only
+on that screen, behind a confirm, never as a one-keystroke action in the
+transcript.
+
+#### Leaving feedback on a hunk
+
+Expand a row and each hunk of its diff gets its own block with a small
+**✎ note** action beneath it. Click it, type a short note, and press
+**Enter** to save (**Escape** cancels without saving). The note renders in
+place under that hunk; while it's still unsent it carries a **✕** to
+delete it. You can leave more than one note per hunk, and notes on
+different hunks and files are independent.
+
+A note you leave doesn't go anywhere by itself — it's picked up
+automatically the next time you send a message that the agent runtime
+handles (not a plain-provider send with the agent runtime off). At that
+point every note still pending across the conversation is bundled into
+your message as extra context under a "Diff feedback from the user"
+heading, and once the reply is produced a TOOL-role row appears in the
+transcript disclosing exactly what was attached, e.g. `📝 Diff feedback
+attached — a.py @@ -1,4 +1,6 @@: "use the cached value here"` (one line
+per note). A live card is reused in place across transcript syncs and
+never reloads its own notes, so on the still-open card the **✕** stays
+put even after delivery — pressing it can no longer delete a delivered
+note, though. The row only shows the **✕**→`sent` swap the next time the
+card is rebuilt from scratch (conversation resume or reopen); at that
+point the note is read-only and part of the record.
+
+A note stays pending — and is never silently dropped — whenever it
+can't actually reach the model: the run fails before producing a reply
+(so nothing was sent — it rides the retry), your send doesn't go through
+the agent runtime at all, or you've queued more feedback than fits one
+message (older notes go first; anything left over waits for your next
+send). Only feedback that genuinely reached the model gets the `sent`
+marker and the disclosure row.
 
 If change tracking failed for one of a turn's roots, that failure shows up
 as its own plain-text disclosure row next to the card, not inside it — the
@@ -231,14 +285,18 @@ it from the stored snapshot.
 **`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
 presentation kill switch: set it to `false` to fall back to the original
 plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
-byte-identical to the pre-card behavior). `v` and the inspector's Review
-changes action work identically either way.
+byte-identical to the pre-card behavior) — no card, no note UI, no Review
+button, no expand-all. `v` and the inspector's Review changes action work
+identically either way. Turning the switch off does **not** lose any
+feedback you already queued: notes created while the card was on still
+auto-attach and deliver on your next agent send, disclosure row included,
+exactly as if the switch had stayed on.
 
 The "✎ A sub-agent edited N files after this turn" row (see [Parallel
 sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
 by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
-that run.
+that run. It supports notes and Review exactly like a turn's own card.
 
 ### Parallel sub-agents (the fleet)
 
@@ -517,11 +575,21 @@ wake-delivery stamp in the run database (`agent_runs.wake_delivered_at`
 — the ledger). One wake bundles *all* of a conversation's undelivered
 completions; each delivered run is stamped only after the wake turn was
 actually accepted, and a run whose stamp is set is never announced
-again. That is why a restart between a wake being accepted and the app
-exiting does not re-announce anything at the next launch, and why a
-sub-agent that finishes *during* a wake turn simply rides the next one.
-The `◈` mark is only the trigger and indicator; the ledger is what
-defines which completions are still owed.
+again. That is why a restart after a wake has been delivered does not
+re-announce anything at the next launch, and why a sub-agent that
+finishes *during* a wake turn simply rides the next one. The `◈` mark is
+only the trigger and indicator; the ledger is what defines which
+completions are still owed.
+
+There is one narrow gap, and it is a deliberate trade rather than an
+oversight: the stamp is written *just after* the wake turn is accepted,
+so an app that is killed in the instant between those two — or a wake
+turn that is still running when you quit — leaves a completion the
+ledger still shows as owed. The next launch announces that completion
+once more. You may therefore see the same sub-agent result reported
+twice; you will never see it lost, and it cannot repeat beyond that one
+extra time, because the second delivery does stamp. (Measured on
+2026-08-17, both in a test and in a live run.)
 
 **You always win ties.**
 
@@ -575,24 +643,59 @@ your signal that it did.
 a woken turn reaches a tool that requires your approval, a toast names it
 on whatever screen you're on ("Agent in “…” needs approval to use a tool.
 Open Console to review — nothing runs until you answer."), the session
-picks up its usual approval badge, and the card is waiting, already
-mounted, the moment you open Console. The tool does not run until you
-answer it. Nothing auto-approves: navigating away from Console again
-denies the request (the same rule as any card you leave unanswered), and
-so does quitting the app. If you have set a positive `[mcp]
-approval_timeout_seconds`, it still expires the request on schedule —
-being away does not buy the request extra time. The shipped default is
-`0`, which means no deadline: the request waits for you. One limitation:
-if a woken turn arms two approval rounds for the same conversation, only
-the most recent one has a card to mount; the older one still has to be
-answered, and until it is, it keeps the badge lit (task-15661).
+picks up its usual approval badge, and the round waits for you rather
+than expiring. The tool does not run until you answer it. Nothing
+auto-approves: navigating away from Console again denies the request (the
+same rule as any card you leave unanswered), and so does quitting the
+app. If you have set a positive `[mcp] approval_timeout_seconds`, it
+still expires the request on schedule — being away does not buy the
+request extra time. The shipped default is `0`, which means no deadline:
+the request waits for you.
+
+**The card is rendered and answerable the first time you open Console —
+no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
+shipped, opening Console in response to that toast showed the card's
+"Approval required" title and *nothing else* — no tool row, no arguments,
+no Approve/Deny buttons — until you clicked that conversation's session
+tab. The cause was an ordering race inside the card itself: its initial
+"hide the batch body" step was deferred mount work, and on a real
+terminal the fresh Console screen's first paint delivered that hide
+*after* the mount-time sync had rendered the round, unrendering it. The
+hide is now construction state, so it cannot land on top of a rendered
+card.
+
+**While an approval waits, other conversations' owed wakes wait behind
+it — by design.** Wake deliveries are serialized app-wide (one delivery
+at a time for the whole app), so a pending approval round in one
+conversation holds every other conversation's owed wake until you answer
+it. Nothing is lost while it waits: the other conversations' `◈` marks
+and ledger rows are already durable, and answering (or denying) the
+round releases them immediately — observed live as a stalled
+conversation delivering the instant a blocked round was denied. This is
+the deliberate trade of the app-wide serialization invariant (one
+`_delivering` per runtime; see the headless-wake close-out report). With
+the card rendering correctly the hold is always answerable, so it lasts
+exactly as long as you leave the question open.
+
+One further limitation: if a woken turn arms two approval rounds for the
+same conversation, only the most recent one has a card to mount; the
+older one still has to be answered, and until it is, it keeps the badge
+lit (task-15661).
 
 **Turning the wake off.** Set `[agents] autowake_enabled = false` in
-`config.toml` (default `true`; no Settings UI switch). OFF loses
-nothing: completions are still recorded and the toast, `◈` marker, and
-ledger still work — the wake turn just never fires. Flip it back ON and
-the next trigger (a later completion, or the next Console mount)
-delivers everything OFF recorded.
+`config.toml` (default `true`; no Settings UI switch) and restart —
+`config.toml` is read once at startup, so an edit does not take effect in
+an app that is already running. OFF loses nothing: completions are still
+recorded and the toast, `◈` marker, and ledger still work — the wake turn
+just never fires. Turn it back on and the next trigger (a later
+completion, the next Console mount, or the next launch) delivers
+everything OFF recorded.
+
+**What the marker looks like after a wake has run.** The `◈` is the
+lowest-priority of the session markers, so once a woken turn has finished
+in a conversation you were not watching, that session's tab shows the
+finished-and-unvisited `✓` instead. Both mean "there is something here
+you haven't seen"; viewing the conversation clears either.
 
 ### Skills
 
@@ -923,4 +1026,82 @@ interactive live-tmux walkthrough of the card itself. The card is a pure
 presentation layer over TASK-1972's existing change-review subsystem; the
 `[console] turn_file_cards` kill switch reverts to the pre-card plain-text
 marker row byte-for-byte, confirmed by
-`test_summary_row_stays_plain_marker_when_disabled`.)*
+`test_summary_row_stays_plain_marker_when_disabled`.) The "Change review"
+section rewritten @ HEAD — 2026-08-17 (TASK-16800 V1.5: the annotate/
+feedback loop, the `Review` button, the expand/collapse-all chevron, and
+middle-elided paths — every claim checked against the shipped code in
+`Widgets/Console/console_turn_file_card.py`,
+`Chat/console_agent_bridge.py`'s `run_reply` attach/stamp/disclosure seam,
+and `Chat/console_display_state.py`'s `render_diff_feedback_block`/
+`format_diff_feedback_disclosure`/`middle_elide_path`, then confirmed by
+the whole-module test run — `Tests/UI/test_console_turn_file_card.py`,
+`Tests/UI/test_console_turn_file_card_notes.py`,
+`Tests/UI/test_console_turn_file_card_factory.py`,
+`Tests/UI/test_change_review_screen.py`,
+`Tests/Chat/test_console_diff_hunks.py`, and
+`Tests/Chat/test_console_diff_feedback_delivery.py`, 91 passed — again a
+docs-only pass, not an interactive live-tmux walkthrough. The kill-switch
+claim ("pending notes still deliver with the switch off") is pinned by a
+new bridge-level test,
+`test_kill_switch_off_does_not_prevent_note_delivery`, which forces
+`[console] turn_file_cards = false` and confirms the attach/stamp/
+disclosure seam is entirely unaffected — it never reads that switch.)*
+
+*Live turn-activity line added against dev @ feea06193 — 2026-08-16.
+Verified by execution, not by a tmux walkthrough: a real
+`ConsoleAgentBridge` ran a real `agent_runtime` turn whose tool call was
+held in flight on an Event, and the MOUNTED transcript row was read back —
+before the change it rendered the bare word `Assistant` (the row is
+`status='pending'`, `content=''`, so even the old `Generating…` copy never
+applied to it); after, it renders `Assistant  ⚙ calculator · <1s` and
+advances to `· 5s` on the next poll
+(`Tests/UI/test_console_turn_activity_line.py`, 26 passed). Not
+live-walked in a terminal — the states and the elapsed are covered by that
+suite plus mutation testing; the rest of this page's content is unchanged
+from the prior stamp.*
+
+*Headless-wake sections (auto-wake off-screen, wake at launch, headless
+approval, the kill switch) re-verified against dev @ 524194c15 —
+2026-08-17, task-15860 close-out. **Driven live in tmux** against a real
+Anthropic model (`claude-sonnet-5`) on an isolated scratch profile, with
+every claim below checked against the app's own ChaChaNotes and
+`agent_runs` databases rather than the pane alone:*
+
+- *a sub-agent finishing while a **different Console session** was
+  displayed woke its supervisor there — app-wide toast, `◈` mark set on
+  the unwatched conversation, a machine-origin SYSTEM notice and a reply
+  that used the child's result, and no USER row;*
+- *a sub-agent finishing while the user sat on **Library** delivered a
+  full supervisor turn with Console unmounted; the `◈` mark survived the
+  delivery and cleared only on return, where the delivered turn was
+  already in the transcript;*
+- *a completion owed from a previous process was delivered **at the next
+  launch with Console never opened** (landing tab Library, no composer
+  ever constructed), stamped the ledger, and a second relaunch watched for
+  60s re-announced nothing;*
+- *`autowake_enabled = false` recorded the mark, the toast and the ledger
+  row and fired no wake turn; turning it back on delivered exactly what
+  OFF had recorded.*
+
+*Two things that pass could NOT confirm: the headless approval card
+mounted empty until you clicked the session tab (filed then as
+task-17500, **since fixed — see the re-verification stamp below**), and
+the live activity line's `⚙ <tool> · Ns` state was not observable in a
+real run — every tool call in the session started and finished inside
+the same second (per the app's own Trajectory view), while the one long
+wait, an approval, renders `Thinking… · Ns`. The advancing elapsed
+itself was seen live (`Generating…` → `Thinking… · 1s` … `· 18s`).*
+
+*Headless-approval card re-verified against dev @ ee6c3d709 +
+fix/task-17500 — 2026-08-17. **Driven live in tmux** on an isolated
+scratch profile with a real Anthropic model, repeating the close-out's
+failing scenario: a risk-tagged `write_file` in a wake turn armed with
+the user on Library; the app-wide toast fired there; opening Console
+painted the FULL card the first time — `Built-in · write_file (high
+risk)`, the arguments, `Approve once / Deny` and the bulk buttons — with
+no session switch, and it stayed complete for the whole observation
+window (minutes, vs. the pre-fix pane that was title-only and stable
+that way). Answering through the rendered control is pinned by the
+automated first-open suite (a press on the painted button resolves the
+round); in the tmux rig the round was ended through the documented
+quit-denies path, and nothing was written to disk while it waited.*

@@ -25,6 +25,14 @@ DEFAULT_DISTANCE_METRIC = "cosine"
 #: it); kept honest by
 #: ``test_reranker_provider_default_constant_matches_rerankingconfig_default``.
 DEFAULT_RERANKER_PROVIDER = "openai"
+#: ``1 + RerankingConfig().max_retries`` (RAG_Search/reranker.py) -- the
+#: attempts ONE candidate can cost. `BaseReranker._call_llm` retries every
+#: `Exception`, not just transient ones, so a provider that is down (or a
+#: credential that is wrong) multiplies the per-search call count by this,
+#: measured: 3 candidates against an erroring provider issue 9 calls. Same
+#: hardcode-not-import trade as the two constants above; kept honest by
+#: ``test_reranker_attempts_constant_matches_rerankingconfig_retries``.
+RERANKER_ATTEMPTS_PER_CANDIDATE = 3
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0
@@ -269,13 +277,13 @@ def library_rag_reranker_providers() -> tuple[str, ...]:
     deliberately light (see ``load_direct_library_tools``), and
     ``Chat_Functions`` is not.
 
-    This enumerates what ``chat_api_call`` can ROUTE, which is not the same
-    as what the reranker can currently CALL: its credential lookup
-    (``_call_llm_impl``) covers far fewer providers than the table has
-    rows, so most picks fail at run time -- disclosed on the results screen
-    ("Reranking was skipped (No API key found for provider: X)") rather
-    than silently. TASK-17065 owns closing that gap, and until it does the
-    honest reading of this list is "offered", not "guaranteed callable".
+    This enumerates what ``chat_api_call`` can ROUTE, and since TASK-17065
+    that is also what the reranker can CALL: it resolves no credential of
+    its own any more and dispatches by keyword, so each row reaches its
+    registered handler and each handler resolves its own key (the keyless
+    local providers need none). Whether a given provider then ANSWERS is
+    that provider's business -- a refusal is disclosed on the results
+    screen ("Reranking was skipped (...)") rather than silently.
 
     Returns:
         Every registered chat provider name, ``DEFAULT_RERANKER_PROVIDER``
@@ -322,10 +330,17 @@ def normalise_library_rag_reranker_provider(value: Any) -> str:
         a blank value the control shows the provider that would really be
         billed. A name this build does not register (a hand-edited profile
         file, a provider from a newer build) resolves there too rather than
-        raising ``InvalidSelectValueError`` out of ``compose()`` -- and in
-        THAT branch the control is showing the default while the profile
-        still carries the unrecognised name, which the picker cannot
-        currently repair (TASK-17065 owns display + repair for it).
+        raising ``InvalidSelectValueError`` out of ``compose()`` -- so in
+        THAT branch the control shows the default while the profile still
+        carries the unrecognised name. That branch IS repairable: the
+        reranker-provider change guard no longer folds an unrecognised
+        loaded value back (see ``settings_screen``'s
+        ``handle_library_rag_reranker_provider_changed``), so picking a
+        registered provider over it stages and saves
+        (``Tests/UI/test_settings_rag_profile_region.py::
+        test_an_unrecognised_stored_provider_is_repairable_from_the_picker``).
+        Left unrepaired, the stored name reaches ``chat_api_call``, which
+        cannot route it, and the results screen discloses the skip.
     """
     text = str(value).strip()
     if not text:

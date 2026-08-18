@@ -252,7 +252,28 @@ DEFAULT_RAG_SEARCH_CONFIG = {
             # "parent_size_multiplier": 3,
             # "expand_context_on_retrieval": True,
             # "clean_pdf_artifacts": True,
-            # "reranking_strategy": "cross_encoder"
+            #
+            # There is NO "reranking_strategy" key here. One used to be
+            # listed, and it read nothing -- no code anywhere loaded it, so
+            # setting it selected exactly nothing (TASK-17600 F3). The
+            # strategy lives on a RAG PROFILE, as
+            # `reranking_config.strategy` in the profile's saved JSON under
+            # <user data dir>/rag_profiles/: `ProfileConfig` serialises the
+            # whole `RerankingConfig` and rebuilds it on load, so a saved or
+            # cloned profile keeps its strategy across restarts (pinned by
+            # Tests/RAG/test_config_profiles.py::
+            # test_a_saved_profile_round_trips_its_reranking_strategy). The
+            # Settings form edits that profile's provider/model/top-k but
+            # not its strategy.
+            #
+            # Reranking strategies: "pointwise" | "pairwise" | "listwise"
+            # (each bills an LLM provider per call) or "cross_encoder" (a
+            # local model, no provider/credential/network). "cross_encoder"
+            # is implemented and selectable but is NOT recommended: it is
+            # the only strategy that has been measured here (TASK-16965)
+            # and it came out net harmful on average [CAVEAT: that averaged row EXCLUDES `scoped` and `negative` (`UNAVERAGED_CATEGORIES`), and `scoped` is where this strategy WINS -- over all 53 ground-truthed queries hybrid REVERSES sign (MRR 0.731 -> 0.806, +0.075). TASK-16965 final review F1.] -- large gains where
+            # retrieval is weak, losses where it is already good. See
+            # Docs/superpowers/qa/2026-08-17-cross-encoder/report.md.
         },
     },
     "memory_management": {
@@ -1295,6 +1316,22 @@ def load_settings(force_reload: bool = False) -> Dict:
     )
     final_console_settings_cli["stack_collapsed_rail_labels"] = coerce_bool_setting(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
+        False,
+    )
+    # task-17652: status-row placement relative to the composer. Validation
+    # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
+    # normalizing here keeps a typo from ever reaching compose order.
+    _status_chips_position = final_console_settings_cli.get("status_chips_position")
+    if not (
+        isinstance(_status_chips_position, str)
+        and _status_chips_position.strip().lower() in ("above", "below")
+    ):
+        _status_chips_position = "above"
+    else:
+        _status_chips_position = _status_chips_position.strip().lower()
+    final_console_settings_cli["status_chips_position"] = _status_chips_position
+    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
+        final_console_settings_cli.get("status_chips_collapsed", False),
         False,
     )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
@@ -3971,8 +4008,21 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # search_enable_subquery = false
 # search_default_max_queries = 5
 # search_result_max = 10
-# relevance_llm_timeout_s = 30
+# relevance_llm_timeout_s = 30   # per relevance/summarization LLM call. Measured
+#   (task-17370): per-result summarization against a local 27B took 42-131s, so
+#   30 guarantees the fallback-to-source-text path on local models. Raise it if
+#   you want summarized evidence rather than raw page text.
 # relevance_scrape_timeout_s = 30
+# research_max_iterations = 2   # rounds a local research RUN performs when it
+#   does not set its own limit: round 1 researches the question, later rounds
+#   research the gaps the previous synthesis left open (task-16324). 2 is the
+#   shipped default because a second round measurably improved evidence --
+#   resolved citation markers 24 -> 39, citation density 0.77 -> 0.95
+#   (task-17370). It costs one extra search per gap, each with its own
+#   per-result relevance and summarization calls, plus another synthesis and gap
+#   analysis per round: the measured arm went from 3 to 12 search calls across
+#   three questions and roughly tripled wall-clock. Set to 1 for single-pass
+#   runs; a run's own limits always override this.
 # deep_search_timeout_s = 240   # the agent runtime automatically allots this tool its own per-call timeout of this value plus ~50s slack (wait_for grace + thread-join + scheduling jitter), via LocalToolProvider.timeout_for -- independent of max_tool_call_seconds, any value here is safe
 
 [webfetch]

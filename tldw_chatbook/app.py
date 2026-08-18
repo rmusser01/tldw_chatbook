@@ -12347,6 +12347,16 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
 
 # --- Main execution block ---
 if __name__ == "__main__":
+    # Record the launch directory first, before anything can chdir -- the
+    # `python -m tldw_chatbook.app` path does not route through
+    # main_cli_runner, so it needs its own capture (set-once; harmless if
+    # already recorded). See workspace_context_note for why this matters.
+    from tldw_chatbook.Tools.workspace_file_roots import (
+        set_launch_cwd as _set_launch_cwd,
+    )
+
+    _set_launch_cwd()
+
     # Initialize logging first
     early_logging_app = initialize_early_logging()
 
@@ -12587,6 +12597,14 @@ def main_cli_runner():
     This function is referenced in pyproject.toml as the entry point for the tldw-chatbook command.
     It initializes logging early and then runs the TldwCli app.
     """
+    # Record the launch directory at the earliest point in the process, before
+    # anything can chdir. The workspace-context note appended to agent prompts
+    # expresses workspace roots relative to this (never as absolute host
+    # paths). Set-once: harmless if another entry path already recorded it.
+    from tldw_chatbook.Tools.workspace_file_roots import set_launch_cwd
+
+    set_launch_cwd()
+
     # Configure logging to suppress verbose debug messages early
     import logging
     import os

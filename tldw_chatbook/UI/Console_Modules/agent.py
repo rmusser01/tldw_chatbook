@@ -144,13 +144,18 @@ import time
 from loguru import logger
 from textual.message_pump import NoActiveAppError
 
-from ...Agents.agent_models import TERMINAL_RUN_STATUSES
+from ...Agents.agent_models import (
+    AGENT_KIND_PRIMARY,
+    STEP_TOOL_CALL,
+    TERMINAL_RUN_STATUSES,
+)
 from ...Chat.cost_display import format_token_count
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
 )
 from ...Widgets.Console.console_run_log_modal import ConsoleRunLogModal
+from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...Agents.fleet_coordinator import FleetHandle
@@ -178,7 +183,27 @@ _AGENT_STATUS_GLYPHS: Dict[str, str] = {
 #: constant so the two sides can never drift apart.
 CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
 
-__all__ = ["ConsoleAgentController", "CONSOLE_AGENT_FLEET_SECTION_ID"]
+#: Leading glyph for the turn-activity line's tool state. Same glyph the
+#: transcript's completed TOOL markers use (``format_agent_step_marker``),
+#: so "what is running now" and "what ran" read as one vocabulary.
+CONSOLE_TURN_ACTIVITY_TOOL_GLYPH = "⚙"
+#: The turn-activity line's between-tools state: the loop has handed the
+#: last tool result back to the model and is waiting on the next round.
+#: There is no step kind for "a model call started" (``STEP_MODEL`` is
+#: emitted AFTER the round returns, carrying its text), so this is derived
+#: from "the last primary step is not a tool call", not from an event.
+CONSOLE_TURN_ACTIVITY_THINKING = "Thinking…"
+#: Separator between the state and its elapsed segment.
+CONSOLE_TURN_ACTIVITY_SEPARATOR = " · "
+
+__all__ = [
+    "ConsoleAgentController",
+    "CONSOLE_AGENT_FLEET_SECTION_ID",
+    "CONSOLE_TURN_ACTIVITY_SEPARATOR",
+    "CONSOLE_TURN_ACTIVITY_THINKING",
+    "CONSOLE_TURN_ACTIVITY_TOOL_GLYPH",
+    "console_turn_activity_text",
+]
 
 
 def _format_fleet_elapsed(seconds: float | None) -> str:
@@ -210,6 +235,85 @@ def _format_fleet_elapsed(seconds: float | None) -> str:
         return f"{total_seconds}s"
     minutes, secs = divmod(total_seconds, 60)
     return f"{minutes}m {secs}s"
+
+
+def console_turn_activity_text(snapshot: Any, *, now: float) -> str:
+    """Return the live activity line for one in-flight Console turn.
+
+    **Live-only, by construction.** There is no resumed counterpart and
+    there must never be one: this line reports what an agent is doing
+    RIGHT NOW, and a finished turn's transcript already carries the TOOL
+    markers that say what it did. (Same "live rendering has no resumed
+    twin" note ``format_todo_marker`` carries -- unlike
+    ``format_agent_step_marker``, which is deliberately shared by the live
+    and resume paths so both render byte-identical text.)
+
+    The four states, derived from the primary agent's most recent step:
+
+    ===========================  ==========================================
+    situation                    line
+    ===========================  ==========================================
+    a tool is running            ``⚙ <tool> · <elapsed>``
+    between tools / after one    ``Thinking… · <elapsed>``
+    running, no primary step     ``Generating…`` (today's copy, unchanged)
+    turn ended (any non-running) ``""`` -- the caller renders nothing
+    ===========================  ==========================================
+
+    Sub-agent steps are skipped, not merely deprioritised: a child's work
+    belongs to the Agent rail's fleet rows, never to the primary assistant
+    row. This is a real path, not a defensive one -- ``ConsoleAgentBridge.
+    on_step`` routes a SUB-AGENT step whose run id is empty into the
+    PRIMARY run's own live feed (its documented "no run attributed"
+    fallback), so ``snapshot.steps[-1]`` can genuinely belong to a child.
+
+    Quiet catalog tools (``find_tools``/``load_tools``) DO appear here.
+    ``_QUIET_STEP_TOOLS`` keeps them out of the permanent, append-only TOOL
+    markers, where a discovery round would be lasting clutter; this line is
+    ephemeral and exists precisely so no working moment looks frozen, and
+    suppressing them would restore a silent gap for the whole round.
+
+    ``STEP_MODEL``'s summary is never shown. It carries the raw model turn
+    text -- mid-turn that is the tool-call fence itself -- so the state, not
+    the summary, is what the user sees.
+
+    Args:
+        snapshot: The conversation's ``AgentLiveSnapshot`` (duck-typed:
+            ``status`` plus a ``steps`` sequence).
+        now: ``time.monotonic()`` reading for this poll tick, injected so
+            the elapsed segment is testable without sleeping.
+
+    Returns:
+        The line to render, or ``""`` when nothing is live.
+    """
+    if getattr(snapshot, "status", "idle") != "running":
+        return ""
+    step = next(
+        (
+            candidate
+            for candidate in reversed(tuple(getattr(snapshot, "steps", ()) or ()))
+            if getattr(candidate, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
+        None,
+    )
+    if step is None:
+        # Pre-first-token: the model has not come back once yet, so there is
+        # no step to name and no honest base to time from.
+        return CONSOLE_GENERATING_PLACEHOLDER
+    if step.kind == STEP_TOOL_CALL:
+        # `AgentLiveStep.text` for a tool-call step IS the tool name:
+        # `agent_runtime` adds every STEP_TOOL_CALL with `tool_name=` and
+        # neither `summary` nor `result`, and `_summarize`'s precedence
+        # (summary or result or tool_name or kind) therefore lands on it.
+        label = f"{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {step.text}"
+    else:
+        label = CONSOLE_TURN_ACTIVITY_THINKING
+    started_at = getattr(step, "started_at", None)
+    elapsed = (
+        _format_fleet_elapsed(max(0.0, now - started_at))
+        if started_at is not None
+        else ""
+    )
+    return f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else label
 
 
 def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSectionRow:
@@ -536,6 +640,52 @@ class ConsoleAgentController:
             ),
         )
         return self._console_agent_bridge
+
+    def console_turn_activity(self) -> str:
+        """The viewed session's live turn-activity line, or ``""``.
+
+        Read once per 0.2s Console poll tick and handed to
+        ``ConsoleTranscript.apply_turn_activity``. **No new timer**: during
+        an agent turn the viewed run's status is in
+        ``CONSOLE_ACTIVE_RUN_STATUSES``, which is exactly the condition
+        ``_start_console_transcript_sync_timer`` keeps its 0.2s tick alive
+        for, so the line already repaints for free while a turn is in
+        flight -- and never repaints when nothing is (task-15664 AC#2).
+
+        That same status check is the FIRST gate here, deliberately. The
+        bridge's published snapshot is per-conversation and only a terminal
+        publish clears it, so a run that died without one would otherwise
+        leave ``status="running"`` behind and let this line tick forever on
+        an idle transcript. ``run_state`` is the read-only facade for the
+        VIEWED session only, so it is also what keeps another session's
+        in-flight turn from writing onto this one's row.
+
+        Every bridge attribute is reached through ``getattr`` for the same
+        reason the rail's own reads are: several suites drive this cluster
+        with a bare bridge double that implements only part of the surface.
+
+        Returns:
+            The rendered line, or ``""`` when no live turn owns this view.
+        """
+        # Imported in-body for the cycle this module's docstring documents:
+        # `chat_screen` imports `Console_Modules.wiring`, which imports this
+        # module, and the constant is defined further down that file.
+        from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller else None
+        if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            return ""
+        bridge = self._console_agent_bridge
+        if bridge is None:
+            return ""
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        read_snapshot = getattr(bridge, "live_snapshot", None)
+        if read_snapshot is None:
+            return ""
+        return console_turn_activity_text(
+            read_snapshot(conversation_id), now=time.monotonic()
+        )
 
     def _console_agent_section_lines(self) -> tuple[str, str, str]:
         """Return the Agent rail's (status, steps, sub-agents) line text.

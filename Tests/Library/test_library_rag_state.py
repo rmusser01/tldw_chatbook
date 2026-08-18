@@ -2488,11 +2488,11 @@ class TestLibraryRagRerankingNotice:
         rows = (
             self._row(
                 source_type="note",
-                reranking_skipped="No API key found for provider: openai",
+                reranking_skipped="provider call failed (fake)",
             ),
         )
         assert library_rag_coverage_note({}, rows) == (
-            "Reranking was skipped (No API key found for provider: openai) "
+            "Reranking was skipped (provider call failed (fake)) "
             "— these results are in their original retrieval order."
         )
 

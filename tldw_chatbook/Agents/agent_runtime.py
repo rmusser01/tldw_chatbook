@@ -28,11 +28,13 @@ from .agent_models import (
     RUN_SKILL_SCRIPT_TOOL_NAME,
     RUN_STUCK,
     SEARCH_RUN_LOG_TOOL_NAME,
+    SEND_TO_AGENT_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
     STEP_SPAWN,
+    STEP_STEERING,
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentConfig,
@@ -49,6 +51,7 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
     WAIT_AGENTS_TOOL_NAME,
+    format_steering_message,
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationResult,
@@ -363,6 +366,35 @@ class LoopDeps:
     # child of this run"; `check_agents` takes nothing.
     wait_agents: Callable[[list[str] | None], ToolResult] | None = None
     check_agents: Callable[[], ToolResult] | None = None
+    # send_to_agent: fleet steering, the SUPERVISOR producer (PR3b Task 2,
+    # spec SS6) for the per-child mailbox drain_mailbox below consumes.
+    # Wired under the exact `fleet_active` predicate as the two fields
+    # above, same primary-only reasoning (depth-1: children cannot steer
+    # each other). Takes (id, message) -- the id in either vocabulary,
+    # resolved by the service closure -- and returns immediately: posting
+    # to the locked in-memory mailbox never blocks, so dispatching it
+    # in-loop beside wait_agents costs nothing and keeps all three fleet
+    # tools on one path. Validation (non-empty, MAX_STEERING_CHARS) and
+    # every piece of refusal copy live in the service closure, not here.
+    send_to_agent: Callable[[str, str], ToolResult] | None = None
+    # drain_mailbox: fleet steering (PR3b Task 1, spec SS6). Wired ONLY for
+    # a THREADED fleet child -- the service's spawn tail closes it over
+    # that child's own coordinator mailbox
+    # (`FleetCoordinator.drain_steering`); primaries and inline children
+    # get None (a primary is steered by the user talking to it; an inline
+    # child has no handle and so no mailbox). Called by the loop at the
+    # single protocol-coherent point -- in the non-restoring branch,
+    # immediately before each model call, AFTER the budget/cancel checks --
+    # returning the queued `(source, text)` entries, which the loop appends
+    # as `format_steering_message`-labeled user-role messages. Draining
+    # there can never split a native `tool_calls` <-> `role:"tool"` pair
+    # (every batch's results are fully appended by then via
+    # `_append_tool_result`), never collides with `expand_restore_history`'s
+    # slice-rewrite (the restoring branch is structurally skipped), and a
+    # dead run (cancelled/stuck/exhausted) never consumes a mailbox.
+    # Wrapped never-raise at the call site, the `on_step` containment rule:
+    # a broken drain costs the delivery, never the run.
+    drain_mailbox: Callable[[], list[tuple[str, str]]] | None = None
     # on_record: full-fidelity capture for the run log (run_log.py). Called
     # with (record_type, payload) at the two points where the COMPLETE value
     # exists -- which the step log does not carry, since `add()` truncates
@@ -900,6 +932,38 @@ def run_agent_loop(
             turn = ModelTurn(tool_calls=tuple(calls))
         else:
             restored_calls = None
+            # Fleet steering drain (PR3b Task 1) -- THE protocol-coherent
+            # point, deliberately here and nowhere else: every previous
+            # batch's results are fully appended by now (via
+            # `_append_tool_result`, both protocols), the restoring branch
+            # above is structurally skipped (so this can never collide
+            # with `expand_restore_history`'s slice-rewrite), and the
+            # budget/cancel checks at the loop top ran first (a dead run
+            # never consumes a mailbox). Wrapped never-raise like
+            # `on_step`: a broken drain costs the delivery, never the run.
+            if deps.drain_mailbox is not None:
+                try:
+                    for steer_source, steer_text in deps.drain_mailbox():
+                        steer_message = format_steering_message(
+                            steer_source, steer_text
+                        )
+                        messages.append(
+                            {"role": "user", "content": steer_message}
+                        )
+                        add(STEP_STEERING, summary=steer_message[:200])
+                        _emit_record(
+                            deps,
+                            "steering",
+                            content=steer_message,
+                            tool="",
+                            status=steer_source,
+                            call_id="",
+                        )
+                except Exception:  # noqa: BLE001 — containment, like on_step
+                    logger.opt(exception=True).warning(
+                        "drain_mailbox raised; steering delivery skipped "
+                        "for this turn"
+                    )
             turn = (
                 deps.call_model_with_continuation(
                     messages,
@@ -1277,6 +1341,24 @@ def run_agent_loop(
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.check_agents()
+                elif (
+                    call.name == SEND_TO_AGENT_TOOL_NAME
+                    and deps.send_to_agent is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    # Same defensive coercion as wait_agents' `ids` above:
+                    # an unreliable local model may send numbers or JSON
+                    # nulls. Anything non-string becomes its str() form (a
+                    # numeric id then simply fails to resolve, and the
+                    # service's own refusal copy names it); a missing/null
+                    # value becomes "" so the service's empty-message and
+                    # unknown-id refusals speak, never a crash here.
+                    raw_target = call.args.get("id")
+                    raw_message = call.args.get("message")
+                    result = deps.send_to_agent(
+                        "" if raw_target is None else str(raw_target),
+                        "" if raw_message is None else str(raw_message),
+                    )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))

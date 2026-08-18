@@ -326,6 +326,51 @@ must fake threading/navigation seams, patch the **collaborator** (`app`) — nev
 a new attribute onto the class under test; an instance monkeypatch is also an
 existence claim, and nothing checks it.
 
+**Widest blast radius (TASK-17065, 2026-08-17).** One module diverged from the house
+pattern in *two* ways at once, and the single fake at its seam mirrored both.
+`RAG_Search/reranker.py` grew its own credential path (`self._settings =
+load_settings()`, then a hand-rolled `if/elif` reading
+`settings["API"]["<provider>_api_key"]` — a key `load_settings()` never builds) *and*
+its own dispatch convention (a positional argument list handed to `chat_api_call`
+through `run_in_executor`, which forwards positionals only). The seam fake,
+`Tests/RAG_Search/test_reranker_degraded_paths.py`'s `def
+fake_chat_api_call(api_key, messages_payload, provider, model, temp, maxp)`, declared
+the caller's own wrong order *and* planted a `_settings` table so the call got past
+the credential gate. Agreeing with both defects, it left ~2,500 green tests unable to
+see that reranking completed a scoring call for **zero of the 29 providers**
+`chat_api_call` dispatches — for the entire life of the feature. Binding the same call
+through `inspect.signature(chat_api_call).bind(...)` printed the truth in one line:
+`api_endpoint='THE-API-KEY'`, `api_key='openai'`, `temp='gpt-4o-mini'`,
+`system_message=0.25`, `streaming=128` — the mis-binding had also silently switched
+STREAMING on, a third defect nobody had filed.
+
+Two rules out of it:
+
+- **A fake at a seam you share with the rest of the app must bind against the real
+  signature, never re-type the call site's argument list.** Note how far this reaches:
+  even the guard written specifically to catch this
+  (`test_reranker_dispatch_binding_against_the_real_chat_api_call_signature`) first
+  asserted a literal tuple *it typed itself*, so it guarded a copy of the caller and
+  caught nothing. It only became evidence once it drove the real `_call_llm_impl` and
+  observed what landed. **And know exactly what `bind` buys you**, because the fixed
+  fake's first docstring over-claimed it and the final review caught that:
+  `inspect.signature(...).bind()` checks arity and keyword *names* only — it is BLIND
+  to order. Re-measured on this very call:
+  `bind("THE-KEY", [...], "openai", "gpt-4o-mini", 0.25, 128)` is ACCEPTED (it simply
+  lands the key in `api_endpoint`), while `bind(provider="x", ...)` raises
+  `unexpected keyword argument`. What actually catches a mis-ordering is the landing
+  ASSERTIONS on a guard that drives the real caller — plus, cheaply, refusing
+  positional arguments at the fake (`assert not args`) when the seam is keyword-only
+  by contract. Mutation-checked: reverting the call site to positional now fails with
+  *"positional arguments landed here: ('openai',)"*, not with a bind error.
+- **A feature that resolves credentials itself is a divergence to justify, not a
+  default.** The fix here was a DELETION: all 29 handlers already resolve their own key
+  or need none, and every other `chat_api_call` caller in the repo
+  (`UI/Tools_Settings_Window.py`, `UI/Screens/evals_screen.py`,
+  `Chat/console_provider_gateway.py`) already passes keywords and omits `api_key`. The
+  reranker was the sole outlier, and being the sole outlier is exactly what broke it.
+  Before writing a lookup at a shared seam, count the callers who do not have one.
+
 ---
 
 ## Mutation-test every guard you add
@@ -1947,6 +1992,15 @@ state (`is_offline_mode()`), never the env var's string value: a `"1"` that arri
 late reads as success on an env-var check while the flag it was meant to control stayed
 `False`. And when closing a hole like this with a two-part fix, mutation-test each half
 independently — here, either half alone was silently insufficient.
+
+**`HF_HUB_OFFLINE` is not the only frozen constant in that module (TASK-16965,
+2026-08-17).** `huggingface_hub.constants.HF_HUB_CACHE` is likewise computed
+once at import, from `expanduser("~")` — so any fixture that sandboxes `HOME`
+(this repo's `Tests/conftest.py` does) points every later model load at an empty
+cache and makes a genuinely cached model unloadable under pytest. Same
+mechanism, opposite blast radius: this lesson's is a download you did not want,
+that one's is a load you did want and silently did not get. See "A metric can be
+graded on fallback content" at the end of this file for what that cost.
 
 ---
 
@@ -4765,6 +4819,37 @@ unimportable at base, reference them lazily (or split the white-box asserts
 out) so the base-tree run fails on the assertion that carries the evidence,
 not on `import`.
 
+---
+
+## A per-tick view value needs its CACHE KEY and its SCOPE mutation-tested; display assertions see neither (turn-activity line, 2026-08-16)
+
+The Console's in-flight assistant row gained a live activity line (`⚙
+read_file · 4s`) refreshed on the 0.2s poll. Every display assertion was
+green, and mutation testing then found two defects that no rendered-text
+assertion could have seen:
+
+1. **The cache key.** `ConsoleTranscript` has TWO renderers — markdown (the
+   default for assistant rows, which carries the line in its *header*) and
+   plain. `_message_row_signature` is built from the PLAIN renderer only, so
+   the markdown row's elapsed advanced solely as a side effect of the plain
+   renderer embedding the same string. Disabling the plain branch left the
+   first paint correct and froze every later tick — the tell was not "the
+   line is missing" but "the FIRST tick passed and the SECOND did not".
+2. **The scope.** Stamping the value on every message instead of only the
+   in-flight row changes nothing a reader can see (a row with content never
+   renders it; only assistant rows can) — but it lands in every row's
+   signature, so the whole transcript re-derives and re-syncs once per
+   second for the entire turn. The mutant SURVIVED a suite of rendered-row
+   assertions.
+
+**What to do.** For any value the poll re-supplies each tick: (a) mutate the
+signature/cache key and require a test that paints two ticks differing in
+*nothing but that value*; (b) mutate the scope and assert **blast radius**,
+not pixels — `row_render_signatures()` and
+`message_signature_compute_counts()` make "exactly one row moved" a direct
+assertion. Also worth knowing for this widget: a signature that renders one
+of two renderers silently couples them, so name the field in the signature
+outright rather than relying on it riding along inside rendered text.
 ## A guard sitting behind an earlier early-return is unreachable, so no fixture can own it (task-15860, 2026-08-16)
 
 Third mutation-survivor in this arc, and a different shape from the two
@@ -4805,6 +4890,202 @@ Two guards in depth meant no single observation covered both mutations;
 the four together did. Corollary: a no-work pin also needs a control that
 runs the same probes WITH work present and watches every one flip,
 otherwise a hook that never runs at all satisfies it perfectly.
+
+## Your test's own harness can make the guard you are testing unreachable (task-15860, 2026-08-17)
+
+The close-out gate had to prove one invariant no per-landing test owned:
+deliveries are serialized **app-wide**, enforced by one line in
+`ConsoleFleetWakeCoordinator._attempt` — `if self._delivering is not
+None: return`. Two successive drafts of that test passed, and **survived
+neutering that exact line**. Both were worthless, for two different
+reasons, and both reasons are general:
+
+1. **The first draft used one conversation.** A second completion in the
+   same conversation is refused by the *per-session busy* gate several
+   lines earlier, so `_delivering` was never the thing under test. A test
+   of gate N must construct the state where gates 1..N-1 all pass —
+   otherwise it is a test of gate 1 wearing gate N's name.
+2. **The second draft used two conversations and still survived**, because
+   the observation was "no second payload reached the provider". The
+   provider double stalls in its readiness probe, and the stall belongs to
+   the GATEWAY, not to a turn: with the guard removed, the second wake
+   turn genuinely started and then parked at the same stall, streaming
+   nothing. The two outcomes — "refused" and "started, then blocked
+   identically" — are indistinguishable at the observation point the test
+   was reading.
+
+The fix was to count *entries into the readiness probe*, which separates
+"a turn started" from "a turn produced output". The mutation then killed
+the test immediately.
+
+**The rule:** when a mutation survives, do not first suspect the
+assertion's strength — ask **what the harness itself does to the code path
+after the mutated line.** A shared blocking double, a fixture that stops
+upstream, a stall that is global rather than per-attempt: each converts
+"the guard fired" and "the guard did not fire" into the same measurement.
+Pick an observation that is downstream of the mutated line but *upstream*
+of whatever the harness blocks on.
+
+## Measure the invariant, then write the assertion — the honest answer may not be the one the plan states (task-15860, 2026-08-17)
+
+The same gate had to pin "exactly-once across a restart mid-commit". The
+plan and the shipped User Guide both asserted the strong form: a restart
+between a wake being accepted and the app exiting re-announces nothing.
+Rather than encode that, the test was written to *measure* first — die
+inside the window (the ledger stamp raises, leaving rows committed and the
+ledger unstamped, which is byte-identical to a process kill there), then
+relaunch and read what the conversation holds.
+
+It holds **six** rows, not four: the same child result announced to the
+supervisor twice, and paid for twice. `_deliver`'s own comment predicts
+it ("a lost stamp risks one re-announce at a later claim, never a lost
+result"); the user-facing doc had quietly promised more than the code
+does. The live pass then reproduced it by accident — an app quit while a
+wake turn sat blocked produced exactly one duplicate notice at the next
+launch.
+
+Two things followed, and both are the point. The doc was corrected to the
+measured behaviour. And the test asserts the **bound** (at most one
+re-announce, the row shape, no USER row on any of it, and that a third
+launch adds nothing) rather than the measured number — so closing the
+window later is an improvement, not a test failure. **Encoding a plan's
+claim as an assertion turns an unverified sentence into a fixture that
+future work must preserve.** Measure, then decide which part is the
+invariant and which part is merely today's value.
+---
+
+## A fixture keyed to the code's invented config section hides a total production failure (task-17382, 2026-08-17)
+
+`summarize_with_llama` indexed `loaded_config_data["llama_api"]` in ten places.
+No such section has ever existed — the loader builds `llama_cpp_api` — so every
+llama.cpp summarization raised `KeyError` before contacting a server, and the
+`except` at the bottom returned an error STRING rather than raising. The
+deep-search caller tested `summary.startswith("Error:")`, which no
+provider-prefixed message matches, so `"Llama: Error occurred while processing
+summary with Llama: 'llama_api'"` was stored AS the result's evidence content
+and the synthesis was built from it. Citation verification kept passing because
+it matches quotes against `original_content` first, so the reports were graded
+sound while the model had never been shown its sources.
+
+The reason this survived a security review of that very file:
+`test_summarization_diagnostic_privacy.py`'s fixture stubbed the settings dict
+with a `"llama_api"` key — the name the summarizer had invented. The tests fed
+the code its own mistake and passed. The same fixture stubs `api_keys` and
+`local_api_ip`, which is exactly why the Kobold and TabbyAPI summarizers'
+identical defect (task-17383) also stayed invisible. Fixing the code then broke
+those tests, which is the only reason anyone looked.
+
+**What to do.** A fixture standing in for configuration must be keyed to what
+the LOADER produces, not to what the code under test reads — those are the same
+string only when the code is right, and a stub that mirrors the code's
+assumption can never fail. When you fake a provider response, fake what the
+SERVER sends: my own first fake returned llama.cpp's native `{"content": ...}`
+shape, which is what the buggy parser read, so it passed while the live
+endpoint (`/v1/chat/completions`, `choices[0].message.content`) returned "No
+choices in response data" on every call. Cheapest check available: print the
+real `load_settings()` keys once and compare, or assert the section exists.
+
+---
+
+## A metric can be graded on fallback content, and nothing in it says so (task-17370, 2026-08-17)
+
+Every live research baseline recorded in this repo reports
+`citation_accuracy 1.00` and healthy `claim_support_rate`. All of them were
+measured with per-result summarization failing: first instantly (wrong config
+section), then a 404, then an unparseable payload, and once those were fixed, a
+timeout at exactly the shipped 30s per call on a local 27B. Each failure fell
+back to raw source text, which is the CORRECT degradation — and completely
+invisible in the metrics, because a report built from source text still
+resolves its markers and still verifies its quotes.
+
+The tell was uniformity: six summarizations completing in exactly `30.0s` is a
+timeout, not a latency distribution.
+
+**What to do.** When a pipeline has a degradation path, a metric that only
+grades the OUTPUT cannot tell you which path produced it — so record the path
+alongside the number (which stage ran, which fell back), and treat suspiciously
+round, uniform timings as a budget being hit rather than work being done. Also:
+absence of an error log is not evidence of success when the code logs successes
+at INFO through stdlib `logging`, whose default level hides them; the runs above
+showed zero "Summarization successful" lines whether they worked or not.
+
+**Second instance, and the sharper rule when the number is a DELTA (TASK-16965,
+2026-08-17).** Same shape, opposite tell — and no tell at all. TASK-16965 had to
+answer "does cross-encoder reranking help retrieval here?" by running the gated
+eval set twice, once reranked and once not, and reading the difference.
+`CrossEncoderReranker` honours the TASK-3502 contract: a model that fails to
+load DEGRADES (returns the caller's ordering untouched) rather than raising. And
+`Tests/conftest.py` sandboxes `HOME`, while
+`huggingface_hub.constants.HF_HUB_CACHE` is computed from `expanduser("~")` **at
+import** — so under pytest `CrossEncoder(...)` raises `OSError` ("couldn't
+connect ... and couldn't find them in the cached files") on a machine where the
+model IS cached. Measured directly, before the probe was written. Compose those
+two facts: every window comes back in its original order, every metric is graded
+on un-reranked output, and the before/after table reads a flawless **0.000 delta
+on all 105 cells** — a NULL result, publishable-looking, pre-registered as an
+acceptable outcome, and entirely fabricated. Unlike task-17370's uniform `30.0s`
+timings there is no tell whatsoever: a real null and a never-ran null are the
+same table. The run therefore repoints the constant
+(`monkeypatch.setattr(constants, "HF_HUB_CACHE", real_cache)` — hf_hub 1.x reads
+it at call time off the module attribute) and **asserts the work happened**:
+`rows_scored > 0` and `rows_failed == 0`, per pass. It scored 3,621 rows, 0
+failed, and moved 1,950 — which is what makes the verdict it did produce
+(HARMED, bimodal) mean anything at all.
+
+**What to do.** Recording the path is enough when a bad path makes the number
+look good; it is NOT enough when the measurement is an A/B and the subject
+degrades to the identity, because then the failure mode is the null hypothesis
+itself and no reader can tell the two apart. So: **a measurement whose subject
+degrades silently must assert, inside the run, that it did work** — a positive
+count of units processed and a zero count of failures — or its null is
+unfalsifiable and must not be published. Write those assertions BEFORE you look
+at the numbers; a 0.000 delta is the one result that never prompts anyone to go
+looking for a bug. Corollary worth its own grep: the frozen-at-import
+huggingface_hub constants bite in more than one place — `HF_HUB_OFFLINE` (see
+"HF offline enforcement must be set before `huggingface_hub.constants`
+EVALUATES" above, where the blast radius is an unwanted download) and
+`HF_HUB_CACHE` (here, where the blast radius is a load you wanted and silently
+did not get, under any fixture that moves `HOME`).
+
+
+## When you find one inert declared surface, enumerate its whole namespace
+
+**TASK-16174 / TASK-17600, 2026-08-16..18.** Three separate arcs each found
+one config surface that was declared, switchable, sometimes documented — and
+implemented by nothing:
+
+1. `include_parent_docs` / `parent_size_threshold` /
+   `parent_inclusion_strategy`: shipped, set to `true` by three profiles,
+   **read by nothing** (TASK-16174 retired them).
+2. `result_reranking`: a middleware declared with `enabled = true`, listed by
+   the `high_accuracy` pipeline, handled by a bare `pass`.
+3. `reranking_strategy`: a config key with **zero readers**, which
+   TASK-16965's own design doc simultaneously told users was the lever for
+   selecting a reranking strategy.
+
+Each was found by accident, while doing something else. Nobody looked for the
+CLASS until the third one — and when TASK-17600 finally enumerated the
+namespace instead of the single filed name, `result_reranking` turned out to
+be **one of eight**: eleven middleware names were declared by pipelines and
+four implemented, with seven falling off an `if/elif` and no-opping silently.
+Two entire pipelines (`technical_docs`, `research_papers`) consisted of
+nothing but unimplemented middleware, and three names referenced no
+definition block at all.
+
+**What to do.** The first inert surface you find is a sample, not the
+population. Before closing, enumerate its whole namespace **in both
+directions** — declared-but-unimplemented AND implemented-but-undeclared —
+and write the enumeration as a test rather than a one-off grep, because the
+grep answers today and the test answers forever. Give that guard a
+self-check (`test_the_guard_can_see_the_names_it_is_guarding`): a namespace
+guard whose parser silently stops matching becomes a green test that
+guarantees nothing, which is the same failure it was written to prevent.
+
+**A corollary this cost us directly:** a doc can *create* the surface. The
+`reranking_strategy` claim was written by the arc that measured the feature,
+in the same commit series that carefully documented everything else
+truthfully — so include documentation in the sweep, and check that the lever
+a doc names is one the code actually reads.
 
 ## A migration test that pins the current version number breaks on every later migration
 

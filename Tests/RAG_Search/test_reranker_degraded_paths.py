@@ -27,15 +27,23 @@ CLAIMS when its provider calls fail. This module pins all three:
 
 **No live provider calls.** Every test here fakes `chat_api_call` -- the
 reranker's single provider seam (imported at `RAG_Search/reranker.py`
-module level, invoked through `run_in_executor` in `_call_llm_impl`) -- and
-plants a fake API key on the instance so the whole real path
-(`rerank` -> `_call_llm` -> `_call_llm_impl` -> the fake) executes.
+module level, invoked through `run_in_executor` in `_call_llm_impl`) -- so
+the whole real path (`rerank` -> `_call_llm` -> `_call_llm_impl` -> the
+fake) executes. The fake REFUSES positional arguments and BINDS what it is
+handed against the real `chat_api_call` signature (TASK-17065): the previous
+one declared the caller's own mis-ordered positional list and therefore
+agreed with the bug.
+No credential is planted any more -- the reranker resolves none, so nothing
+gates the call before the seam.
 """
 
+import inspect
 from typing import Callable, List
 
 import pytest
 
+from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat.Chat_Functions import chat_api_call as real_chat_api_call
 from tldw_chatbook.RAG_Search import reranker as reranker_module
 from tldw_chatbook.RAG_Search.reranker import (
     ListwiseReranker,
@@ -57,28 +65,52 @@ class _FakeProviderDown(RuntimeError):
 
 
 def _install_fake_provider(
-    monkeypatch, reranker, responder: Callable[[list], str]
+    monkeypatch, responder: Callable[[list], str] | None = None
 ) -> List[dict]:
-    """Fake the reranker's ONLY provider seam and return the call log.
+    """Fake the reranker's ONLY provider seam, BOUND to the real signature.
 
     `responder` receives the messages payload and returns the raw model
-    string (or raises, to simulate a failing provider call). A fake key is
-    planted on the instance because `_call_llm_impl` raises before it ever
-    reaches `chat_api_call` when no credential is configured -- without it
-    the fake would never be exercised and the test would be measuring the
-    key check instead of the degraded path.
-    """
-    calls: List[dict] = []
+    string (or raises, to simulate a failing provider call); it defaults to
+    a fixed valid score.
 
-    def fake_chat_api_call(api_key, messages_payload, provider, model, temp, maxp):
-        calls.append(
-            {"provider": provider, "model": model, "messages": messages_payload}
+    Everything the reranker passes is run through
+    `inspect.signature(chat_api_call).bind(...)`, which raises HERE on a
+    mis-named keyword or on arity drift. It does NOT see argument ORDER --
+    `bind("KEY", [...], "openai", "gpt-4o-mini", 0.25, 128)` is accepted
+    quite happily, it just lands the key in `api_endpoint` -- so this fake
+    ALSO refuses positional arguments outright, and the seam guard below
+    asserts what each keyword actually carries. Between them, mis-ordering
+    cannot pass. The fake this replaces declared
+    the caller's OWN (wrong) positional list -- `(api_key, messages_payload,
+    provider, model, temp, maxp)` -- so it agreed with the bug, and a green
+    suite could not see that the reranker reached zero of the 29 providers it
+    offers (TASK-17065). No fake at this seam may be written that way again.
+    No credential is planted either: the reranker resolves none, so nothing
+    gates the call before the seam.
+
+    Returns each call's `BoundArguments.arguments` -- what was ACTUALLY
+    passed, defaults NOT applied, so "sent no credential at all" stays
+    distinguishable from "sent `api_key=None`".
+    """
+    signature = inspect.signature(real_chat_api_call)
+    landings: List[dict] = []
+
+    def fake_chat_api_call(*args, **kwargs):
+        # `bind` cannot see order, so refuse positionals rather than pretend
+        # it can: this seam is keyword-only by contract (`run_in_executor`
+        # forwards positionals only, which is exactly how the credential
+        # used to land in `api_endpoint`).
+        assert not args, (
+            "the reranker must call chat_api_call by keyword; positional "
+            f"arguments landed here: {args!r}"
         )
-        return responder(messages_payload)
+        bound = signature.bind(*args, **kwargs)
+        landings.append(dict(bound.arguments))
+        payload = bound.arguments["messages_payload"]
+        return responder(payload) if responder is not None else '{"score": 0.5}'
 
     monkeypatch.setattr(reranker_module, "chat_api_call", fake_chat_api_call)
-    reranker._settings = {"API": {"openai_api_key": "fake-key-never-sent-anywhere"}}
-    return calls
+    return landings
 
 
 def _always_fails(_messages) -> str:
@@ -138,7 +170,7 @@ async def test_degraded_rerank_never_touches_the_callers_cached_objects(
     the RETURNED list only."""
     cls = {"pairwise": PairwiseReranker, "listwise": ListwiseReranker}[strategy]
     reranker = cls(_degraded_config(strategy))
-    _install_fake_provider(monkeypatch, reranker, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
 
     cached_list = _results(4)
     cache = {"quokka marsupial": cached_list}  # simulates rag_service's cache
@@ -186,7 +218,7 @@ async def test_degraded_tag_does_not_poison_the_search_cache(
     not see the stale tag."""
     service = _make_v2_service(tmp_path, strategy, enable_cache=True)
     assert service.reranker is not None
-    _install_fake_provider(monkeypatch, service.reranker, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
 
     await service.index_batch_optimized(_quokka_platypus_docs())
     query = "quokka marsupial"
@@ -228,7 +260,7 @@ async def test_failed_pointwise_rows_do_not_claim_the_reranked_score_kind(monkey
 
     reranker = PointwiseReranker(_degraded_config("pointwise"))
     _install_fake_provider(
-        monkeypatch, reranker, _fail_for_titles(["doc-0", "doc-2", "doc-4"], score=0.95)
+        monkeypatch, _fail_for_titles(["doc-0", "doc-2", "doc-4"], score=0.95)
     )
 
     originals = {r.id: r for r in _results(5)}
@@ -272,9 +304,7 @@ async def test_failed_pointwise_rows_keep_their_kind_through_the_cache_hit(monke
     scored?" fact has to survive that round trip, or the second identical
     search re-acquires the over-claim."""
     reranker = PointwiseReranker(_degraded_config("pointwise"))
-    calls = _install_fake_provider(
-        monkeypatch, reranker, _fail_for_titles(["doc-0"], score=0.8)
-    )
+    calls = _install_fake_provider(monkeypatch, _fail_for_titles(["doc-0"], score=0.8))
 
     first = await reranker.rerank("q", _results(3))
     assert first.failed == 1
@@ -310,7 +340,7 @@ async def test_rerank_returns_its_own_failure_counts(strategy, monkeypatch):
         "listwise": ListwiseReranker,
     }[strategy]
     reranker = cls(_degraded_config(strategy))
-    _install_fake_provider(monkeypatch, reranker, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
 
     outcome = await reranker.rerank("q", _results(3))
 
@@ -327,7 +357,7 @@ async def test_reranker_keeps_no_cross_call_failure_state(monkeypatch):
     that call returned -- not a field another coroutine/thread may have
     overwritten between `rerank()` returning and the disclosure being built."""
     reranker = PointwiseReranker(_degraded_config("pointwise"))
-    _install_fake_provider(monkeypatch, reranker, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
 
     await reranker.rerank("q", _results(2))
 
@@ -338,7 +368,7 @@ async def test_reranker_keeps_no_cross_call_failure_state(monkeypatch):
     assert not hasattr(PointwiseReranker, "_record_rerank_outcome")
 
     pairwise = PairwiseReranker(_degraded_config("pairwise"))
-    _install_fake_provider(monkeypatch, pairwise, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
     await pairwise.rerank("q", _results(3))
     for leaked in ("_pairwise_comparisons_failed", "_pairwise_comparisons_total"):
         assert not hasattr(pairwise, leaked), (
@@ -359,7 +389,7 @@ async def test_disclosure_survives_a_concurrent_write_in_its_own_window(
     returned rather than stored, that write is inert."""
     service = _make_v2_service(tmp_path, "pointwise", enable_cache=False)
     reranker = service.reranker
-    _install_fake_provider(monkeypatch, reranker, _always_fails)
+    _install_fake_provider(monkeypatch, _always_fails)
     await service.index_batch_optimized(_quokka_platypus_docs())
 
     real_log = reranker._log_reranking_metrics
@@ -440,47 +470,149 @@ def _make_v2_service(tmp_path, strategy: str, enable_cache: bool):
 # ---------------------------------------------------------------------------
 
 
-def test_reranker_dispatch_binding_against_the_real_chat_api_call_signature():
-    """CHARACTERIZATION PIN — asserts the CURRENT, BROKEN binding on purpose.
+@pytest.mark.asyncio
+async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signature(
+    monkeypatch,
+):
+    """PROOF OF REPAIR (TASK-17065) -- the CORRECT binding, observed live.
 
-    Qodo PR-1751 finding 3: every fake at this seam copies the caller's own
-    parameter order, so a suite full of green reranker tests cannot see that
-    the caller is mis-ordered. This test binds what the reranker actually
-    passes against the REAL `chat_api_call` signature and states where each
-    argument LANDS -- which is how TASK-3502's fix wave established that
-    end-to-end dispatch reaches 0 of 29 providers.
+    This test was written red-on-repair by Qodo PR-1751 finding 3: it used to
+    assert the BROKEN landing (the credential in `api_endpoint`, every later
+    argument displaced by one) reconstructed from the caller's source. The
+    repair flips it, and this is the arc's proof.
 
-    It is deliberately red-on-repair: when TASK-17065 fixes the caller, this
-    test MUST fail and be rewritten to assert the correct binding. That is
-    the point -- the seam gets a mechanical guard instead of agreeable fakes.
+    Two things changed beyond the assertions. It now drives the REAL caller
+    (`_call_llm_impl`) instead of re-typing its argument list, so it cannot
+    drift from the code it guards; and the seam fake binds through
+    `inspect.signature(chat_api_call).bind(...)` and refuses positionals.
+    Be precise about which half catches what (final-review F4): `bind`
+    catches a mis-named keyword and arity drift, and is BLIND to order --
+    it accepts the old positional list without complaint. A future
+    mis-ordering is caught by the fake's no-positionals rule and by the
+    landing assertions below, which is why this test drives the real
+    caller instead of asserting a tuple it typed itself.
     """
-    import inspect
-
-    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
-
-    # Exactly the positional sequence `BaseReranker._call_llm_impl` hands to
-    # `loop.run_in_executor(None, chat_api_call, ...)`.
-    caller_positionals = (
-        "THE-API-KEY",
-        [{"role": "user", "content": "q"}],
-        "the-provider",
-        "the-model",
-        0.25,
-        128,
+    config = RerankingConfig(
+        model_provider="openai",
+        model_name="gpt-4o-mini",
+        temperature=0.25,
+        max_tokens=128,
     )
-    bound = inspect.signature(chat_api_call).bind(*caller_positionals)
-    landed = dict(bound.arguments)
+    reranker = PointwiseReranker(config)
+    landings = _install_fake_provider(monkeypatch)
 
-    # The credential lands in the ENDPOINT parameter -- the root of both the
-    # "Unsupported API endpoint" failure and the key-echoing ERROR log
-    # (TASK-17165).
-    assert landed["api_endpoint"] == "THE-API-KEY"
-    assert landed["messages_payload"] == [{"role": "user", "content": "q"}]
-    # ...and every remaining argument is displaced by one position.
-    assert landed["api_key"] == "the-provider"
-    assert landed["temp"] == "the-model"
-    assert landed["system_message"] == 0.25
-    assert landed["streaming"] == 128
-    # Nothing reaches the parameters the caller's own inline comments claim.
-    assert "model" not in landed
-    assert "maxp" not in landed
+    await reranker._call_llm_impl("score this document")
+
+    assert len(landings) == 1
+    landed = landings[0]
+    # The three the config owns land where the signature says they belong.
+    assert landed["api_endpoint"] == "openai"
+    assert landed["model"] == "gpt-4o-mini"
+    assert landed["temp"] == 0.25
+    assert landed["max_tokens"] == 128
+    # The messages carry the USER turn and nothing else: since TASK-17265 the
+    # system instruction travels as `system_message=` (see below and
+    # `test_reranker_system_prompt.py`, which asserts where each provider
+    # actually puts it).
+    assert landed["messages_payload"] == [
+        {"role": "user", "content": "score this document"},
+    ]
+    # No argument carries a credential: the reranker resolves none, and each
+    # `chat_with_<provider>` handler resolves its own from the normalised
+    # config path (CLAUDE.md's documented precedence) -- which is what every
+    # other `chat_api_call` caller in this repo already relies on.
+    assert "api_key" not in landed
+    # `system_message` was the parameter the broken positional call filled by
+    # displacement -- it took the TEMPERATURE. It is populated deliberately
+    # now (TASK-17265: anthropic and google read system text from nowhere
+    # else), so the guard is no longer "absent" but "carries the system
+    # prompt, and specifically not a displaced value".
+    # `isinstance(..., str)`, not `!= config.temperature`: a str is never
+    # equal to a float, so that comparison would have passed no matter what
+    # landed. The type check is what a displaced 0.25 would actually fail.
+    assert isinstance(landed["system_message"], str)
+    assert landed["system_message"] == reranker.config.system_prompt
+    # NON-STREAMING IS PINNED, NOT INHERITED (final-review F5). The old
+    # positional list put the token cap into `streaming` (truthy), so a
+    # scoring call that had resolved a credential would have STREAMED. Today
+    # non-streaming holds only because all 29 handlers DECLARE
+    # `streaming=False` and therefore never consult the config -- while the
+    # shipped `CONFIG_TOML_CONTENT` sets `streaming = true` for 18 of them,
+    # including every keyless local. One future handler declaring
+    # `streaming: bool | None = None` would flip reranking to streaming for
+    # those, and `_call_llm_impl` would return the repr of a generator: no
+    # exception, every row `scored=False`, the whole rerank billed and
+    # unscored. So the reranker states it.
+    assert landed["streaming"] is False
+
+
+def test_reranker_does_not_read_a_settings_table(monkeypatch):
+    """AC#2: the phantom `self._settings["API"]` read is GONE, not repaired.
+
+    `BaseReranker.__init__` used to do `self._settings = load_settings()` and
+    `_call_llm_impl` read `self._settings["API"]["<p>_api_key"]` -- a table
+    `load_settings()` never builds, so three of its four provider branches
+    read `None` for every user, always. The fix deletes the read rather than
+    re-pointing it: credential resolution is not the reranker's job.
+    """
+    assert not hasattr(reranker_module, "load_settings"), (
+        "reranker.py must not import load_settings -- a settings read here is "
+        "the divergence that produced TASK-17065"
+    )
+
+    # The exploder goes on the SOURCE, not on `reranker_module` (final-review
+    # F7): monkeypatching the name the assertion above just proved absent
+    # planted something nothing could call. Patched here it is live -- a
+    # re-grown read fires it even if it arrives as a late import inside
+    # `__init__` rather than a module-level one -- and it is quiet today:
+    # constructing all three strategies reads no settings at all.
+    def _explode(*_args, **_kwargs):
+        raise AssertionError("a reranker must not call load_settings()")
+
+    monkeypatch.setattr(config_module, "load_settings", _explode)
+
+    for strategy_class in (PointwiseReranker, PairwiseReranker, ListwiseReranker):
+        reranker = strategy_class(RerankingConfig())
+        assert not hasattr(reranker, "_settings")
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        # keyless locals -- AC#5: never rejected for a key they do not need
+        "ollama",
+        "llama_cpp",
+        "vllm",
+        "koboldcpp",
+        "mlx_lm",
+        # remotes whose handlers resolve their own credential -- AC#4
+        "openai",
+        "anthropic",
+        "groq",
+        "deepseek",
+    ],
+)
+@pytest.mark.asyncio
+async def test_every_sampled_provider_reaches_the_seam_without_a_credential_gate(
+    monkeypatch, provider
+):
+    """AC#4/AC#5: the reranker dispatches; it does not judge credentials.
+
+    Sampled across the 29 rows of `API_CALL_HANDLERS` the picker enumerates:
+    the five keyless locals TASK-17065 names, plus the four remotes the old
+    hand-rolled `if/elif` claimed to cover. Every one used to die before the
+    seam with `No API key found for provider: X` (three of them because the
+    table they read does not exist); every one now arrives at `chat_api_call`
+    with its own name in `api_endpoint`.
+    """
+    reranker = PointwiseReranker(
+        RerankingConfig(model_provider=provider, model_name="the-model")
+    )
+    landings = _install_fake_provider(monkeypatch)
+
+    response = await reranker._call_llm_impl("score this document")
+
+    assert response == '{"score": 0.5}'
+    assert [landed["api_endpoint"] for landed in landings] == [provider]
+    assert landings[0]["model"] == "the-model"
+    assert "api_key" not in landings[0]

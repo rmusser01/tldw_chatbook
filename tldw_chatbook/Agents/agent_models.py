@@ -36,6 +36,40 @@ STEP_TOOL_CALL = "tool_call"
 STEP_TOOL_RESULT = "tool_result"
 STEP_SPAWN = "spawn"
 STEP_ERROR = "error"
+# Fleet PR3b Task 1 (spec SS6): a steering entry delivered to a child at the
+# protocol-coherent drain boundary records a step of this kind, so the step
+# log shows WHEN each entry actually reached the model.
+STEP_STEERING = "steering"
+
+# The two steering sources (spec SS6: "two paths, one mechanism"). The label
+# the child sees is derived from the source by `format_steering_message`
+# below -- prepended by the mechanism, never trusted from input.
+STEERING_SOURCE_SUPERVISOR = "supervisor"
+STEERING_SOURCE_USER = "user"
+#: Cap on one steering entry's text, enforced by the producers at their own
+#: boundaries (send_to_agent -- Task 2; the panel input -- Task 3). The
+#: ``max_subagent_result_chars`` shape: a plain int ceiling, 4000.
+MAX_STEERING_CHARS = 4000
+
+
+def format_steering_message(source: str, text: str) -> str:
+    """Render one steering entry exactly as the child's model will see it.
+
+    THE one formatter (plan Task 1): the loop's history injection, the run
+    log record, and every test render through this function, so the three
+    can never drift. The label comes from ``source`` (one of
+    ``STEERING_SOURCE_SUPERVISOR``/``STEERING_SOURCE_USER``); ``text`` is
+    payload only -- a forged "[Steering from ...]" prefix inside it is
+    still wrapped, never promoted to a label.
+
+    Args:
+        source: Who steered -- ``"supervisor"`` or ``"user"``.
+        text: The steering message body.
+
+    Returns:
+        ``"[Steering from {source}] {text}"``.
+    """
+    return f"[Steering from {source}] {text}"
 
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
@@ -60,6 +94,12 @@ RUN_LOG_SLICE_TOOL_NAME = "run_log_slice"
 # supposed to be bounded by the parent's own wall-clock instead.
 WAIT_AGENTS_TOOL_NAME = "wait_agents"
 CHECK_AGENTS_TOOL_NAME = "check_agents"
+# Fleet steering (PR3b Task 2, spec SS6): the supervisor's producer for the
+# per-child mailbox Task 1 added. Primary-only and fleet-gated like the two
+# tools above, dispatched IN-LOOP like them (posting to a locked in-memory
+# mailbox is instant, but the id-resolution copy lives in the service
+# closure, not behind invoke_tool's daemon-thread timeout wrapper).
+SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 RUNTIME_TOOL_NAMES = frozenset(
     {
         SPAWN_TOOL_NAME,
@@ -73,6 +113,7 @@ RUNTIME_TOOL_NAMES = frozenset(
         RUN_LOG_SLICE_TOOL_NAME,
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
+        SEND_TO_AGENT_TOOL_NAME,
     }
 )
 
@@ -419,7 +460,8 @@ class AgentConfig:
 
             *What it does NOT govern.* The runtime tools --
             ``RUNTIME_TOOL_NAMES`` above: ``spawn_subagent``,
-            ``wait_agents``/``check_agents``, ``find_tools``/
+            ``wait_agents``/``check_agents``/``send_to_agent``,
+            ``find_tools``/
             ``load_tools``, ``skill_file``, ``install_skill``,
             ``run_skill_script``, and ``search_run_log``/
             ``run_log_stats``/``run_log_slice``. These are not catalog
@@ -461,6 +503,12 @@ class AgentConfig:
         budget: This run's caps (see ``RunBudget``).
         native_tools: Whether to use provider-native tool-calling when the
             endpoint supports it; ``False`` forces the fence protocol.
+        workspace_context_note: Optional environment note appended to the
+            system prompt each turn when the run is bound to a NON-default
+            workspace (built by ``workspace_file_roots.workspace_context_note``
+            with launch-relative, never absolute, paths). Empty for the default
+            workspace, so the common case adds nothing. Carried on the config
+            so it propagates verbatim onto spawned sub-agents' configs.
     """
 
     model: str
@@ -468,6 +516,7 @@ class AgentConfig:
     allowed_tools: tuple[str, ...] = ()
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
+    workspace_context_note: str = ""
 
 
 @dataclass

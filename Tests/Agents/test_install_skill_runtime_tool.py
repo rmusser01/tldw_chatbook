@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
+    SEND_TO_AGENT_TOOL_NAME,
     SPAWN_TOOL_NAME,
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
@@ -49,6 +50,7 @@ def test_install_skill_name_in_runtime_tool_names():
         RUN_LOG_SLICE_TOOL_NAME,
         WAIT_AGENTS_TOOL_NAME,
         CHECK_AGENTS_TOOL_NAME,
+        SEND_TO_AGENT_TOOL_NAME,
     }
 
 

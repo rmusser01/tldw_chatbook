@@ -435,6 +435,26 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
   Everything PR 3a-2 built is substrate that version needs; the only delta
   is where the wake runs.
 
+  **SUPERSEDED 2026-08-17 — the limit above no longer holds (task-15860,
+  eight merged landings).** The Console runtime (agent bridge +
+  `ConsoleChatController` + the message store) is owned by the APP, not by
+  `ChatScreen`; a screen attaches as a view and detaches at unmount, and
+  `ConsoleFleetWakeCoordinator._attempt` now refuses only a DISPOSED
+  controller (app exit), never a merely-ended visit. So a background
+  sub-agent that finishes with no Console mounted delivers a full
+  supervisor turn there and then, and a completion owed across a restart
+  is delivered at the next launch with Console never opened (mark-gated,
+  behind the same `[agents] autowake_enabled`). The app-owned store is the
+  continuity owner, so that turn is in the transcript when the user
+  returns. Driven live 2026-08-17 against a real provider (see
+  `Docs/User_Guide/console/agent-runs-and-tools.md`'s stamp and
+  `Docs/superpowers/plans/2026-08-14-headless-wake-closeout-report.md`).
+  Two honest residues, both recorded rather than hidden: a process killed
+  in the window between a wake turn's acceptance and its ledger stamp
+  costs exactly one re-announce at the next launch (never a lost result),
+  and a headless approval round's card currently mounts empty until the
+  user clicks that session's tab (task-17500).
+
   *(Corrected 2026-08-14, wake-integrity arc — tasks 15970/15971, per the
   coordinator's design ruling; rationale re-anchored the same day, see the
   superseding note below.)* A Console screen that is mounted but not the
@@ -565,7 +585,13 @@ Definitions themselves live in the DB, not config.
   PR 3a-2: `[agents] autowake_enabled` defaults ON and is a kill switch, not a
   scope reduction. What genuinely remains a follow-up is the **headless** wake —
   the supervisor acting while no Console screen is mounted — filed as
-  task-15860.)
+  task-15860.) **CLOSED 2026-08-17**: task-15860 shipped in eight
+  landings. Nothing about the wake remains a follow-up; the app owns the
+  Console runtime, the wake fires with no Console mounted and at launch
+  with Console never opened, and §7's "honest architectural limit as
+  built" paragraph carries its superseding note. What is still open is a
+  BUG found by the close-out live pass, not a scope gap: task-17500 (a
+  headless approval card mounts empty until the session tab is clicked).
 - Cross-provider child models; provider-aware model validation in the editor.
 - Cross-restart resurrection of finished agents.
 - File export/import of definitions.

@@ -163,11 +163,19 @@ class ConsoleCommandPopup(Widget):
         # visible strip in the composer's cluster (staged evidence, then the
         # prompt-queue shelf) rather than the composer itself, so the open
         # popup covers transcript rows (the conventional autocomplete
-        # trade-off) instead of wiping mid-composition state. The status
-        # chips now sit below the composer, out of the popup's reach -- the
-        # anchor must never chase them down over the input row.
+        # trade-off) instead of wiping mid-composition state.
+        # task-17652: the status chips join the loop because their side of
+        # the cluster is now configurable. min() keeps this safe in both
+        # placements: chips ABOVE the composer lower bottom_y so the popup
+        # clears them; chips BELOW have a larger y than the anchor, so the
+        # min() is a no-op and the anchor never chases them down over the
+        # input row.
         bottom_y = anchor.y
-        for strip_id in ("#console-staged-evidence-strip", "#console-prompt-queue"):
+        for strip_id in (
+            "#console-status-chips",
+            "#console-staged-evidence-strip",
+            "#console-prompt-queue",
+        ):
             try:
                 strip = self.screen.query_one(strip_id)
             except NoMatches:

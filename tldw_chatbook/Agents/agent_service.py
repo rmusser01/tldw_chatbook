@@ -34,10 +34,12 @@ from tldw_chatbook.Utils.token_counter import count_tokens_messages, estimate_to
 from .agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    MAX_STEERING_CHARS,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
     SPAWN_TOOL_NAME,
+    STEERING_SOURCE_SUPERVISOR,
     STEP_ERROR,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
@@ -95,6 +97,7 @@ from .tool_catalog import (
     RUN_LOG_STATS_TOOL_SCHEMA,
     RUN_SKILL_SCRIPT_TOOL_SCHEMA,
     SEARCH_RUN_LOG_TOOL_SCHEMA,
+    SEND_TO_AGENT_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     WAIT_AGENTS_SCHEMA,
@@ -873,6 +876,16 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            if config.workspace_context_note:
+                # Non-default workspace: append the environment note LAST, as a
+                # stable per-turn suffix (cache-friendly, like the sections
+                # above). ``_is_subagent`` prefix-matches the SENT system
+                # content (messages_payload[0]); appending after
+                # ``config.system_prompt`` keeps the sub-agent identity prefix
+                # leading the emitted prompt, so detection is unaffected.
+                system_content = (
+                    f"{system_content}\n\n{config.workspace_context_note}"
+                )
             # TASK-1272 (Phase 3): bound the SEND payload, never
             # `run_agent_loop`'s own `messages` -- that list is untouched,
             # see `bound_history_for_send`'s docstring. A no-op (returns
@@ -1421,6 +1434,14 @@ class AgentService:
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
+        # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
+        # by spawn's fleet branch as a closure over THIS child's own
+        # coordinator mailbox (`fleet.drain_steering(handle_id)`) and
+        # threaded through `child_kwargs` exactly like `on_run_id` above.
+        # None -- the default every other caller keeps -- for primaries
+        # and inline children: a primary is steered by the user talking to
+        # it, and an inline child has no handle, so no mailbox exists.
+        drain_mailbox: Callable[[], list[tuple[str, str]]] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -1527,6 +1548,11 @@ class AgentService:
         if fleet_active:
             runtime_schemas.append(WAIT_AGENTS_SCHEMA)
             runtime_schemas.append(CHECK_AGENTS_SCHEMA)
+            # PR3b Task 2: the steering producer rides the exact same
+            # predicate -- a sub-agent must never see it (depth-1:
+            # children cannot steer each other), and without a fleet
+            # there is no mailbox to post into.
+            runtime_schemas.append(SEND_TO_AGENT_SCHEMA)
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
         if (
@@ -1850,6 +1876,11 @@ class AgentService:
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
+                # A sub-agent operates on the same workspace roots as its
+                # parent, so it inherits the same environment note verbatim
+                # (appended to its own prompt in call_model, after its identity
+                # prefix). Empty for the default workspace, so no change there.
+                workspace_context_note=config.workspace_context_note,
             )
             # C1: snapshot/restore whatever review_state_scope owns (see
             # __init__'s own comment) around the ENTIRE nested run -- the
@@ -1964,6 +1995,15 @@ class AgentService:
             # without cancelling the parent.
             child_cancel = threading.Event()
             child_kwargs["continuation_agent_kind"] = "fleet"
+            # PR3b Task 1: THIS child's steering drain -- a closure over
+            # its own mailbox on the conversation-lifetime coordinator,
+            # reachable from the UI thread and any turn's supervisor while
+            # the child runs on its own thread. handle_id is default-bound
+            # (the run_child style) so the closure can never pick up a
+            # later spawn's handle.
+            child_kwargs["drain_mailbox"] = (
+                lambda handle_id=handle.handle_id: fleet.drain_steering(handle_id)
+            )
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
 
@@ -2298,6 +2338,134 @@ class AgentService:
                 )
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
+
+        def send_to_agent(target_id: str, message: str) -> ToolResult:
+            """Queue a steering message for a LIVE child (PR3b Task 2).
+
+            Spec SS6's supervisor path into Task 1's per-child mailbox.
+            Text validation happens HERE, at the producer boundary --
+            ``post_steering`` deliberately does not validate (Task 1's
+            pinned decision), because each producer owes its caller its
+            own refusal copy, which the mailbox's silent bool cannot
+            carry.
+
+            Resolution speaks BOTH id vocabularies over the WHOLE
+            coordinator, not ``my_handle_ids``: a live survivor another
+            turn's service spawned is steerable, because the mailbox
+            lives on the conversation-lifetime coordinator and needs no
+            per-service state -- deliberately unlike ``cancel_subagent``,
+            whose retained-owner walk exists only because cancel Events
+            are service-local. Handle id resolves FIRST (the coordinator
+            minted it as the primary vocabulary -- spawn results,
+            check_agents, and the panel rows all speak it), then a live
+            handle's run id (the vocabulary completion notices speak); a
+            pathological collision therefore lands on the handle-id
+            owner.
+
+            Steering never cancels (spec SS3 invariant 4): this posts to
+            the mailbox and touches nothing else -- no cancel Event, no
+            run row, no coordinator status.
+
+            Args:
+                target_id: A live child's handle id, or its run id.
+                message: The steering text (validated, then posted
+                    stripped; the drain point prepends the label).
+
+            Returns:
+                ok with honest queued-plus-latency copy naming the
+                resolved handle id; a refusal with its own copy for an
+                empty message, an oversize one, a finished child, or an
+                unknown id. Never raises.
+            """
+            if fleet is None:  # pragma: no cover — not wired without a fleet
+                return ToolResult(
+                    ok=False, error="send_to_agent: this run has no sub-agents"
+                )
+            text = message.strip()
+            if not text:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "send_to_agent: the message is empty; there is "
+                        "nothing to deliver. Put the steering text in "
+                        "'message'."
+                    ),
+                )
+            if len(text) > MAX_STEERING_CHARS:
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f"send_to_agent: the message is too long "
+                        f"({len(text)} chars; the cap is "
+                        f"{MAX_STEERING_CHARS}). Shorten it and send it "
+                        f"again."
+                    ),
+                )
+            handles = fleet.snapshot()
+            live = [
+                handle
+                for handle in handles
+                if handle.status not in TERMINAL_RUN_STATUSES
+            ]
+            target = next(
+                (h for h in live if h.handle_id == target_id), None
+            ) or next((h for h in live if h.run_id == target_id), None)
+            if target is not None and fleet.post_steering(
+                target.handle_id, STEERING_SOURCE_SUPERVISOR, text
+            ):
+                return ToolResult(
+                    ok=True,
+                    content=(
+                        f"Steering for {target.handle_id} queued; it will "
+                        f"be delivered before its next model turn. If it "
+                        f"is inside a long tool call it will see the "
+                        f"message once that call returns. It was not "
+                        f"cancelled or restarted."
+                    ),
+                )
+            if target is not None:
+                # Lost the post race: it went terminal between the
+                # snapshot and the post. Re-snapshot so the terminal
+                # branch below reports the child honestly.
+                handles = fleet.snapshot()
+                live = [
+                    handle
+                    for handle in handles
+                    if handle.status not in TERMINAL_RUN_STATUSES
+                ]
+            live_ids = ", ".join(h.handle_id for h in live) or "none"
+            finished = next(
+                (
+                    h
+                    for h in handles
+                    if h.handle_id == target_id or h.run_id == target_id
+                ),
+                None,
+            )
+            if finished is not None:
+                # PR3b Task 4's continuation seam: THIS branch becomes
+                # "resume the finished child with the retained transcript
+                # + this message" (spawn-slot accounting, definition
+                # re-resolution, resumed_from_run_id). Until then the
+                # honest answer is that the child finished.
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f"send_to_agent: sub-agent '{target_id}' has "
+                        f"finished ({finished.status}); a finished "
+                        f"sub-agent takes no more model turns, so there "
+                        f"is nothing to deliver to. Live sub-agent ids: "
+                        f"{live_ids}."
+                    ),
+                )
+            return ToolResult(
+                ok=False,
+                error=(
+                    f"send_to_agent: no sub-agent matches id "
+                    f"'{target_id}' (checked handle ids and run ids). "
+                    f"Live sub-agent ids: {live_ids}."
+                ),
+            )
 
         # Skill-aware invoke_tool, built AFTER spawn (it closes over it): a
         # skill-tool call never reaches the registry/ToolProvider.invoke
@@ -2932,6 +3100,12 @@ class AgentService:
             # one it was not told about).
             wait_agents=wait_agents if fleet_active else None,
             check_agents=check_agents if fleet_active else None,
+            # PR3b Task 2: the steering producer, under the same predicate.
+            send_to_agent=send_to_agent if fleet_active else None,
+            # PR3b Task 1: non-None ONLY for a threaded fleet child (see
+            # the parameter's own comment above); the pure loop drains it
+            # at its protocol-coherent pre-model-call point.
+            drain_mailbox=drain_mailbox,
             on_record=on_record,
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,

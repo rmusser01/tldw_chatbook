@@ -995,3 +995,118 @@ HOME/XDG_*/TLDW_CONFIG_PATH to a throwaway root by hand (and asserting the
 config path took). Treat an imported guard whose `install()` conftest never
 ran as adversarial: `blocked_attempts=()` from an uninstalled guard is not
 evidence of no egress.
+
+---
+
+## The venv's editable install points `tldw_chatbook` at a FOREIGN worktree; you win only by import ordering (task-15860, 2026-08-14 → 2026-08-17)
+
+**What happened.** Every headless-wake landing ran its tests from a
+worktree under `.worktrees/`, using the repo-root `.venv`. That venv's
+editable install resolves the package elsewhere entirely:
+
+```
+.venv/lib/python3.12/site-packages/__editable___tldw_chatbook_0_1_8_0_finder.py
+    tldw_chatbook -> .worktrees/task-2512-mcp-unified/tldw_chatbook
+```
+
+Every result in this arc would have been a statement about *someone
+else's branch* if that finder had won. It does not win — setuptools'
+editable finder is **appended** to `sys.meta_path`, so the stdlib
+`PathFinder` searching the rootdir pytest prepends (because `Tests/` is a
+package) resolves first. That is the entire margin: an ordering detail in
+a third-party install hook, with nothing in the repo pinning it.
+
+It is silent in both directions. A run against the foreign worktree
+raises nothing, prints nothing, and produces plausible passes and
+plausible failures — the arc's own baseline "measure the failure at the
+merge-base" discipline would have compared two branches neither of which
+was yours.
+
+**What to do.** Keep an executable assertion of import provenance in the
+gate, not a habit: `Tests/test_probe_import_provenance.py` asserts
+`tldw_chatbook.__file__` lives under the worktree the test file is in.
+Run it first, read its printed path, and treat a green suite whose
+provenance probe was not in the run as unproven. The same shape applies
+to any machine with several checkouts sharing one venv — which, on this
+repo, is every machine.
+
+## A DB append is invisible to a live Console *and* to the next mount — the STORE is what the transcript and the payload are built from (task-15860, Task 0 probe P1)
+
+**What happened.** Two of the three designs for headless wake rested on
+one assumption: write the wake's rows straight to ChaChaNotes while
+Console is down, and the user sees them when they come back. Executed
+through the production `ChatPersistenceService.create_message` and the
+real navigation API, rows written with Console unmounted were, at the
+next mount: **absent from the transcript, absent from the rendered
+widgets, absent from the next send's provider payload** — and the next
+persisted append *forked the tree*, parenting itself to the pre-nav
+assistant and stranding the headless rows on a dead branch. Maintaining
+the durable active-leaf pointer as well changed none of it. Two runs,
+identical. The composed case was worse: a wake turn that genuinely ran,
+spent real tokens and stamped its ledger persisted four rows, and the
+returning user saw two.
+
+The mechanism is ordinary once seen and invisible until then: Console
+history travelled across a navigation as an in-memory `ScreenStateStore`
+snapshot, and the restore path rebuilt the store from that payload
+**without ever re-reading the database**. The DB was a write-only mirror
+for this purpose.
+
+**What to do.** Before treating a database as the place a background
+writer can deposit user-visible state, find out what the READER is
+actually built from. Grep the restore/hydrate path for the DB read and,
+if there isn't one, say so out loud — "it's persisted" is not "it will be
+shown". The general form: a durable write is evidence about durability
+and about nothing else. Two live sessions of this programme were spent on
+designs that a single executed probe retired in an afternoon.
+## A worktree's live probe imports the MAIN checkout, and a redirected log hides its own progress (task-17370/17380, 2026-08-17)
+
+Two mechanical traps cost a cycle each while measuring the research pipeline
+from a worktree.
+
+The venv here is an editable install pointing at
+`/Users/.../tldw_chatbook/tldw_chatbook`, i.e. the MAIN checkout. A probe run
+from a worktree with the venv's python imported the main checkout's package,
+which was on an unrelated branch — the first attempt died with
+`ModuleNotFoundError: No module named
+'tldw_chatbook.Research_Interop.local_research_engine'` on a module that exists
+in the worktree. Fix: `PYTHONPATH=<worktree>` (or run the script from the
+worktree root, so `sys.path[0]` wins).
+
+Second: the baseline recorder prints progress with `print()`, and Python
+block-buffers stdout when it is redirected to a file — so a 50-minute run's
+per-question lines all appeared at the very end, while loguru's stderr flowed
+continuously. A monitor watching for `Running:` saw nothing for the whole run
+and a `grep -c` for it returned 0 on a live, healthy process. Fix:
+`PYTHONUNBUFFERED=1` for anything whose stdout you intend to watch.
+
+**Also worth stating**: verifying a UI launch path means launching it the way
+the UI does. A window-created research run is CHECKPOINTED (the scope service
+never passes `autonomy_mode`, so the service default applies), so it parks at
+`plan_review` and never reaches `collecting` until the checkpoint is approved.
+A harness that used `autonomy_mode="autonomous"` would have "verified" a path
+no user takes.
+
+## tmux synthetic mouse (`send-keys -l` SGR bytes) reaches some widgets and not others — a dead click is not a dead control (task-17500, 2026-08-17)
+
+**What happened.** Live-verifying the fixed approval card, clicks synthesized as
+raw SGR sequences (`\e[<0;COL;ROWM` / `…m` via `tmux send-keys -l`) worked on
+the Console session TAB STRIP (they created a tab and switched sessions, with
+one-shot coordinates computed from a single capture) but never registered on
+anything inside the transcript region — the approval card's fast Deny, Deny
+all, and its decision Select all ignored identical sequences at verified
+coordinates, across press/release timing variants and a hover-first attempt.
+Real user mouse input is not this selective; ~15 minutes went into suspecting
+the buttons before the pattern (tab strip yes, transcript region no) showed it
+was the harness. Blind Tab-walking (25 presses with probes) never reached the
+card either.
+
+**What to do.** When a synthetic click does not land, test a KNOWN-clickable
+control elsewhere on screen before concluding anything about the target — and
+compute coordinates from ONE capture in the same shell invocation as the click
+(captures taken across separate invocations race the UI and land clicks on
+stale coordinates). If the control stays unreachable, do not force it: prove
+press-resolution with the automated widget test (a mounted-widget `press()`
+drives the same production seam) and use a documented keyboard path (here:
+quit-denies) to end the live round. Record which regions accepted synthetic
+mouse so the next rig starts there.
