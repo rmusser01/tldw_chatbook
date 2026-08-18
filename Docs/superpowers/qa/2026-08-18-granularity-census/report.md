@@ -141,6 +141,40 @@ candidate elsewhere is a similarity miss that fusion already handles. Where a
 user genuinely needs whole-document context, surface 2 exists and is
 demand-driven, which is strictly better than a router guessing per query.
 
+## What review changed (PR #1812)
+
+Two substantive findings, both accepted; neither moved the verdict, and the
+second is worth recording because it is the *third* instance of one species
+in this programme:
+
+**Production parity in the chunk count.** The census chunked raw
+`CorpusDoc.content`, but conversations are indexed as a transcript with the
+sender prepended (`conversation_document` builds `f"{sender}: {content}"`),
+so the text measured was one word shorter than the text that exists in the
+index. Real defect: a document sitting on a boundary would be counted wrong.
+**Re-measured under parity across all 31 conversation fixtures: 0 chunk
+counts change and the multi-chunk set is identical.** The fix is in the
+script regardless, because a future corpus would not be so forgiving.
+
+**An errored query used to shrink the population silently.** The first
+version printed the error and continued, then reported NULL from whatever
+survived — so a failed search could have hidden a qualifying query and ended
+the investigation below a bar it never actually faced. The census now
+collects errors and, if any occurred, **claims no verdict at all** and exits
+non-zero. This run reports `errors: 0 -- population COMPLETE (60 queries x 2
+modes)`, which is now printed evidence rather than my assurance.
+
+That is the same failure shape as the negatives bug above and as TASK-18255
+one arc earlier: **a number that means "could not measure" rendered
+identically to one that means "measured, found nothing".** Three instances in
+two arcs is a pattern, not a coincidence.
+
+**Pins added.** `Tests/RAG_Eval/test_granularity_census.py` (13 tests) covers
+the classification logic, including the negatives case. Mutation-verified:
+disabling the negative exclusion reds
+`test_negative_query_is_excluded_not_qualifying` and restoring it greens —
+so the pin proves the repair rather than merely coexisting with it.
+
 ## What would reopen this
 
 The census is a property of **this corpus**, and it is honest to say so: 168
