@@ -1289,39 +1289,6 @@ def test_generated_sub_questions_reach_the_paper_providers():
         paper_search_fn=paper_fn,
         search_params={"search_default_max_queries": 5},
     )
-
-def test_a_failed_synthesis_is_recorded_on_the_run():
-    """task-17386: a synthesis that never returns leaves no citation verdict,
-    which used to make the run indistinguishable from one nobody scored -- it
-    completed quietly and vanished from any aggregate. The run must say so."""
-    service = _make_service()
-
-    def search_fn(q, params):
-        return (
-            {"results": [{"title": "One", "url": "https://one.example/"}], "warnings": []},
-            {"sub_questions": [], "main_goal": q},
-        )
-
-    async def analyze_fn(wsr, sqd, params, cancel_event=None):
-        # Exactly what aggregate_results returns when synthesis raises.
-        return {
-            "final_answer": {
-                "text": "Could not create the report due to an error (ReadTimeoutError).",
-                "evidence": [],
-                "confidence": 0.0,
-                "chunks": [],
-                "synthesis_failed": {
-                    "stage": "synthesis",
-                    "error_type": "ReadTimeoutError",
-                    "evidence_count": 46,
-                    "chunk_count": 6,
-                },
-            },
-            "relevant_results": {},
-        }
-
-    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
-
     run = service.launch_run(
         query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
     )
@@ -1479,6 +1446,42 @@ def test_academic_queries_falls_back_when_the_cap_is_unusable():
 
     assert len(queries) == 5, queries  # DEFAULT_MAX_QUERIES
 
+
+def test_a_failed_synthesis_is_recorded_on_the_run():
+    """task-17386: a synthesis that never returns leaves no citation verdict,
+    which used to make the run indistinguishable from one nobody scored -- it
+    completed quietly and vanished from any aggregate. The run must say so."""
+    service = _make_service()
+
+    def search_fn(q, params):
+        return (
+            {"results": [{"title": "One", "url": "https://one.example/"}], "warnings": []},
+            {"sub_questions": [], "main_goal": q},
+        )
+
+    async def analyze_fn(wsr, sqd, params, cancel_event=None):
+        # Exactly what aggregate_results returns when synthesis raises.
+        return {
+            "final_answer": {
+                "text": "Could not create the report due to an error (ReadTimeoutError).",
+                "evidence": [],
+                "confidence": 0.0,
+                "chunks": [],
+                "synthesis_failed": {
+                    "stage": "synthesis",
+                    "error_type": "ReadTimeoutError",
+                    "evidence_count": 46,
+                    "chunk_count": 6,
+                },
+            },
+            "relevant_results": {},
+        }
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
     final = asyncio.run(engine.execute_run(run["id"]))
 
     assert final["status"] == "completed"
@@ -1487,4 +1490,3 @@ def test_academic_queries_falls_back_when_the_cap_is_unusable():
     assert content.get("synthesis_failed", {}).get("error_type") == "ReadTimeoutError"
     warnings = " ".join(str(w) for w in (content.get("warnings") or []))
     assert "synthesis produced no report" in warnings, content.get("warnings")
-
