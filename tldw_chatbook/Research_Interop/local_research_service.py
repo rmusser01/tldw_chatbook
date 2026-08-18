@@ -684,39 +684,129 @@ class LocalResearchService:
         return self._format_timestamp(moment)
 
     def claim_run(
-        self, run_id: str, *, worker_id: str, lease_seconds: float
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: float,
+        max_attempts: int = 3,
     ) -> str | None:
         """Take the execution lease on a run, or decline it.
 
-        The claim is atomic: the UPDATE only matches when no live lease
-        exists, so two racing executors cannot both succeed (task-18060).
+        The claim is atomic: the UPDATE matches only when no live lease
+        exists, so two racing executors cannot both succeed. Every
+        successful claim counts against ``max_attempts`` (the run's total
+        attempt budget), but the budget is only ENFORCED when reclaiming an
+        EXPIRED lease -- a run's very first claim always succeeds. A run
+        whose executor keeps dying is broken rather than slow, and must
+        stop being retried once the budget is spent (task-18060, following
+        the server job manager's retry budget).
 
         Args:
             run_id: The run to claim.
             worker_id: Identifies the claiming executor.
             lease_seconds: How long the lease is valid without renewal.
+            max_attempts: How many times, in total, a run may be claimed
+                (its first claim plus subsequent reclaims of an expired
+                lease) before further reclaims are refused.
 
         Returns:
             A new lease id when the claim succeeded, otherwise None.
         """
-        self._require_one("research_runs", run_id, "research run")
+        row = self._require_one("research_runs", run_id, "research run")
+        previous = row["leased_until"] if "leased_until" in row.keys() else None
+        attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
+        reclaiming = previous is not None
+        if reclaiming and attempts >= int(max_attempts):
+            return None
         lease_id = uuid.uuid4().hex
         now = self._now()
         expires = self._timestamp_after(lease_seconds)
+        next_attempts = attempts + 1
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 UPDATE research_runs
                    SET lease_owner = ?, lease_id = ?, leased_until = ?,
-                       updated_at = ?
+                       lease_attempts = ?, updated_at = ?
                  WHERE id = ?
                    AND (leased_until IS NULL OR leased_until <= ?)
                 """,
-                (worker_id, lease_id, expires, now, run_id, now),
+                (worker_id, lease_id, expires, next_attempts, now, run_id, now),
             )
             if cursor.rowcount != 1:
                 return None
         return lease_id
+
+    def renew_lease(
+        self, run_id: str, *, lease_id: str, lease_seconds: float
+    ) -> bool:
+        """Extend a lease the caller still holds.
+
+        The lease id is a fencing token: a worker that stalled past its lease
+        and was taken over still matches on worker id, so matching on the id
+        alone would let it act on a run it no longer owns (task-18060).
+
+        Args:
+            run_id: The leased run.
+            lease_id: The token returned by ``claim_run``.
+            lease_seconds: How much longer the lease should be valid.
+
+        Returns:
+            True when the lease was extended, False when it was lost.
+        """
+        expires = self._timestamp_after(lease_seconds)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE research_runs
+                   SET leased_until = ?, updated_at = ?
+                 WHERE id = ? AND lease_id = ?
+                """,
+                (expires, self._now(), run_id, lease_id),
+            )
+            return cursor.rowcount == 1
+
+    def release_lease(self, run_id: str, *, lease_id: str) -> bool:
+        """Drop a lease the caller holds so another executor may claim it.
+
+        Args:
+            run_id: The leased run.
+            lease_id: The token returned by ``claim_run``.
+
+        Returns:
+            True when the lease was released, False when it was already lost.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE research_runs
+                   SET lease_owner = NULL, lease_id = NULL, leased_until = NULL,
+                       updated_at = ?
+                 WHERE id = ? AND lease_id = ?
+                """,
+                (self._now(), run_id, lease_id),
+            )
+            return cursor.rowcount == 1
+
+    def holds_lease(self, run_id: str, *, lease_id: str) -> bool:
+        """Whether ``lease_id`` is still the live lease on the run.
+
+        Args:
+            run_id: The run to check.
+            lease_id: The token returned by ``claim_run``.
+
+        Returns:
+            True when the token matches an unexpired lease.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT lease_id, leased_until FROM research_runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None or row["lease_id"] != lease_id:
+            return False
+        return str(row["leased_until"] or "") > self._now()
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:

@@ -101,3 +101,50 @@ def test_format_timestamp_is_stable_at_a_whole_second_boundary():
     assert _TIMESTAMP_RE.match(fractional_str)
     # Chronological order must equal string order.
     assert whole_str < fractional_str
+
+
+# NOTE: a lease of 0 seconds expires the instant it is granted, so these tests
+# exercise takeover deterministically. Do NOT use time.sleep() to age a lease:
+# a wall-clock dependency makes the suite flaky on a loaded machine, and the
+# behaviour under test is the comparison against `leased_until`, not duration.
+
+
+def test_a_stale_lease_can_be_taken_over():
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+
+    assert service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
+
+
+def test_a_displaced_worker_cannot_renew_or_release():
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    stale = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+    service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
+
+    assert service.renew_lease(run["id"], lease_id=stale, lease_seconds=60) is False
+    assert service.release_lease(run["id"], lease_id=stale) is False
+    assert service.holds_lease(run["id"], lease_id=stale) is False
+
+
+def test_reclaim_stops_at_the_retry_budget():
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    for _ in range(3):
+        assert service.claim_run(
+            run["id"], worker_id="w", lease_seconds=0, max_attempts=3
+        )
+
+    assert service.claim_run(
+        run["id"], worker_id="w", lease_seconds=0, max_attempts=3
+    ) is None
+
+
+def test_release_frees_the_run_for_the_next_executor():
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    lease = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=60)
+
+    assert service.release_lease(run["id"], lease_id=lease) is True
+    assert service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
