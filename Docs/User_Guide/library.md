@@ -169,7 +169,7 @@ current as of that open, not a reading cached at some earlier repaint.
 
 | Action | What it does |
 |---|---|
-| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and ACP handoff remain WIP. |
+| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and ACP handoff remain WIP. A bound folder containing a `.SKILLS/` project skills folder is annotated "— contains N project skill(s)" and, after Create, offers a chained import prompt — see [Project skills](library/skills.md#project-skills-skills). |
 | **Import sources** | Shown only while you have no workspace-eligible sources: "Open Library Import/Export to add workspace-eligible sources." |
 | **Use in Console** | Stages a snapshot of your local Library sources ("Local Library Sources") into Console and takes you there. When it can't run yet, its tooltip says why — "Stage Library source context after Library finishes loading." or "Stage Library source context after adding notes, media, or conversations." |
 
@@ -409,3 +409,7 @@ Workspace" dialog — the same one Console and Settings use — instead of
 creating a zero-input workspace instantly; documented its name prefill,
 optional validated folder bindings, Browse… picker, and default-on
 "Switch to this workspace" checkbox).*
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+"— contains N project skill(s)" and a chained import prompt follows
+Create).*

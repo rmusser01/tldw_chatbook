@@ -377,7 +377,11 @@ picker), and a "Switch to this workspace" checkbox, checked by default —
 here, unlike the old inline row, checking it activates the workspace
 immediately on Create. Escape cancels the dialog with nothing created.
 **Show archived** widens the list; each row shows the workspace's name and
-its bound-folder count ("N folders"); click a row to open its card.
+its bound-folder count ("N folders"); click a row to open its card. A
+folder you add that contains a `.SKILLS/` project skills folder is
+annotated "— contains N project skill(s)" in the list, and creation is
+followed by a chained import prompt for it — see
+[Project skills](library/skills.md#project-skills-skills).
 
 | Control | What it does |
 |---|---|
@@ -683,3 +687,8 @@ validated folder bindings, and a "Switch to this workspace" checkbox that
 here defaults to activating the workspace on Create, unlike the old
 inline flow; the walkthrough's step 5 updated to match; the rest of this
 page's content unchanged from the prior stamp).*
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+"— contains N project skill(s)" in the creation dialog, followed by a
+chained import prompt after Create; the rest of this page's content
+unchanged from the prior stamp).*

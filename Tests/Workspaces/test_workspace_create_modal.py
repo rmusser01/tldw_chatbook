@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -414,3 +415,109 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
     created = inner.list_workspaces()
     assert len(created) == 1
     assert result.workspace_id == created[0].workspace_id
+
+
+@pytest.mark.asyncio
+async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    skill = project / ".SKILLS" / "alpha-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: x\n---\nB\n", encoding="utf-8")
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        rows = [str(s.renderable) for s in modal.query(".workspace-create-folder-locator")]
+        assert any("1 project skill" in row for row in rows)
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    assert len(app.result.project_skills) == 1
+    assert app.result.project_skills[0].entries[0].name == "alpha-skill"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_suppresses_folder_discovery_scan(tmp_path, monkeypatch):
+    """Finding 1: with the ``[skills] project_skills_prompt_enabled``
+    kill-switch off, ``_add_folder`` must not scan the bound folder for
+    project skills AT ALL -- "no scanning" must be literally true, not
+    merely "no offer" later. Monkeypatches ``discover_project_skills`` with
+    a recorder to prove the call never happens.
+    """
+    calls: list = []
+
+    def _recorder(root):
+        calls.append(root)
+        return None
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", lambda *a, **k: False)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.workspace_create_modal.discover_project_skills",
+        _recorder,
+    )
+
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    skill = project / ".SKILLS" / "alpha-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: x\n---\nB\n", encoding="utf-8")
+
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_removed_and_rescanned_folder_clears_stale_discovery(tmp_path):
+    """Finding 9 (Qodo review, PR #1810): a removed folder's stale
+    ``_folder_discoveries`` entry must not linger -- ``_remove_folder`` has
+    to pop it -- and a fresh ``_add_folder`` rescan that finds nothing
+    usable (e.g. the ``.SKILLS/`` dir was deleted since the last scan) must
+    CLEAR any previously-recorded entry for that same locator, not merely
+    leave the old one in place (assign-or-pop, not assign-only).
+    """
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    skill = project / ".SKILLS" / "alpha-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: x\n---\nB\n", encoding="utf-8")
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        rows = [
+            str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
+        ]
+        assert any("1 project skill" in row for row in rows)
+
+        # Remove the folder -- its discovery must be popped, not left stale.
+        modal.query_one("#workspace-create-folder-remove-0", Button).press()
+        await pilot.pause()
+        assert modal._folder_discoveries == {}
+
+        # Delete the .SKILLS/ dir, then re-add the SAME folder -- the fresh
+        # (empty) scan must not resurrect the stale annotation.
+        shutil.rmtree(project / ".SKILLS")
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        rows = [
+            str(s.renderable) for s in modal.query(".workspace-create-folder-locator")
+        ]
+        assert not any("project skill" in row for row in rows)
+
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    assert app.result.project_skills == ()

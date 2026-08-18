@@ -16,6 +16,10 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Static
 
+from tldw_chatbook.Skills_Interop.project_skills_discovery import (
+    ProjectSkillsDiscovery,
+    discover_project_skills,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Utils.input_validation import sanitize_string
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -46,9 +50,10 @@ class WorkspaceCreateResult:
     bound_folders: tuple[str, ...] = ()
     failed_folders: tuple[tuple[str, str], ...] = ()  # (path, error message)
     make_active: bool = True
-    #: ProjectSkillsDiscovery entries for bound folders containing .SKILLS/.
-    #: Stays empty until project-skills discovery ships (spec §5.5 / PR B).
-    project_skills: tuple = ()
+    #: One ProjectSkillsDiscovery per bound folder whose root contains a
+    #: non-empty .SKILLS/ (spec §5.5 create-modal chaining). Empty when no
+    #: bound folder had project skills, or none were bound at all.
+    project_skills: tuple[ProjectSkillsDiscovery, ...] = ()
 
 
 class WorkspaceCreateModal(
@@ -116,6 +121,12 @@ class WorkspaceCreateModal(
         super().__init__()
         self._registry = registry_service
         self._folders: list[str] = []
+        #: Folder locator -> its project-skills discovery, populated only
+        #: for folders whose root contains a non-empty .SKILLS/ (spec §5.5
+        #: create-modal chaining). Keyed by the same resolved-locator string
+        #: stored in ``self._folders`` so `_create()` can filter by
+        #: ``bound_folders`` without a second discovery pass.
+        self._folder_discoveries: dict[str, ProjectSkillsDiscovery] = {}
         self._error = ""
         # Finding 1: one-shot guard against a double-submit (rapid
         # Enter-Enter, or a double-click race on Create) running
@@ -183,9 +194,17 @@ class WorkspaceCreateModal(
                 )
             with Vertical(id="workspace-create-folder-list"):
                 for index, folder in enumerate(self._folders):
+                    discovery = self._folder_discoveries.get(folder)
+                    if discovery is not None and discovery.entries:
+                        label = (
+                            f"{folder} — contains "
+                            f"{len(discovery.entries)} project skill(s)"
+                        )
+                    else:
+                        label = folder
                     with Horizontal(classes="workspace-create-folder-item"):
                         yield Static(
-                            folder,
+                            label,
                             classes="workspace-create-folder-locator",
                             markup=False,
                         )
@@ -231,7 +250,24 @@ class WorkspaceCreateModal(
                     for folder in self._folders
                 ),
                 make_active=self._make_active_result,
+                project_skills=self._project_skills_for(self._bound_folders),
             )
+        )
+
+    def _project_skills_for(self, folders: tuple[str, ...]) -> tuple:
+        """Discoveries for bound folders whose root carries a .SKILLS/ dir.
+
+        Args:
+            folders: Locator strings of successfully bound folders.
+
+        Returns:
+            The ``ProjectSkillsDiscovery`` entries recorded at Add time for
+            those folders, in binding order (spec 2026-08-17 §5.5).
+        """
+        return tuple(
+            self._folder_discoveries[folder]
+            for folder in folders
+            if folder in self._folder_discoveries
         )
 
     @on(Button.Pressed, "#workspace-create-browse")
@@ -282,7 +318,28 @@ class WorkspaceCreateModal(
         except WorkspaceRegistryServiceError as exc:
             self._set_error(str(exc))
             return
-        self._folders.append(str(resolved))
+        resolved_locator = str(resolved)
+        self._folders.append(resolved_locator)
+        # Pure filesystem scan (no side effects, no trust decisions) so the
+        # row can flag "contains N project skill(s)" up front; only stored
+        # when there's something to offer later (spec §5.5). Skipped
+        # entirely when the kill-switch is off (Finding 1, final review
+        # 2026-08-17): the feature's "no scanning" promise must be
+        # literally true, not merely "no offer" once the flag was already
+        # set. Imported locally (like app.py's startup discovery worker
+        # does) rather than at module import time.
+        from tldw_chatbook.config import get_cli_setting
+
+        if get_cli_setting("skills", "project_skills_prompt_enabled", True):
+            discovery = discover_project_skills(resolved)
+            if discovery is not None and discovery.entries:
+                self._folder_discoveries[resolved_locator] = discovery
+            else:
+                # Finding 9 (Qodo review, PR #1810): a re-add of the same
+                # locator (e.g. after Remove) must not resurrect a stale
+                # discovery from an earlier scan when the fresh one finds
+                # nothing usable -- assign-or-pop, not assign-only.
+                self._folder_discoveries.pop(resolved_locator, None)
         self._error = ""
         self._stash_form_state()
         self._folder_path_value = ""  # the just-consumed path is cleared
@@ -297,7 +354,14 @@ class WorkspaceCreateModal(
         except ValueError:
             return
         if 0 <= index < len(self._folders):
+            locator = self._folders[index]
             del self._folders[index]
+            # Finding 9 (Qodo review, PR #1810): a removed folder's stale
+            # discovery must not linger -- otherwise re-adding a DIFFERENT
+            # folder that happens to resolve to the same locator later (or
+            # a subsequent buggy rescan) could read an annotation for a
+            # folder that is no longer bound at all.
+            self._folder_discoveries.pop(locator, None)
             self._error = ""
             self._stash_form_state()
             self.refresh(recompose=True)
@@ -371,6 +435,7 @@ class WorkspaceCreateModal(
                 bound_folders=all_bound,
                 failed_folders=(),
                 make_active=self._make_active_result,
+                project_skills=self._project_skills_for(all_bound),
             )
         )
 

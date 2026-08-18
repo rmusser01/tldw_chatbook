@@ -18123,6 +18123,12 @@ class SettingsScreen(BaseAppScreen):
                     status_parts.append(str(exc))
             self._settings_workspaces_result = "; ".join(status_parts)
             self._refresh_settings_workspaces_pane()
+            if result.project_skills:
+                from tldw_chatbook.Widgets.project_skills_import_modal import (
+                    maybe_offer_project_skills_import,
+                )
+
+                maybe_offer_project_skills_import(self.app, result.project_skills)
 
         self.app.push_screen(WorkspaceCreateModal(registry_service=registry), _done)
 

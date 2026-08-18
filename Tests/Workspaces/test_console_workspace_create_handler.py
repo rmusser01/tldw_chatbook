@@ -79,3 +79,23 @@ def test_failed_folders_surface_as_warnings(tmp_path):
     )
     ConsoleWorkspaceController._handle_workspace_create_result(stub, result)
     assert any("Folder does not exist" in n for n in stub.notifications)
+
+
+def test_result_with_project_skills_offers_import(tmp_path, monkeypatch):
+    offered = []
+    import tldw_chatbook.UI.Console_Modules.workspace as ws_module
+
+    monkeypatch.setattr(
+        ws_module,
+        "maybe_offer_project_skills_import",
+        lambda app, discoveries: offered.append(discoveries),
+    )
+    stub = _Stub(_registry(tmp_path))
+    result = WorkspaceCreateResult(
+        workspace_id="workspace-local-1",
+        name="Workspace 1",
+        make_active=False,
+        project_skills=("sentinel-discovery",),
+    )
+    ConsoleWorkspaceController._handle_workspace_create_result(stub, result)
+    assert offered == [("sentinel-discovery",)]
