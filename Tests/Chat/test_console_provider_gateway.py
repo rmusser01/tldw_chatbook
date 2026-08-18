@@ -6215,6 +6215,10 @@ class TestGatewayExchangeCapture:
         ]
         await self._drain(gateway.stream_chat(resolution, messages, signals=signals))
         await self._drain(gateway.stream_chat(resolution, messages, signals=signals))
+        # The fake provider actually received the built kwargs -- not just a
+        # dead collection sitting unused.
+        assert len(calls) == 2
+        assert calls[0]["model"] == "gpt-4.1"
         captures = signals.exchange_captures()
         assert len(captures) == 2
         assert captures[0].status == "complete"
@@ -6252,7 +6256,9 @@ class TestGatewayExchangeCapture:
 
         gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
         signals = ConsoleProviderStreamSignals()
-        with pytest.raises(Exception):
+        # Narrowed from bare Exception: a capture-code explosion must not be
+        # mistaken for the provider error this test actually targets.
+        with pytest.raises(ChatProviderError):
             await self._drain(
                 gateway.stream_chat(
                     self._resolution(),
@@ -6277,4 +6283,167 @@ class TestGatewayExchangeCapture:
                 signals=signals,
             )
         )
+        assert signals.exchange_captures() == []
+
+    @pytest.mark.asyncio
+    async def test_not_ready_resolution_emits_no_phantom_capture(self):
+        """The early ``not resolution.ready`` return never reaches the
+        worker, so no exchange ever begins -- confirm the finally's
+        close_exchange() no-ops instead of fabricating an empty capture."""
+
+        def fake_chat_api_call(**kwargs):
+            pytest.fail("chat_api_call must not run for a not-ready resolution")
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        not_ready = dataclasses.replace(self._resolution(), ready=False)
+        await self._drain(
+            gateway.stream_chat(
+                not_ready, [{"role": "user", "content": "q"}], signals=signals
+            )
+        )
+        assert signals.exchange_captures() == []
+
+    @pytest.mark.asyncio
+    async def test_no_content_no_tool_calls_closes_capture_as_error(self):
+        """The 'Provider returned no content and no tool calls' route is a
+        real send failure (PR #648 review Minor 1) and must close its
+        exchange as 'error', not the finally's default 'complete'."""
+
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": ""}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        with pytest.raises(ChatProviderError):
+            await self._drain(
+                gateway.stream_chat(
+                    self._resolution(),
+                    [{"role": "user", "content": "q"}],
+                    tools=TOOLS,
+                    signals=signals,
+                )
+            )
+        captures = signals.exchange_captures()
+        assert len(captures) == 1 and captures[0].status == "error"
+
+    @pytest.mark.asyncio
+    async def test_consumer_abort_mid_stream_closes_capture_as_stopped(self):
+        """A user Stop/cancel mid-stream (consumer calls aclose()) must
+        close the exchange as 'stopped', keeping the partial content that
+        was already recorded -- never silently upgraded to 'complete'."""
+
+        class _BlockAfterFirstChunk:
+            """Yields one chunk, then blocks until close() releases it --
+            deterministically pins the worker mid-stream so the second
+            chunk can never reach the queue before the consumer aborts."""
+
+            def __init__(self) -> None:
+                self._state = 0
+                self._released = threading.Event()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self._state == 0:
+                    self._state = 1
+                    return {"choices": [{"delta": {"content": "he"}}]}
+                self._released.wait(timeout=5)
+                raise StopIteration
+
+            def close(self) -> None:
+                self._released.set()
+
+        iterator = _BlockAfterFirstChunk()
+
+        def fake_chat_api_call(**kwargs):
+            return iterator
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        gen = gateway.stream_chat(
+            self._resolution(), [{"role": "user", "content": "q"}], signals=signals
+        )
+        first = await anext(gen)
+        assert first == "he"
+        await gen.aclose()
+
+        captures = signals.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].status == "stopped"
+        assert captures[0].response["content"] == "he"
+
+    @pytest.mark.asyncio
+    async def test_native_tool_calls_recorded_in_capture(self):
+        response = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "t1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_time",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+
+        def fake_chat_api_call(**kwargs):
+            return response
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        items = await self._drain(
+            gateway.stream_chat(
+                self._resolution(),
+                [{"role": "user", "content": "q"}],
+                tools=TOOLS,
+                signals=signals,
+            )
+        )
+        (ptc,) = [i for i in items if isinstance(i, ProviderToolCalls)]
+        captures = signals.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].response["tool_calls"] == list(ptc.tool_calls)
+
+    @pytest.mark.asyncio
+    async def test_never_break_send_when_build_request_capture_raises(
+        self, monkeypatch
+    ):
+        """A capture-path bug (begin_exchange's own try/except) must never
+        block a send. Patches the CONSUMER namespace -- the gateway
+        module's imported binding, which is what `worker()` actually calls
+        -- and proves the patch took with a call counter."""
+        call_count = {"n": 0}
+
+        def raising_build_request_capture(kwargs):
+            call_count["n"] += 1
+            raise RuntimeError("capture exploded")
+
+        monkeypatch.setattr(
+            gateway_module, "build_request_capture", raising_build_request_capture
+        )
+
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        items = await self._drain(
+            gateway.stream_chat(
+                self._resolution(),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        )
+        assert items == ["pong"]
+        assert call_count["n"] == 1
         assert signals.exchange_captures() == []

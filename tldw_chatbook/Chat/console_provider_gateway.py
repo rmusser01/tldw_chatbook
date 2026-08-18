@@ -2352,6 +2352,14 @@ class ConsoleProviderGateway:
             if signals is not None
             else None
         )
+        # Tracks whether the generator drained a provider call normally, vs.
+        # being torn down early (consumer Stop/cancel -> GeneratorExit /
+        # CancelledError thrown into a suspended `yield`). Read only in the
+        # `finally` below to pick the exchange's terminal status -- an
+        # in-flight worker error already closed its own exchange as "error"
+        # before enqueueing (token-pop move semantics make the second close
+        # here a no-op), so this flag only decides "complete" vs "stopped".
+        completed = False
         try:
             if not resolution.ready or not resolution.model:
                 return
@@ -2400,6 +2408,7 @@ class ConsoleProviderGateway:
                     )
                     if completion:
                         yield completion
+                    completed = True
                     return
                 async for chunk in self.stream_llamacpp_chat(
                     base_url=resolution.base_url,
@@ -2415,16 +2424,18 @@ class ConsoleProviderGateway:
                     api_key=resolution.api_key,
                 ):
                     yield chunk
+                completed = True
                 return
             if resolution.execution_key:
                 async for chunk in self._stream_generic_chat(
                     effective_resolution, prepared, signals=call_signals
                 ):
                     yield chunk
+                completed = True
                 return
         finally:
             if call_signals is not None:
-                call_signals.close_exchange()
+                call_signals.close_exchange(status="complete" if completed else "stopped")
                 call_signals.close_usage_call()
 
     async def _stream_generic_chat(
@@ -2536,6 +2547,8 @@ class ConsoleProviderGateway:
                             "Provider returned no content and no tool calls.",
                             provider=resolution.provider,
                         )
+                        if signals is not None:
+                            signals.close_exchange(status="error")
                         enqueue(
                             _QueueItem.error(
                                 self._safe_error_copy(
