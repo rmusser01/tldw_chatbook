@@ -55,6 +55,7 @@ from .agent_models import (
     clamp_child_budget,
     contain_child_budget,
     definition_from_row,
+    format_steering_message,
     # Aliased: `_run_one` below has its own `definition_fingerprint: str |
     # None` keyword parameter (the audit value to persist), and that
     # parameter shadows this module-level function for the rest of
@@ -71,7 +72,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
-from .fleet_coordinator import FleetCoordinator, FleetHandle
+from .fleet_coordinator import (
+    DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+    DEFAULT_RETAINED_TRANSCRIPTS,
+    FleetCoordinator,
+    FleetHandle,
+)
 from .human_input_wait import human_input_wait_active
 from .native_tools import (
     ensure_tool_call_ids,
@@ -129,6 +135,14 @@ TRUNCATION_NOTICE = "\n[truncated]"
 #: `max_live=1` / config-of-one tests in `Tests/Agents/test_fleet_runtime`.
 MAX_LIVE_SUBAGENTS_KEY = "max_live_subagents"
 DEFAULT_MAX_LIVE_SUBAGENTS = 3
+#: PR3b Task 4 (finished-agent continuation): the retention caps, read by
+#: the bridge's coordinator factory beside `max_live_subagents` above and
+#: applied via `FleetCoordinator(retained_transcripts=...,
+#: retained_transcript_max_chars=...)` / `set_retention_caps`. The
+#: canonical default NUMBERS live on the pure coordinator (this module
+#: imports them); these are the `[agents]` key names.
+RETAINED_TRANSCRIPTS_KEY = "retained_transcripts"
+RETAINED_TRANSCRIPT_MAX_CHARS_KEY = "retained_transcript_max_chars"
 #: ``[agents]`` key deciding whether a sub-agent still running when its
 #: turn returns KEEPS RUNNING (PR3a-1 Task 2). Default **true**: a child
 #: the supervisor deliberately left working is background work, and
@@ -139,13 +153,17 @@ DEFAULT_MAX_LIVE_SUBAGENTS = 3
 #: panel is a thing the user watches ACROSS turns).
 #:
 #: `false` restores the phase-2 rule in full -- wait for stragglers within
-#: the parent's remaining wall-clock, cooperative-cancel, then abandon --
-#: and is the supported kill switch, guarded by the turn-scoped tests in
-#: `Tests/Agents/test_fleet_runtime`. Two cases settle regardless of this
-#: key, both in `_surviving_handles`: a turn nobody left a child running
-#: in (nothing to decide), and a turn the USER cancelled (Stop must stay a
-#: kill switch for the whole run tree; spec Sec 10 puts any change to Stop
-#: semantics in PR 3b).
+#: the parent's remaining wall-clock, cooperative-cancel, then abandon;
+#: a user Stop kills the whole run tree -- and is the supported kill
+#: switch, guarded by the turn-scoped tests in
+#: `Tests/Agents/test_fleet_runtime` and the probes in
+#: `Tests/Agents/test_fleet_stop_semantics`. One case settles regardless
+#: of this key: a turn nobody left a child running in (nothing to
+#: decide). PR3b Task 5 (spec Sec 8) removed the other: with this key ON,
+#: a USER-CANCELLED turn no longer settles its children -- Stop stops the
+#: supervisor only, and the children's own kill switches are the panel's
+#: per-row Cancel and "Cancel all agents"
+#: (`ConsoleAgentBridge.cancel_all_subagents`).
 SUBAGENTS_OUTLIVE_TURN_KEY = "subagents_outlive_turn"
 DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: ``[agents]`` key sizing a THREADED, non-inline child's OWN wall-clock
@@ -280,6 +298,61 @@ def _coerce_max_live_subagents(value) -> int:
             logger.warning("invalid max_live_subagents setting; using default")
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
+
+
+def _coerce_retained_transcripts(value) -> int:
+    """Read the retention COUNT cap from config, tolerating any junk.
+
+    Same posture as ``_coerce_max_live_subagents`` (int-or-float parse,
+    junk falls back to the default -- a malformed config key must never
+    stop an agent run) with one difference: the floor is 0, not 1,
+    because 0 is a meaningful opt-out (retain nothing; finished children
+    cannot be resumed).
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured cap, floored at 0.
+    """
+    text = str(value).strip()
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        try:
+            parsed = int(float(text))
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("invalid retained_transcripts setting; using default")
+            return DEFAULT_RETAINED_TRANSCRIPTS
+    return max(parsed, 0)
+
+
+def _coerce_retained_transcript_max_chars(value) -> int:
+    """Read the retention SIZE cap from config, tolerating any junk.
+
+    Same rules as ``_coerce_retained_transcripts`` directly above: junk
+    falls back to the default; the floor is 0 (a meaningful opt-out --
+    nothing fits, so nothing is retained; ruling #2 forbids truncating a
+    transcript to fit).
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured ceiling, floored at 0.
+    """
+    text = str(value).strip()
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        try:
+            parsed = int(float(text))
+        except (TypeError, ValueError, OverflowError):
+            logger.warning(
+                "invalid retained_transcript_max_chars setting; using default"
+            )
+            return DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS
+    return max(parsed, 0)
 
 
 def _coerce_child_max_wall_seconds(value) -> float:
@@ -1259,7 +1332,6 @@ class AgentService:
         self,
         fleet: FleetCoordinator,
         handle_ids: list[str],
-        should_cancel: Callable[[], bool],
     ) -> set[str]:
         """Which of this turn's children are allowed to outlive it.
 
@@ -1270,18 +1342,29 @@ class AgentService:
         delegation pointless for anything slower than one reply.
 
         Ordered so the common case costs nothing: a turn that left no
-        child running reads no config and does not probe cancellation,
-        which is what keeps the turn-scoped path byte-identical.
+        child running reads no config, which is what keeps the
+        turn-scoped path byte-identical.
+
+        PR3b Task 5 (spec Sec 8): a USER-CANCELLED turn no longer settles
+        its children. Stop stops the SUPERVISOR; a child the supervisor
+        deliberately left working is the same background work whether the
+        turn ended by answering or by being stopped, and the user keeps
+        real kill switches for the children themselves -- the panel's
+        per-row Cancel, "Cancel all agents"
+        (``ConsoleAgentBridge.cancel_all_subagents``), and the
+        ``subagents_outlive_turn = false`` config switch, under which a
+        cancelled turn still settles everything exactly as phase 2 did
+        (pinned by ``test_probe_b_stop_kills_everything_through_the_
+        cancel_event_path``).
 
         Args:
             fleet: This turn's coordinator.
             handle_ids: This turn's handles (``mine`` in ``_settle_fleet``).
-            should_cancel: The run-wide cancellation probe.
 
         Returns:
             The handles to leave running. Empty -- i.e. settle everything,
-            exactly as phase 2 did -- when nothing is still running, when
-            the kill switch is off, or when the USER cancelled this turn.
+            exactly as phase 2 did -- when nothing is still running or
+            when the kill switch is off.
         """
         pending = self._pending_handles(fleet, handle_ids)
         if not pending:
@@ -1289,13 +1372,6 @@ class AgentService:
         if not _coerce_subagents_outlive_turn(
             _setting(SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN)
         ):
-            return set()
-        if should_cancel():
-            # Stop means stop, for the whole run tree. A cancelled turn is
-            # not a turn that ENDED -- it is one the user killed, and
-            # leaving its children running would take away the only kill
-            # switch they have (spec Sec 10 keeps Stop-semantics changes
-            # in PR 3b).
             return set()
         return set(pending)
 
@@ -1340,7 +1416,7 @@ class AgentService:
         # merely defensive: an earlier turn's survivor is visible in a
         # long-lived coordinator, and settling THIS turn must not kill it.
         mine = list(self._fleet_cancels)
-        survivors = self._surviving_handles(fleet, mine, should_cancel)
+        survivors = self._surviving_handles(fleet, mine)
         if survivors:
             logger.info(
                 "{} sub-agents are outliving their turn", len(survivors)
@@ -1433,6 +1509,11 @@ class AgentService:
         assistant_message_id: str | None = None,
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
+        # PR3b Task 4 (finished-agent continuation): the run this one was
+        # seeded from, recorded onto the new row for lineage. Set only by
+        # send_to_agent's continuation branch; None for every other
+        # caller (an ordinary run).
+        resumed_from_run_id: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
         # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
         # by spawn's fleet branch as a closure over THIS child's own
@@ -1497,6 +1578,7 @@ class AgentService:
             assistant_message_id=assistant_message_id,
             agent_definition=agent_definition,
             definition_fingerprint=definition_fingerprint,
+            resumed_from_run_id=resumed_from_run_id,
         )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
@@ -1684,6 +1766,271 @@ class AgentService:
         # injected coordinator would show, and make this run wait on,
         # another run's children.
         my_handle_ids: list[str] = []
+
+        def _launch_fleet_child(
+            spawn_task: str,
+            agent_name: "str | None",
+            child_kwargs: dict,
+        ) -> "tuple[FleetHandle | None, ToolResult | None]":
+            """spawn's reserve -> Event -> thread -> handle tail, shared.
+
+            PR3b Task 4: extracted MECHANICALLY from `spawn`'s fleet path
+            (every moved line verbatim, including its comments) so the
+            continuation path launches a resumed child through the exact
+            same machinery -- reserve/cap refusal (with the spawn-slot
+            unwind), cancel Event, drain-mailbox wiring, `run_child`'s
+            settle chain, thread start with full failure unwind. Returns
+            `(handle, None)` on success; `(None, refusal)` on a cap or
+            thread-start failure, with the slot already unwound. The
+            SUCCESS copy stays with each caller: spawn's "started ...",
+            the continuation's "resumed ...".
+            """
+            nonlocal sub_agent_spawns
+            # -- FLEET path: register, launch, return a handle.
+            handle = fleet.reserve(task=spawn_task, agent=agent_name)
+            if handle is None:
+                # At the live cap. Unlike a budget refusal this is
+                # RETRYABLE -- collecting a finished child frees a slot --
+                # so it must not consume a spawn from the per-turn
+                # ceiling, exactly like the unknown-agent refusal above
+                # ("a typo costs no sub-agent slot"). The check/increment
+                # itself stays where it has always been; only this one
+                # no-child-was-created path unwinds it.
+                sub_agent_spawns -= 1
+                return None, ToolResult(
+                    ok=False,
+                    error=(
+                        f"live sub-agent limit reached ({fleet.live_count()} "
+                        "already running); call wait_agents to collect a "
+                        "finished sub-agent before starting another"
+                    ),
+                )
+            # Cooperative cancellation for THIS child specifically, on top
+            # of the run-wide `should_cancel` it also honours. wait_agents
+            # and the end-of-turn settle both set it to unwind stragglers
+            # without cancelling the parent.
+            child_cancel = threading.Event()
+            child_kwargs["continuation_agent_kind"] = "fleet"
+            # PR3b Task 1: THIS child's steering drain -- a closure over
+            # its own mailbox on the conversation-lifetime coordinator,
+            # reachable from the UI thread and any turn's supervisor while
+            # the child runs on its own thread. handle_id is default-bound
+            # (the run_child style) so the closure can never pick up a
+            # later spawn's handle.
+            child_kwargs["drain_mailbox"] = (
+                lambda handle_id=handle.handle_id: fleet.drain_steering(handle_id)
+            )
+            self._fleet_cancels[handle.handle_id] = child_cancel
+            my_handle_ids.append(handle.handle_id)
+
+            # PR3b Task 5 (spec Sec 8, Stop-semantics decoupling): with
+            # `subagents_outlive_turn` ON, a child's cancellation is ITS
+            # OWN Event only -- the parent's run-wide probe stays out of
+            # its poll, so a user Stop (which flips that probe and leaves
+            # it flipped forever) no longer kills background work at the
+            # child's next loop boundary. Every path that must still stop
+            # a child sets the Event (`_cancel_fleet_handles`: the
+            # end-of-turn settle for non-survivors, `wait_agents`' budget
+            # branch, per-row Cancel, and "Cancel all agents"). Read ONCE,
+            # at spawn: a child's Stop-coupling contract is fixed when it
+            # launches, not flappable mid-run by a config write --
+            # `_surviving_handles` still reads the key at settle time, so
+            # flipping the switch OFF mid-run still lets the very next
+            # settle cancel the child through its Event. With the key OFF
+            # the closure is the pre-Task-5 line, byte-identical.
+            child_outlives_turn = _coerce_subagents_outlive_turn(
+                _setting(
+                    SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN
+                )
+            )
+            if child_outlives_turn:
+
+                def child_should_cancel() -> bool:
+                    return child_cancel.is_set()
+
+            else:
+
+                def child_should_cancel() -> bool:
+                    return should_cancel() or child_cancel.is_set()
+
+            def run_child(
+                handle: FleetHandle = handle,
+                child_kwargs: dict = child_kwargs,
+                child_should_cancel=child_should_cancel,
+            ) -> None:
+                """Run one child to completion, then release its handle.
+
+                Deliberately NOT wrapped in the parent's
+                `review_state_scope`, which the inline path above still
+                takes. That scope snapshots and RESTORES the parent's
+                verdict slice, which is sound only for a strictly nested
+                (LIFO) inline child: with siblings running concurrently,
+                one child's exit would roll the parent's slice back to a
+                snapshot taken before another child -- or before the
+                parent's own later turn -- had stamped anything, wiping
+                live verdicts. PR2a Task 5 made per-run keying the
+                load-bearing protection precisely so this scope is not
+                needed here: the child stamps `(child_run_id, tool)` and
+                cannot reach the parent's keys at all.
+                """
+                status = RUN_ERROR
+                result_text = ""
+                error_text = ""
+                # PR2b Task 5 (cost rollup): only ever set from a
+                # SUCCESSFULLY-returned `child_outcome` below -- a child
+                # that raised before `_run_one` returned has no measured
+                # spend to report, so this stays 0 (never a fabricated or
+                # partial figure) exactly like `result_text`/`error_text`
+                # staying at their own "nothing to report" defaults on that
+                # path.
+                total_tokens_spent = 0
+                # PR3b Task 4: the coherent transcript, retained by
+                # `fleet.finish` below ATOMICALLY with the terminal
+                # transition. Stays None on the raise path -- a child that
+                # died before the loop returned has no coherent transcript
+                # to retain, and retention honestly refuses None.
+                final_messages = None
+                try:
+                    # PR3a-1 Task 1: this child's own model-call lifeline,
+                    # entered HERE -- on the child's thread, before its run
+                    # starts -- and exited when the run ends, so it lives
+                    # exactly as long as the child does rather than as long
+                    # as the turn that spawned it. See
+                    # `self._child_model_scope`.
+                    with self._child_model_scope():
+                        _child_id, child_outcome = self._run_one(
+                            should_cancel=child_should_cancel,
+                            on_run_id=(
+                                lambda rid: fleet.attach_run(handle.handle_id, rid)
+                            ),
+                            **child_kwargs,
+                        )
+                    status = child_outcome.status
+                    result_text = child_outcome.final_text
+                    total_tokens_spent = child_outcome.total_tokens
+                    final_messages = child_outcome.final_messages
+                    if status != RUN_DONE:
+                        error_text = f"sub-agent {status}"
+                except BaseException as exc:  # noqa: BLE001 — see below
+                    # EVERY exception, including BaseException: this runs
+                    # on a daemon thread whose exception would otherwise
+                    # go to the default excepthook and leave the handle
+                    # live forever -- stranding the parent's end-of-turn
+                    # join until its own timeout, every time, for what may
+                    # be a trivial bug. Same containment rule as
+                    # `_call_with_timeout._runner`.
+                    error_text = f"sub-agent failed: {exc}"
+                    logger.warning("sub-agent thread raised")
+                finally:
+                    # PR3b Task 4: `transcript=` makes retention atomic
+                    # with the terminal transition -- ONE coordinator
+                    # critical section, so a send_to_agent continuation
+                    # racing this teardown can never observe a retainable
+                    # child terminal-but-unretained (the Qodo race finding
+                    # on plan PR #1773; the plan's original
+                    # retain-after-finish two-step had that window).
+                    # First-writer-wins covers retention too: if a
+                    # settle-cancel already finished this handle, this
+                    # whole call -- transcript included -- is ignored, so
+                    # a user-cancelled child is never retained.
+                    fleet.finish(
+                        handle.handle_id,
+                        status,
+                        result=result_text,
+                        error=error_text,
+                        total_tokens=total_tokens_spent,
+                        transcript=final_messages,
+                    )
+                    # Review fix (PR2a final review): `_persist` -- called
+                    # from INSIDE `_run_one`'s own try/except -- is
+                    # normally the only thing that writes this child's
+                    # terminal DB status. But `_run_one`'s try/except
+                    # wraps ONLY the `run_agent_loop(...)` call; an
+                    # exception raised between `create_run()` and that
+                    # try block (e.g. `initial_disclosure` recursing into
+                    # the tool catalog's RLock and raising RecursionError)
+                    # unwinds `_run_one` entirely, past `_persist`, and
+                    # lands in the `except BaseException` above instead --
+                    # leaving the DB row `running` for the life of the
+                    # process, violating "DB is truth" (spec Sec 3
+                    # invariant 3). `attach_run` has already fired by the
+                    # time any post-`create_run` exception can, so
+                    # `fleet.get()` (re-fetched, not the possibly-stale
+                    # `handle` closed over above) reliably has the run id.
+                    # `set_status` is first-writer-wins (AgentRunsDB), so
+                    # this call is a safe no-op on the normal path where
+                    # `_persist` already wrote a terminal status -- it
+                    # only matters on the setup-phase-exception path,
+                    # where it is the only writer. Same defensive shape as
+                    # `_settle_fleet`'s abandonment path: a DB failure
+                    # here must not take down a turn that has already
+                    # produced its answer.
+                    current = fleet.get(handle.handle_id)
+                    child_run_id = current.run_id if current is not None else None
+                    if child_run_id:
+                        try:
+                            self.db.set_status(child_run_id, status)
+                        except Exception:  # noqa: BLE001
+                            logger.warning(
+                                "could not persist terminal status for sub-agent run"
+                            )
+                    # PR3a-2 Task 2: the settle signal, LAST -- after
+                    # `fleet.finish` and after the terminal-status
+                    # fallback, so at fire time the row is terminal on
+                    # the happy path (`_persist` wrote it) AND on the
+                    # setup-exception path (`set_status` just did). See
+                    # `on_child_settled`'s __init__ comment for why no
+                    # earlier point can offer that. Wrapped never-raise:
+                    # this is a daemon thread's teardown, and a notifier
+                    # bug must not kill it (same containment rule as the
+                    # `except BaseException` above).
+                    if self._on_child_settled is not None:
+                        try:
+                            self._on_child_settled(child_run_id, status)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "on_child_settled consumer raised (exception_type={})",
+                                type(exc).__name__,
+                            )
+
+            thread = threading.Thread(
+                target=run_child,
+                name=f"fleet-{handle.handle_id[:8]}",
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except Exception as exc:  # noqa: BLE001 — thread exhaustion
+                # `Thread.start()` raises RuntimeError ("can't start new
+                # thread") when the process is out of thread slots. Every
+                # piece of state this spawn reserved has to be unwound
+                # here, because NOTHING else will: `run_child` never runs,
+                # so the handle would stay live forever -- making the
+                # end-of-turn settle burn the ENTIRE remaining wall-clock
+                # waiting for a child that does not exist. Registering the
+                # thread only AFTER a successful start is the other half:
+                # `_settle_fleet` joins every registered thread, and
+                # joining an unstarted one raises RuntimeError out of
+                # `run_turn`, skipping `write_manifest()` and
+                # `run_log_writer.close()` (leaking a file descriptor).
+                fleet.finish(
+                    handle.handle_id,
+                    RUN_ERROR,
+                    error=f"could not start sub-agent thread: {exc}",
+                )
+                self._fleet_cancels.pop(handle.handle_id, None)
+                if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
+                    my_handle_ids.pop()
+                # No child was created, so this spawn costs no slot --
+                # same rule as the cap refusal above.
+                sub_agent_spawns -= 1
+                logger.warning("could not start sub-agent thread")
+                return None, ToolResult(
+                    ok=False,
+                    error=f"could not start sub-agent: {exc}",
+                )
+            self._fleet_threads[handle.handle_id] = thread
+            return handle, None
 
         def spawn(
             spawn_task: str,
@@ -1968,206 +2315,15 @@ class AgentService:
                     )
                 return ToolResult(ok=True, content=text)
 
-            # -- FLEET path: register, launch, return a handle.
-            handle = fleet.reserve(
-                task=spawn_task, agent=(resolved.name if resolved else None)
+            # -- FLEET path: register, launch, return a handle -- via the
+            # shared reserve->Event->thread->handle tail (PR3b Task 4
+            # extracted it verbatim so the continuation path launches
+            # through the exact same machinery).
+            handle, failure = _launch_fleet_child(
+                spawn_task, (resolved.name if resolved else None), child_kwargs
             )
-            if handle is None:
-                # At the live cap. Unlike a budget refusal this is
-                # RETRYABLE -- collecting a finished child frees a slot --
-                # so it must not consume a spawn from the per-turn
-                # ceiling, exactly like the unknown-agent refusal above
-                # ("a typo costs no sub-agent slot"). The check/increment
-                # itself stays where it has always been; only this one
-                # no-child-was-created path unwinds it.
-                sub_agent_spawns -= 1
-                return ToolResult(
-                    ok=False,
-                    error=(
-                        f"live sub-agent limit reached ({fleet.live_count()} "
-                        "already running); call wait_agents to collect a "
-                        "finished sub-agent before starting another"
-                    ),
-                )
-            # Cooperative cancellation for THIS child specifically, on top
-            # of the run-wide `should_cancel` it also honours. wait_agents
-            # and the end-of-turn settle both set it to unwind stragglers
-            # without cancelling the parent.
-            child_cancel = threading.Event()
-            child_kwargs["continuation_agent_kind"] = "fleet"
-            # PR3b Task 1: THIS child's steering drain -- a closure over
-            # its own mailbox on the conversation-lifetime coordinator,
-            # reachable from the UI thread and any turn's supervisor while
-            # the child runs on its own thread. handle_id is default-bound
-            # (the run_child style) so the closure can never pick up a
-            # later spawn's handle.
-            child_kwargs["drain_mailbox"] = (
-                lambda handle_id=handle.handle_id: fleet.drain_steering(handle_id)
-            )
-            self._fleet_cancels[handle.handle_id] = child_cancel
-            my_handle_ids.append(handle.handle_id)
-
-            def child_should_cancel() -> bool:
-                return should_cancel() or child_cancel.is_set()
-
-            def run_child(
-                handle: FleetHandle = handle,
-                child_kwargs: dict = child_kwargs,
-                child_should_cancel=child_should_cancel,
-            ) -> None:
-                """Run one child to completion, then release its handle.
-
-                Deliberately NOT wrapped in the parent's
-                `review_state_scope`, which the inline path above still
-                takes. That scope snapshots and RESTORES the parent's
-                verdict slice, which is sound only for a strictly nested
-                (LIFO) inline child: with siblings running concurrently,
-                one child's exit would roll the parent's slice back to a
-                snapshot taken before another child -- or before the
-                parent's own later turn -- had stamped anything, wiping
-                live verdicts. PR2a Task 5 made per-run keying the
-                load-bearing protection precisely so this scope is not
-                needed here: the child stamps `(child_run_id, tool)` and
-                cannot reach the parent's keys at all.
-                """
-                status = RUN_ERROR
-                result_text = ""
-                error_text = ""
-                # PR2b Task 5 (cost rollup): only ever set from a
-                # SUCCESSFULLY-returned `child_outcome` below -- a child
-                # that raised before `_run_one` returned has no measured
-                # spend to report, so this stays 0 (never a fabricated or
-                # partial figure) exactly like `result_text`/`error_text`
-                # staying at their own "nothing to report" defaults on that
-                # path.
-                total_tokens_spent = 0
-                try:
-                    # PR3a-1 Task 1: this child's own model-call lifeline,
-                    # entered HERE -- on the child's thread, before its run
-                    # starts -- and exited when the run ends, so it lives
-                    # exactly as long as the child does rather than as long
-                    # as the turn that spawned it. See
-                    # `self._child_model_scope`.
-                    with self._child_model_scope():
-                        _child_id, child_outcome = self._run_one(
-                            should_cancel=child_should_cancel,
-                            on_run_id=(
-                                lambda rid: fleet.attach_run(handle.handle_id, rid)
-                            ),
-                            **child_kwargs,
-                        )
-                    status = child_outcome.status
-                    result_text = child_outcome.final_text
-                    total_tokens_spent = child_outcome.total_tokens
-                    if status != RUN_DONE:
-                        error_text = f"sub-agent {status}"
-                except BaseException as exc:  # noqa: BLE001 — see below
-                    # EVERY exception, including BaseException: this runs
-                    # on a daemon thread whose exception would otherwise
-                    # go to the default excepthook and leave the handle
-                    # live forever -- stranding the parent's end-of-turn
-                    # join until its own timeout, every time, for what may
-                    # be a trivial bug. Same containment rule as
-                    # `_call_with_timeout._runner`.
-                    error_text = f"sub-agent failed: {exc}"
-                    logger.warning("sub-agent thread raised")
-                finally:
-                    fleet.finish(
-                        handle.handle_id,
-                        status,
-                        result=result_text,
-                        error=error_text,
-                        total_tokens=total_tokens_spent,
-                    )
-                    # Review fix (PR2a final review): `_persist` -- called
-                    # from INSIDE `_run_one`'s own try/except -- is
-                    # normally the only thing that writes this child's
-                    # terminal DB status. But `_run_one`'s try/except
-                    # wraps ONLY the `run_agent_loop(...)` call; an
-                    # exception raised between `create_run()` and that
-                    # try block (e.g. `initial_disclosure` recursing into
-                    # the tool catalog's RLock and raising RecursionError)
-                    # unwinds `_run_one` entirely, past `_persist`, and
-                    # lands in the `except BaseException` above instead --
-                    # leaving the DB row `running` for the life of the
-                    # process, violating "DB is truth" (spec Sec 3
-                    # invariant 3). `attach_run` has already fired by the
-                    # time any post-`create_run` exception can, so
-                    # `fleet.get()` (re-fetched, not the possibly-stale
-                    # `handle` closed over above) reliably has the run id.
-                    # `set_status` is first-writer-wins (AgentRunsDB), so
-                    # this call is a safe no-op on the normal path where
-                    # `_persist` already wrote a terminal status -- it
-                    # only matters on the setup-phase-exception path,
-                    # where it is the only writer. Same defensive shape as
-                    # `_settle_fleet`'s abandonment path: a DB failure
-                    # here must not take down a turn that has already
-                    # produced its answer.
-                    current = fleet.get(handle.handle_id)
-                    child_run_id = current.run_id if current is not None else None
-                    if child_run_id:
-                        try:
-                            self.db.set_status(child_run_id, status)
-                        except Exception:  # noqa: BLE001
-                            logger.warning(
-                                "could not persist terminal status for sub-agent run"
-                            )
-                    # PR3a-2 Task 2: the settle signal, LAST -- after
-                    # `fleet.finish` and after the terminal-status
-                    # fallback, so at fire time the row is terminal on
-                    # the happy path (`_persist` wrote it) AND on the
-                    # setup-exception path (`set_status` just did). See
-                    # `on_child_settled`'s __init__ comment for why no
-                    # earlier point can offer that. Wrapped never-raise:
-                    # this is a daemon thread's teardown, and a notifier
-                    # bug must not kill it (same containment rule as the
-                    # `except BaseException` above).
-                    if self._on_child_settled is not None:
-                        try:
-                            self._on_child_settled(child_run_id, status)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.warning(
-                                "on_child_settled consumer raised (exception_type={})",
-                                type(exc).__name__,
-                            )
-
-            thread = threading.Thread(
-                target=run_child,
-                name=f"fleet-{handle.handle_id[:8]}",
-                daemon=True,
-            )
-            try:
-                thread.start()
-            except Exception as exc:  # noqa: BLE001 — thread exhaustion
-                # `Thread.start()` raises RuntimeError ("can't start new
-                # thread") when the process is out of thread slots. Every
-                # piece of state this spawn reserved has to be unwound
-                # here, because NOTHING else will: `run_child` never runs,
-                # so the handle would stay live forever -- making the
-                # end-of-turn settle burn the ENTIRE remaining wall-clock
-                # waiting for a child that does not exist. Registering the
-                # thread only AFTER a successful start is the other half:
-                # `_settle_fleet` joins every registered thread, and
-                # joining an unstarted one raises RuntimeError out of
-                # `run_turn`, skipping `write_manifest()` and
-                # `run_log_writer.close()` (leaking a file descriptor).
-                fleet.finish(
-                    handle.handle_id,
-                    RUN_ERROR,
-                    error=f"could not start sub-agent thread: {exc}",
-                )
-                self._fleet_cancels.pop(handle.handle_id, None)
-                if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
-                    my_handle_ids.pop()
-                # No child was created, so this spawn costs no slot --
-                # same rule as the cap refusal above.
-                sub_agent_spawns -= 1
-                logger.warning("could not start sub-agent thread")
-                return ToolResult(
-                    ok=False,
-                    error=f"could not start sub-agent: {exc}",
-                )
-            self._fleet_threads[handle.handle_id] = thread
+            if failure is not None:
+                return failure
             snippet = spawn_task[:_SPAWN_ECHO_CHARS]
             return ToolResult(
                 ok=True,
@@ -2234,6 +2390,7 @@ class AgentService:
                         ),
                     )
             note = ""
+            stopped_children = False
             # See `_settle_fleet`: a real-time bound runs alongside the
             # budget deadline so an injected (possibly frozen) clock can
             # never turn this into an unbounded wait.
@@ -2243,8 +2400,34 @@ class AgentService:
                 if not pending:
                     break
                 if should_cancel():
+                    # PR3b Task 5 (spec Sec 8): a user Stop releases the
+                    # WAIT, not the children. With the outlive default ON
+                    # the pending children keep working in the background
+                    # (the settle spares them too -- `_surviving_handles`);
+                    # under the kill switch this branch is the pre-Task-5
+                    # cancel, byte-identical. Read here, at the moment of
+                    # the Stop, matching `_surviving_handles`' settle-time
+                    # read -- the two must agree on the SAME Stop. The
+                    # note promises only what is true on EVERY path from
+                    # here (Qodo #1808 finding 4): `pending` is non-empty
+                    # by the loop guard, so children genuinely continue --
+                    # but result DELIVERY depends on the auto-wake key (a
+                    # completion is only ever marked when that is off),
+                    # so the copy does not promise delivery.
+                    if _coerce_subagents_outlive_turn(
+                        _setting(
+                            SUBAGENTS_OUTLIVE_TURN_KEY,
+                            DEFAULT_SUBAGENTS_OUTLIVE_TURN,
+                        )
+                    ):
+                        note = (
+                            "\n(The run was cancelled; sub-agents continue "
+                            "in the background.)"
+                        )
+                        break
                     note = "\n(The run was cancelled; sub-agents were stopped.)"
                     self._cancel_fleet_handles(pending)
+                    stopped_children = True
                     break
                 if (
                     self.clock() - started >= config.budget.max_wall_seconds
@@ -2255,11 +2438,16 @@ class AgentService:
                         "working were stopped.)"
                     )
                     self._cancel_fleet_handles(pending)
+                    stopped_children = True
                     break
                 time.sleep(_FLEET_POLL_SECONDS)
-            if note:
+            if stopped_children:
                 # Give the children just cancelled a bounded chance to
                 # unwind and record a real status before we report them.
+                # Gated on an actual cancel (not the note): the Task 5
+                # not-cancelling Stop branch above has nothing to drain,
+                # and waiting out the grace for children that are not
+                # stopping would hold the stopped turn open for nothing.
                 self._drain_fleet_handles(fleet, targets)
             return ToolResult(
                 ok=True,
@@ -2339,6 +2527,180 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
 
+        def _resume_retained_child(retained, steer_text: str) -> ToolResult:
+            """Continuation (PR3b Task 4, spec SS6): a NEW run from a
+            retained transcript.
+
+            Order of operations mirrors spawn's own gauntlet so every
+            refusal costs what spawn's would: definition re-resolution
+            FIRST (a vanished definition costs no slot -- "a typo costs
+            no sub-agent slot"), then the spawn-slot check/consume, then
+            `_launch_fleet_child` (whose cap refusal and thread-start
+            failure both unwind the slot).
+
+            Ruling #1 on the definition: a still-existing one re-resolves
+            to its CURRENT form -- the new row's fresh
+            `definition_fingerprint` records the change, which is exactly
+            what that audit column exists for; a deleted/disabled one
+            refuses clearly, because silently downgrading the child to a
+            generic spawn would change its behavior with no record.
+
+            The seed is the retained coherent transcript, then any
+            undelivered queued steering the retention claimed (ORIGINAL
+            labels -- the user's entry stays the user's), then the new
+            supervisor-labeled message. The new row's `parent_run_id` is
+            THIS (the resuming) primary; `resumed_from_run_id` records
+            the old run.
+            """
+            nonlocal sub_agent_spawns
+            resolved = None
+            if retained.agent:
+                resolved = next(
+                    (
+                        d
+                        for d in self._turn_definitions
+                        if d.name == retained.agent
+                    ),
+                    None,
+                )
+                if resolved is None:
+                    available = (
+                        ", ".join(d.name for d in self._turn_definitions)
+                        or "none"
+                    )
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            f"send_to_agent: sub-agent "
+                            f"'{retained.handle_id}' was spawned from "
+                            f"agent definition '{retained.agent}', which "
+                            f"no longer exists (or is disabled), so it "
+                            f"cannot be resumed as it was. Spawn a fresh "
+                            f"sub-agent instead (available agents: "
+                            f"{available})."
+                        ),
+                    )
+            if sub_agent_spawns >= config.budget.max_subagents:
+                # Spawn's own budget-refusal shape: a resume starts a NEW
+                # run, so it costs a spawn slot like any other spawn.
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "send_to_agent: sub-agent budget exhausted -- "
+                        "resuming a finished sub-agent starts a new run "
+                        "and costs a spawn slot."
+                    ),
+                )
+            sub_agent_spawns += 1
+            # A resumed child is a THREADED survivor candidate by
+            # construction (it is launched through the fleet tail below),
+            # so it gets `contain_child_budget`'s independent ceiling --
+            # never the turn-scoped parent-remainder clamp.
+            child_max_wall_seconds = _coerce_child_max_wall_seconds(
+                _setting(
+                    CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS
+                )
+            )
+            child_budget = contain_child_budget(
+                config.budget, child_max_wall_seconds
+            )
+            # Composition mirrors spawn's default path exactly (inherit
+            # minus the spawn tool and any skill-tool names; a resolved
+            # definition APPENDS instructions and INTERSECTS the
+            # allow-list -- never grants). Duplicated deliberately rather
+            # than extracted: the plan mandates only the launch TAIL be
+            # shared (`_launch_fleet_child`); spawn's composition block
+            # stays byte-identical where it is, and each site cites the
+            # other.
+            child_allowed_tools = tuple(
+                n
+                for n in config.allowed_tools
+                if n != SPAWN_TOOL_NAME
+                and not (
+                    self.skill_runner is not None
+                    and self.skill_runner.is_skill_tool(n)
+                )
+            )
+            child_system_prompt = get_internal_prompt("agents.subagent_system")
+            child_model = config.model
+            if resolved is not None:
+                # IDENTITY CONTRACT: instructions APPEND, never prepend
+                # (fleet spec SS4; console_agent_bridge._is_subagent
+                # prefix-matches the base prompt).
+                child_system_prompt = (
+                    child_system_prompt + "\n\n" + resolved.instructions
+                )
+                if resolved.model:
+                    child_model = resolved.model
+                if resolved.tool_allowlist:
+                    wanted = set(resolved.tool_allowlist)
+                    child_allowed_tools = tuple(
+                        n for n in child_allowed_tools if n in wanted
+                    )
+            child_config = AgentConfig(
+                model=child_model,
+                system_prompt=child_system_prompt,
+                allowed_tools=child_allowed_tools,
+                budget=child_budget,
+                native_tools=config.native_tools,
+                workspace_context_note=config.workspace_context_note,
+            )
+            seed = [dict(m) for m in retained.messages]
+            for source, queued_text in retained.steering:
+                seed.append(
+                    {
+                        "role": "user",
+                        "content": format_steering_message(source, queued_text),
+                    }
+                )
+            seed.append(
+                {
+                    "role": "user",
+                    "content": format_steering_message(
+                        STEERING_SOURCE_SUPERVISOR, steer_text
+                    ),
+                }
+            )
+            child_kwargs = dict(
+                conversation_id=conversation_id,
+                messages=seed,
+                config=child_config,
+                api_endpoint=api_endpoint,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                task=retained.task,
+                parent_run_id=run_id,
+                agent_definition=(resolved.name if resolved else None),
+                definition_fingerprint=(
+                    compute_definition_fingerprint(resolved) if resolved else None
+                ),
+                continuation_durability=continuation_durability,
+                run_log_writer=writer,
+                resumed_from_run_id=retained.run_id,
+            )
+            handle, failure = _launch_fleet_child(
+                retained.task, (resolved.name if resolved else None), child_kwargs
+            )
+            if failure is not None:
+                return failure
+            queued = len(retained.steering)
+            queued_note = (
+                f" plus {queued} undelivered queued steering "
+                f"entr{'y' if queued == 1 else 'ies'}"
+                if queued
+                else ""
+            )
+            return ToolResult(
+                ok=True,
+                content=(
+                    f"resumed {retained.handle_id} as a NEW run: started "
+                    f"{handle.handle_id}, seeded with its retained "
+                    f"transcript ({len(retained.messages)} messages"
+                    f"{queued_note}) and your message. The finished run "
+                    f"itself was not restarted. It is running now. Call "
+                    f"wait_agents to collect its result before you answer."
+                ),
+            )
+
         def send_to_agent(target_id: str, message: str) -> ToolResult:
             """Queue a steering message for a LIVE child (PR3b Task 2).
 
@@ -2366,16 +2728,31 @@ class AgentService:
             the mailbox and touches nothing else -- no cancel Event, no
             run row, no coordinator status.
 
+            PR3b Task 4 (continuation): when the id is NOT live, the
+            RETENTION store resolves next -- before the coordinator's
+            terminal handles -- because `prune_terminal` drops those at
+            every turn start while retention survives it (Task 2's
+            concern (a)). A retained finished child is RESUMED (a new
+            run, seeded; see `_resume_retained_child` above); a real
+            finished child with nothing retained, or a run id only the
+            database remembers (an earlier session), each get their own
+            honest refusal; only an id nothing has ever seen gets the
+            unknown-id copy.
+
             Args:
-                target_id: A live child's handle id, or its run id.
+                target_id: A live child's handle id, or its run id --
+                    or a RETAINED finished child's (either vocabulary).
                 message: The steering text (validated, then posted
-                    stripped; the drain point prepends the label).
+                    stripped; the drain point prepends the label -- or,
+                    for a resume, seeds the new run supervisor-labeled).
 
             Returns:
                 ok with honest queued-plus-latency copy naming the
-                resolved handle id; a refusal with its own copy for an
-                empty message, an oversize one, a finished child, or an
-                unknown id. Never raises.
+                resolved handle id (live), or the resumed-as-new-run copy
+                (retained); a refusal with its own copy for an empty
+                message, an oversize one, a finished-but-unretained
+                child, a pre-restart run id, or an unknown id. Never
+                raises.
             """
             if fleet is None:  # pragma: no cover — not wired without a fleet
                 return ToolResult(
@@ -2434,6 +2811,19 @@ class AgentService:
                     if handle.status not in TERMINAL_RUN_STATUSES
                 ]
             live_ids = ", ".join(h.handle_id for h in live) or "none"
+            # PR3b Task 4: not live -- try the RETENTION store next, and
+            # FIRST among the finished-child surfaces (Task 2's concern
+            # (a)): `prune_terminal` drops terminal handles at every turn
+            # start, so a finished child's ids may already be gone from
+            # the coordinator's handle map -- but its transcript survives
+            # in the retention store, keyed by both vocabularies (handle
+            # id first, Task 2's pinned order). Retention is ATOMIC with
+            # `finish` (one critical section), so a real retainable child
+            # can never be observed terminal-but-unretained by this
+            # lookup.
+            retained = fleet.get_retained(target_id)
+            if retained is not None:
+                return _resume_retained_child(retained, text)
             finished = next(
                 (
                     h
@@ -2443,19 +2833,48 @@ class AgentService:
                 None,
             )
             if finished is not None:
-                # PR3b Task 4's continuation seam: THIS branch becomes
-                # "resume the finished child with the retained transcript
-                # + this message" (spawn-slot accounting, definition
-                # re-resolution, resumed_from_run_id). Until then the
-                # honest answer is that the child finished.
+                # A REAL finished child with nothing retained: cancelled/
+                # superseded are never retained (the user killed it / it
+                # was replaced), and an oversize or evicted transcript is
+                # gone too. Honest refusal, never the unknown-id copy.
                 return ToolResult(
                     ok=False,
                     error=(
                         f"send_to_agent: sub-agent '{target_id}' has "
-                        f"finished ({finished.status}); a finished "
-                        f"sub-agent takes no more model turns, so there "
-                        f"is nothing to deliver to. Live sub-agent ids: "
-                        f"{live_ids}."
+                        f"finished ({finished.status}) and no retained "
+                        f"transcript is available for it (a cancelled or "
+                        f"superseded child is never retained; an oversize "
+                        f"or evicted transcript is not either), so it "
+                        f"cannot be resumed. Spawn a fresh sub-agent for "
+                        f"follow-up work. Live sub-agent ids: {live_ids}."
+                    ),
+                )
+            # A run id the DATABASE still knows but this process does not:
+            # a child that finished in an earlier session. Retention is
+            # in-memory by design (spec SS6: cross-restart resurrection is
+            # out of scope), so the honest answer names the real limit
+            # instead of pretending the id is unknown. Scoped to THIS
+            # conversation's sub-agent runs -- a foreign conversation's
+            # run id stays an unknown id here.
+            past = None
+            try:
+                past = self.db.get_run(target_id)
+            except Exception:  # noqa: BLE001 — a read failure is "unknown"
+                past = None
+            if (
+                past is not None
+                and past.get("agent_kind") == AGENT_KIND_SUBAGENT
+                and past.get("conversation_id") == conversation_id
+                and past.get("status") in TERMINAL_RUN_STATUSES
+            ):
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f"send_to_agent: run '{target_id}' finished in an "
+                        f"earlier session and its transcript is no longer "
+                        f"available -- retained transcripts live in memory "
+                        f"and do not survive an app restart. Spawn a fresh "
+                        f"sub-agent instead."
                     ),
                 )
             return ToolResult(
@@ -3267,9 +3686,11 @@ class AgentService:
 
             A sub-agent's record is NOT (PR3a-1 Task 2). It is persisted
             before return only if that child settled -- it had already
-            finished, the ``[agents] subagents_outlive_turn`` kill switch
-            is off, or the user cancelled this turn (see
-            ``_surviving_handles``). Otherwise the child keeps running:
+            finished, or the ``[agents] subagents_outlive_turn`` kill
+            switch is off (see ``_surviving_handles``; PR3b Task 5
+            removed user cancellation from this list -- with the switch
+            ON a stopped turn's children keep running). Otherwise the
+            child keeps running:
             its row is still ``running`` when this returns, and its own
             thread persists its terminal status later, from
             ``run_child``'s ``finally``. Anything reading a sub-agent's

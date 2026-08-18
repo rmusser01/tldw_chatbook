@@ -3,7 +3,7 @@ id: TASK-15701
 title: >-
   SimpleRAGCache sync get/put render a key that ignores three search-defining
   dimensions
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-12 23:05'
 labels:
@@ -63,10 +63,10 @@ cold misses after the upgrade.
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The synchronous `get`/`put` either accept and forward all three search-defining dimensions to `_make_key`, or are removed / made private if the async path is genuinely the only supported entry point — the decision is stated in the module docstring with its reason
-- [ ] #2 A test fails on today's behaviour: two sync `put`/`get` round trips that differ ONLY in `fts_match_construction` (and, separately, only in `keyword_source_types`, and only in `hybrid_fusion`) must not collide on one key
-- [ ] #3 If the sync API is kept, the async and sync paths are shown to render the SAME key for the same search, rather than each being asserted separately
-- [ ] #4 The "no production caller" claim is re-verified at the time of the fix and recorded, so a future reader knows whether this was still latent when it was closed
+- [x] #1 The synchronous `get`/`put` either accept and forward all three search-defining dimensions to `_make_key`, or are removed / made private if the async path is genuinely the only supported entry point — the decision is stated in the module docstring with its reason
+- [x] #2 A test fails on today's behaviour: two sync `put`/`get` round trips that differ ONLY in `fts_match_construction` (and, separately, only in `keyword_source_types`, and only in `hybrid_fusion`) must not collide on one key
+- [x] #3 If the sync API is kept, the async and sync paths are shown to render the SAME key for the same search, rather than each being asserted separately
+- [x] #4 The "no production caller" claim is re-verified at the time of the fix and recorded, so a future reader knows whether this was still latent when it was closed
 <!-- AC:END -->
 
 ## Related
@@ -78,3 +78,37 @@ cold misses after the upgrade.
   async path and point here.
 - **TASK-4110** — the precedent: fusion parameters absent from a cache key
   would have flattened that arc's sweep silently.
+
+## Implementation Notes
+
+**AC#1 — the sync API is KEPT and corrected, not removed.** It now accepts
+and forwards all three search-defining dimensions, so it renders the same key
+as the async path. The reason is stated in `get`'s docstring: the sync
+methods are the cache's ergonomic **test** surface — 58 call sites across
+five test modules — while production reads and writes go through the async
+path only. Removing a correct-but-unused API to fix a key bug would have
+traded a latent trap for 58 rewrites and no behavioural gain.
+
+**AC#4 — the "no production caller" claim re-verified at fix time
+(2026-08-18) and it still holds.** The only `SimpleRAGCache` traffic in
+`tldw_chatbook/` is `rag_service.py:1301` (`get_async`), `:1395`
+(`put_async`) and `:4229` (`get_metrics`). The `_global_cache` singleton has
+no consumer outside `simple_cache.py` itself. So this was closed while still
+latent, which is the state the task was filed to preserve.
+
+**AC#2 — three RED-first collision tests**, one per omitted dimension
+(`fts_match_construction`, `keyword_source_types`, `hybrid_fusion`),
+parametrized so each names the dimension it protects. Each asserts the
+*wrong-hit* failure specifically: the identical search must still hit, and
+the differing one must not be served the first search's rows. A missed hit
+would be harmless; being served another search's results is not.
+
+**AC#3 — shown, not asserted separately:** a sync `put` followed by an async
+`get_async` for the same search. That round trip cannot pass while the two
+paths render different keys, which is exactly what asserting each path's key
+in isolation would have failed to catch.
+
+`Tests/RAG/simplified/` + the three sibling suites: 354 passed. The one red
+(`test_config.py::test_config_loading_from_file`) is pre-existing on clean
+dev — baselined in a throwaway worktree at `e49c5dba8` before being called
+unrelated.

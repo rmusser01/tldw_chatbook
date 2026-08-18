@@ -77,7 +77,10 @@ from ..Console_Modules.dictation import (
 from ..Console_Modules.hands_free import (
     ConsoleHandsFreeSession,
 )
-from ..Console_Modules.agent import CONSOLE_AGENT_FLEET_SECTION_ID
+from ..Console_Modules.agent import (
+    CONSOLE_AGENT_CANCEL_ALL_ID,
+    CONSOLE_AGENT_FLEET_SECTION_ID,
+)
 from ..Console_Modules.prompt_queue import (
     ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
@@ -453,6 +456,10 @@ from ...Widgets.Console.console_context_controls import (
 from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
+)
+from ...Widgets.Console.console_agent_steering_bar import (
+    ConsoleAgentSteeringBar,
+    ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
@@ -2163,6 +2170,53 @@ class ChatScreen(BaseAppScreen):
         if cancelled:
             self._request_console_agent_fleet_sync()
 
+    @on(Button.Pressed, f"#{CONSOLE_AGENT_CANCEL_ALL_ID}")
+    def on_console_agent_cancel_all(self, event: Button.Pressed) -> None:
+        """Cancel every live child of the conversation (PR3b Task 5).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.cancel_all_subagents``,
+        which walks the current service plus the retained survivor owners
+        and cancels each live handle through the EXISTING per-handle
+        cancel/approval-revoke path -- no second mechanism. A non-zero
+        count requests one coalesced fleet resync so the rows and the
+        affordance's own visibility reflect the stop on the next tick.
+
+        Args:
+            event: The press on the agent section's "Cancel all agents"
+                button (``CONSOLE_AGENT_CANCEL_ALL_ID``); stopped here --
+                the delegation is this handler's whole job.
+        """
+        event.stop()
+        if self._agent._cancel_all_console_agents():
+            self._request_console_agent_fleet_sync()
+
+    @on(ConsoleAgentSteeringBar.SteeringSubmitted)
+    def on_console_agent_steering_submitted(
+        self, message: ConsoleAgentSteeringBar.SteeringSubmitted
+    ) -> None:
+        """Queue USER steering for the drilled-in child (PR3b Task 3).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.steer_subagent`` (which
+        owns resolution + boundary validation), and a successful post
+        requests one coalesced fleet-section resync so the queued-count
+        line reflects the new entry on the next tick. The bar's draft is
+        cleared only on a QUEUED submit (Qodo audit minor batch) -- a
+        refusal keeps the user's text in the input for retry rather than
+        destroying it with nothing delivered.
+        """
+        message.stop()
+        queued = self._agent._steer_console_agent_drilldown_child(
+            message.target_id, message.text
+        )
+        if queued:
+            self._request_console_agent_fleet_sync()
+            try:
+                self.query_one(ConsoleAgentSteeringBar).clear_draft()
+            except Exception:  # noqa: BLE001 -- a mid-recompose bar is fine
+                pass
+
     @on(Button.Pressed, "#console-context-rail-collapse")
     def on_console_context_rail_collapse(self, event: Button.Pressed) -> None:
         """Collapse the Console context rail and persist the preference."""
@@ -3576,7 +3630,17 @@ class ChatScreen(BaseAppScreen):
         # `_sync_console_agent_section` itself -- it is that DOM write's
         # memo and nothing else's (wave-4 console decomposition, task 3).
         self._console_agent_section_last: (
-            tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool] | None
+            tuple[
+                str,
+                str,
+                ConsoleInspectorSectionState,
+                str,
+                bool,
+                bool,
+                bool,
+                ConsoleAgentSteeringState,
+            ]
+            | None
         ) = None
         # PR2b Task 5: coalescing flag for `_request_console_agent_fleet_
         # sync` -- mirrors `_console_control_bar_sync_scheduled` exactly
@@ -4968,6 +5032,8 @@ class ChatScreen(BaseAppScreen):
             back_visible,
             section_open,
             full_log_visible,
+            steering_state,
+            cancel_all_visible,
         ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
@@ -4986,6 +5052,20 @@ class ChatScreen(BaseAppScreen):
             back_button.styles.display = "block" if back_visible else "none"
             full_log_button = self.query_one("#console-agent-view-full-log", Button)
             full_log_button.styles.display = "block" if full_log_visible else "none"
+            # PR3b Task 3: the drill-in steering bar applies its own
+            # visibility/queued-line writes from the derived state.
+            self.query_one(
+                "#console-agent-steering-bar", ConsoleAgentSteeringBar
+            ).sync_state(steering_state)
+            # PR3b Task 5: the whole-fleet kill switch paints only while
+            # a live child exists (derived beside the steering state so
+            # the two surfaces move together).
+            cancel_all_button = self.query_one(
+                f"#{CONSOLE_AGENT_CANCEL_ALL_ID}", Button
+            )
+            cancel_all_button.styles.display = (
+                "block" if cancel_all_visible else "none"
+            )
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -13917,6 +13997,12 @@ class ChatScreen(BaseAppScreen):
                     agent_full_log_available=(
                         self._agent._console_agent_full_log_available()
                     ),
+                    agent_steering_state=(
+                        self._agent._console_agent_steering_state()
+                    ),
+                    agent_cancel_all_visible=(
+                        self._agent._console_agent_cancel_all_visible()
+                    ),
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
@@ -14089,11 +14175,11 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
-            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
-                yield status_chips
-            # RAG-40: staged evidence belongs on the MAIN surface, directly
-            # above the composer it is about to be prepended to -- not only
-            # in an Inspector rail the staging path never opens.
+            # RAG-40: staged evidence belongs on the MAIN surface -- not only
+            # in an Inspector rail the staging path never opens. task-17661:
+            # ALL transient strips (staged evidence, prompt queue) sit at the
+            # TOP of the control deck, above the status line, so the area
+            # around the composer stays visually quiet.
             yield ConsoleStagedEvidenceStrip(
                 self._build_console_staged_evidence_strip_state(pending_launch),
                 id="console-staged-evidence-strip",
@@ -14122,6 +14208,8 @@ class ChatScreen(BaseAppScreen):
                     )
                 ),
             )
+            if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
+                yield status_chips
             composer = ConsoleComposerBar(
                 id="console-native-composer",
                 classes="ds-panel",
@@ -14647,9 +14735,22 @@ class ChatScreen(BaseAppScreen):
         count can over-report by one in the rare case a wake turn is
         mid-flight at nav-away; ``fleet_teardown_split``'s own contract is
         deliberately left untouched.
+
+        Qodo audit S1 (PR 1680): the staging is gated on
+        ``leave_console_runtime``'s return. On an overlapping
+        ChatScreen→ChatScreen navigation (a fleet-completion deep link
+        clicked while already on Console), the incoming screen claims the
+        runtime in ``restore_state`` BEFORE this screen unmounts, so this
+        superseded screen's leave is a designed no-op (``ConsoleRuntime.
+        detach_view``) and the sessions keep running under the successor.
+        Staging unconditionally toasted "N session(s) cancelled when you
+        left Console" for work that was never cancelled -- and never left
+        Console. A leave that did not end the visit reports nothing.
         """
         killed, surviving = controller.fleet_teardown_split()
-        await leave_console_runtime(self.app_instance, view=self)
+        ended = await leave_console_runtime(self.app_instance, view=self)
+        if not ended:
+            return
         if killed:
             self.app_instance._console_fleet_teardown_notice = killed
         if surviving:

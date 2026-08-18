@@ -4016,7 +4016,23 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
             return True
 
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
-    host = DestinationHarness(app, "settings")
+
+    # task-17660: this flow needs the REAL stylesheet. The bare harness
+    # loads no bundle, so `.settings-secondary-card { height: auto }` never
+    # applies and the card falls back to a container default that clamps it
+    # to a fraction of the pane — the checkbox lays out past the clamp,
+    # sibling detail rows paint over it, and pilot.click misses silently
+    # (returns False), so the draft never staged and Save truthfully said
+    # "no changes". The card grew past the clamp when Status row placement
+    # and Selection side chat landed; in the bundled app the card
+    # auto-grows and the control is reachable by scrolling, exactly as a
+    # user does below.
+    from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+
+    class _StyledDestinationHarness(DestinationHarness):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+    host = _StyledDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
@@ -4032,7 +4048,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
 
         assert toggle.value is expected_checked
 
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        clicked = await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        assert clicked, "checkbox click missed — widget not in view"
         await pilot.pause(0.1)
 
         assert app.app_config["console"]["collapse_large_pastes"] == initial_value

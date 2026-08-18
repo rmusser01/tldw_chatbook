@@ -4017,6 +4017,15 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
         )
         await _wait_for_focus(console.app, pilot, copy_button)
 
+        # task-17656: idle Speak moved from the message header into the
+        # action row between Copy and Edit (8ae87242a) — the walk gains a
+        # stop, exactly as the row's on-screen guide lists it.
+        await pilot.press("tab")
+        speak_button = console.query_one(
+            f"#console-message-action-speak-{message.id}", Button
+        )
+        await _wait_for_focus(console.app, pilot, speak_button)
+
         await pilot.press("tab")
         edit_button = console.query_one(
             f"#console-message-action-edit-{message.id}", Button
@@ -4029,6 +4038,24 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
         )
         await _wait_for_focus(console.app, pilot, save_as_button)
 
+        # task-17656: walk the rest of the row full circle back to Delete —
+        # every stop of a completed assistant reply is Tab-reachable in
+        # visual order, and focus never escapes the row.
+        for action_id in (
+            "regenerate",
+            "continue",
+            "feedback-up",
+            "feedback-down",
+            "delete",
+        ):
+            await pilot.press("tab")
+            stop = console.query_one(
+                f"#console-message-action-{action_id}-{message.id}", Button
+            )
+            await _wait_for_focus(console.app, pilot, stop)
+
+        transcript.focus_action(message.id, "save-as")
+        await _wait_for_focus(console.app, pilot, save_as_button)
         await pilot.press("enter")
         await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
 

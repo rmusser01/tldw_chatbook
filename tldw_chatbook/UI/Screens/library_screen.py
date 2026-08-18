@@ -356,7 +356,6 @@ from ...Workspaces import (
     build_library_workspace_depth_state,
     library_item_context_handoff,
 )
-from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -8797,18 +8796,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _invalidate_library_workspace_depth_state(self) -> None:
         self._library_workspace_depth_state_cache = None
-
-    def _next_local_workspace_identity(self) -> tuple[str, str]:
-        """Return a collision-free local workspace id and display name."""
-        registry_service = getattr(
-            self.app_instance, "workspace_registry_service", None
-        )
-        if registry_service is None:
-            # Preserve the original behavior when the registry is unavailable by
-            # falling back to a deterministic identity that mirrors the shared
-            # helper's first candidate.
-            return "workspace-local-1", "Workspace 1"
-        return next_local_workspace_identity(registry_service)
 
     def _library_workspace_depth_state(
         self,
@@ -30763,6 +30750,23 @@ class LibraryScreen(BaseAppScreen):
                     await asyncio.shield(retrieval_task)
                 except asyncio.CancelledError as error:
                     cancellation = cancellation or error
+                    # TASK-16450. Clear the delivered request before looping.
+                    # The repeated-cancel PATH is reachable -- Textual's
+                    # `cancel_group` selects by group/node with no state
+                    # filter and `Worker.cancel()` has no already-cancelled
+                    # guard, so every new exclusive search re-cancels a worker
+                    # that is still draining. It does NOT hot-spin (measured:
+                    # Tests/Library/test_library_rag_drain_loop.py -- one
+                    # iteration per delivered cancellation, then a normal
+                    # block), so this is hygiene rather than a bug fix: it
+                    # keeps `cancelling()` from staying elevated on a task
+                    # that goes on to complete normally, which is what any
+                    # enclosing cancel scope reads. The retain-and-re-raise
+                    # contract above is unaffected -- `cancellation` is
+                    # already captured.
+                    current = asyncio.current_task()
+                    if current is not None:
+                        current.uncancel()
             outcome = retrieval_task.result()
             if cancellation is not None:
                 raise cancellation
@@ -31704,39 +31708,63 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Workspace registry is not ready.", severity="warning")
             return
-        try:
-            workspace_id, workspace_name = self._next_local_workspace_identity()
-            registry_service.create_workspace(
-                workspace_id=workspace_id,
-                name=workspace_name,
-                description="Local workspace created from Library.",
-            )
-            registry_service.set_active_workspace(workspace_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Failed to create local Library workspace"
-            )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify("Local workspace could not be created.", severity="error")
-            return
+        from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
-        self._invalidate_library_workspace_depth_state()
-        # TASK-716: the whole-screen recompose replaces the rail and resets
-        # its scroll to the top, hiding the Details disclosure (and the
-        # updated Active row) the user was just working in. Preserve the
-        # rail's scroll offset across the rebuild.
-        self._preserve_library_rail_scroll()
-        self.refresh(recompose=True)
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            # TASK-713: creation also makes the workspace active, which
-            # retargets Console's context from another screen - say so.
-            notify(
-                f"Created local workspace {workspace_name} and made it active; "
-                "Console now targets it.",
-                severity="information",
-            )
+        def _done(result) -> None:
+            if result is None:
+                return
+            notify = getattr(self.app_instance, "notify", None)
+            for _folder, message in result.failed_folders:
+                if callable(notify):
+                    notify(message, severity="warning")
+            # Finding 2: the workspace record was already created by the
+            # modal regardless of what happens below, so the rail must
+            # always be rebuilt to show it -- activation failure only
+            # changes which toast fires, it must not skip the
+            # invalidate/scroll-preserve/recompose seam entirely.
+            activation_failed = False
+            if result.make_active:
+                try:
+                    registry_service.set_active_workspace(result.workspace_id)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to activate new Library workspace"
+                    )
+                    activation_failed = True
+            self._invalidate_library_workspace_depth_state()
+            # TASK-716: preserve the rail's scroll offset across the rebuild.
+            self._preserve_library_rail_scroll()
+            self.refresh(recompose=True)
+            if callable(notify):
+                if activation_failed:
+                    notify(
+                        "Workspace created but could not be activated.",
+                        severity="error",
+                    )
+                elif result.make_active:
+                    # TASK-713: activation retargets Console from another screen.
+                    notify(
+                        f"Created local workspace {result.name} and made it "
+                        "active; Console now targets it.",
+                        severity="information",
+                    )
+                else:
+                    notify(
+                        f"Created local workspace {result.name}.",
+                        severity="information",
+                    )
+            if result.project_skills:
+                from tldw_chatbook.Widgets.project_skills_import_modal import (
+                    maybe_offer_project_skills_import,
+                )
+
+                maybe_offer_project_skills_import(
+                    self.app_instance, result.project_skills
+                )
+
+        self.app.push_screen(
+            WorkspaceCreateModal(registry_service=registry_service), _done
+        )
 
     def _preserve_library_rail_scroll(self) -> None:
         """Restore the rail's scroll offset after the next recompose.

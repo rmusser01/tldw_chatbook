@@ -368,8 +368,20 @@ reconnected." Two things to internalise:
 ### Data & Privacy — Workspaces
 
 No draft — every action applies as you make it, and each is reversible
-("unarchive, rename again, or set active"). Type a name and press **Create**;
-**Show archived** widens the list; click a workspace to open its card.
+("unarchive, rename again, or set active"). **Create workspace…** opens the
+same creation dialog Console and Library use (see
+[Console sessions, tabs & workspaces](console/sessions-tabs-workspaces.md#workspaces)
+for the full walkthrough): a name prefilled "Workspace N", an optional list
+of folders to bind (validated as each is added; **Browse…** opens a directory
+picker), and a "Switch to this workspace" checkbox, checked by default —
+here, unlike the old inline row, checking it activates the workspace
+immediately on Create. Escape cancels the dialog with nothing created.
+**Show archived** widens the list; each row shows the workspace's name and
+its bound-folder count ("N folders"); click a row to open its card. A
+folder you add that contains a `.SKILLS/` project skills folder is
+annotated "— contains N project skill(s)" in the list, and creation is
+followed by a chained import prompt for it — see
+[Project skills](library/skills.md#project-skills-skills).
 
 | Control | What it does |
 |---|---|
@@ -531,11 +543,14 @@ a note on what would have to exist before Settings could own a default.
    saved paths." Move the file yourself, then restart: until you do, the app
    keeps using the old one, which is what **Active files (resolved this
    session)** is showing you.
-5. **Create a workspace and give an agent a folder.** Open **Workspaces**, type
-   a name, press **Create**. Select the new workspace, press **Set active**,
-   then under **Folders (agent file-tool access)** enter a folder path and press
-   **Add folder** — it is bound read-only. Press **Allow write** on that row if
-   the agent needs to write. Every step applies immediately; nothing to save.
+5. **Create a workspace and give an agent a folder.** Open **Workspaces** and
+   press **Create workspace…**. In the dialog, keep the prefilled name (or
+   type your own), enter a folder path and press **Add folder** — it is
+   validated and bound read-only — then leave "Switch to this workspace"
+   checked and press **Create**; the new workspace is created, bound, and
+   activated in one step. Click the new workspace's row to open its card,
+   then press **Allow write** on the folder's row if the agent needs to
+   write. Every step applies immediately; nothing to save.
 6. **Repair a configuration you broke.** Open **Diagnostics** and press
    **Validate Config** — the error names the problem, with secrets redacted. Fix
    it in the guided pages if you can. If not, open **Advanced Config**, press
@@ -664,3 +679,16 @@ unchanged from the prior stamp).*
 2026-08-17 (mounted-settings test drives the toggle both ways and reads
 the live config; headless Console probes verified both placements render;
 the rest of this page's content unchanged from the prior stamp).*
+*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
+(task-17650: Data & Privacy ▸ Workspaces' inline "type a name, press
+Create" row is retired — **Create workspace…** now opens the same shared
+creation dialog Console and Library use, with a prefilled name, optional
+validated folder bindings, and a "Switch to this workspace" checkbox that
+here defaults to activating the workspace on Create, unlike the old
+inline flow; the walkthrough's step 5 updated to match; the rest of this
+page's content unchanged from the prior stamp).*
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+"— contains N project skill(s)" in the creation dialog, followed by a
+chained import prompt after Create; the rest of this page's content
+unchanged from the prior stamp).*

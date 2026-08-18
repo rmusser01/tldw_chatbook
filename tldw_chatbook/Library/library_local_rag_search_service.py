@@ -505,9 +505,27 @@ class LibraryLocalRagSearchService:
         # row loses a position it used to hold at the front of the merge --
         # position 0 of each seam still comes first, in seam order. Deeper
         # in the list a fallback row can interleave ahead of a primary one,
-        # which is exactly what tiering would fix. Tiering this path is a
-        # follow-up that must be re-measured on the golden set, not a
-        # tidy-up; `Tests/Library/test_library_keyword_and_then_prefix.py`
+        # which is exactly what tiering would fix.
+        #
+        # MEASURED AND CLOSED (TASK-17955, 2026-08-18): tiering is
+        # UNOBSERVABLE on the gated corpus. Note the reason carefully, because
+        # the obvious one is wrong: it is NOT that nothing gets cut. MRR and
+        # NDCG consume ORDER, so a reordering changes a score with nothing
+        # cut at all (Qodo PR-1801 caught that argument). The actual reason is
+        # narrower -- a reordering can only move a score for a query with >=2
+        # rows AND a RELEVANT row among them, and this corpus has none: 59 of
+        # 60 plain queries return 0 or 1 row, and the single 6-row query
+        # (`ng-mains-supply`) retrieves no relevant document at all, so every
+        # permutation of it scores identically.
+        #
+        # Untiered is therefore the MEASURED choice, not an unpaid debt, and
+        # TASK-16071's "the 15700 tier design would apply" note is retired.
+        # RE-CHECK when the corpus or construction changes -- runnable, not
+        # prose: `Docs/superpowers/qa/2026-08-18-merge-tiering/
+        # tier_observability_census.py`. If ANY plain query starts returning
+        # >=2 rows INCLUDING a relevant one, ordering becomes observable and
+        # this decision is due for review. Tiering before then would ship an
+        # ordering nothing can distinguish; `Tests/Library/test_library_keyword_and_then_prefix.py`
         # pins the untiered order so the change cannot happen silently.
         #
         # Dedup across seams is structurally vacuous -- the seams are

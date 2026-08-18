@@ -10170,10 +10170,26 @@ class TldwCli(
 
         await forward_model_catalog_refreshed(self, event)
 
-    def _maybe_offer_first_run_wizard(self) -> None:
-        """Offer the setup wizard once; otherwise nudge unfinished setups."""
+    def _maybe_offer_first_run_wizard(self) -> bool:
+        """Offer the setup wizard once; otherwise nudge unfinished setups.
+
+        Returns:
+            True iff the wizard OR the recovery dialog was pushed this
+            launch (the ``"offer"`` and ``"prompt"`` branches); False for
+            every other outcome (already scheduled, the resume-toast
+            "none" branch -- which still runs and notifies -- or a caught
+            exception). Callers use this to decide whether a lower-
+            priority startup offer (e.g. the project-.SKILLS import
+            prompt, spec 2026-08-17 §5.4) should defer to next launch
+            instead of competing with the wizard OR the recovery dialog
+            for the user's attention -- both branches push a screen onto
+            the stack, so both must suppress the lower-priority offer
+            (final review 2026-08-17, Finding 3: the "prompt" branch used
+            to return False here, letting the skills-import modal stack
+            on top of a just-pushed ``SetupRecoveryDialog``).
+        """
         if getattr(self, "_first_run_startup_action_scheduled", False):
-            return
+            return False
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
                 setup_recovery_action,
@@ -10184,9 +10200,11 @@ class TldwCli(
             if action == "offer":
                 self._first_run_startup_action_scheduled = True
                 self.call_after_refresh(self._push_first_run_wizard)
+                return True
             elif action == "prompt":
                 self._first_run_startup_action_scheduled = True
                 self.call_after_refresh(self._push_first_run_recovery_dialog)
+                return True
             elif action == "none" and should_show_resume_toast(
                 self.app_config, os.environ
             ):
@@ -10202,6 +10220,7 @@ class TldwCli(
                 "First-run startup action failed (error_type={})",
                 type(exc).__name__,
             )
+        return False
 
     def _maybe_warn_config_load_failure(self) -> None:
         """Warn (never block) when boot's config load fell back to defaults.
@@ -10266,6 +10285,70 @@ class TldwCli(
         self.push_screen(
             FirstRunSetupWizard(self), self._handle_first_run_wizard_result
         )
+
+    def _maybe_offer_project_skills_import(self) -> None:
+        """Offer to import a project's .SKILLS/ folder (spec 2026-08-17 §5.4).
+
+        ``exit_on_error=False`` matches the repo's own precedent for an
+        optional, best-effort worker (``action_quit``'s ``_confirm_and_quit``,
+        the screen-navigation dispatch worker): Textual's default
+        (``exit_on_error=True``) makes ANY unhandled exception in the worker
+        exit the whole app, which an optional startup nicety must never do.
+        The worker body below additionally never lets an exception reach the
+        worker at all -- this is belt AND suspenders.
+        """
+        try:
+            self.run_worker(
+                self._discover_project_skills_for_startup,
+                thread=True,
+                exclusive=True,
+                group="project-skills-discovery",
+                exit_on_error=False,
+            )
+        except Exception:
+            logger.opt(exception=True).debug("project-skills startup offer failed")
+
+    def _discover_project_skills_for_startup(self) -> None:
+        """Worker body: every line here must be exception-safe.
+
+        This runs on a worker thread with ``exit_on_error=False`` set above,
+        but that alone still leaves an unhandled exception logged as a
+        worker error and the offer silently dropped with a stack trace in
+        the logs -- an entirely optional startup nicety earns a clean,
+        quiet no-op instead. ``get_cli_setting``/``get_user_data_dir`` (I/O,
+        config parsing), ``startup_discovery_for`` (filesystem walk), and
+        ``call_from_thread`` (can raise if the app is already shutting down
+        mid-walk) are all covered by the one try/except below.
+        """
+        try:
+            from tldw_chatbook.config import get_cli_setting, get_user_data_dir
+            from tldw_chatbook.Skills_Interop.project_skills_prompt import (
+                startup_discovery_for,
+            )
+
+            try:
+                cwd = Path.cwd().resolve()
+            except OSError:
+                return  # launch directory deleted out from under the process
+            discovery = startup_discovery_for(
+                cwd,
+                enabled=bool(
+                    get_cli_setting("skills", "project_skills_prompt_enabled", True)
+                ),
+                ledger_dir=get_user_data_dir(),
+            )
+            if discovery is None:
+                return
+            self.call_from_thread(self._push_project_skills_import_modal, discovery)
+        except Exception:
+            logger.opt(exception=True).debug("project-skills startup discovery failed")
+
+    def _push_project_skills_import_modal(self, discovery) -> None:
+        from tldw_chatbook.Widgets.project_skills_import_modal import (
+            maybe_offer_project_skills_import,
+        )
+
+        maybe_offer_project_skills_import(self, (discovery,))
 
     def _push_first_run_recovery_dialog(self) -> None:
         from tldw_chatbook.UI.Wizards.first_run_recovery_dialog import (
@@ -10524,11 +10607,14 @@ class TldwCli(
             f"Screen navigation: Pushed initial {screen_class.__name__}"
             f" (target={resolved_screen_name})"
         )
-        self._maybe_offer_first_run_wizard()
+        wizard_offered = self._maybe_offer_first_run_wizard()
         try:
             self._maybe_warn_second_instance()
         except Exception as e:
             logger.error(f"Second-instance warning failed: {e}")
+        if not wizard_offered:
+            # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
+            self._maybe_offer_project_skills_import()
         try:
             self._maybe_warn_config_load_failure()
         except Exception as e:

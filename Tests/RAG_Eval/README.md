@@ -31,7 +31,21 @@ every golden query through the real seam across all three profile modes.
 > P2c feature premises, not an omission. A **fourth** premise died the same
 > way in TASK-15965 (2026-08-13): pseudo-relevance feedback was probed
 > before it was built and came back NULL — see "The fourth retired P2c
-> premise" under the admission protocol. Start at the **headroom table**
+> premise" under the admission protocol. A **fifth** died on 2026-08-18
+> (TASK-16072): the **clarification gate**, killed by a CENSUS rather than a
+> probe — of 60 golden queries only 2 have more than one relevant document,
+> and both of those have two CORRECT answers, so a clarifying question would
+> ask the user to discard a right one. Qualifying queries: 0 against a
+> pre-registered bar of 5. The census cost one query over the fixture and
+> reached the same kind of answer PRF needed a full probe for, which is why
+> the next candidate (TASK-18155, granularity router) required a census
+> first. A **sixth** died on 2026-08-18 (TASK-18155): the **granularity
+> router**, killed by that census — **168 of the 172 corpus documents fit in
+> a single chunk**, so a chunk already IS the document for them, and in
+> `hybrid` (the shipped mode) **no query has a duplicate document slot at
+> all**. Rescuable: **1** against the same inherited bar of 5, and that one
+> is a similarity miss fusion already fixed. See "The sixth retired P2c
+> premise". Start at the **headroom table**
 > below: it names, per category, what is left to improve and what can only
 > be regressed.
 
@@ -201,13 +215,14 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | 0.000 | **0.200** | 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
+| `prompt` | 5 | 0.000 | 0.000 &nbsp;⚠️ | **0.200** | ⚠️ **the `plain` cell is VACUOUS, not measured** — the harness leaves `prompt_scope_service=None` so that seam reports itself unavailable (TASK-18255); read only the `semantic`/`hybrid` cells as retrieval. 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
 | **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
 
 **The remaining 0.000 rows are P2c's admission targets.** `negation` (all
-three modes) and `prompt` (still 0.000 in `semantic` and `plain`) are the
-cells with room to rise, and they are not the same kind of problem:
+three modes) and `prompt` (0.000 in `semantic`; `plain`'s 0.000 is **vacuous** — see the
+⚠️ note) are the cells with room to rise, and they are not the same kind of
+problem:
 
 - **`negation` 0.000 in all three modes is a genuine open capability gap.**
   Three fixtures, each describing the exception *without ever naming the
@@ -807,6 +822,71 @@ audited in place rather than by re-authoring the candidates.
   company before its ranks meant anything; 24 documents were added purely
   for that.
 
+### The sixth retired P2c premise: the granularity router, killed by census (TASK-18155, 2026-08-18)
+
+**Verdict: NULL.** Full record:
+`Docs/superpowers/qa/2026-08-18-granularity-census/report.md`; rerunnable
+census: `granularity_census.py` beside it.
+
+The premise was per-query routing between chunk-level and document-level
+retrieval. It has **two** mechanisms, and the cheap corpus count only sees
+the first:
+
+1. **Direct** — the query's own relevant document is multi-chunk.
+2. **Displacement** — another document eats several top-k slots, because the
+   cut happens at ROW level and rows collapse to documents afterwards
+   (`canonicalize.py`: *"one document can occupy several of the top-k
+   slots"*). This one needs a live index, and the census ran one.
+
+`plain` is structurally exempt: it returns whole items, so it is already
+document-granular.
+
+**Measured with the real `ChunkingService` at the profile's own settings
+(384 words / 64 overlap): 172 documents produce 179 chunks. 168 of 172 are
+single-chunk** — a chunk already IS the document for 98% of the corpus. Only
+four documents chunk at all.
+
+| population | semantic | hybrid |
+|---|---|---|
+| direct (relevant doc multi-chunk) | 4, of which 3 already HIT | 4, **all HIT** |
+| displacement-qualifying | **0** | **0** (no query has ANY duplicate slot) |
+| **rescuable** | **1** | **0** |
+| exposure: already-HIT queries a reorder could only move DOWN | 9 | 0 |
+
+**1 against the bar of 5 → BELOW.** Three things make the null solid rather
+than marginal:
+
+- The single rescuable query, `kw-plant-maintenance-record`, has **zero**
+  duplicate slots — displacement is not its mechanism. It is the fusion
+  arc's known similarity miss (*"semantic ABSENT from top-10, present ~rank
+  22"*), and **fusion weighting already rescued it**, which is why hybrid
+  reads HIT.
+- In the **shipped** mode there is nothing to act on at all: zero duplicate
+  slots across all 60 queries.
+- The exposure asymmetry is PRF's again — no gain available, nine
+  currently-correct semantic queries put at risk of reordering.
+
+**Two apparent qualifiers were instrument artifacts**, and the exclusions are
+now explicit in the script: a `negative` query has an empty `relevant_slugs`,
+so it registers MISS *by construction* (all 7 do, regardless of retrieval);
+and a `prompt` target has **no vector index**, so no freed slot can admit it.
+Both are "not applicable" rendering as "failed" — the same species as
+TASK-18255.
+
+**Why the bar was not chosen to fit**: the census was run BEFORE the bar was
+registered (the wrong order). The bar is therefore **inherited verbatim** —
+≥5, the number PRF's clause 1 and the clarification gate both used — rather
+than invented after the fact.
+
+**On surfaces**: a router would be the third over one capability, after the
+`include_parent_docs` family (retired inert, TASK-16174) and
+`expand_document` (the gated pull-based replacement). Where whole-document
+context is genuinely wanted, the demand-driven tool already serves it.
+
+**What would reopen it**: this is a property of THIS corpus. 168 of 172 docs
+fit one chunk; a long-form corpus would move every number. Re-run the script
+if the fixture gains substantial long documents.
+
 ### The fourth retired P2c premise: PRF, probed before built (TASK-15965, 2026-08-13)
 
 > **Every probe figure in this section was re-measured on 2026-08-14 under the
@@ -1264,11 +1344,24 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 
   For media, notes and conversations the semantic leg covers all of this
   completely. Prompts have no semantic leg — B2 gave them an FTS sub-leg and
-  deliberately no vector index — so the `prompt` category still reads 0.000
-  in `semantic` and `plain`, and reads 0.200 in `hybrid` on the strength of
-  that single rescued query. Do not read a `prompt` 0.000 as a
-  prompts-retrieval defect, and do not read the other categories' hybrid
-  numbers as evidence that the keyword leg is contributing to them.
+  deliberately no vector index — so the `prompt` category reads 0.000 in
+  `semantic`, and reads 0.200 in `hybrid` on the strength of that single
+  rescued query. Do not read a `prompt` 0.000 as a prompts-retrieval defect,
+  and do not read the other categories' hybrid numbers as evidence that the
+  keyword leg is contributing to them.
+
+  **`plain`'s 0.000 has a DIFFERENT cause, and this paragraph used to give
+  the wrong one** (corrected 2026-08-18, TASK-18255). The missing vector
+  index cannot explain `plain`, which never consults a vector index at all.
+  `plain` fans out over the Library's own four seams, and the harness
+  **deliberately does not wire the prompts one** — its fake app sets
+  `prompt_scope_service=None`, so `_search_prompts` returns `(False, [])`:
+  the seam reporting itself UNAVAILABLE. The cell is therefore **vacuous by
+  construction**, not a measured zero, and production does wire the service
+  (`app.py:5682`). The warning above was right for the wrong reason in
+  `plain`'s case — and TASK-17855 nonetheless filed the defect this sentence
+  warns against, because a `0.000` renders identically whether it means "not
+  measured" or "measured and found nothing".
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and

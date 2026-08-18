@@ -150,6 +150,10 @@ from ...Agents.agent_models import (
     TERMINAL_RUN_STATUSES,
 )
 from ...Chat.cost_display import format_token_count
+from ...Widgets.Console.console_agent_steering_bar import (
+    STEERING_STATE_HIDDEN,
+    ConsoleAgentSteeringState,
+)
 from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionState,
     InspectorSectionRow,
@@ -182,6 +186,14 @@ _AGENT_STATUS_GLYPHS: Dict[str, str] = {
 #: ``chat_screen.py``'s ``RowActivated`` handler matches against -- one
 #: constant so the two sides can never drift apart.
 CONSOLE_AGENT_FLEET_SECTION_ID = "agent-fleet"
+
+#: The "Cancel all agents" button's DOM id (PR3b Task 5) -- constructed
+#: in ``left_rail.py``'s ``compose()``, matched by ``chat_screen.py``'s
+#: ``@on`` selector, and written by its ``_sync_console_agent_section``
+#: apply; one constant, same drift rule as the section id above. The UI
+#: suite (``test_console_agent_cancel_all.py``) deliberately pins the
+#: LITERAL instead, so a silent rename here still fails a test.
+CONSOLE_AGENT_CANCEL_ALL_ID = "console-agent-cancel-all"
 
 #: Leading glyph for the turn-activity line's tool state. Same glyph the
 #: transcript's completed TOOL markers use (``format_agent_step_marker``),
@@ -355,6 +367,23 @@ def _fleet_row_from_handle(handle: "FleetHandle", *, now: float) -> InspectorSec
     if handle.total_tokens:
         token_segment = f"{format_token_count(handle.total_tokens)} tok"
         secondary = f"{secondary} · {token_segment}" if secondary else token_segment
+    # PR3b Task 3 (spec §6 latency honesty): a posted steering entry is
+    # QUEUED until the child's next drain boundary consumes it, and the
+    # row says so. `queued_steering` is computed onto every coordinator
+    # copy from the mailbox itself (never stored on the live handle), so
+    # this figure can never disagree with what the drain would deliver;
+    # it defaults 0 for the historical/fallback row sources, which never
+    # reach this builder anyway. Terminal rows drop the segment (Qodo
+    # audit minor batch): a finished/errored/cancelled child never drains
+    # its mailbox again, so "steering queued (N)" on such a row is a
+    # delivery promise the app can no longer keep -- the mailbox copy
+    # still reports the count, which is exactly why the gate lives here.
+    queued_steering = int(getattr(handle, "queued_steering", 0) or 0)
+    if queued_steering and status not in TERMINAL_RUN_STATUSES:
+        steering_segment = f"steering queued ({queued_steering})"
+        secondary = (
+            f"{secondary} · {steering_segment}" if secondary else steering_segment
+        )
     return InspectorSectionRow(
         row_id=handle.handle_id,
         primary_text=primary,
@@ -778,8 +807,18 @@ class ConsoleAgentController:
                         steps = "\n".join(
                             f"{s.kind}: {s.text}" for s in live_run.steps
                         )
+                # PR3b Task 4: a resumed sub-agent (send_to_agent to a
+                # finished child starts a NEW run seeded with its retained
+                # transcript) carries its lineage in the header. The run
+                # row's `resumed_from_run_id` flows here for free (the
+                # bridge reads SELECT * row dicts); `.get(...) or ""`
+                # keeps pre-v11 rows (key absent or NULL) byte-identical.
+                resumed_from = str(record.get("resumed_from_run_id") or "")
+                header = f"Sub-agent · {record.get('status')}"
+                if resumed_from:
+                    header += f" · resumed from {resumed_from}"
                 return (
-                    f"Sub-agent · {record.get('status')} (Back)",
+                    f"{header} (Back)",
                     steps,
                     str(record.get("task") or ""),
                 )
@@ -1027,7 +1066,17 @@ class ConsoleAgentController:
 
     def _console_agent_section_payload(
         self,
-    ) -> tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool]:
+    ) -> tuple[
+        str,
+        str,
+        ConsoleInspectorSectionState,
+        str,
+        bool,
+        bool,
+        bool,
+        ConsoleAgentSteeringState,
+        bool,
+    ]:
         """Derive everything the mounted Agent rail should be showing.
 
         TASK-251: equality-guarded against the last successfully-applied
@@ -1075,8 +1124,17 @@ class ConsoleAgentController:
 
         Returns:
             ``(status_line, steps_text, fleet_section_state, fleet_line,
-            back_visible, section_open, full_log_visible)`` -- the exact
-            tuple the screen compares against its last applied payload.
+            back_visible, section_open, full_log_visible, steering_state,
+            cancel_all_visible)`` -- the exact tuple the screen compares
+            against its last applied payload. ``steering_state`` (PR3b
+            Task 3) is the drill-in steering bar's
+            ``ConsoleAgentSteeringState`` -- a frozen dataclass, so the
+            payload's ``==`` equality guard keeps working unchanged, the
+            same argument PR2b Task 4 recorded for
+            ``ConsoleInspectorSectionState``. ``cancel_all_visible``
+            (PR3b Task 5) is the "Cancel all agents" affordance's
+            visibility -- extending THIS payload rather than adding a
+            second equality guard, per Task 3's landing note.
         """
         status_line, steps_text, _subagents_text = self._console_agent_section_lines()
         fleet_section_state = self._console_agent_fleet_section_state()
@@ -1111,6 +1169,11 @@ class ConsoleAgentController:
             back_visible,
             section_open,
             full_log_visible,
+            # Derived AFTER `_console_agent_section_lines` above, which
+            # self-heals a stale drill-in scope first (Finding C) -- though
+            # the derivation re-checks the scope itself defensively.
+            self._console_agent_steering_state(),
+            self._console_agent_cancel_all_visible(),
         )
 
     # -- PR2b Task 4: the fleet mini-section (states 1/2, spec §7) ---------
@@ -1242,6 +1305,145 @@ class ConsoleAgentController:
         if cancel_subagent is None:
             return False
         return bool(cancel_subagent(conversation_id, row_id))
+
+    def _console_agent_cancel_all_visible(self) -> bool:
+        """Whether the "Cancel all agents" affordance should be offered.
+
+        PR3b Task 5: visible exactly while the conversation has at least
+        one LIVE child -- read from ``bridge.fleet_snapshot``, the SAME
+        live source the fleet rows and the steering-bar visibility read,
+        so the three surfaces can never disagree about whether live work
+        exists. A fleet of finished children (rows still on screen) hides
+        it: offering a kill switch for work that already ended would be
+        a lie.
+
+        Returns:
+            ``True`` only with a bridge, an active conversation, and a
+            live (non-terminal) handle in its fleet snapshot; ``False``
+            -- never raises -- otherwise.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return False
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return False
+        return any(
+            handle.status not in TERMINAL_RUN_STATUSES
+            for handle in fleet_snapshot(conversation_id)
+        )
+
+    def _cancel_all_console_agents(self) -> int:
+        """Cancel every live child of the active conversation (PR3b Task 5).
+
+        The exact shape of ``_cancel_console_agent_fleet_row`` above, for
+        the same reasons: ``getattr`` guards degrade a bare test double
+        to "nothing cancelled", never a raise, and no enumeration happens
+        here -- ``ConsoleAgentBridge.cancel_all_subagents`` owns the
+        owner walk and delegates each handle to the existing per-handle
+        revocation path (no second mechanism).
+
+        Returns:
+            The number of children actually cancelled -- 0 for no
+            bridge, no active conversation, or an idle fleet.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return 0
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return 0
+        cancel_all = getattr(bridge, "cancel_all_subagents", None)
+        if cancel_all is None:
+            return 0
+        return int(cancel_all(conversation_id))
+
+    def _console_agent_steering_state(self) -> ConsoleAgentSteeringState:
+        """Derive the drill-in steering bar's state (PR3b Task 3).
+
+        Visible ONLY while drilled into a LIVE child (spec §1's owner
+        pin: the panel watches/steers, never launches) -- never a
+        finished/historical child, never the overview. The drill-in
+        target (``_console_agent_drilldown_run_id``, a RUN id) is matched
+        against the live fleet snapshot in both vocabularies, the same
+        pair ``_console_agent_drilldown_target_run_id`` accepts; the
+        state then carries the matched handle's HANDLE id as the steering
+        target -- the mailbox's own key, the panel rows' identity, and
+        the vocabulary ``ConsoleAgentBridge.steer_subagent`` resolves
+        first.
+
+        ``queued`` is the handle copy's ``queued_steering`` -- computed
+        from the coordinator's mailbox at snapshot time (PR3b Task 1), so
+        the bar's "steering queued (N)" line can never disagree with what
+        the child's next drain would actually deliver.
+
+        Returns:
+            The bar's ``ConsoleAgentSteeringState``; the hidden state --
+            never raises -- when not drilled in, the drill-in is scoped to
+            another conversation, there is no bridge/fleet surface, the
+            target cannot be found among live handles, or it has gone
+            terminal.
+        """
+        drill = self._console_agent_drilldown_run_id
+        if not drill:
+            return STEERING_STATE_HIDDEN
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return STEERING_STATE_HIDDEN
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if (
+            not conversation_id
+            or conversation_id != self._console_agent_drilldown_conversation_id
+        ):
+            return STEERING_STATE_HIDDEN
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return STEERING_STATE_HIDDEN
+        for handle in fleet_snapshot(conversation_id):
+            if drill not in (handle.run_id, handle.handle_id):
+                continue
+            if handle.status in TERMINAL_RUN_STATUSES:
+                return STEERING_STATE_HIDDEN
+            return ConsoleAgentSteeringState(
+                visible=True,
+                target_id=handle.handle_id,
+                queued=int(getattr(handle, "queued_steering", 0) or 0),
+            )
+        return STEERING_STATE_HIDDEN
+
+    def _steer_console_agent_drilldown_child(self, target_id: str, text: str) -> bool:
+        """Route one validated steering submit to the bridge (PR3b Task 3).
+
+        The exact shape of ``_cancel_console_agent_fleet_row`` above, for
+        the same reasons: ``getattr`` guards degrade a bare test double to
+        "no", never a raise, and no resolution happens here --
+        ``ConsoleAgentBridge.steer_subagent`` owns both id vocabularies
+        and the boundary validation (the bar already refused
+        empty/oversize drafts with its own copy before posting).
+
+        Args:
+            target_id: The steering target the bar's submit message
+                carried (the drilled-in child's handle id).
+            text: The stripped steering text.
+
+        Returns:
+            Whether the entry was actually queued -- ``False`` for no
+            bridge, no active conversation, an empty target, or a bridge
+            refusal (unknown/terminal target, invalid text).
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id or not target_id:
+            return False
+        steer_subagent = getattr(bridge, "steer_subagent", None)
+        if steer_subagent is None:
+            return False
+        return bool(steer_subagent(conversation_id, target_id, str(text or "")))
 
     def _console_agent_fleet_section_state(self) -> ConsoleInspectorSectionState:
         """Build the fleet mini-section's rows + header summary (states 1/2).

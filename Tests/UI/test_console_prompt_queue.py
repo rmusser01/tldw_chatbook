@@ -228,7 +228,17 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(size) -> None
 
         assert region.display
         assert region.region.height == 1
-        assert region.region.y + region.region.height == composer.region.y
+        # task-17661: ALL transient strips sit at the top of the control
+        # deck, above the status line — the shelf's nearest lower neighbor
+        # in the default (chips-above) placement is the status row, and the
+        # composer keeps its quiet gap below the chips. DOM-order geometry,
+        # exact in any harness.
+        chips = console.query_one("#console-status-chips")
+        assert region.region.y + region.region.height == chips.region.y
+        assert (
+            chips.region.y + chips.region.height
+            <= composer.region.y - composer.styles.margin.top
+        )
         assert manage.region.right <= region.region.right
         assert pause.region.right <= region.region.right
         assert manage.region.right <= pause.region.x

@@ -573,15 +573,33 @@ class ConsoleFleetWakeCoordinator:
                     "wake delivery UI hook raised (exception_type={})",
                     type(exc).__name__,
                 )
-        task = loop.create_task(
-            self._deliver(
-                conversation_id,
-                session_id,
-                tuple(bucket),
-                notice,
-                authorization,
+        # Qodo audit minor batch: `_delivering` must be set BEFORE the hook
+        # and the task (the poll-beat race above), so a `create_task` that
+        # raises -- the loop closing between the `is_closed()` check and
+        # this call is the live shape -- must CLEAR the flags on its way
+        # out. Leaving them set wedged every future `_attempt` in the
+        # process at the `self._delivering is not None` gate: no wake could
+        # ever fire again. The bucket is untouched, so the wake is
+        # deferred to the next attempt, not lost.
+        try:
+            task = loop.create_task(
+                self._deliver(
+                    conversation_id,
+                    session_id,
+                    tuple(bucket),
+                    notice,
+                    authorization,
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001 -- a failed wake defers, never wedges
+            self._delivering = None
+            self._delivering_session = None
+            logger.warning(
+                "wake delivery task could not be scheduled; deferring "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
+            return
         self._delivery_tasks.add(task)
         task.add_done_callback(self._delivery_tasks.discard)
 

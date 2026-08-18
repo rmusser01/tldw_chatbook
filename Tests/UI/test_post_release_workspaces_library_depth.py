@@ -251,6 +251,12 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -301,6 +307,12 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -343,6 +355,12 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = service.get_active_workspace()
@@ -518,12 +536,81 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
         notifications: list[str] = []
         app.notify = lambda message, **kwargs: notifications.append(str(message))
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.3)
 
         assert any(
             "made it active" in message and "Console" in message
             for message in notifications
         ), f"expected an activation-aware creation toast, got {notifications!r}"
+
+
+@pytest.mark.asyncio
+async def test_create_workspace_recomposes_after_activation_failure() -> None:
+    """Finding 2: activation failure must not skip the depth-state
+    invalidation, rail-scroll preservation, or recompose seam -- the
+    workspace WAS created (it just could not be switched to), so the rail
+    must still be rebuilt to show it exists.
+
+    Pinned by monkeypatching the real registry service's
+    set_active_workspace to raise, then spying on
+    LibraryScreen._invalidate_library_workspace_depth_state to prove the
+    seam is (or is not) reached.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_shell_ready(screen, pilot)
+        await _open_library_details(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        def _boom(workspace_id: str) -> None:
+            raise RuntimeError("simulated activation failure")
+
+        app.workspace_registry_service.set_active_workspace = _boom
+
+        invalidate_calls: list[bool] = []
+        original_invalidate = screen._invalidate_library_workspace_depth_state
+
+        def _tracking_invalidate() -> None:
+            invalidate_calls.append(True)
+            original_invalidate()
+
+        screen._invalidate_library_workspace_depth_state = _tracking_invalidate
+
+        notifications: list[str] = []
+        app.notify = lambda message, **kwargs: notifications.append(str(message))
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause(0.3)
+
+        # The workspace was created despite the activation failure.
+        created = [
+            workspace
+            for workspace in app.workspace_registry_service.list_workspaces()
+            if workspace.name == "Workspace 1"
+        ]
+        assert created, "workspace creation itself must have succeeded"
+
+        assert invalidate_calls, (
+            "activation failure must not skip the depth-state invalidation "
+            "and recompose seam -- the created workspace must still show "
+            "up in the rail"
+        )
+        assert any(
+            "could not be activated" in message for message in notifications
+        ), f"expected an activation-failure notice, got {notifications!r}"
 
 
 @pytest.mark.asyncio
@@ -571,6 +658,11 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         assert scrolled_to > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.6)
 
         rail = screen.query_one("#library-rail")

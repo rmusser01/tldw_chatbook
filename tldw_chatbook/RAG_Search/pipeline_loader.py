@@ -52,6 +52,24 @@ class PipelineConfig:
     components: Optional[Dict[str, Dict[str, Any]]] = None
 
 
+#: Middleware ids `_apply_before_middleware` actually implements. A name not
+#: here is a PROMISE, not a stage: TASK-17600 deleted eight such names from the
+#: bundled TOML, and Qodo (PR #1778) caught that the deletion never reaches an
+#: installation that already has a user copy -- `load_pipeline_config` writes
+#: one on first run and prefers it forever after. So the filter is applied at
+#: LOAD, to whatever file is loaded, rather than only to the shipped file.
+#:
+#: Filtering rather than migrating is deliberate, and follows TASK-17365's
+#: floor-over-migration reasoning: a loader may refuse to honour a name it
+#: cannot implement, but it should not silently rewrite a file the user owns.
+IMPLEMENTED_BEFORE_MIDDLEWARE: frozenset[str] = frozenset(
+    {"query_expansion", "technical_term_detector"}
+)
+
+#: Middleware ids `_apply_after_middleware` actually implements.
+IMPLEMENTED_AFTER_MIDDLEWARE: frozenset[str] = frozenset({"citation_enhancement"})
+
+
 class PipelineLoader:
     """Loads and manages pipeline configurations from TOML files."""
 
@@ -68,6 +86,54 @@ class PipelineLoader:
             "perform_full_rag_pipeline": chat_rag_events.perform_full_rag_pipeline,
             "perform_hybrid_rag_search": chat_rag_events.perform_hybrid_rag_search,
         }
+
+    def _implemented_middleware(
+        self, pipeline_id: str, declared: Dict[str, Any]
+    ) -> Dict[str, List[str]]:
+        """Drop declared middleware names this loader cannot run.
+
+        Args:
+            pipeline_id: The pipeline the names were declared under.
+            declared: The raw ``middleware`` table from the config file.
+
+        Returns:
+            The same table with unimplemented names removed, phase by phase.
+        """
+        allowed = {
+            "before": IMPLEMENTED_BEFORE_MIDDLEWARE,
+            "after": IMPLEMENTED_AFTER_MIDDLEWARE,
+        }
+        kept: Dict[str, List[str]] = {}
+        for phase, names in (declared or {}).items():
+            if not isinstance(names, list):
+                # Qodo PR-1795 finding 1: preserving a malformed value let it
+                # reach PipelineConfig unchecked. A phase is a LIST of names or
+                # it is not a phase; anything else is dropped loudly rather
+                # than carried. (Validating the whole file through a Pydantic
+                # model is the broader fix and is deliberately not attempted
+                # here -- this loader has never used one, and widening a
+                # remediation PR into a schema migration is how a small fix
+                # acquires an unmeasured blast radius.)
+                logger.warning(
+                    f"Pipeline {pipeline_id!r}: ignoring {phase} middleware -- "
+                    f"expected a list of names, got {type(names).__name__}"
+                )
+                continue
+            permitted = allowed.get(phase)
+            if permitted is None:
+                kept[phase] = list(names)
+                continue
+            keep = [n for n in names if n in permitted]
+            dropped = [n for n in names if n not in permitted]
+            if dropped:
+                logger.warning(
+                    f"Pipeline {pipeline_id!r}: ignoring {phase} middleware with no "
+                    f"implementation: {', '.join(sorted(dropped))}. These names were "
+                    "removed from the shipped config (TASK-17600); a config copied "
+                    "before that still lists them."
+                )
+            kept[phase] = keep
+        return kept
 
     def load_pipeline_config(self, config_file: Optional[Path] = None) -> None:
         """Load pipeline configurations from TOML file."""
@@ -146,7 +212,9 @@ class PipelineLoader:
                         profile=pipeline_config.get("profile"),
                         tags=pipeline_config.get("tags", []),
                         parameters=pipeline_config.get("parameters", {}),
-                        middleware=pipeline_config.get("middleware", {}),
+                        middleware=self._implemented_middleware(
+                            pipeline_id, pipeline_config.get("middleware", {})
+                        ),
                         strategy=pipeline_config.get("strategy"),
                         components=pipeline_config.get("components"),
                     )

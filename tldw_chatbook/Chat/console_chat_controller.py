@@ -1450,6 +1450,22 @@ class ConsoleChatController:
         #: ``<= 0`` default is "no deadline" for the mounted case too),
         #: this run's own cancel event, or these two teardown signals.
         self._headless_visit_cancel: threading.Event | None = None
+        #: Whether a Console visit is OPEN on this controller right now
+        #: (``begin_visit()`` .. ``leave_console()``). Qodo audit S2
+        #: (PR 1752): ``_bind_visit_cancel_signal`` used to infer "no
+        #: visit open" from ``_shutdown_requested.is_set()`` -- but a
+        #: controller that has NEVER had a visit holds the constructor's
+        #: unset Event, so a round armed viewless-from-birth (wake-at-
+        #: launch) bound THAT Event, and the first ``begin_visit()``
+        #: REPLACED the attribute, orphaning it: neither the next leave
+        #: nor ``begin_shutdown`` could ever reach the round. This flag
+        #: states the visit lifecycle instead of inferring it. False at
+        #: birth on purpose: a controller built lazily DURING a visit
+        #: (``attach_view`` ran before the controller existed, so
+        #: ``begin_visit`` never fired on it) binds the headless Event --
+        #: which both teardown paths set, so its rounds still deny at
+        #: leave/exit exactly as before.
+        self._visit_open = False
         #: True once this controller has been torn down for good
         #: (``begin_shutdown``). Blocks ``begin_visit`` from ever handing
         #: a disposed controller a fresh, unset cancellation Event.
@@ -2352,12 +2368,20 @@ class ConsoleChatController:
 
         - **killed**: sessions with an active stream task or an
           outstanding approval-like round. Shutdown's ``_signal_stop``
-          fanout sets the in-flight turn's own cancel event, and a
-          cancelled turn settles its children ``cancelled`` rather than
-          promoting survivors (``AgentService._surviving_handles``;
-          pinned by execution in ``Tests/Agents/test_fleet_runtime.py::
-          test_stopping_the_turn_still_stops_its_children``). This work
-          genuinely dies.
+          fanout sets the in-flight turn's own cancel event, and the
+          TURN genuinely dies. PR3b Task 5 (spec Sec 8) narrowed what
+          dies with it: under the shipped ``subagents_outlive_turn``
+          default a cancelled turn's still-running children now SURVIVE
+          the stop and continue as background survivors
+          (``AgentService._surviving_handles``; pinned by
+          ``Tests/Agents/test_fleet_stop_semantics.py``), so "killed"
+          describes the session's run, and its children only under the
+          kill switch (``test_fleet_runtime.py::test_stopping_the_turn_
+          still_stops_its_children``, now pinned turn-scoped). The
+          teardown notice therefore under-reports in the same direction
+          the "surviving" bullet already documents: a killed run's
+          surviving children go unmentioned there and are reported by
+          their own settle toasts instead.
         - **surviving**: sessions whose ONLY busy-ness is a cross-turn
           survivor. Task 1 A1 executed the fate: no cancel signal ever
           reaches such a child (its turn's cancel event was popped when
@@ -3524,6 +3548,39 @@ class ConsoleChatController:
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)
+        # PR3b Task 5 (Qodo #1808 finding 3): closing a session is
+        # DESTRUCTIVE -- `ConsoleChatStore.close_session` purges every
+        # message and drops the session -- so its fleet must die with it.
+        # Navigation-away teardowns (`leave_console`/`shutdown`) preserve
+        # the conversation and its survivors rightly continue; here a
+        # surviving child would outlive its own conversation with no
+        # panel row left to cancel it from, a wake targeting a dead
+        # conversation, and a leaked unseen-mark. The conversation id is
+        # derived NOW, while the session still exists (persisted id when
+        # set -- the key the bridge's fleet state actually lives under),
+        # and every live child goes through the explicit whole-fleet
+        # path: `cancel_all_subagents` reuses the per-handle cancel, so
+        # approval-card revocation and cancelled-is-never-retained ride
+        # along. getattr-guarded and wrapped: a bare bridge double, no
+        # bridge, or a raising cancel must never break a close.
+        fleet_conversation_id = self._agent_conversation_id(session_id)
+        cancel_all = (
+            getattr(self._agent_bridge, "cancel_all_subagents", None)
+            if self._agent_bridge is not None
+            else None
+        )
+        if callable(cancel_all):
+            try:
+                cancelled_children = int(cancel_all(fleet_conversation_id))
+                if cancelled_children:
+                    logger.info(
+                        "close_session cancelled {} sub-agent(s) of the closed conversation",
+                        cancelled_children,
+                    )
+            except Exception:  # noqa: BLE001 -- teardown never fails on a fleet read
+                logger.warning(
+                    "close_session could not cancel the conversation's sub-agents"
+                )
         repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
@@ -3799,10 +3856,24 @@ class ConsoleChatController:
         excluded -- it keeps the permanently-set Event, so an app-exit
         round still denies immediately.
 
+        Qodo audit S2 (PR 1752): "no visit open" is now the explicit
+        ``_visit_open`` lifecycle flag, not an ``is_set()`` inference. The
+        inference read a NEVER-VISITED controller (constructor Event
+        unset) as "visit in progress", so a wake-at-launch round bound the
+        constructor Event -- which the first ``begin_visit()`` then
+        replaced, orphaning the round beyond the reach of every teardown
+        signal until its own deadline. Only a round armed while a visit
+        is genuinely open (and not already ending) binds the visit Event;
+        every other live round binds the headless Event, which BOTH
+        teardown paths set (``leave_console``/``begin_shutdown``, via
+        ``_cancel_headless_rounds``).
+
         Returns:
             The Event whose set() this round must treat as cancellation.
         """
-        if self._disposed or not self._shutdown_requested.is_set():
+        if self._disposed:
+            return self._shutdown_requested
+        if self._visit_open and not self._shutdown_requested.is_set():
             return self._shutdown_requested
         event = self._headless_visit_cancel
         if event is None or event.is_set():
@@ -6048,9 +6119,20 @@ class ConsoleChatController:
         """
 
         self._disposed = True
-        self.prompt_queue_coordinator.shutdown()
-        self._shutdown_requested.set()
-        self._cancel_headless_rounds()
+        self._visit_open = False
+        # The queue tombstone keeps its contract of running BEFORE any
+        # teardown cancellation -- but it must never be able to SKIP that
+        # cancellation. Its shutdown asserts queue-owner-thread affinity
+        # (QueueThreadViolation from any other thread), and an exit path
+        # whose safety signals sit after a raise-capable call would leave
+        # every armed approval round waiting for a deadline instead of
+        # denying. Found via a test that drove begin_shutdown off-thread:
+        # the round timed out at 30s because the signals were never set.
+        try:
+            self.prompt_queue_coordinator.shutdown()
+        finally:
+            self._shutdown_requested.set()
+            self._cancel_headless_rounds()
 
     def _cancel_headless_rounds(self) -> None:
         """Deny every round armed while no Console visit was open.
@@ -6090,6 +6172,9 @@ class ConsoleChatController:
         if self._disposed:
             return
         self._shutdown_requested = threading.Event()
+        # Qodo audit S2: state the visit lifecycle explicitly -- see
+        # `_visit_open`'s own comment and `_bind_visit_cancel_signal`.
+        self._visit_open = True
         self._stop_requested = False
         reopen = getattr(self.prompt_queue_coordinator, "reopen", None)
         if callable(reopen):
@@ -6134,6 +6219,7 @@ class ConsoleChatController:
         # Tombstone first: `begin_shutdown`'s ordering contract ("before any
         # teardown cancellation"), unchanged.
         self.prompt_queue_coordinator.shutdown()
+        self._visit_open = False
         self._shutdown_requested.set()
         # task-15860 Task 5: a round armed while DETACHED deferred to this
         # moment. The user has now had a Console visit in which to answer

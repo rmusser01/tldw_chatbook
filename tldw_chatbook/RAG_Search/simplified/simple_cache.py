@@ -436,12 +436,38 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Thread-safe synchronous cache get.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use get_async() directly.
+
+        TASK-15701: the three search-defining dimensions below are accepted
+        and forwarded so this path renders the SAME key as `get_async`. They
+        were previously absent from the signature entirely, which made the
+        sync key a legacy, construction-less one -- harmless while `and` was
+        both the legacy value and the shipped default, and a WRONG-HIT risk
+        once the default moved (twice). The API was kept rather than removed
+        because it is the cache's ergonomic test surface (58 call sites);
+        production reads and writes go through the async path only, re-verified
+        at fix time.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
+
+        Returns:
+            The cached (results, context) pair, or None on a miss.
         """
         if not self.enabled:
             return None
@@ -461,6 +487,9 @@ class SimpleRAGCache:
                     top_k,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 return future.result(
                     timeout=1.0
@@ -468,7 +497,14 @@ class SimpleRAGCache:
         except RuntimeError:
             # No running loop, safe to run directly
             return self._sync_get_impl(
-                query, search_type, top_k, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_get_impl(
@@ -478,6 +514,9 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]],
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
@@ -489,7 +528,16 @@ class SimpleRAGCache:
                 self._prune_expired_sync()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
@@ -562,23 +610,21 @@ class SimpleRAGCache:
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
             keyword_source_types: Optional keyword-leg source-type selection;
-                also part of the key. The synchronous ``get``/``put`` twins
-                do not take it: no caller can hand them one, so they key
-                without it. Across a MIXED sync/async workload that can only
-                produce a miss (the two paths render different keys). It is
-                NOT safe between two SYNC calls: two sync searches differing
-                only in a dimension the sync key omits render the SAME key,
-                so the second is served the first's rows -- a wrong hit.
-                Latent only because no production code calls the sync API
-                (re-verified at the close of TASK-15400); **TASK-15701**
-                owns closing it.
+                also part of the key. **TASK-15701 closed the sync-twin gap
+                this argument used to describe**: ``get``/``put`` now accept
+                and forward this dimension too, so both paths render the same
+                key and two sync searches differing only in it can no longer
+                collide. (The historical hazard, for anyone reading a git
+                blame: the sync twins could not take it, so two sync searches
+                differing only in an omitted dimension rendered the SAME key
+                and the second was served the first's rows -- a wrong hit,
+                latent only because no production code called the sync API.)
             hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
                 for a hybrid search; see ``_make_key`` for why this must be
-                part of the key. Same sync-twin exclusion rationale as
-                ``keyword_source_types`` above.
+                part of the key. Carried by both paths since TASK-15701.
             fts_match_construction: The keyword leg's MATCH construction
-                (hybrid/keyword searches); see ``_make_key``. Same sync-twin
-                exclusion rationale.
+                (hybrid/keyword searches); see ``_make_key``. Carried by both
+                paths since TASK-15701.
         """
         if not self.enabled:
             return
@@ -676,12 +722,32 @@ class SimpleRAGCache:
         context: str,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """
         Thread-safe synchronous cache put.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use put_async() directly.
+
+        TASK-15701: forwards the same three search-defining dimensions as
+        `put_async`, so an entry cannot be STORED under a key asserting a
+        construction that did not produce it. See `get` for why the sync API
+        was kept rather than removed.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            results: The rows to cache.
+            context: The rendered context string.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
         """
         if not self.enabled:
             return
@@ -703,12 +769,24 @@ class SimpleRAGCache:
                     context,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 future.result(timeout=1.0)  # 1 second timeout for cache operations
         except RuntimeError:
             # No running loop, safe to run directly
             self._sync_put_impl(
-                query, search_type, top_k, results, context, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                results,
+                context,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_put_impl(
@@ -720,10 +798,22 @@ class SimpleRAGCache:
         context: str,
         filters: Optional[Dict[str, Any]],
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
 
             # Create cache entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())

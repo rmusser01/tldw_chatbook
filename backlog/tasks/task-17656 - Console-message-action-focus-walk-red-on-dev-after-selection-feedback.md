@@ -1,8 +1,9 @@
 ---
 id: TASK-17656
 title: 'Console: message-action focus-walk test red on dev after selection-feedback merge'
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-17'
 labels:
   - console
@@ -22,6 +23,21 @@ Fix belongs with the selection-feedback feature: either the action-row focus ord
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] #1 The action-row keyboard focus walk is verified live: every action in a selected message's row is reachable by Tab in visual order, including the new feedback action
-- [ ] #2 The test is green on dev, updated to the intended contract (or the focus-order defect it caught is fixed)
+- [x] #1 The action-row keyboard focus walk is verified live: every action in a selected message's row is reachable by Tab in visual order, including the new feedback action
+- [x] #2 The test is green on dev, updated to the intended contract (or the focus-order defect it caught is fixed)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reproduce; identify what added the stop between Copy and Edit.
+2. Walk the row live; decide regression vs stale pin; fix accordingly.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The filing's attribution was half right: the failure rode in with the selection-feedback merge train, but the mechanism was NOT the feedback action — commit `8ae87242a` ("move idle Speak into the selected-message action row", 2026-08-15, merged via that branch) deliberately moved Speak from the message header into the row between Copy and Edit, exactly where the on-screen guide has always listed it. Keyboard navigation was never broken; the walk test's expectations were stale. The walk gains the Speak stop, and — to honor AC#1 — now continues full circle through Regenerate, Continue, both feedback thumbs, and back to Delete, proving every stop of a completed assistant reply is Tab-reachable in visual order with focus contained, before re-focusing Save-as for the modal ending. Green with zero production changes.
+
+Files: `Tests/UI/test_console_native_chat_flow.py`.
+<!-- SECTION:NOTES:END -->

@@ -518,8 +518,16 @@ class AppFooterStatus(Widget):
             print(f"Error updating word count display: {e}")
 
     def update_token_count(self, display_text: str) -> None:
-        """Update the token count display in the footer."""
+        """Update the token count display in the footer.
+
+        task-17653: gated on ``show_token_count`` — on screens where the
+        counter is retired (all of them today; the Console cost chip owns
+        token/cost display) no write may reveal the widget, including
+        db_status_manager's "Token count error" path.
+        """
         try:
+            if not self._show_token_count:
+                display_text = ""
             if display_text:
                 self._token_count_display.update(f"{display_text} | ")
             else:
