@@ -31,7 +31,7 @@ which is the point.
 
 ## Acceptance Criteria (the what)
 
-- [x] **The fixture is extended FIRST so the comparison can say anything.**
+- [ ] **NOT DONE, DELIBERATELY — see the outcome below.** The fixture is extended FIRST so the comparison can say anything.
       TASK-17755's final review established that tiering is provably the
       IDENTITY on today's corpus: **0 of 60 queries mix primary and fallback
       rows, and 0 have more than one primary row**, so a tiered-vs-untiered
@@ -58,20 +58,25 @@ leg while leaving an *ordering* divergence.
 
 ## Outcome (2026-08-18): untiered is the MEASURED choice; the note retires
 
-**AC#1 was deliberately NOT taken, and the reason is the finding.** The AC
+**AC#1 is left UNCHECKED on purpose (Qodo PR-1801 finding 2).** Ticking a
+criterion whose own outcome text says it was skipped would be a false project
+record; the box stays open and the deviation is stated here. The AC
 asks for a fixture with a multi-row primary seam and a rescued seam. Measuring
 first showed that would not be enough: to make the comparison mean anything
 the authored query would also have to **fill the window**, and
 
-| k | queries whose window is FULL (`rows >= k`) | max rows |
-|---|---|---|
-| 10 | **0 of 60** | 6 |
-| 20 | **0 of 60** | 6 |
+| k | queries with >1 row | with ground truth | with a RELEVANT row retrieved |
+|---|---|---|---|
+| 10 | 1 | 1 | **0** |
+| 20 | 1 | 1 | **0** |
 
-Tiering changes what a consumer sees **only when the merged list is cut**. On
-this corpus nothing is ever cut, so the order cannot change what any consumer
-receives — a stronger result than TASK-17755's review reached (it found the
-orderings *coincide*; this finds the cut *never happens*).
+**The first version of this outcome argued from CUTS and was wrong** (Qodo
+PR-1801 finding 1): MRR and NDCG consume ORDER, so a reordering changes a
+score with nothing cut. The correct condition is narrower — a reordering can
+move a score only for a query with ≥2 rows AND a relevant row among them.
+This corpus has none: 59 of 60 plain queries return 0 or 1 row, and the single
+6-row query (`ng-mains-supply`, rescued by TASK-17755's fallback) retrieves no
+relevant document at all, so every permutation of it scores identically.
 
 Authoring a window-filling query means choosing its shape, and its shape
 decides which ordering wins. That is exactly the trap TASK-16072's kill
@@ -82,12 +87,14 @@ to give a comparison something to distinguish.
 **AC#2/#3 — the decision:** untiered ships as the measured choice, not as an
 unpaid debt. TASK-16071's "the 15700 tier design would apply" note is retired.
 
-**AC#4 — the merge-site comment** now states what was measured, when, and the
-one-command re-check: if any plain query starts returning `>= top_k` rows,
-tiering becomes measurable and the decision is due for review. That re-check
-is the census in
-`Docs/superpowers/qa/2026-08-18-merge-tiering/report.md`, which also records
-today's row distribution (37 queries at 0 rows, 22 at exactly 1, 1 at 6).
+**AC#4 — the merge-site comment** states what was measured, when, and a
+**runnable** re-check (Qodo PR-1801 finding 3: the earlier note promised a
+"one-command re-check" and offered prose):
+`Docs/superpowers/qa/2026-08-18-merge-tiering/tier_observability_census.py`,
+which prints per depth the >1-row queries and the ranks at which relevant rows
+landed. The trigger is corrected too — **≥2 rows including a relevant one**,
+not `rows >= top_k`, which would have under-triggered for the reason finding 1
+identified.
 
 Row counts re-measured on current dev rather than inherited: the gating census
 was taken during TASK-17755's review, before `and_then_prefix` shipped to this

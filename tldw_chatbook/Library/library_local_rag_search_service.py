@@ -507,20 +507,25 @@ class LibraryLocalRagSearchService:
         # in the list a fallback row can interleave ahead of a primary one,
         # which is exactly what tiering would fix.
         #
-        # MEASURED AND CLOSED (TASK-17955, 2026-08-18): that displacement
-        # cannot occur on the gated corpus, and for a more basic reason than
-        # "the orderings happen to coincide" -- **the plain path never fills
-        # a retrieval window**. Zero of 60 golden queries return `>= top_k`
-        # rows at either depth (k=10 and k=20; the maximum seen is 6), so no
-        # row is ever CUT and the order cannot change what a consumer
-        # receives. Untiered is therefore the MEASURED choice here, not an
-        # unpaid debt, and TASK-16071's "the 15700 tier design would apply"
-        # note is retired. The one-command re-check, should the corpus or the
-        # construction ever change, is the census in
-        # `Docs/superpowers/qa/2026-08-18-merge-tiering/report.md`: if any
-        # plain query starts returning `>= top_k` rows, tiering becomes
-        # measurable and this decision is due for review. Tiering it BEFORE
-        # then would ship an ordering nothing can distinguish; `Tests/Library/test_library_keyword_and_then_prefix.py`
+        # MEASURED AND CLOSED (TASK-17955, 2026-08-18): tiering is
+        # UNOBSERVABLE on the gated corpus. Note the reason carefully, because
+        # the obvious one is wrong: it is NOT that nothing gets cut. MRR and
+        # NDCG consume ORDER, so a reordering changes a score with nothing
+        # cut at all (Qodo PR-1801 caught that argument). The actual reason is
+        # narrower -- a reordering can only move a score for a query with >=2
+        # rows AND a RELEVANT row among them, and this corpus has none: 59 of
+        # 60 plain queries return 0 or 1 row, and the single 6-row query
+        # (`ng-mains-supply`) retrieves no relevant document at all, so every
+        # permutation of it scores identically.
+        #
+        # Untiered is therefore the MEASURED choice, not an unpaid debt, and
+        # TASK-16071's "the 15700 tier design would apply" note is retired.
+        # RE-CHECK when the corpus or construction changes -- runnable, not
+        # prose: `Docs/superpowers/qa/2026-08-18-merge-tiering/
+        # tier_observability_census.py`. If ANY plain query starts returning
+        # >=2 rows INCLUDING a relevant one, ordering becomes observable and
+        # this decision is due for review. Tiering before then would ship an
+        # ordering nothing can distinguish; `Tests/Library/test_library_keyword_and_then_prefix.py`
         # pins the untiered order so the change cannot happen silently.
         #
         # Dedup across seams is structurally vacuous -- the seams are

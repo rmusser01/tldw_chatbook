@@ -3,31 +3,46 @@
 Date: 2026-08-18 · measured on the gated fixture (172 docs, 60 golden
 queries), plain path, current dev. No network, no spend.
 
-## What tiering would change, precisely
+## What tiering would change, precisely (CORRECTED after review)
 
-Tiering makes a primary-form row outrank a fallback-form row instead of
-interleaving with it by position. That changes what a consumer sees **only
-when the merged list is CUT** — i.e. when `rows_returned >= top_k`. If the
-window is never full, every row survives whatever the order, and the two
-merges are observationally identical to any downstream metric.
+**The first version of this report argued from CUTS and that was wrong.**
+It said tiering matters only when `rows_returned >= top_k`, so a corpus that
+never fills the window is safe. Qodo (PR #1801, finding 1) pointed out the
+hole: **MRR and NDCG consume ORDER, not membership.** Moving a relevant row
+from rank 1 to rank 3 changes both, with nothing cut. A cut-based argument
+cannot establish that ordering is unobservable, and a `rows >= top_k` review
+trigger would have left tiering closed through exactly the corpus change that
+made it matter.
 
-## The measurement
+## The correct question, and the measurement
 
-| k | queries whose window is FULL (`rows >= k`) | max rows seen |
-|---|---|---|
-| 10 | **0 of 60** | 6 |
-| 20 | **0 of 60** | 6 |
+Reordering can move a score only for a query that has **≥2 rows** AND **at
+least one retrieved row that is relevant** — otherwise every permutation
+scores identically.
 
-Row distribution on the plain path today: **37** queries return 0 rows,
-**22** return exactly 1, **1** returns 6 (`ng-mains-supply` — a negation
-query, and the single query TASK-17755's fallback rescued into multi-row
-territory).
+| k | queries with >1 row | of those, with ground truth | with a RELEVANT row retrieved |
+|---|---|---|---|
+| 10 | **1** | 1 | **0** |
+| 20 | **1** | 1 | **0** |
 
-**So the displacement failure mode cannot occur on this corpus at all.**
-This is a stronger statement than TASK-17755's review made. That review found
-the two orderings *coincide* (no query mixes primary and fallback rows). The
-measurement above shows something more basic: **no row is ever cut**, so the
-order cannot change what any consumer receives, whatever the mix.
+The single multi-row query is `ng-mains-supply` (6 rows, the one TASK-17755's
+fallback rescued). It *has* a relevant document — and **that document is not
+among the rows retrieved** (`relevant_at_ranks: NONE`). So every ordering of
+its six rows scores exactly the same, and no other query has more than one
+row to order at all.
+
+**Tiering is therefore unobservable on this corpus** — not because nothing is
+cut, but because there is no relevant row whose rank an ordering could move.
+
+Reproduce with `tier_observability_census.py` in this directory:
+
+```
+RAG_EVAL=1 PYTHONPATH=<repo> .venv/bin/python \
+    Docs/superpowers/qa/2026-08-18-merge-tiering/tier_observability_census.py
+```
+
+It prints, per depth, the >1-row queries, whether each has ground truth, and
+the ranks at which relevant rows actually landed.
 
 ## Why the fixture was NOT extended (AC#1, deliberately not taken)
 
@@ -51,7 +66,9 @@ structural reason that is cheap to re-check**: the plain path does not fill a
 retrieval window.
 
 What a future arc would need, stated so nobody re-derives it: a corpus where
-the plain four-seam path returns **≥ top_k rows for at least one query**.
-That is a property of the corpus and the construction together, not something
-a merge change can create — and the same census in this report (`rows >= k`,
-two depths) is the one-command check for whether it has become true.
+the plain four-seam path returns, **for at least one query, ≥2 rows including
+a relevant one**. That is the condition under which an ordering becomes
+observable at all — and it is a property of the corpus and the construction
+together, not something a merge change can create. The script above is the
+check; the earlier `rows >= top_k` formulation was wrong and would have
+under-triggered.
