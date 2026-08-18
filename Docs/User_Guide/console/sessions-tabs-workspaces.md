@@ -108,8 +108,10 @@ Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
 (edit or keep it), an optional **folder** field with a **Browse…** button
 (opens a directory picker) and an **Add folder** button — each folder is
 validated as you add it (must be a real, existing directory; not your home
-folder or filesystem root; not nested inside/around a folder already in the
-list) and rejections render inline without closing the dialog. Folders bind
+folder or filesystem root; not this app's own data, configuration, or
+credential directories — or a folder that contains or sits inside one; not
+nested inside/around a folder already in the list) and rejections render
+inline without closing the dialog. Folders bind
 **read-only** (change that later in Settings ▸ Workspaces). A **"Switch to
 this workspace"** checkbox, checked by default, controls whether Create also
 activates the workspace; unchecking it creates the workspace without
