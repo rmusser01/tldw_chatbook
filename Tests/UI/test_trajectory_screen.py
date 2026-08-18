@@ -571,3 +571,40 @@ def test_footer_hints_match_bindings_exactly() -> None:
     assert hint_keys == binding_keys, (
         f"Footer hints {hint_keys} are not 1:1 with BINDINGS {binding_keys}"
     )
+
+
+def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
+    """task-17169: the payload branch is tool-shaped (`tool {name}` / args /
+    result). A user_feedback record has none of those keys, so it would
+    render a bogus `tool —` line and hide the action, quote and comment that
+    are the entire content of the record."""
+    from tldw_chatbook.Chat.trajectory import TrajectoryRecord
+    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+
+    record = TrajectoryRecord(
+        seq=3,
+        kind="user_feedback",
+        turn_id="t1",
+        message_id="a1",
+        content_preview="Request changes: tighten error paths",
+        usage=None,
+        step_started_at=None,
+        first_token_at=None,
+        completed_at=None,
+        model=None,
+        provider=None,
+        payload={
+            "action": "request-changes",
+            "quote": "the retry loop",
+            "comment": "tighten error paths",
+        },
+        variants=(),
+        depth=1,
+    )
+
+    text = TrajectoryScreen._inspector_text_for_record(None, record)  # type: ignore[arg-type]
+
+    assert "tool" not in text
+    assert "feedback request-changes" in text
+    assert "quote the retry loop" in text
+    assert "comment tighten error paths" in text

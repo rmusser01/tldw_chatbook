@@ -609,3 +609,97 @@ def test_module_is_pure_stdlib() -> None:
             assert "textual" not in stripped, f"forbidden import: {stripped}"
             assert "tldw_chatbook.DB" not in stripped, f"forbidden import: {stripped}"
             assert "ConsoleChatStore" not in stripped, f"forbidden import: {stripped}"
+
+
+# ---------------------------------------------------------------------------
+# Selection feedback events (task-17169, phase 4)
+# ---------------------------------------------------------------------------
+
+
+def test_feedback_records_nest_under_their_anchor_without_displacing_it() -> None:
+    """A user_feedback row is keyed to the assistant message it critiques, so
+    a naive by-message-id sidecar lookup would let it REPLACE that message's
+    own assistant row -- losing the assistant's timing and turn attribution.
+    It has to nest, the way tool rows do."""
+    rows, leaf = linear_chain(("u1", "user"), ("a1", "assistant"))
+    payload = '{"action": "request-changes", "quote": "the patch", "comment": "use a CM"}'
+    traj_rows = [
+        TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=2,
+            event_kind="assistant",
+            step_started_at=100.0,
+            completed_at=105.0,
+        ),
+        TrajRow(
+            "a1", turn_id="t1", seq=3, event_kind="user_feedback", payload_json=payload
+        ),
+    ]
+    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    (turn,) = snapshot.turns
+    assert [(r.kind, r.depth) for r in turn.records] == [
+        ("user", 0),
+        ("assistant", 0),
+        ("user_feedback", 1),
+    ]
+    assistant = turn.records[1]
+    assert assistant.step_started_at == 100.0  # NOT clobbered by the feedback row
+    assert assistant.completed_at == 105.0
+    feedback = turn.records[2]
+    assert feedback.message_id == "a1"
+    assert feedback.payload == {
+        "action": "request-changes",
+        "quote": "the patch",
+        "comment": "use a CM",
+    }
+    assert feedback.content_preview == "Request changes: use a CM"
+
+
+def test_feedback_preview_without_a_comment_shows_the_quote() -> None:
+    rows, leaf = linear_chain(("u1", "user"), ("a1", "assistant"))
+    traj_rows = [
+        TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
+        TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=3,
+            event_kind="user_feedback",
+            payload_json='{"action": "lgm", "quote": "ship it"}',
+        ),
+    ]
+    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    (turn,) = snapshot.turns
+    assert turn.records[-1].content_preview == "LGTM: ship it"
+
+
+def test_multiple_feedback_events_on_one_message_all_survive_in_seq_order() -> None:
+    """The ledger is chronological: a user who comments twice on the same
+    message gets two records, not one overwriting the other."""
+    rows, leaf = linear_chain(("u1", "user"), ("a1", "assistant"))
+    traj_rows = [
+        TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
+        TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=4,
+            event_kind="user_feedback",
+            payload_json='{"action": "comment", "quote": "q", "comment": "second"}',
+        ),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=3,
+            event_kind="user_feedback",
+            payload_json='{"action": "comment", "quote": "q", "comment": "first"}',
+        ),
+    ]
+    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    (turn,) = snapshot.turns
+    assert [r.payload["comment"] for r in turn.records if r.kind == "user_feedback"] == [
+        "first",
+        "second",
+    ]

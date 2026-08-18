@@ -753,6 +753,11 @@ DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 160
 MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 20
 MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
 
+# Ephemeral side chat (Console selection menu): the default prompt template
+# for the "More Details" action. ``{selection}`` is the only placeholder the
+# side-chat service substitutes (Task-3 renders it via replace, not format).
+DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE = "Give me more details about: {selection}"
+
 
 def coerce_bool_setting(value: Any, default: bool = True) -> bool:
     """Coerce config/app setting values with the same bool rules as load_settings.
@@ -1356,6 +1361,20 @@ def load_settings(force_reload: bool = False) -> Dict:
     if not isinstance(workspace_root, str):
         workspace_root = ""
     final_console_settings_cli["workspace_root"] = workspace_root.strip()
+    # Ephemeral side chat (selection menu): strings need presence-validation
+    # only -- non-strings fall back, mirroring workspace_root above.
+    sidechat_model = final_console_settings_cli.get("sidechat_model", "")
+    if not isinstance(sidechat_model, str):
+        sidechat_model = ""
+    final_console_settings_cli["sidechat_model"] = sidechat_model.strip()
+    sidechat_prompt_template = final_console_settings_cli.get(
+        "sidechat_prompt_template", DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    )
+    if not isinstance(sidechat_prompt_template, str):
+        sidechat_prompt_template = DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
+    final_console_settings_cli["sidechat_prompt_template"] = (
+        sidechat_prompt_template.strip()
+    )
     background_effects = final_console_settings_cli.get("background_effects")
     if not isinstance(background_effects, dict):
         background_effects = {}
@@ -2736,6 +2755,9 @@ compaction_summary_max_tokens = 1024
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
+# Ephemeral side chat (selection menu) — empty model = session model
+sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
+sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.

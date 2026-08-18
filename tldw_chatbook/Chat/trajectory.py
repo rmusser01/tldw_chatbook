@@ -62,8 +62,14 @@ KIND_ASSISTANT = "assistant"
 KIND_TOOL_CALL = "tool_call"
 KIND_TOOL_RESULT = "tool_result"
 KIND_COMPACTION = "compaction"
+KIND_USER_FEEDBACK = "user_feedback"
 
 _TOOL_KINDS = frozenset({KIND_TOOL_CALL, KIND_TOOL_RESULT})
+# Kinds that nest UNDER the message they key on rather than being that
+# message's own sidecar row. Feedback (task-17169) is keyed to the message
+# it critiques, so treating it as that message's row would displace the
+# real one -- taking its timing and turn attribution with it.
+_NESTED_KINDS = _TOOL_KINDS | {KIND_USER_FEEDBACK}
 _RENDERED_ROLES = frozenset({KIND_USER, KIND_ASSISTANT})
 _COMPACTION_PURPOSE = "conversation_compaction"
 
@@ -312,7 +318,7 @@ def derive_trajectory(
         kind = str(_field(row, "event_kind") or "")
         if not mid:
             continue
-        if kind in _TOOL_KINDS:
+        if kind in _NESTED_KINDS:
             tool_rows.setdefault(str(mid), []).append(row)
         else:
             message_rows[str(mid)] = row
@@ -551,12 +557,18 @@ def _tool_record(row: Any, *, turn_id: str) -> TrajectoryRecord:
     raw ``payload_json`` envelope.
     """
     payload = _parse_payload(_field(row, "payload_json"))
+    kind = str(_field(row, "event_kind") or "")
+    preview = (
+        _feedback_preview(payload)
+        if kind == KIND_USER_FEEDBACK
+        else _tool_preview(payload)
+    )
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
-        kind=str(_field(row, "event_kind") or ""),
+        kind=kind,
         turn_id=turn_id,
         message_id=str(_field(row, "message_id") or "") or None,
-        content_preview=_tool_preview(payload),
+        content_preview=preview,
         usage=None,
         step_started_at=_field(row, "step_started_at"),
         first_token_at=_field(row, "first_token_at"),
@@ -567,6 +579,30 @@ def _tool_record(row: Any, *, turn_id: str) -> TrajectoryRecord:
         variants=(),
         depth=1,
     )
+
+
+_FEEDBACK_ACTION_LABELS = {
+    "request-changes": "Request changes",
+    "lgm": "LGTM",
+    "comment": "Comment",
+}
+
+
+def _feedback_preview(payload: dict | None) -> str:
+    """Single-line preview of a selection-feedback payload.
+
+    Shows what the user SAID where they said anything -- the comment is the
+    reviewer's own words and the reason the record exists. With no comment
+    (LGTM, or Request-changes submitted bare) the quote is the only content
+    there is, so it stands in.
+    """
+    if not payload:
+        return ""
+    action = str(payload.get("action") or "")
+    label = _FEEDBACK_ACTION_LABELS.get(action, action or "Feedback")
+    detail = str(payload.get("comment") or payload.get("quote") or "").strip()
+    detail = " ".join(detail.split())
+    return f"{label}: {detail}" if detail else label
 
 
 def _tool_preview(payload: dict | None) -> str:

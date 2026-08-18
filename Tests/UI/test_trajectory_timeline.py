@@ -601,3 +601,17 @@ class TestTimelineMouseGlue:
             assert _bar_events(app) == []
             assert _brush_events(app)
             assert tl.brush is not None
+
+
+def test_feedback_records_get_their_own_timeline_style():
+    """task-17169: user_feedback falls back to plain white otherwise, which
+    makes review events indistinguishable from an unknown/unhandled kind in
+    the one view meant to surface them."""
+    from tldw_chatbook.Chat.trajectory import KIND_USER_FEEDBACK
+    from tldw_chatbook.UI.Widgets.trajectory_timeline import (
+        _FALLBACK_STYLE,
+        KIND_STYLES,
+    )
+
+    assert KIND_USER_FEEDBACK in KIND_STYLES
+    assert KIND_STYLES[KIND_USER_FEEDBACK] != _FALLBACK_STYLE

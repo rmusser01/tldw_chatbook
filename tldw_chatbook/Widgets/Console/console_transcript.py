@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import re
 from dataclasses import dataclass, replace
 from time import monotonic
@@ -10,6 +11,7 @@ from typing import Any, Callable, Iterable, Literal, Mapping
 
 from loguru import logger
 from PIL import Image as PILImage
+from rich.text import Text
 from rich_pixels import Pixels
 from textual import events, on
 from textual.app import ComposeResult
@@ -17,17 +19,21 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.dom import NoScreen
-from textual.events import Click, Key
+from textual.events import Click, Key, MouseDown, MouseMove, MouseUp
+from textual.geometry import Region
+from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
+from textual_diff_view import DiffView
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleCitationNoticeCode,
     ConsoleCitationPhase,
     ConsoleMessageRole,
+    FEEDBACK_ACTIVE_RUN_STATUSES,
 )
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
@@ -60,6 +66,18 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
     ConsoleGenerationCardSpec,
     generation_card_signature,
 )
+from tldw_chatbook.Widgets.Console.console_selection import (
+    SelectionManager,
+    TextSelection,
+    cap_quote,
+    offset_for_cell,
+)
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionMenu,
+    ConsoleSelectionQuoteRequested,
+    ConsoleSideChatRequested,
+)
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
@@ -72,6 +90,15 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: Console selection phase 3: run statuses during which review feedback
+#: (Request changes / LGTM) can be queued behind the active run via the
+#: prompt-queue seam. Anything else (or a screen without the run-status
+#: seam at all) leaves those two menu actions gated; Comment never gates.
+#: Derived (as raw strings, matching the seam's wire format) from the
+#: canonical ``FEEDBACK_ACTIVE_RUN_STATUSES`` next to ``ConsoleRunStatus``.
+_SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES = frozenset(
+    {status.value for status in FEEDBACK_ACTIVE_RUN_STATUSES}
+)
 #: TASK-1365: virtual-height watermarks (terminal rows) for transcript pruning.
 #: 20000 rows is several hundred long messages; rows are cheap to measure but
 #: expensive to keep laid out. Mirrored from the legacy chat log pruning
@@ -763,6 +790,23 @@ def _message_body_render_text(
     return Content.assemble(*body_segments)
 
 
+def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
+    """One marker row's content: a dim header plus each note, first line only.
+
+    The marker is the transcript-side viewer for persisted Comment
+    annotations (task-17169): compact enough to sit inline, complete enough
+    that the note is readable without leaving the transcript.
+    """
+    header = "Review note" if len(notes) == 1 else f"Review notes ({len(notes)})"
+    segments: list = [(f"✎ {header}", "dim")]
+    for note in notes:
+        first_line = note.splitlines()[0] if note else ""
+        if len(first_line) > 200:
+            first_line = first_line[:199] + "…"
+        segments.extend(("\n", first_line))
+    return Content.assemble(*segments)
+
+
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
@@ -772,6 +816,7 @@ class _TranscriptRow:
         "message",
         "diff",
         "citations",
+        "annotations",
         "original-attempt",
         "image",
         "generation-card",
@@ -1188,6 +1233,13 @@ class ConsoleMarkdownMessage(Vertical):
     Link policy (task AC#6): links never auto-open (``open_links=False``). A
     click on an http(s) link opens the system browser and notifies; any other
     scheme notifies with the href and does nothing else.
+
+    Text selection (console selection phase 1, task G): implements the same
+    four-method row protocol as ``ConsoleTranscriptMessage`` at LINE
+    granularity -- the domain is the markdown SOURCE (``_body_text``), ranges
+    snap outward to whole source lines, and the highlight is a reverse-video
+    ``Static`` strip below the Markdown widget instead of restyling the
+    Markdown renderer's internals (which would fight its block widgets).
     """
 
     can_focus = False
@@ -1228,6 +1280,9 @@ class ConsoleMarkdownMessage(Vertical):
         self._message = message
         self._speech_state = speech_state
         self._body_text = _assistant_markdown_body(message, self._presentation)
+        # Text-selection range over the markdown SOURCE at line granularity
+        # (task G): offsets are always whole-line bounds. None = no highlight.
+        self._selection_line_range: tuple[int, int] | None = None
         # TASK-15456: text appended to ``self._body_text`` above but not yet
         # handed to the Markdown widget (deferred while streaming inside an
         # open fence), plus the monotonic deadline by which it must flush.
@@ -1246,6 +1301,16 @@ class ConsoleMarkdownMessage(Vertical):
             classes="console-markdown-body",
             open_links=False,
         )
+        # Selection highlight strip (task G): hidden until a selection exists.
+        # Composed once and toggled via ``display`` so selection updates never
+        # mount/remove widgets (no DuplicateIds / async-remove lifecycle).
+        selection_strip = Static(
+            "",
+            classes="console-markdown-selection-strip",
+            markup=False,
+        )
+        selection_strip.display = False
+        yield selection_strip
         footer_content = _assistant_markdown_footer(self._message)
         footer = Static(
             footer_content or "",
@@ -1253,6 +1318,93 @@ class ConsoleMarkdownMessage(Vertical):
         )
         footer.display = footer_content is not None
         yield footer
+
+    # -- Text-selection protocol (console selection phase 1, task G) ----------
+
+    def get_display_text(self) -> str:
+        """Return the markdown source this row renders (selection domain)."""
+        return self._body_text
+
+    def get_selection_text(self) -> str:
+        """Return the selected whole source lines, capped for quoting."""
+        if self._selection_line_range is None:
+            return ""
+        start, end = self._selection_line_range
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight the character range ``[start, end)`` of the source.
+
+        Live-spike feedback: whole-line snapping made any partial drag over
+        a one-line reply select the ENTIRE message. The cell-to-offset map
+        already resolves character positions, so the range is stored
+        as-is; only its visual carrier (the reverse-video strip) still
+        spells the text out below the Markdown body.
+        """
+        start, end = sorted((start, end))
+        if end <= start:
+            self.clear_selection()
+            return
+        text = self.get_display_text()
+        self._selection_line_range = (
+            max(0, start),
+            min(end, len(text)),
+        )
+        self._refresh_selection_strip()
+
+    def clear_selection(self) -> None:
+        """Remove the highlight strip."""
+        if self._selection_line_range is None:
+            return
+        self._selection_line_range = None
+        self._refresh_selection_strip()
+
+    def _clamp_selection_to_text(self) -> None:
+        """Clamp the stored line range to the current source, re-snapped.
+
+        Streaming updates grow/replace the markdown source; if the new text
+        no longer contains the range start, drop the selection entirely
+        (mirrors ``ConsoleTranscriptMessage``'s clamp-on-sync). A non-prefix
+        replace can also shift line boundaries under the stored offsets, so
+        the surviving range is re-snapped to the NEW text's whole lines --
+        clamping offsets alone produced misaligned quotes (stray leading
+        newline, partial line) when the old start landed mid-line of the new
+        body (fix round 1).
+        """
+        if self._selection_line_range is None:
+            return
+        start, end = self._selection_line_range
+        new_len = len(self._body_text)
+        if start >= new_len:
+            self._selection_line_range = None
+        else:
+            self._selection_line_range = (start, min(end, new_len))
+        self._refresh_selection_strip()
+
+    def _refresh_selection_strip(self) -> None:
+        """Show/hide the reverse-video strip of selected source lines.
+
+        The strip is the visually equivalent highlight: the Markdown widget
+        owns its block layout and is left untouched, while the strip spells
+        the selected source lines out below it in reverse video. The strip
+        content is capped exactly like the quote (``cap_quote``) so
+        select-all on a huge message cannot duplicate the whole body below
+        itself (fix round 1).
+        """
+        try:
+            strip = self.query_one(".console-markdown-selection-strip", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_line_range is None:
+            strip.display = False
+            return
+        start, end = self._selection_line_range
+        text = self.get_display_text()
+        selected = cap_quote(text[max(0, start) : min(end, len(text))])
+        strip.update(Text(selected, style="reverse"))
+        strip.display = bool(selected)
 
     def sync_message(
         self,
@@ -1305,6 +1457,10 @@ class ConsoleMarkdownMessage(Vertical):
             delta = new_body[len(self._body_text) :]
             self._body_text = new_body
             self._append_or_defer_body_delta(markdown, delta, message)
+            # Selection clamp-on-sync (task G): the source grew under a live
+            # selection; the stored line bounds stay valid but the strip must
+            # re-derive from the new source.
+            self._clamp_selection_to_text()
         else:
             # Non-append edit (variant switch, retry, DB-resume rebind): the
             # prior diff base no longer applies, so any deferred fence
@@ -1316,6 +1472,9 @@ class ConsoleMarkdownMessage(Vertical):
             self._fence_defer_deadline = None
             markdown.update(new_body)
             self._body_text = new_body
+            # Selection clamp-on-sync (task G): a replaced body may no longer
+            # contain the selected lines -- clamp or clear like the plain row.
+            self._clamp_selection_to_text()
 
     def _flush_pending_fence_delta(self, markdown: Markdown) -> None:
         """Hand any buffered fence-interior text to the widget and clear state.
@@ -1396,6 +1555,27 @@ class ConsoleMarkdownMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
+            manager = transcript.selection_manager
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
+                # This click completed (or landed during) a text-selection
+                # drag on this selectable row (markdown rows arm drags too,
+                # task G); it must not toggle message selection (console
+                # selection phase 1). Consume the finish flag so the
+                # suppression swallows exactly this one click. Live spike
+                # 2026-08-16: BOTH tokens must die here and the event must
+                # STOP -- a short-circuited ``or`` left release_click_pending
+                # armed and the click bubbled to the transcript's on_click,
+                # whose _remove_selection_menu() wiped the row selection
+                # before the menu's action read it ("buttons don't work
+                # after the first one").
+                manager.consume_just_finished()
+                manager.consume_release_click()
+                event.stop()
+                return
             transcript.toggle_message_selection(self.message_id)
 
 
@@ -1419,6 +1599,9 @@ class ConsoleTranscriptMessage(Vertical):
         )
         self._selected = selected
         self._speech_state = speech_state
+        # Text-selection range over the BODY text domain (header excluded),
+        # console selection phase 1. None = no highlight.
+        self._selection_range: tuple[int, int] | None = None
         super().__init__(
             id=f"console-message-{message.id}",
             classes=" ".join(
@@ -1456,6 +1639,72 @@ class ConsoleTranscriptMessage(Vertical):
     def _speaker_label(self) -> str:
         return _speaker_label(self._message, self._presentation)
 
+    # -- Text-selection protocol (console selection phase 1) -----------------
+    # Offsets are BODY-only: the speaker header is a separate child widget and
+    # never part of the selection domain.
+
+    def get_display_text(self) -> str:
+        """Return the plain body text this row renders (selection domain)."""
+        return _message_body_render_text(self._message, self._presentation).plain
+
+    def get_selection_text(self) -> str:
+        """Return the currently highlighted text, capped for quoting."""
+        if self._selection_range is None:
+            return ""
+        start, end = sorted(self._selection_range)
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight ``[start, end)`` in the body and re-render it."""
+        self._selection_range = (start, end)
+        self._refresh_body_highlight()
+
+    def clear_selection(self) -> None:
+        """Remove any highlight and re-render the plain body."""
+        if self._selection_range is None:
+            return
+        self._selection_range = None
+        self._refresh_body_highlight()
+
+    def _clamp_selection_to_text(self) -> None:
+        """Clamp the stored range to the current text length (streaming sync).
+
+        Streaming updates shrink/grow the body text; if the new text no longer
+        contains the range start, drop the selection entirely.
+        """
+        if self._selection_range is None:
+            return
+        start, end = self._selection_range
+        new_len = len(self.get_display_text())
+        if start >= new_len:
+            self._selection_range = None
+        else:
+            self._selection_range = (min(start, new_len), min(end, new_len))
+
+    def _refresh_body_highlight(self) -> None:
+        """Re-render the body Static with a reverse-video span over the range.
+
+        The body Static is ``markup=False``, so a rich ``Text`` with spans is
+        safe; with no range the original ``Content`` renderable is restored
+        exactly, so non-selecting rows render byte-identically to before.
+        """
+        try:
+            body = self.query_one(".console-transcript-message-body", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_range is None:
+            body.update(_message_body_render_text(self._message, self._presentation))
+            return
+        plain = self.get_display_text()
+        start, end = sorted(self._selection_range)
+        start, end = max(0, start), min(end, len(plain))
+        rich_text = Text(plain)
+        if end > start:
+            rich_text.stylize("reverse", start, end)
+        body.update(rich_text)
+
     def sync_message(
         self,
         message: ConsoleChatMessage,
@@ -1480,11 +1729,15 @@ class ConsoleTranscriptMessage(Vertical):
         )
         try:
             header = self.query_one(ConsoleMessageHeader)
-            body = self.query_one(".console-transcript-message-body", Static)
+            self.query_one(".console-transcript-message-body", Static)
         except NoMatches:
             return
         header.sync_header(message, presentation, speech_state)
-        body.update(_message_body_render_text(message, presentation))
+        # Clamp any live text-selection range to the NEW body length before
+        # re-rendering: streaming deltas shrink/grow the text under the
+        # selection (console selection phase 1).
+        self._clamp_selection_to_text()
+        self._refresh_body_highlight()
 
     def on_click(self, event: Click) -> None:
         if event.control is not None and event.control.has_class(
@@ -1497,6 +1750,27 @@ class ConsoleTranscriptMessage(Vertical):
         while transcript is not None and not isinstance(transcript, ConsoleTranscript):
             transcript = transcript.parent
         if isinstance(transcript, ConsoleTranscript):
+            manager = transcript.selection_manager
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
+                # This click completed (or landed during) a text-selection
+                # drag on this row; it must not toggle message selection
+                # (console selection phase 1). A genuine click never reaches
+                # this branch: its empty drag finish consumed the flag on
+                # MouseUp, so what is left here is the drag-release Click
+                # (or a click landing mid-drag). Markdown rows carry the
+                # identical guard in their own ``on_click`` (task G). Live
+                # spike 2026-08-16: consume BOTH tokens and STOP the event
+                # -- a lingering release_click_pending let the artifact
+                # click reach the transcript's on_click, whose dismissal
+                # cleanup wiped the selection the menu needs.
+                manager.consume_just_finished()
+                manager.consume_release_click()
+                event.stop()
+                return
             transcript.toggle_message_selection(self.message_id)
 
 
@@ -1509,6 +1783,16 @@ class ConsoleToolDiffRow(Vertical):
     render-derived view state -- it exists only while its marker message is
     expanded via the full-output toggle, and disappears with it (or when
     the message leaves the view window).
+
+    Text selection (console selection phase 3, task 1): implements the same
+    four-method row protocol as the other rows at LINE granularity -- the
+    domain is the deterministic unified-diff projection
+    (``_tool_diff_display_text``), ranges snap outward to whole diff lines,
+    and the highlight is a reverse-video ``Static`` strip below the DiffView
+    instead of restyling the DiffView's internals. Diff content is
+    immutable (fixed at append time), so unlike the plain/markdown rows
+    there is no streaming clamp; row removal rides the existing
+    reconciliation guard.
     """
 
     can_focus = False
@@ -1516,10 +1800,29 @@ class ConsoleToolDiffRow(Vertical):
     def __init__(self, message_id: str, diff: tuple[str, str, str]) -> None:
         self.message_id = message_id
         self._diff = diff
+        # Text-selection range over the unified-diff projection at LINE
+        # granularity (phase 3, task 1). Offsets are always whole-line
+        # bounds. None = no highlight.
+        self._selection_range: tuple[int, int] | None = None
+        self._display_text: str | None = None
         super().__init__(
             id=f"console-tool-diff-{message_id}",
             classes="console-transcript-tool-diff",
         )
+
+    def compose(self) -> ComposeResult:
+        # Selection highlight strip (phase 3, task 1): composed once and
+        # toggled via ``display`` (same lifecycle rationale as the markdown
+        # row's strip -- selection updates never mount/remove widgets). The
+        # DiffView mounts BEFORE it in ``_prepare_and_mount`` so the strip
+        # always sits below the diff.
+        selection_strip = Static(
+            "",
+            classes="console-tool-diff-selection-strip",
+            markup=False,
+        )
+        selection_strip.display = False
+        yield selection_strip
 
     def on_mount(self) -> None:
         path, old_content, new_content = self._diff
@@ -1540,11 +1843,85 @@ class ConsoleToolDiffRow(Vertical):
                 # Row was unmounted (collapse/prune/session swap) while the
                 # diff prepared off-thread.
                 return
-            await self.mount(diff_view)
+            try:
+                strip = self.query_one(".console-tool-diff-selection-strip", Static)
+            except NoMatches:
+                strip = None
+            if strip is None:
+                await self.mount(diff_view)
+            else:
+                await self.mount(diff_view, before=strip)
         except Exception as exc:  # noqa: BLE001 — a render failure never breaks the transcript
             logger.opt(exception=True).error(
                 f"Failed to render console tool diff for {path}: {exc}"
             )
+
+    # -- Text-selection protocol (console selection phase 3, task 1) ------
+
+    def get_display_text(self) -> str:
+        """Return the unified-diff projection this row renders (selection domain)."""
+        if self._display_text is None:
+            # Immutable contents: compute once and cache forever.
+            self._display_text = _tool_diff_display_text(self._diff)
+        return self._display_text
+
+    def get_selection_text(self) -> str:
+        """Return the selected whole diff lines, capped for quoting."""
+        if self._selection_range is None:
+            return ""
+        start, end = self._selection_range
+        text = self.get_display_text()
+        start, end = max(0, start), min(end, len(text))
+        return cap_quote(text[start:end])
+
+    def set_selection_range(self, start: int, end: int) -> None:
+        """Highlight ``[start, end)`` of the projection, snapped to whole lines.
+
+        Diff-row granularity is the whole diff line (spec phase 3): the
+        character range grows to cover every projection line it touches,
+        so a coarse cell-to-offset map still yields whole-line quotes.
+        """
+        start, end = sorted((start, end))
+        if end <= start:
+            self.clear_selection()
+            return
+        text = self.get_display_text()
+        start, end = _snap_to_line_bounds(text, start, end)
+        if end <= start:
+            self.clear_selection()
+            return
+        self._selection_range = (start, end)
+        self._refresh_selection_strip()
+
+    def clear_selection(self) -> None:
+        """Hide the highlight strip."""
+        if self._selection_range is None:
+            return
+        self._selection_range = None
+        self._refresh_selection_strip()
+
+    def _refresh_selection_strip(self) -> None:
+        """Show/hide the reverse-video strip of selected diff lines.
+
+        Same carrier as the markdown row's strip: the DiffView owns its
+        block layout and is left untouched, while the strip spells the
+        selected diff lines out below it in reverse video. The strip
+        content is capped exactly like the quote (``cap_quote``) so
+        select-all on a huge diff cannot duplicate the whole diff below
+        itself.
+        """
+        try:
+            strip = self.query_one(".console-tool-diff-selection-strip", Static)
+        except NoMatches:
+            return  # row not composed yet -- protocol state stays valid
+        if self._selection_range is None:
+            strip.display = False
+            return
+        start, end = self._selection_range
+        text = self.get_display_text()
+        selected = cap_quote(text[max(0, start) : min(end, len(text))])
+        strip.update(Text(selected, style="reverse"))
+        strip.display = bool(selected)
 
 
 class ConsoleTranscriptActionButton(Button):
@@ -1774,10 +2151,204 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int:
+    """Map a body-local screen cell to a character offset in ``text``.
+
+    Console selection phase 1. Plain-row bodies are ``Static`` widgets whose
+    text wraps at the body's content width, so the vertical position must be
+    resolved against the wrapped layout, not treated as one long line.
+    ``Content.wrap`` mirrors the widget's own fold (leading indentation is
+    preserved, the fold space is dropped), so each wrapped line is aligned
+    back to its source offset by skipping the whitespace the fold dropped --
+    mapping choice verified against ``Content.wrap`` on Textual 8.2.8.
+
+    Cells above the body clamp to offset 0, cells below the last wrapped
+    line to the end of the text; on the hovered line the x cell maps through
+    ``offset_for_cell`` (clamped to that line's extent).
+
+    Args:
+        text: The row's display (plain body) text -- the selection domain.
+        width: The body Static's content width (cells).
+        cell_x: Body-local column of the pointer.
+        cell_y: Body-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    if width <= 0 or not text:
+        # Not laid out (or nothing to select): monotone single-line mapping.
+        return offset_for_cell(text, cell_x)
+    wrapped = [
+        line.plain
+        for line in Content(text, strip_control_codes=False).wrap(width)
+    ]
+    if cell_y < 0:
+        return 0
+    if cell_y >= len(wrapped):
+        return len(text)
+    source_offset = 0
+    for index, line in enumerate(wrapped):
+        if line:
+            start = text.find(line, source_offset)
+            if start == -1 or text[source_offset:start].strip():
+                # Wrap edge case not modeled (defensive): fall back to the
+                # single-line mapping rather than mis-anchor the drag.
+                return offset_for_cell(text, cell_x)
+            if index == cell_y:
+                return start + offset_for_cell(line, cell_x)
+            source_offset = start + len(line)
+        else:
+            if index == cell_y:
+                # Blank wrapped line: anchor at the current position.
+                return source_offset
+            # Consume the blank line's own break so later lines stay
+            # aligned; any other inter-line whitespace is absorbed by the
+            # next line's find() above.
+            if source_offset < len(text) and text[source_offset] in "\r\n":
+                source_offset += 1
+    return len(text)
+
+
+def _snap_to_line_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Snap ``[start, end)`` outward to whole ``'\\n'``-delimited lines.
+
+    Console selection phase 1 (task G): markdown-row granularity is the whole
+    source line, so a character range grows to cover every line it touches.
+    The trailing newline of the last touched line is excluded, so the quoted
+    text is exactly the selected lines.
+    """
+    start, end = sorted((start, end))
+    start = max(0, min(start, len(text)))
+    end = max(0, min(end, len(text)))
+    line_start = text.rfind("\n", 0, start) + 1
+    newline = text.find("\n", end)
+    line_end = len(text) if newline == -1 else newline
+    return line_start, line_end
+
+
+def _markdown_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a markdown-body-local cell to a source-line character offset.
+
+    Console selection phase 1 (task G). The ``Markdown`` widget does not
+    expose which rendered line belongs to which SOURCE line (blocks re-flow,
+    wrap, and pad internally), so the body-local ``cell_y`` is distributed
+    evenly across the source lines and clamped to the nearest line -- the
+    recorded phase-1 approximation (ADR-068). ``set_selection_range`` then
+    snaps outward to whole lines, which bounds the damage of a coarse y map:
+    the quoted text is always whole lines regardless.
+
+    Two clamp details keep drags useful when the render COLLAPSES source
+    lines (soft-wrapped paragraphs render several source lines as one row,
+    so ``height < line count``): cells above the body map to the first line,
+    and the LAST rendered row maps to the last source line -- otherwise a
+    drag that ends on the bottom row could never reach the final lines.
+    ``cell_x`` maps within the target line via ``offset_for_cell``.
+
+    Args:
+        text: The row's markdown source text -- the selection domain.
+        height: The Markdown widget's rendered height (cells).
+        cell_x: Body-local column of the pointer.
+        cell_y: Body-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    lines = text.split("\n")
+    if height <= 0 or len(lines) <= 1:
+        # Not laid out (or a single source line): monotone single-line map.
+        return offset_for_cell(text, cell_x)
+    if cell_y < 0:
+        line_index = 0
+    elif cell_y >= height:
+        return len(text)
+    elif cell_y == height - 1:
+        line_index = len(lines) - 1
+    else:
+        line_index = min(int(cell_y * len(lines) / height), len(lines) - 1)
+    line_start = sum(len(line) + 1 for line in lines[:line_index])
+    return line_start + offset_for_cell(lines[line_index], cell_x)
+
+
+def _tool_diff_display_text(diff: tuple[str, str, str]) -> str:
+    """Deterministic plain-text projection of a tool diff (selection domain).
+
+    Console selection phase 3, task 1. The selection domain of a
+    ``ConsoleToolDiffRow`` is the unified diff of its immutable
+    ``(path, old, new)`` contents, built with ``keepends=True`` so offsets
+    are line-anchored, and ``fromfile=tofile=path`` so the header names the
+    file. Pure function on the tuple -- unit-testable without a widget.
+
+    Args:
+        diff: ``(file_path, old_content, new_content)`` as captured at the
+            provider's strip seam.
+
+    Returns:
+        The joined unified-diff text (the row's selection domain).
+    """
+    path, old_content, new_content = diff
+    return "".join(
+        difflib.unified_diff(
+            old_content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+        )
+    )
+
+
+def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> int:
+    """Map a DiffView-local cell to a diff-projection character offset.
+
+    Console selection phase 3, task 1. ``DiffView`` renders line-number
+    gutters, hunk headers, and (in split mode) paired +/- columns, so its
+    rows do not map 1:1 onto any exposed text -- exactly like the Markdown
+    rows (task G), the body-local ``cell_y`` is distributed evenly across
+    the projection's lines and clamped to the nearest line, and
+    ``set_selection_range`` then snaps outward to whole diff lines, which
+    bounds the damage of a coarse y map: the quoted text is always whole
+    diff lines regardless. ``wrap=False`` (the diff-widgets default) keeps
+    long diff lines unwrapped (they scroll horizontally), so ``cell_x``
+    maps monotonically within the target line.
+
+    Args:
+        text: The row's unified-diff projection -- the selection domain.
+        height: The DiffView's rendered height (cells).
+        cell_x: Diff-view-local column of the pointer.
+        cell_y: Diff-view-local row of the pointer.
+
+    Returns:
+        Character offset into ``text`` for the cell, always in
+        ``[0, len(text)]``.
+    """
+    return _markdown_cell_to_offset(text, height, cell_x, cell_y)
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
     can_focus = True
+
+
+
+    class TranscriptTextSelected(Message):
+        """Posted when a mouse drag finished with a non-empty text selection.
+
+        Console selection phase 1. This transcript mounts the floating
+        selection menu at the release cell (screen coordinates); the event
+        is not stopped, so the owning screen may also consume it (selection
+        lifecycle).
+        """
+
+        def __init__(
+            self, selection: TextSelection, screen_x: int, screen_y: int
+        ) -> None:
+            super().__init__()
+            self.selection = selection
+            self.screen_x = screen_x
+            self.screen_y = screen_y
+
     BINDINGS = [
         ("down,j", "select_next", "Next message"),
         ("up,k", "select_previous", "Previous message"),
@@ -1871,6 +2442,9 @@ class ConsoleTranscript(VerticalScroll):
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
+        # task-17169: screen-owned review-note previews keyed by native
+        # message id -- a message with entries gains an inline marker row.
+        self._annotation_previews: dict[str, tuple[str, ...]] = {}
         self._speech_states: dict[str, ConsoleSpeechPresentationState] = {}
         #: TASK-1860: ids of TOOL markers currently showing their FULL result.
         #: Pure view state, owned here: expansion never touches the store, is
@@ -1915,6 +2489,19 @@ class ConsoleTranscript(VerticalScroll):
         #: prefix, but only hydration removes ids from it.
         self._scrollback_hydration_scheduled = False
         self._hydrating_scrollback = False
+        #: Console selection phase 1: drag-selection state over plain rows.
+        #: Public so the owning screen (and tests) can inspect/consume it.
+        self.selection_manager = SelectionManager()
+        #: Row widget the active drag started on. Mouse capture reroutes
+        #: subsequent moves to THIS transcript (event control is then the
+        #: transcript itself), so extension resolves the origin row here
+        #: instead of from the event's control. Cleared on finish/cancel and
+        #: by the reconciliation guard when the row is removed/rebuilt.
+        #: Plain, markdown, or tool diff row (all implement the selection
+        #: protocol).
+        self._selection_origin_row: (
+            ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
+        ) = None
         #: TASK-15777: view-only hidden TAIL — the second window boundary.
         #: Always a contiguous SUFFIX of ``_messages`` derived from one index
         #: (``_hidden_tail_start``), so mounted rows stay one contiguous slice
@@ -3078,6 +3665,22 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
+    def set_annotation_previews(
+        self, previews: Mapping[str, tuple[str, ...]]
+    ) -> None:
+        """Replace screen-owned review-note previews keyed by native message ID.
+
+        task-17169 slice 2: the screen's sync loop pushes this every tick
+        (the citation-counts pattern); entries without an id or without at
+        least one note are dropped so the row derivation below can treat
+        presence as "render a marker".
+        """
+        self._annotation_previews = {
+            message_id: notes
+            for message_id, notes in previews.items()
+            if isinstance(message_id, str) and message_id and notes
+        }
+
     def set_change_review_provider_factory(
         self, factory: Callable[[], Any] | None
     ) -> None:
@@ -3716,19 +4319,600 @@ class ConsoleTranscript(VerticalScroll):
         button.press()
         return True
 
+    def _selection_row_for(
+        self, widget: Widget | None
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None:
+        """Return the selectable message row for a pressed widget, if any.
+
+        Console selection phase 1. Walks parents from the event control to
+        the nearest selection-protocol row: plain rows (character
+        granularity), markdown rows (line granularity, task G), and tool
+        diff rows (whole-diff-line granularity, phase 3 task 1).
+        Protected controls (``PROTECTED_CLICK_CLASSES`` -- action rows,
+        speech controls, rules, banners, scrollbars) never start a
+        selection.
+        """
+        if widget is None:
+            return None
+        if any(
+            widget.has_class(class_name)
+            for class_name in self.PROTECTED_CLICK_CLASSES
+        ):
+            return None
+        node: Widget | None = widget
+        while node is not None:
+            if node is self:
+                return None
+            if isinstance(
+                node, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+            ):
+                return node
+            node = node.parent
+        return None
+
+    def _selection_offset_for(
+        self,
+        row: ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow,
+        screen_x: int,
+        screen_y: int,
+    ) -> int:
+        """Map a screen cell to a character offset in ``row``'s text domain.
+
+        Plain rows resolve body-local cells wrap-aware through
+        ``_body_cell_to_offset``. Markdown rows (task G) resolve against the
+        Markdown widget's region at line granularity through
+        ``_markdown_cell_to_offset``. Diff rows (phase 3, task 1) resolve
+        against the DiffView's region through ``_diff_cell_to_offset``.
+        Cells outside the body clamp to the text bounds (above -> 0, below
+        -> end), which is the single-row clamp rule for drags that leave
+        the row.
+        """
+        if isinstance(row, ConsoleMarkdownMessage):
+            return self._markdown_selection_offset_for(row, screen_x, screen_y)
+        if isinstance(row, ConsoleToolDiffRow):
+            return self._diff_selection_offset_for(row, screen_x, screen_y)
+        text = row.get_display_text()
+        try:
+            body = row.query_one(".console-transcript-message-body", Static)
+        except NoMatches:
+            return 0  # row not composed; anchor at the text start
+        region = body.region
+        width = body.content_region.width or region.width
+        if width <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _body_cell_to_offset(
+            text, width, screen_x - region.x, screen_y - region.y
+        )
+
+    def _markdown_selection_offset_for(
+        self, row: ConsoleMarkdownMessage, screen_x: int, screen_y: int
+    ) -> int:
+        """Map a screen cell to a markdown row's source-line offset (task G)."""
+        text = row.get_display_text()
+        try:
+            markdown = row.query_one(Markdown)
+        except NoMatches:
+            return 0  # row not composed; anchor at the source start
+        region = markdown.region
+        # The transcript CSS zeroes the Markdown child's margin/padding, so
+        # its region is the rendered body; height <= 0 means not laid out.
+        if region.height <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _markdown_cell_to_offset(
+            text, region.height, screen_x - region.x, screen_y - region.y
+        )
+
+    def _diff_selection_offset_for(
+        self, row: ConsoleToolDiffRow, screen_x: int, screen_y: int
+    ) -> int:
+        """Map a screen cell to a diff row's projection-line offset (task 1)."""
+        text = row.get_display_text()
+        try:
+            diff_view = row.query_one(DiffView)
+        except NoMatches:
+            return 0  # diff not prepared/mounted yet; anchor at the start
+        region = diff_view.region
+        # The DiffView child carries the rendered body box; height <= 0
+        # means not laid out (or the async prepare has not mounted it).
+        if region.height <= 0:
+            return offset_for_cell(text, screen_x - region.x)
+        return _diff_cell_to_offset(
+            text, region.height, screen_x - region.x, screen_y - region.y
+        )
+
+    def _selection_press_widget(self, event: MouseDown | MouseUp) -> Widget | None:
+        """Return the widget a real-terminal mouse press/release hit.
+
+        Textual's screen forwarding dispatches ``MouseDown``/``MouseUp`` to
+        the widget under the pointer WITHOUT setting ``event.widget`` (only
+        the translated ``MouseMove`` path assigns one), so ``event.control``
+        is ``None`` for every press in a live terminal; it is populated only
+        on the synthetic events pilot tests post. Live-spike evidence
+        (2026-08-15): real drags logged ``ctrl=None`` on every MouseDown
+        while synthetic-test events carried controls. Resolve the target
+        from screen coordinates, falling back to ``event.control`` for
+        synthetic callers.
+        """
+        if event.control is not None:
+            return event.control
+        try:
+            widget, _offset = self.screen.get_widget_at(
+                event.screen_x, event.screen_y
+            )
+        except Exception:
+            return None
+        return widget
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Arm a text-selection drag on a left press over a selectable row."""
+        press_control = self._selection_press_widget(event)
+        # Click-outside dismissal, row-body half (final review): rows stop
+        # their own Clicks (the message-selection toggle), so with a menu
+        # open a press on another row's body never reaches this
+        # transcript's ``on_click`` removal -- the menu used to stay
+        # mounted while the user toggled selections elsewhere. Dismiss
+        # mounted menus here, before arming the new drag, EXCEPT when the
+        # press originates inside a ``ConsoleSelectionMenu``: the
+        # Add-to-chat button's MouseDown precedes its Click, so removing
+        # the menu on the press would unmount the button before its Click
+        # can activate it.
+        press_node: Widget | None = press_control
+        while press_node is not None and not isinstance(
+            press_node, ConsoleSelectionMenu
+        ):
+            press_node = press_node.parent
+        if press_node is None:
+            self._remove_selection_menu()
+        # Textual encodes a real left press as button 1 (the XTerm driver
+        # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
+        # as in plain mouse-move reports).
+        row = self._selection_row_for(press_control) if event.button == 1 else None
+        if row is None:
+            # A fresh press that cannot arm a drag (non-left button, or a
+            # protected/non-row control) ends the drag-release suppression
+            # window: the NEXT genuine click must behave normally. The drag's
+            # own release Click arrives with no intervening MouseDown, so
+            # same-press suppression is intact.
+            self.selection_manager.consume_just_finished()
+            return
+        offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
+        self.selection_manager.begin_drag(row.id, offset)
+        self._selection_origin_row = row
+        # Capture the mouse so the terminal MouseUp reaches this transcript
+        # even when the pointer is released outside it; otherwise the
+        # manager stays active and suppresses row clicks until the next
+        # MouseDown (ported from the reference implementation's fix).
+        self.capture_mouse(True)
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        """Extend the active drag over the origin row's body text."""
+        if not self.selection_manager.state.active:
+            return
+        event.stop()
+        selection = self.selection_manager.state.selection
+        row = self._selection_origin_row
+        if (
+            selection is None
+            or row is None
+            or not row.is_attached
+            or row.id != selection.row_key
+        ):
+            return  # origin row went away: hold the last position
+        offset = self._selection_offset_for(row, event.screen_x, event.screen_y)
+        self.selection_manager.extend_drag(row.id, offset)
+        updated = self.selection_manager.state.selection
+        if updated is None:
+            return
+        for other in self._row_widgets.values():
+            if (
+                isinstance(
+                    other,
+                    (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
+                )
+                and other.id != row.id
+            ):
+                other.clear_selection()
+        row.set_selection_range(updated.start, updated.end)
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        """Finish the drag; post a selection message for menu-worthy releases."""
+        # Self-guarding: a no-op unless this transcript holds the capture.
+        self.release_mouse()
+        if not self.selection_manager.state.active:
+            return
+        event.stop()
+        selection = self.selection_manager.finish_drag()
+        self._selection_origin_row = None
+        if selection is None:
+            # Empty finish (a plain click, not a drag): the manager's
+            # just_finished flag exists to suppress drag-release clicks, so
+            # consume it here and let the following Click select the message.
+            self.selection_manager.consume_just_finished()
+            return
+        self.post_message(
+            self.TranscriptTextSelected(
+                selection=selection,
+                screen_x=event.screen_x,
+                screen_y=event.screen_y,
+            )
+        )
+
+    @on(TranscriptTextSelected)
+    async def _text_selected(self, event: TranscriptTextSelected) -> None:
+        """Mount the floating selection menu at the drag-release cell.
+
+        Console selection phase 1, live-spike round 3 rework: the menu is
+        mounted on the owning SCREEN with an ``absolute_offset`` (the
+        tooltip anchoring mechanism). The previous approaches -- plain flow
+        child (rendered at the end of the scroll content), and a docked
+        transcript child with ``styles.offset`` -- were both broken in a
+        live terminal: the flow child sat below the fold, and the docked
+        child painted translated by its offset while being CLIPPED to the
+        un-translated dock slot (the user saw one button; hit-tests used
+        the un-translated region, so the rest were unclickable). Screen
+        mounting folds the position into the widget's region, so paint,
+        clipping, and hit-testing agree. Deliberately does not stop the
+        event: the owning screen also consumes TranscriptTextSelected
+        (selection lifecycle).
+
+        The event carries SCREEN coordinates directly; the clamp keeps the
+        anchor within the OWNING TRANSCRIPT's visible region (the ``+1``
+        sits the menu just below the release row). Live-spike 2026-08-16:
+        the real Console layout puts the composer + status bar BELOW the
+        transcript, so the transcript's box ends above the screen edge --
+        clamping the anchor to SCREEN bounds let a bottom-of-transcript
+        release paint the menu over the composer.
+
+        Async and awaiting the previous menu's removal is load-bearing:
+        ``Widget.remove()`` only SCHEDULES removal while ``mount()``
+        registers the new menu into the DOM synchronously, so a same-id
+        remount over a still-attached old menu raises Textual's app-fatal
+        ``DuplicateIds`` (consecutive selections crashed before). Menus
+        whose removal was merely scheduled (``_pruning``) are awaited too
+        rather than skipped: a skipped one can still be attached at the
+        remount, and awaiting an already-pruning node's ``remove()`` is
+        harmless (it waits out the prune already in flight). The freshly
+        mounted menu survives the drag-release Click because that Click is
+        stopped by the row's ``on_click`` (drag-release suppression), so it
+        never reaches this transcript's own ``on_click`` removal.
+        """
+        for menu in self._attached_selection_menus():
+            await menu.remove()
+        # Mounting on the screen triggers a layout refresh that re-engages
+        # Textual's bottom anchor and yanks the view to the tail -- away
+        # from the selection the user just made. Release the tail-follow
+        # for the menu's lifetime (the jump pill appears, the standard
+        # detached-reader affordance).
+        self.release_anchor()
+        # Phase 3: selections in agent output (ASSISTANT/TOOL-role rows,
+        # diff rows) additionally offer the review-feedback actions,
+        # run-gated through the owning screen's status seam.
+        origin_row = self._active_selection_row()
+        feedback_available = self._row_supports_selection_feedback(origin_row)
+        # Live spike 2026-08-16 8:48: when the measured clamp must pull the
+        # menu up off the release point, pinning its bottom to the
+        # transcript bottom landed it ON TOP of the just-selected row --
+        # the reverse-video highlight strip (the evidence of the selection)
+        # hid behind the menu. Hand the menu the row's screen top so its
+        # clamp can hop entirely ABOVE the row when there is room (NULL /
+        # unmeasured row region passes None -> plain bottom pin).
+        origin_region = origin_row.region if origin_row is not None else None
+        selection_top = origin_region.y if origin_region else None
+        # Clamp the ANCHOR POINT into the transcript's own visible box
+        # (never the bare screen): the composer/status bar live below this
+        # region, and the menu's measured post-layout clamp (in the menu)
+        # finishes the job against the same box.
+        bounds = self.region
+        if not bounds:
+            # Clamp-fix review: pre-layout the region is NULL_REGION (never
+            # None in textual 8.2.8), and a zero-size box would collapse
+            # both clamp axes to its origin and pin the menu at (0, 0) --
+            # fall back to screen-size bounds, mirroring the menu-side
+            # guard for unmeasured owners.
+            screen_size = self.screen.size
+            bounds = Region(0, 0, screen_size.width, screen_size.height)
+        self.screen.mount(
+            ConsoleSelectionMenu(
+                screen_x=self._clamp_menu_offset(
+                    event.screen_x, low=bounds.x, high=bounds.right, margin=2
+                ),
+                screen_y=self._clamp_menu_offset(
+                    event.screen_y + 1, low=bounds.y, high=bounds.bottom, margin=2
+                ),
+                owner=self,
+                feedback_available=feedback_available,
+                run_active=feedback_available and self._selection_run_active(),
+                selection_top=selection_top,
+            )
+        )
+
+    @staticmethod
+    def _clamp_menu_offset(value: int, low: int, high: int, *, margin: int) -> int:
+        """Clamp a screen-space menu anchor into ``[low, high - margin]``.
+
+        ``low``/``high`` delimit the owning transcript's visible box on one
+        axis, so the anchor can never leave the transcript (the composer
+        below it stays clear); the inner ``max(low, ...)`` guards
+        degenerate boxes thinner than the margin.
+        """
+        return max(low, min(value, max(low, high - margin)))
+
+    @on(ConsoleSelectionMenu.AddToChat)
+    def _selection_add_to_chat(self, event: ConsoleSelectionMenu.AddToChat) -> None:
+        """Quote the active row selection up to the owning screen and clean up."""
+        event.stop()
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSelectionQuoteRequested(quote=cap_quote(row.get_selection_text()))
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    @on(ConsoleSelectionMenu.Dismissed)
+    def _selection_menu_dismissed(
+        self, event: ConsoleSelectionMenu.Dismissed
+    ) -> None:
+        """Escape dismissal clears the whole selection UI (strip included)."""
+        event.stop()
+        self._remove_selection_menu()
+
+    @on(ConsoleSelectionMenu.MoreDetails)
+    def _selection_more_details(
+        self, event: ConsoleSelectionMenu.MoreDetails
+    ) -> None:
+        """Open a More Details side chat about the active selection."""
+        event.stop()
+        self._request_side_chat(ConsoleSideChatRequested.MODE_MORE_DETAILS)
+
+    @on(ConsoleSelectionMenu.AskInSideChat)
+    def _selection_ask_side_chat(
+        self, event: ConsoleSelectionMenu.AskInSideChat
+    ) -> None:
+        """Open a freeform Ask in Side Chat about the active selection."""
+        event.stop()
+        self._request_side_chat(ConsoleSideChatRequested.MODE_ASK)
+
+    def _request_side_chat(self, mode: str) -> None:
+        """Post a capped-selection side-chat request and clean up (phase 2).
+
+        Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
+        selection text is capped by ``cap_quote`` before it leaves the
+        transcript, the row range is cleared, the drag manager cancelled,
+        and the menu removed.
+        """
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSideChatRequested(
+                    quote=cap_quote(row.get_selection_text()), mode=mode
+                )
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    @on(ConsoleSelectionMenu.RequestChanges)
+    def _selection_request_changes(
+        self, event: ConsoleSelectionMenu.RequestChanges
+    ) -> None:
+        """Send request-changes review feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(
+            ConsoleSelectionFeedbackRequested.ACTION_REQUEST_CHANGES
+        )
+
+    @on(ConsoleSelectionMenu.Lgm)
+    def _selection_lgm(self, event: ConsoleSelectionMenu.Lgm) -> None:
+        """Send LGTM review feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_LGM)
+
+    @on(ConsoleSelectionMenu.Comment)
+    def _selection_comment(self, event: ConsoleSelectionMenu.Comment) -> None:
+        """Send comment feedback for the active selection."""
+        event.stop()
+        self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_COMMENT)
+
+    def _request_selection_feedback(self, action: str) -> None:
+        """Post a capped-selection feedback request and clean up (phase 3).
+
+        Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
+        selection text is capped by ``cap_quote`` before it leaves the
+        transcript (the screen no-ops empty quotes), the row range is
+        cleared, the drag manager cancelled, and the menu removed. The
+        structured message composition and prompt-queue routing live on
+        the owning screen (phase 3 task 5).
+        """
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSelectionFeedbackRequested(
+                    action=action,
+                    quote=cap_quote(row.get_selection_text()),
+                    anchor_message_id=getattr(row, "message_id", None),
+                )
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
+
+    def _row_supports_selection_feedback(
+        self,
+        row: ConsoleTranscriptMessage
+        | ConsoleMarkdownMessage
+        | ConsoleToolDiffRow
+        | None,
+    ) -> bool:
+        """Whether the selection's origin row is agent output (phase 3).
+
+        Diff rows exist only under expanded file-write TOOL markers, so
+        they are agent output by definition; plain/markdown rows qualify
+        when the message they render is ASSISTANT- or TOOL-role. Product
+        decision 2026-08-16: the agent's own prose replies (markdown or
+        plain) are the most natural review target, so ASSISTANT-role rows
+        qualify alongside tool markers/diagnostics; USER-role rows never
+        do (the user's own words are not reviewable output). ``None`` (no
+        live selection) offers nothing.
+        """
+        if isinstance(row, ConsoleToolDiffRow):
+            return True
+        if isinstance(row, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+            message = getattr(row, "_message", None)
+            return message is not None and message.role in (
+                ConsoleMessageRole.ASSISTANT,
+                ConsoleMessageRole.TOOL,
+            )
+        return False
+
+    def _selection_run_active(self) -> bool:
+        """Whether the owning screen reports an active console run (phase 3).
+
+        Reads the screen's run-status seam (``ChatScreen``'s
+        ``_current_console_run_status_value``) defensively via ``getattr``:
+        bare harness screens and non-console hosts do not expose it, which
+        simply means "no active run" (Request changes / LGTM stay gated).
+        """
+        try:
+            status_getter = getattr(
+                self.screen, "_current_console_run_status_value", None
+            )
+        except NoScreen:  # pragma: no cover - teardown race only
+            return False
+        if not callable(status_getter):
+            return False
+        return str(status_getter()).strip().lower() in (
+            _SELECTION_FEEDBACK_ACTIVE_RUN_STATUSES
+        )
+
+    def _active_selection_row(
+        self,
+    ) -> ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None:
+        """Resolve the row widget holding the active selection, if any."""
+        sel = self.selection_manager.state.selection
+        if sel is None:
+            return None
+        # Query by id without a type expectation: the selected row may be
+        # a plain, markdown (task G), or tool diff (phase 3, task 1) row,
+        # and a typed query_one would raise WrongType on the other kinds.
+        try:
+            widget = self.query_one(f"#{sel.row_key}")
+        except NoMatches:
+            return None
+        if isinstance(
+            widget, (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow)
+        ):
+            return widget
+        return None
+
+    def _attached_selection_menus(self) -> list[ConsoleSelectionMenu]:
+        """Menus still attached whose removal is not already scheduled.
+
+        Textual marks a widget ``_pruning`` synchronously inside
+        ``remove()`` but detaches it only when the prune message is
+        processed, so a menu can appear in ``query`` twice across two
+        removal calls; already-pruning menus are skipped to keep
+        ``remove()`` single-shot per menu.
+        """
+        return [
+            menu
+            for menu in self.screen.query(ConsoleSelectionMenu)
+            if not getattr(menu, "_pruning", False)
+        ]
+
+    def _remove_selection_menu(self) -> None:
+        """Dismiss the selection UI: remove the menu AND the highlight.
+
+        Every dismissal path (escape, click-outside, action cleanup)
+        clears the text selection as well -- live-spike feedback: the
+        markdown highlight strip lingered after the menu closed until the
+        user clicked the strip itself. Action handlers read the quote
+        BEFORE calling here, so clearing on removal is safe for them.
+
+        Fire-and-forget: suitable for dismissal paths that never remount
+        a same-id menu afterwards. The remount path (``_text_selected``)
+        must await the removals instead -- see its docstring.
+        """
+        row = self._active_selection_row()
+        if row is not None:
+            row.clear_selection()
+        # Deliberately NOT cancelling the drag manager here: the drag's own
+        # release Click is still in the queue, and its suppression flag is
+        # what stops it from toggling the row's message selection. The
+        # click cycle consumes that flag (empty finish or non-arming press),
+        # and the next armed drag replaces the selection state wholesale.
+        for menu in self._attached_selection_menus():
+            menu.remove()
+
     def on_click(self, event: Click) -> None:
         """Clear selection when the user clicks negative space in the transcript.
+
+        Any click that reaches this handler is outside the floating selection
+        menu (the menu stops clicks that land inside it), so the menu is
+        removed first: click-outside dismisses it with no other side effect,
+        then the normal click handling continues.
+
+        A drag release (``just_finished`` or the one-shot
+        ``release_click_pending`` token, which the row guard's short-circuit
+        can leave armed) is consumed here instead -- BEFORE any dismissal
+        cleanup, which would wipe the row selection the just-opened menu
+        exists to act on (live spike 2026-08-16: the release click reached
+        this handler with ``just_finished`` already consumed and
+        ``_remove_selection_menu()`` erased the quote before the action read
+        it).
 
         Clicks that land on controls with classes in ``PROTECTED_CLICK_CLASSES``
         (message action rows/buttons, rule separators, action-help text, the
         empty-state panel, or scrollbars) keep the current selection active. All
         other clicks that bubble up to the transcript itself clear the selection.
         """
+        if (
+            self.selection_manager.just_finished
+            or self.selection_manager.consume_release_click()
+        ):
+            event.stop()
+            self.selection_manager.consume_just_finished()
+            return
+        self._remove_selection_menu()
+        if self.selection_manager.just_finished:
+            event.stop()
+            self.selection_manager.consume_just_finished()
+            return
         control = event.control
         if control is not None and any(
             control.has_class(class_name) for class_name in self.PROTECTED_CLICK_CLASSES
         ):
             event.stop()
+            return
+        # Capture-routed row clicks (live spike 2026-08-16: 'can't select
+        # messages via mouse'): the drag-arm on press captures the mouse,
+        # and the synthesized Click is routed to THIS capturer -- the
+        # capture only releases when the MouseUp is processed, which lands
+        # after the Click was already forwarded. The row the pointer
+        # actually targeted never sees the click, so its toggle (and the
+        # row-level drag-release suppression) must run here instead.
+        row_node: Widget | None = control
+        while row_node is not None and not isinstance(
+            row_node,
+            (ConsoleMarkdownMessage, ConsoleTranscriptMessage, ConsoleToolDiffRow),
+        ):
+            row_node = row_node.parent
+        if row_node is not None:
+            event.stop()
+            manager = self.selection_manager
+            if (
+                manager.state.active
+                or manager.just_finished
+                or manager.consume_release_click()
+            ):
+                manager.consume_just_finished()
+                manager.consume_release_click()
+                return
+            self.toggle_message_selection(row_node.message_id)
             return
         if control is self:
             self.action_clear_selection()
@@ -3870,6 +5054,20 @@ class ConsoleTranscript(VerticalScroll):
                         renderable=f"Sources ({citation_count})",
                     )
                 )
+            annotation_notes = self._annotation_previews.get(message.id)
+            if annotation_notes:
+                # task-17169: inline review-note marker under the annotated
+                # message. The notes ride the signature so an added or edited
+                # note re-renders the mounted marker instead of going stale.
+                rows.append(
+                    _TranscriptRow(
+                        key=f"annotations:{message.id}",
+                        kind="annotations",
+                        signature=("annotations", message.id, annotation_notes),
+                        message=message,
+                        renderable=_annotation_marker_content(annotation_notes),
+                    )
+                )
             original_attempt = self._original_attempt_previews.get(message.id)
             if original_attempt is not None:
                 rows.append(
@@ -3983,6 +5181,29 @@ class ConsoleTranscript(VerticalScroll):
             self._build_row_widget(row, track=False) for row in self._transcript_rows()
         ]
 
+    def _cancel_selection_if_row_removed(self, widget: Widget) -> None:
+        """Drop drag-selection state when its row widget is removed/rebuilt.
+
+        A rebuilt row widget does not carry the previous selection range, so
+        keeping the manager state would desync highlight vs. domain (ported
+        from the reference implementation). Releases mouse capture the same
+        way ``on_mouse_up`` does, so a mid-drag row rebuild cannot leave the
+        pointer captured.
+        """
+        selection = self.selection_manager.state.selection
+        if (
+            isinstance(
+                widget,
+                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
+            )
+            and selection is not None
+            and selection.row_key == widget.id
+        ):
+            if self.selection_manager.state.active:
+                self.release_mouse()
+            self.selection_manager.cancel()
+            self._selection_origin_row = None
+
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
@@ -4013,6 +5234,8 @@ class ConsoleTranscript(VerticalScroll):
         # one DOM operation.  A session swap therefore has one await instead
         # of two awaits per message (rule + body).
         if removals:
+            for widget in removals:
+                self._cancel_selection_if_row_removed(widget)
             await self.remove_children(removals)
 
         pending_widgets: list[Widget] = []
@@ -4158,6 +5381,12 @@ class ConsoleTranscript(VerticalScroll):
             and row.message.tool_diff is not None
         ):
             return ConsoleToolDiffRow(row.message.id, row.message.tool_diff)
+        if row.kind == "annotations" and row.message is not None:
+            return Static(
+                row.renderable,
+                id=f"console-annotations-{row.message.id}",
+                classes="console-transcript-annotations",
+            )
         if row.kind == "citations" and row.message is not None:
             button = Button(
                 row.renderable,

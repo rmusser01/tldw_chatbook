@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.trajectory import (
     KIND_COMPACTION,
     KIND_TOOL_CALL,
     KIND_TOOL_RESULT,
+    KIND_USER_FEEDBACK,
     KIND_USER,
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -76,6 +77,7 @@ KIND_STYLES: dict[str, Style] = {
     KIND_TOOL_CALL: Style(color="yellow"),
     KIND_TOOL_RESULT: Style(color="magenta"),
     KIND_COMPACTION: Style(color="red"),
+    KIND_USER_FEEDBACK: Style(color="bright_blue"),
 }
 _FALLBACK_STYLE = Style(color="white")
 

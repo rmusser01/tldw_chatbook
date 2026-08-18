@@ -50,6 +50,9 @@ from tldw_chatbook.Widgets.Console.console_edit_message_modal import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
 )
+from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+    ConsoleFeedbackCommentModal,
+)
 from tldw_chatbook.Widgets.Console.console_generate_image_modal import (
     ConsoleGenerateImageModal,
 )
@@ -107,6 +110,9 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from tldw_chatbook.Widgets.Console.console_side_chat_modal import (
+    ConsoleSideChatModal,
+)
 from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
     ScopeListPage,
     TagCount,
@@ -273,6 +279,32 @@ async def _save_system_prompt(_name: str, _text: str) -> str:
     return "saved"
 
 
+class _IdleSideChatService:
+    """Contract-fixture side-chat service: an async generator that yields
+    nothing, so the dismissal factory never starts a stream."""
+
+    async def run(self, **_kwargs: object) -> Any:
+        return
+        yield  # pragma: no cover -- makes run() an async generator
+
+
+def _side_chat_factory() -> ConsoleSideChatModal:
+    return ConsoleSideChatModal(
+        service=_IdleSideChatService(),  # type: ignore[arg-type]
+        provider_selection=None,
+        sidechat_model="",
+        quote="selected transcript text",
+        auto_send_prompt=None,
+    )
+
+
+def _feedback_comment_factory() -> ConsoleFeedbackCommentModal:
+    return ConsoleFeedbackCommentModal(
+        action="comment",
+        quote="selected transcript text",
+    )
+
+
 def _prompt_variables_factory() -> PromptVariablesDialog:
     return PromptVariablesDialog(
         PromptVariablesDialogRequest(
@@ -432,6 +464,16 @@ TASK2_MODAL_CONTRACTS = (
         "none",
         _RESTORE_OPENER,
     ),
+    _Task2ModalContract(
+        ConsoleSideChatModal,
+        _side_chat_factory,
+        "#console-side-chat-modal",
+        None,
+        "Console selection More Details / Ask in Side Chat actions",
+        "cancel side-chat worker",
+        "none",
+        _RESTORE_OPENER,
+    ),
 )
 
 
@@ -454,6 +496,17 @@ TASK3_MODAL_CONTRACTS = (
         None,
         (ConsoleEditResult,),
         "Console transcript message action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
+        ConsoleFeedbackCommentModal,
+        _feedback_comment_factory,
+        "#console-feedback-comment-modal",
+        None,
+        (str,),
+        "Console selection Request changes / LGTM / Comment actions",
         None,
         "none",
         _RESTORE_OPENER,
@@ -778,6 +831,13 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
         )
     ),
 )
+# The side-chat modal launches from the Console root (phase 2 task 5:
+# ChatScreen's ConsoleSideChatRequested handler pushes it after the
+# selection menu's More Details / Ask in Side Chat actions), so it rides
+# the declared root launches like every other root-owned modal. The
+# feedback comment modal rides the same way (phase 3 task 5:
+# ChatScreen's ConsoleSelectionFeedbackRequested flow pushes it before
+# routing the composed feedback through the prompt queue).
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
@@ -1048,7 +1108,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 39
+    assert len(reachable_modal_types) == 41
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1168,7 +1228,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 14
+    assert len(TASK2_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
@@ -1182,6 +1242,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsolePromptQueueModal",
         "ConsoleRunLogModal",
         "ConsoleScopePickerModal",
+        "ConsoleSideChatModal",
         "ConsoleSkillPickerModal",
         "ConsoleStylePickerModal",
     }
@@ -1189,6 +1250,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleCharacterPickerModal": "_cancel_query_debounce",
         "ConsoleReactionPickerModal": "_cancel_pending_updates",
         "ConsoleCitationSourcesModal": "increment _request_generation",
+        "ConsoleSideChatModal": "cancel side-chat worker",
         "ConsoleStylePickerModal": "_cancel_search_debounce",
     }
     for contract in TASK2_MODAL_CONTRACTS:
@@ -1215,10 +1277,11 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 12
+    assert len(TASK3_MODAL_CONTRACTS) == 13
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
+        "ConsoleFeedbackCommentModal",
         "ConsoleGenerateImageModal",
         "ConsoleRagSettingsModal",
         "ConsoleRenameSessionModal",

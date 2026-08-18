@@ -244,7 +244,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 39  # Local Visual Identity pack metadata.
+    _CURRENT_SCHEMA_VERSION = 40  # Local transcript annotations (task-17169).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5159,6 +5159,45 @@ UPDATE db_schema_version
                 f"Migration from V38 to V39 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v39_to_v40(self, conn: sqlite3.Connection) -> None:
+        """Add the local-only transcript_annotations table (task-17169)."""
+        if self._get_db_version(conn) != 39:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V39→V40] Migration requires schema version 39"
+            )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v39_to_v40_transcript_annotations.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if not sqlite3.complete_statement(pending):
+                        continue
+                    cursor.execute(pending)
+                    pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Transcript annotations migration contains incomplete SQL"
+                    )
+                row = cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                ).fetchone()
+                if row is None or row["version"] != 40:
+                    raise SchemaError(
+                        "Transcript annotations schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V39 to V40 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -5329,6 +5368,7 @@ UPDATE db_schema_version
                     36: self._migrate_from_v36_to_v37,
                     37: self._migrate_from_v37_to_v38,
                     38: self._migrate_from_v38_to_v39,
+                    39: self._migrate_from_v39_to_v40,
                 }
 
                 if current_db_version == 0:
@@ -10131,6 +10171,88 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Database error upserting trajectory rows: {e}"
             ) from e
+
+    def upsert_transcript_annotation(
+        self,
+        *,
+        conversation_id: str,
+        row_key: str,
+        quote_text: str,
+        comment: str,
+        message_id: Optional[str] = None,
+        annotation_id: Optional[str] = None,
+    ) -> str:
+        """Insert (or, given an ``annotation_id``, update) one review annotation.
+
+        task-17169: a Comment on a selected transcript span persists here in
+        addition to its trajectory-sidecar audit event. Upsert is BY
+        annotation id only — two annotations sharing an anchor are two
+        records (repeated review accumulates); passing an existing id edits
+        that record in place and refreshes ``updated_at``.
+
+        LOCAL-ONLY: no sync_log write, matching the table's design.
+
+        Returns:
+            The annotation id (generated when not supplied).
+        """
+        now = self._get_current_utc_timestamp_iso()
+        annotation_id = annotation_id or self._generate_uuid()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO transcript_annotations(
+                    annotation_id, conversation_id, row_key, message_id,
+                    quote_text, comment, created_at, updated_at, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(annotation_id) DO UPDATE SET
+                    row_key = excluded.row_key,
+                    message_id = excluded.message_id,
+                    quote_text = excluded.quote_text,
+                    comment = excluded.comment,
+                    updated_at = excluded.updated_at,
+                    deleted = 0
+                """,
+                (
+                    annotation_id,
+                    conversation_id,
+                    row_key,
+                    message_id,
+                    quote_text,
+                    comment,
+                    now,
+                    now,
+                ),
+            )
+        return annotation_id
+
+    def get_transcript_annotations(self, conversation_id: str) -> List[dict]:
+        """Live (non-deleted) annotations for one conversation, oldest first."""
+        conn = self.get_connection()
+        rows = conn.execute(
+            """
+            SELECT annotation_id, conversation_id, row_key, message_id,
+                   quote_text, comment, created_at, updated_at
+              FROM transcript_annotations
+             WHERE conversation_id = ? AND deleted = 0
+             ORDER BY created_at, annotation_id
+            """,
+            (conversation_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def soft_delete_transcript_annotation(self, annotation_id: str) -> bool:
+        """Soft-delete one annotation; False when unknown or already deleted."""
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE transcript_annotations
+                   SET deleted = 1, updated_at = ?
+                 WHERE annotation_id = ? AND deleted = 0
+                """,
+                (now, annotation_id),
+            )
+            return cursor.rowcount > 0
 
     def get_trajectory_rows(self, conversation_id: str) -> List[TrajectoryRowRead]:
         """Return a conversation's trajectory sidecar rows ordered by ``seq``.

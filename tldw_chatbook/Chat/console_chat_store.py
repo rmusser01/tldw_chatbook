@@ -4490,6 +4490,135 @@ class ConsoleChatStore:
         message.turn_id = turn_id
         return turn_id
 
+    def record_feedback_event(
+        self,
+        session_id: str,
+        *,
+        anchor_message_id: str,
+        action: str,
+        quote: str,
+        comment: str | None = None,
+    ) -> bool:
+        """Persist one selection-feedback event to the trajectory sidecar.
+
+        task-17169 (phase 4). Console selection feedback -- Request changes /
+        LGTM / Comment -- was ephemeral: composed into the next user message
+        and forgotten. It lands here rather than in a new annotations table
+        because it is a chronological run event, and because the sidecar is
+        LOCAL-ONLY (see the table's migration note): an audit record of what
+        THIS device's operator said about THIS run carries no sync-schema
+        implications, where a synced annotations table would.
+
+        ``anchor_message_id`` is the NATIVE Console id carried by the quoted
+        transcript row; the stored row keys off that message's persisted id,
+        so an unpersisted anchor (ephemeral session, or a message not yet
+        written) has nothing to anchor to and is skipped. ``seq=None`` lets
+        the write transaction assign the next ledger seq, so repeated
+        feedback on the same message does not collide on the
+        ``(message_id, event_kind, seq)`` primary key.
+
+        Returns True only when a row was actually written. Never raises --
+        the caller is a UI dispatch path, and losing an audit record must
+        never cost the user their actual feedback message.
+        """
+        try:
+            try:
+                message = self._message_or_raise(anchor_message_id)
+            except KeyError:
+                logger.bind(
+                    session_id=session_id, anchor_message_id=anchor_message_id
+                ).warning("feedback_event_unknown_anchor")
+                return False
+            if message.persisted_message_id is None:
+                return False
+            session = self._sessions.get(session_id) if session_id else None
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is None:
+                return False
+            payload: dict[str, str] = {"action": action, "quote": quote}
+            # No empty-string comment: LGTM and Request-changes genuinely have
+            # none, and the viewer must be able to tell "no comment" from
+            # "comment the user left blank".
+            if comment:
+                payload["comment"] = comment
+            row = TrajectoryRowWrite(
+                message_id=message.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=self._trajectory_turn_id(session_id, message),
+                seq=None,
+                event_kind="user_feedback",
+                step_started_at=time.time(),
+                payload_json=json.dumps(payload),
+            )
+            return self.write_trajectory_rows([row])
+        except Exception as exc:
+            logger.bind(
+                session_id=session_id,
+                anchor_message_id=anchor_message_id,
+                error=repr(exc),
+            ).warning("feedback_event_write_failed")
+            return False
+
+    def record_feedback_annotation(
+        self,
+        session_id: str,
+        *,
+        anchor_message_id: str,
+        quote: str,
+        comment: str,
+    ) -> str | None:
+        """Persist one Comment as a transcript annotation (task-17169 slice 2).
+
+        The second half of the both-homes decision: alongside the
+        ``user_feedback`` sidecar event (``record_feedback_event``), a
+        Comment on a selected span persists as a row-anchored annotation so
+        the transcript can carry an inline marker. ``row_key`` follows the
+        spike's rule -- ``message:<persisted_message_id>`` -- so only
+        anchors with a durable identity persist; TOOL markers, diff rows
+        and ephemeral messages have none and are skipped (the spec's
+        "excluded from annotation" case).
+
+        Returns the annotation id, or ``None`` for every skip (unknown or
+        unpersisted anchor, unpersisted session, no DB). Never raises: the
+        caller is the same UI dispatch path as the sidecar write, and a
+        lost marker must never cost the user their feedback message.
+        """
+        try:
+            database = getattr(self.persistence, "db", None) if self.persistence else None
+            if database is None:
+                return None
+            try:
+                message = self._message_or_raise(anchor_message_id)
+            except KeyError:
+                logger.bind(
+                    session_id=session_id, anchor_message_id=anchor_message_id
+                ).warning("feedback_annotation_unknown_anchor")
+                return None
+            if message.persisted_message_id is None:
+                return None
+            session = self._sessions.get(session_id) if session_id else None
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is None:
+                return None
+            return database.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{message.persisted_message_id}",
+                message_id=message.persisted_message_id,
+                quote_text=quote,
+                comment=comment,
+            )
+        except Exception as exc:
+            logger.bind(
+                session_id=session_id,
+                anchor_message_id=anchor_message_id,
+                error=repr(exc),
+            ).warning("feedback_annotation_write_failed")
+            return None
+
     def _write_trajectory_row_for_message(self, message: ConsoleChatMessage) -> None:
         """Write one persisted message's sidecar row (and any stashed tool rows).
 

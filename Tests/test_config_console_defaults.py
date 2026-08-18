@@ -136,6 +136,80 @@ def test_load_settings_normalizes_console_rail_label_style(
     assert settings["console"]["stack_collapsed_rail_labels"] is expected
 
 
+def test_console_sidechat_model_default_is_empty_string():
+    from tldw_chatbook.config import get_cli_setting
+
+    assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["sidechat_model"] == ""
+    assert get_cli_setting("console", "sidechat_model", "") == ""
+
+
+def test_console_sidechat_prompt_template_default():
+    from tldw_chatbook.config import get_cli_setting
+
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"][
+            "sidechat_prompt_template"
+        ]
+        == "Give me more details about: {selection}"
+    )
+    assert (
+        get_cli_setting("console", "sidechat_prompt_template", "")
+        == "Give me more details about: {selection}"
+    )
+
+
+def test_load_settings_exposes_console_sidechat_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["sidechat_model"] == ""
+    assert (
+        settings["console"]["sidechat_prompt_template"]
+        == "Give me more details about: {selection}"
+    )
+
+
+def test_console_sidechat_keys_survive_loader_coercion(tmp_path, monkeypatch):
+    """String side-chat keys round-trip through the loader as strings."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[console]\n"
+        'sidechat_model = "openai/gpt-5-mini"\n'
+        'sidechat_prompt_template = "Summarize this simply: {selection}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["sidechat_model"] == "openai/gpt-5-mini"
+    assert (
+        settings["console"]["sidechat_prompt_template"]
+        == "Summarize this simply: {selection}"
+    )
+
+
+def test_console_sidechat_non_string_values_fall_back_to_defaults(
+    tmp_path, monkeypatch
+):
+    """Presence-validation only: non-string values reset to the defaults."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[console]\nsidechat_model = 123\nsidechat_prompt_template = 789\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["sidechat_model"] == ""
+    assert (
+        settings["console"]["sidechat_prompt_template"]
+        == "Give me more details about: {selection}"
+    )
+
+
 def test_load_settings_coerces_console_paste_threshold(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

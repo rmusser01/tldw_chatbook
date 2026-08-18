@@ -380,7 +380,7 @@ are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.
   gate use), `[console]` and `[console.background_effects]` (paste
   collapse, ambience), `[chat.images]` (attachments), `[general]`
   `default_tab` (start here).
-- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md)
+- Child pages: [Chat basics](console/chat-basics.md) · [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) · [Branching & rewind](console/branching-and-rewind.md) · [Attachments, images & voice](console/attachments-images-voice.md) · [Agent runs & tools](console/agent-runs-and-tools.md) · [Context & RAG](console/context-and-rag.md) · [Text selection & feedback](console/text-selection-and-feedback.md)
 - Deep dives: [Speech services](../Features/Speech-Services-Guide.md) (Mic dictation backends) · [Chat dictionaries](../Features/ChatDictionaries-Documented.md).
 
 ## Quirks & troubleshooting
