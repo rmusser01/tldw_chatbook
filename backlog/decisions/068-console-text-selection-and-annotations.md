@@ -246,3 +246,30 @@ The selection menu also gains a fourth base action, **Create note**
 (maintainer request): title = first line capped at 48 chars, body = quote +
 provenance line, written off-thread through the store's persistence DB —
 the same seam as the annotation write, with the same never-raises contract.
+
+
+### Amendment 6 (2026-08-18, task-18515): review-note management surface
+
+Amendment 4 deferred Option B's management UI; it ships here. The ✎ marker
+became a real widget (`ConsoleAnnotationMarker`) that posts
+`ConsoleReviewNotesRequested` and joined `PROTECTED_CLICK_CLASSES` —
+closing a phase-4 papercut where clicking the marker toggled message
+selection instead. `n` opens the same modal from the keyboard.
+`ConsoleReviewNotesModal` takes injected `on_edit`/`on_delete` callables
+and imports no DB code; the screen owns the off-thread fetch, the
+never-raises wrappers, and the forced preview reload.
+
+Two invariants are test-pinned rather than merely intended:
+
+1. **The sidecar is immutable.** Editing or deleting an annotation leaves
+   its `user_feedback` trajectory row byte-identical (full `TrajectoryRowRead`
+   comparison, `payload_json` included). The ledger records what the
+   operator said during the run; the annotation is the living copy.
+2. **The quote is immutable.** Only the comment is editable; `quote_text`
+   is read once for display and never written.
+
+Recurring-trap note: the flow needed an inflight latch against rapid
+double-trigger — the THIRD occurrence in this program (feedback dispatch,
+keyboard Enter, now notes). The pattern is that the non-exclusive-worker
+*rationale* gets copied from `_console_selection_feedback_flow` while its
+`_inflight` guard does not; both halves are load-bearing.
