@@ -429,7 +429,15 @@ class PipelineLoader:
     async def _apply_before_middleware(
         self, middleware_id: str, query: str, params: Dict[str, Any]
     ) -> Tuple[str, Dict[str, Any]]:
-        """Apply before_search middleware."""
+        """Apply before_search middleware.
+
+        Declared names and implemented names must match, in both directions;
+        Tests/RAG_Search/test_pipeline_middleware_contract.py enforces it
+        (TASK-17600). `abstract_extractor`, `citation_parser` and
+        `code_syntax_enhancer` were listed by shipped pipelines and fell
+        straight off the end of this chain -- no branch, no error, no log
+        line -- so their declarations were removed rather than stubbed.
+        """
         middleware = self.middleware[middleware_id]
 
         # Implement specific middleware logic based on ID
@@ -451,16 +459,28 @@ class PipelineLoader:
     async def _apply_after_middleware(
         self, middleware_id: str, results: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Apply after_search middleware."""
+        """Apply after_search middleware.
+
+        Every `middleware_id` this branches on must be declared by a pipeline
+        in `rag_pipelines.toml`, and every name declared there must branch
+        here -- both directions are pinned by
+        Tests/RAG_Search/test_pipeline_middleware_contract.py, which also
+        fails a branch whose body is a bare `pass` (TASK-17600).
+
+        A `result_reranking` branch used to sit at the top of this chain with
+        exactly that body, under a middleware the shipped config declared
+        `enabled = true` and listed on `high_accuracy`. It was deleted rather
+        than wired: TASK-16965 measured cross-encoder reranking net-harmful
+        on the averaged row, so switching it on for everyone who selects the
+        accuracy pipeline is the opposite of what that measurement licenses.
+        `citation_formatter`, `code_formatter`, `result_clustering` and
+        `table_renderer` were declared by pipelines and never had branches at
+        all; their declarations are gone too.
+        """
         middleware = self.middleware[middleware_id]
 
         # Implement specific middleware logic
-        if middleware_id == "result_reranking":
-            # Example: re-rank results
-            # This would integrate with the re-ranking system
-            pass
-
-        elif middleware_id == "citation_enhancement":
+        if middleware_id == "citation_enhancement":
             # Example: enhance citations
             for result in results:
                 if "metadata" not in result:

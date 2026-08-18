@@ -106,6 +106,30 @@ class RerankOutcome:
         return self.failed > 0
 
 
+#: Smallest token budget a reranking call may run with when
+#: ``include_reasoning`` is on (TASK-17365).
+#:
+#: The shipped ``max_tokens = 100`` is sized for ``{"score": 0.9}`` and
+#: nothing else. Turn reasoning on and the model writes its explanation
+#: first, leaving ~60 tokens for the JSON: the object truncates before its
+#: closing brace, ``json.loads`` raises, and the row comes back
+#: ``scored=False`` -- after the provider has been billed in full. For
+#: listwise that is the WHOLE rerank, not one row.
+#:
+#: TASK-17065 (AC#11) turned the flag off on the two shipped read-only
+#: profiles, and built-ins never persist, so every install picked that up.
+#: A profile a user CLONED beforehand did not: ``ProfileConfig`` round-trips
+#: ``asdict(reranking_config)`` to the user's own JSON, where no shipped
+#: default reaches it.
+#:
+#: This is a FLOOR, not a migration. A migration would have to rewrite a
+#: file the user owns and GUESS whether a large ``max_tokens`` was
+#: deliberate; a floor cannot guess wrong -- it only raises a budget too
+#: small to hold what the config already asked the model to produce, leaves
+#: every deliberate value alone, and covers profiles cloned after it ships.
+REASONING_TOKEN_FLOOR = 400
+
+
 @dataclass
 class RerankingConfig:
     """Configuration for reranking operations."""
@@ -114,6 +138,10 @@ class RerankingConfig:
     model_provider: str = "openai"
     model_name: str = "gpt-3.5-turbo"
     temperature: float = 0.0  # Use deterministic scoring
+    # Sized for `{"score": 0.9}`. With `include_reasoning` on it is raised to
+    # `REASONING_TOKEN_FLOOR` at the call site (`_effective_max_tokens`) --
+    # 100 tokens cannot hold an explanation AND the JSON, and the truncated
+    # object is billed but unscorable (TASK-17365).
     max_tokens: int = 100
 
     # Reranking settings.
@@ -295,6 +323,28 @@ class BaseReranker(ABC):
                 retries += 1
                 await asyncio.sleep(1 * retries)
 
+    def _effective_max_tokens(self) -> int:
+        """The token budget this call actually runs with (TASK-17365).
+
+        ``max(configured, REASONING_TOKEN_FLOOR)`` when ``include_reasoning``
+        is on, the configured value otherwise. ``max`` is the whole point:
+        this is a floor, so a deliberate ``max_tokens = 4000`` comes through
+        as 4000 and only a budget too small to hold the explanation the
+        config asked for is raised.
+
+        It applies here, at the one place the budget is consumed, so it
+        covers every strategy and -- more importantly -- every profile,
+        including the ones a user cloned before TASK-17065 fixed the
+        built-ins and any they clone afterwards. See
+        ``REASONING_TOKEN_FLOOR`` for why this is not a migration.
+
+        Returns:
+            The ``max_tokens`` value to send to ``chat_api_call``.
+        """
+        if self.config.include_reasoning:
+            return max(self.config.max_tokens, REASONING_TOKEN_FLOOR)
+        return self.config.max_tokens
+
     async def _call_llm_impl(
         self, prompt: str, system_prompt: Optional[str] = None
     ) -> str:
@@ -312,19 +362,38 @@ class BaseReranker(ABC):
         did not name; that is how reranking reached 0 of the 29 providers
         the picker offers. Credential resolution is not this module's job.
         """
-        # Prepare messages
-        messages_payload = []
-        if system_prompt or self.config.system_prompt:
-            messages_payload.append(
-                {
-                    "role": "system",
-                    # The enclosing `if` guarantees one of these is truthy, so
-                    # no literal fallback is needed (each reranker's __init__
-                    # already populates config.system_prompt from the registry).
-                    "content": system_prompt or self.config.system_prompt,
-                }
-            )
-        messages_payload.append({"role": "user", "content": prompt})
+        # Prepare messages. The system instruction is NOT one of them: it
+        # travels as `chat_api_call`'s own `system_message=` (TASK-17265).
+        #
+        # It used to be an in-band `{"role": "system"}` entry here, and two
+        # mainstream providers throw that on the floor -- `chat_with_
+        # anthropic` builds its wire `messages` from user/assistant turns
+        # only and fills the top-level `system` field from its mapped
+        # parameter alone; `chat_with_google` `continue`s past every role
+        # that is not user/assistant and sets `system_instruction` only
+        # from its own. The text lost that way is the JSON contract this
+        # module's parser depends on, so on those providers every call was
+        # billed and unscorable.
+        #
+        # All 29 provider maps carry `system_message`, and all 29 handlers
+        # read the parameter they map it to (the target NAME differs --
+        # `system_prompt` for anthropic and the llama.cpp family,
+        # `system_message` for openai and google -- which is exactly why
+        # this is the dispatcher's translation to do, not the reranker's).
+        # Knowing provider shapes is not this module's job, the same lesson
+        # TASK-17065 landed for credentials.
+        #
+        # Sending it ONLY this way also satisfies "exactly one system
+        # instruction" by construction: for the providers that DO accept an
+        # in-band turn (openai, and the local family through the shared
+        # OpenAI-compatible sender) the handler synthesises the one turn
+        # itself, so keeping a copy here as well would put two conflicting
+        # copies on the wire.
+        messages_payload = [{"role": "user", "content": prompt}]
+        # Falsy -> omitted entirely, so no provider receives an empty system
+        # instruction (each reranker's __init__ populates
+        # config.system_prompt from the registry, so this is normally set).
+        effective_system_prompt = system_prompt or self.config.system_prompt
 
         # Call using chat_api_call
         try:
@@ -335,6 +404,15 @@ class BaseReranker(ABC):
             # endpoint: <key>" failure, and the key-in-a-log-line disclosure
             # TASK-17165 had to redact downstream.
             loop = asyncio.get_event_loop()
+            # Omitted, not passed as an empty value, when there is no system
+            # prompt: `chat_api_call` forwards a mapped argument whenever it
+            # is not None, so `system_message=""` would reach a handler and
+            # some would then synthesise an empty system turn.
+            system_kwarg = (
+                {"system_message": effective_system_prompt}
+                if effective_system_prompt
+                else {}
+            )
             response = await loop.run_in_executor(
                 None,
                 functools.partial(
@@ -343,7 +421,8 @@ class BaseReranker(ABC):
                     messages_payload=messages_payload,
                     model=self.config.model_name,
                     temp=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
+                    max_tokens=self._effective_max_tokens(),
+                    **system_kwarg,
                     # STATED, not inherited. Every handler currently
                     # DECLARES `streaming=False`, so the config is never
                     # consulted -- but the shipped `CONFIG_TOML_CONTENT`

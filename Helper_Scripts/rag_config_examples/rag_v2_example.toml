@@ -30,7 +30,13 @@ profile = "hybrid_basic"  # Default profile
 # enable_reranking = true
 # enable_parallel_processing = true
 # parent_size_multiplier = 3
-# reranking_strategy = "pointwise"
+#
+# There is NO "reranking_strategy" key. One was listed here and it read
+# nothing -- setting it selected nothing at all (TASK-17600 F3). The
+# strategy belongs to a RAG PROFILE: `reranking_config.strategy` in the
+# profile's saved JSON under <user data dir>/rag_profiles/, which survives
+# a restart because the profile serialises and rebuilds the whole
+# RerankingConfig. Clone a built-in profile, set it there.
 #
 # Reranking strategies: "pointwise" | "pairwise" | "listwise" bill an LLM
 # provider per call; "cross_encoder" runs a local model (no provider, no
@@ -64,4 +70,5 @@ profile = "hybrid_basic"  # Default profile
 # profile = "hybrid_enhanced"
 # [rag_search.service.custom_overrides]
 # enable_reranking = true
-# reranking_strategy = "llm"
+# (the strategy is a profile field -- see the note above; there is no
+#  reranking_strategy key, and "llm" was never one of the four values)
