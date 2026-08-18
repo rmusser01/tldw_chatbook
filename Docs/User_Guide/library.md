@@ -169,7 +169,7 @@ current as of that open, not a reading cached at some earlier repaint.
 
 | Action | What it does |
 |---|---|
-| **Create local workspace** | "Create a local-only workspace and make it active. Server sync and ACP handoff remain WIP." |
+| **Create local workspace** | Opens the same "New Workspace" dialog Console and Settings use — a prefilled "Workspace N" name, optional folders to bind (validated as added, with a Browse… picker), and a "Switch to this workspace" checkbox (checked by default). Escape cancels with nothing created. Server sync and ACP handoff remain WIP. |
 | **Import sources** | Shown only while you have no workspace-eligible sources: "Open Library Import/Export to add workspace-eligible sources." |
 | **Use in Console** | Stages a snapshot of your local Library sources ("Local Library Sources") into Console and takes you there. When it can't run yet, its tooltip says why — "Stage Library source context after Library finishes loading." or "Stage Library source context after adding notes, media, or conversations." |
 
@@ -403,3 +403,9 @@ anything you've saved" step above to match B3's already-shipped
 behavior — the Search / RAG canvas's per-source count follows Settings ▸
 RAG's Default results, 15 on the shipped default profile, not a fixed 5;
 no code changed here).*
+*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
+(task-17650: **Create local workspace** now opens the shared "New
+Workspace" dialog — the same one Console and Settings use — instead of
+creating a zero-input workspace instantly; documented its name prefill,
+optional validated folder bindings, Browse… picker, and default-on
+"Switch to this workspace" checkbox).*

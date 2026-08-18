@@ -98,10 +98,26 @@ highlighted result when it is an open tab. Esc cancels.
 | Control | What it does |
 |---|---|
 | "Switch" / Alt+W | Opens "Change Workspace" — "Switching changes Console context only; Library and Notes stay globally visible." Click a workspace to activate it; the active one is marked "(current)" and the built-in one is listed as "Default (everyday chats)" |
-| "New" | Creates a workspace (named "Workspace 1", "Workspace 2", …) and switches to it |
+| "New" | Opens the "New Workspace" dialog — see below |
 | "Rename" (in the switcher) | Opens "Rename Workspace" — edit the name, then "Save" |
 | "Archive" (in the switcher) | Opens "Archive workspace?" — "Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Confirm with "Archive" |
 | "RAG Scope" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+
+**The "New Workspace" dialog** is the same creation dialog Settings ▸
+Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
+(edit or keep it), an optional **folder** field with a **Browse…** button
+(opens a directory picker) and an **Add folder** button — each folder is
+validated as you add it (must be a real, existing directory; not your home
+folder or filesystem root; not this app's own data, configuration, or
+credential directories — or a folder that contains or sits inside one; not
+nested inside/around a folder already in the list) and rejections render
+inline without closing the dialog. Folders bind
+**read-only** (change that later in Settings ▸ Workspaces). A **"Switch to
+this workspace"** checkbox, checked by default, controls whether Create also
+activates the workspace; unchecking it creates the workspace without
+switching Console to it. **Escape cancels the dialog — nothing is created.**
+A name that collides with an existing workspace renders inline and keeps the
+dialog open.
 
 The built-in Default workspace has no "Rename" or "Archive" buttons. If you
 archive the workspace you are in, the Console switches back to Default.
@@ -146,12 +162,28 @@ single summary line quoted in the layout tour instead.
 
 **Create and switch to a new workspace**
 
-1. In the "Session" block, click "New" — a "Workspace N" is created and
-   becomes active; new chats now land in it.
-2. To go back, press Alt+W (or click "Switch") and pick
+1. In the "Session" block, click "New" — the "New Workspace" dialog opens
+   with a prefilled "Workspace N" name.
+2. Optional: edit the name, and add a project folder (type a path or click
+   "Browse…", then "Add folder") so agents have file access there.
+3. Leave "Switch to this workspace" checked and click "Create" — the
+   workspace is created and becomes active; new chats now land in it. A
+   toast confirms the switch even if the Session block is scrolled out of
+   view.
+4. To go back, press Alt+W (or click "Switch") and pick
    "Default (everyday chats)".
-3. Optional: in the same switcher, use "Rename" to give the new workspace a
-   real name.
+
+**Create a workspace without switching to it**
+
+1. Click "New", fill in the dialog as above, and uncheck "Switch to this
+   workspace" before pressing "Create".
+2. The workspace is created (with any folders bound) but Console stays on
+   its current workspace; a "Created \<name\>." toast confirms it.
+
+**Cancel a workspace creation**
+
+Press Escape (or click "Cancel") anywhere in the "New Workspace" dialog —
+nothing is created, no matter what you had typed or added.
 
 ## Keyboard & commands
 
@@ -195,3 +227,9 @@ single summary line quoted in the layout tour instead.
 
 —
 *Verified against dev @ ff435772c — 2026-07-31*
+*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
+(task-17650: "New" now opens the shared "New Workspace" dialog — prefilled
+name, optional validated folder bindings with Browse…, a "Switch to this
+workspace" checkbox default on, and Escape/Cancel creating nothing —
+instead of instant "Workspace N" creation; the walkthrough split into
+create-and-switch / create-without-switching / cancel tasks to match).*
