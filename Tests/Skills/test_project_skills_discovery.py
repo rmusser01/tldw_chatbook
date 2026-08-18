@@ -81,6 +81,22 @@ def test_fingerprint_changes_when_a_skill_is_added(tmp_path):
     assert discover_project_skills(tmp_path).fingerprint != first
 
 
+def test_fingerprint_changes_when_skill_md_edited_in_place(tmp_path):
+    d = _skill_dir(tmp_path, "alpha-skill")
+    first = discover_project_skills(tmp_path).fingerprint
+    skill_md = d / "SKILL.md"
+    skill_md.write_text(
+        "---\nname: alpha-skill\ndescription: Changed content.\n---\nNew body\n",
+        encoding="utf-8",
+    )
+    # Bump mtime_ns explicitly (rather than sleeping) so the assertion doesn't
+    # depend on filesystem mtime resolution catching a fast in-process edit.
+    st = skill_md.stat()
+    os.utime(skill_md, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    second = discover_project_skills(tmp_path).fingerprint
+    assert second != first
+
+
 def test_hostile_description_survives_as_plain_data(tmp_path):
     _skill_dir(tmp_path, "alpha-skill", description='"[red]evil[/red]"')
     discovery = discover_project_skills(tmp_path)
@@ -120,4 +136,26 @@ def test_ancestor_walk_stops_at_home(monkeypatch, tmp_path):
     start = tmp_path / "sub"
     start.mkdir()
     _skill_dir(tmp_path, "in-home-itself")
+    assert find_project_dir_with_skills(start) is None
+
+
+def test_ancestor_walk_stops_at_home_reached_via_symlinked_ancestor(monkeypatch, tmp_path):
+    # The walk start is reached through a symlinked path component that
+    # resolves onto $HOME. The unresolved `current` never string-equals the
+    # resolved `home`, so a stop-check that compares unresolved `current`
+    # against resolved `home` never fires -- the walk sails past the $HOME
+    # boundary and can discover skills planted at (or beyond) home.
+    real_home = tmp_path / "real_home"
+    real_home.mkdir()
+    _skill_dir(real_home, "in-home-itself")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: real_home))
+
+    link_root = tmp_path / "link_root"
+    link_root.mkdir()
+    home_link = link_root / "home_link"
+    os.symlink(real_home, home_link)
+
+    start = home_link / "sub"
+    start.mkdir()
+
     assert find_project_dir_with_skills(start) is None

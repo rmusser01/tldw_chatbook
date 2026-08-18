@@ -37,19 +37,19 @@ class ProjectSkillsDiscovery:
 
 
 def find_project_skills_dir(root: Path) -> Path | None:
-    """First non-symlinked .SKILLS/.skills dir in root, deduped by resolved path."""
-    seen: set[Path] = set()
+    """First non-symlinked, existing .SKILLS/.skills dir in root.
+
+    ``.SKILLS`` is preferred over ``.skills`` purely by check order: the
+    names are tried in that order and the function returns on the first
+    candidate that exists, is a directory, and is not itself a symlink.
+    """
     for name in _PROJECT_SKILLS_DIRNAMES:
         candidate = root / name
         try:
             if candidate.is_symlink() or not candidate.is_dir():
                 continue
-            resolved = candidate.resolve()
         except OSError:
             continue
-        if resolved in seen:
-            continue
-        seen.add(resolved)
         return candidate
     return None
 
@@ -59,7 +59,10 @@ def find_project_dir_with_skills(start: Path) -> Path | None:
 
     Checks each directory from ``start`` upward; a directory containing
     ``.git`` is the last one checked (the project root); ``$HOME`` and the
-    filesystem root are never checked and end the walk.
+    filesystem root are never checked and end the walk. Traversal itself
+    walks unresolved parents, but each stop-check resolves ``current``
+    first, so a symlinked ancestor that points at (or through) ``$HOME``
+    still stops the walk instead of silently crossing the boundary.
     """
     try:
         home = Path.home().resolve()
@@ -67,7 +70,11 @@ def find_project_dir_with_skills(start: Path) -> Path | None:
         home = None
     current = start
     while True:
-        if current == home or current == Path(current.anchor):
+        try:
+            resolved_current = current.resolve()
+        except OSError:
+            return None
+        if resolved_current == home or resolved_current == Path(resolved_current.anchor):
             return None
         if find_project_skills_dir(current) is not None:
             return current
@@ -117,10 +124,15 @@ def _entry_for(name: str, kind: str, path: Path, body: Path) -> ProjectSkillEntr
 
 
 def _fingerprint(entries: list[ProjectSkillEntry]) -> str:
+    # Stat the recognized skill FILE (spec §5.2), not the containing
+    # directory: on POSIX a directory's mtime/size don't change when a file
+    # inside it is edited in place, so stat'ing entry.path for a directory
+    # kind would make in-place SKILL.md edits invisible to the fingerprint.
     digest = hashlib.sha256()
     for entry in entries:
+        body = entry.path / "SKILL.md" if entry.kind == "directory" else entry.path
         try:
-            stat = entry.path.stat()
+            stat = body.stat()
             digest.update(
                 f"{entry.name}|{stat.st_size}|{stat.st_mtime_ns}\n".encode()
             )
