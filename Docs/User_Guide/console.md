@@ -51,8 +51,15 @@ Top to bottom:
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
   (ask Library sources before sending), and the **Session Settings**
   summary.
+- **Staged-evidence strip** — appears at the top of the control deck,
+  directly under the conversation pane and above the status chip strip,
+  only while Library RAG evidence is staged (or briefly after a send
+  consumes it); lists what's staged with an **Un-stage** button — see
+  [Context & RAG](console/context-and-rag.md). The prompt-queue shelf
+  occupies the same slot while prompts are queued.
 - **Status chip strip** — one row of chips directly below the
-  conversation pane, above the composer: **Provider**, **Model**,
+  conversation pane (and below any staged-evidence or prompt-queue
+  strip), above the composer: **Provider**, **Model**,
   **Assistant**, **Library search**, **Sources**, **Tools**,
   **Approvals**, and — once retrieval is narrowed — **Scope**. (Settings ▸
   Console Behavior ▸ **Status row placement** can move this row below the
@@ -66,10 +73,6 @@ Top to bottom:
   pending approval card, and **Scope** opens the scope picker. The **Tools**
   chip only appears once tools are counted for the session (after your
   first send) — before that it stays hidden rather than guessing.
-- **Staged-evidence strip** — appears directly above the composer only
-  while Library RAG evidence is staged (or briefly after a
-  send consumes it); lists what's staged with an **Un-stage** button — see
-  [Context & RAG](console/context-and-rag.md).
 - **Composer row** — a slim one-row bar (it grows with your draft, up to
   eight rows, and shrinks back as the draft empties) marked by a one-column edge on its left that brightens and
   thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
@@ -450,4 +453,8 @@ prompt-queue shelf and staged evidence sit immediately above that gap;
 compact mode drops both rows. Verified
 against TASK-17654 — 2026-08-17 (headless probe at 150×44): the draft
 now grows to eight rows (was four), head-elided with "... " while
-windowed, and returns to one row as the draft empties.*
+windowed, and returns to one row as the draft empties. Verified against
+TASK-17661 — 2026-08-18 (painted probe with staged sources): the
+staged-evidence strip and prompt-queue shelf now sit at the top of the
+control deck, above the status row, keeping the composer's surroundings
+quiet.*
