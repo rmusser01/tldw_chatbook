@@ -14,7 +14,7 @@ reply back to its citations.
 Open Console with **Ctrl+2**. This page's surfaces: the **Chat Context**
 viewer (**Ctrl+Shift+P**), the **Inspector** rail on the right (click its
 handle to expand), the composer for `/prompt`, `/system`, and `/prefill`,
-and the status chips below the composer.
+and the status chips above the composer.
 
 ## Layout tour
 
@@ -28,11 +28,11 @@ Where this page's controls live:
   retrieval-scope row beneath it, the "Prefill" rows when one is armed, the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom.
-- **The status chips** below the composer — "RAG: on/off", "Sources: N
+- **The status chips** above the composer — "RAG: on/off", "Sources: N
   staged", and the "Scope: N" chip once retrieval is narrowed.
-- **The staged-evidence strip** — directly above the composer; shown only
-  while something is staged (or right after a send
-  that used it).
+- **The staged-evidence strip** — at the top of the control deck, above
+  the status chips; shown only while something is staged (or right after
+  a send that used it).
 - **The composer** — where `/prompt`, `/system`, and `/prefill` are typed;
   the left rail's Model section carries the clickable `System:` line.
 
@@ -249,9 +249,9 @@ staying silent. A zero-result outcome currently clears the in-flight
 placeholder with no further notice.
 
 The Inspector tray is not the only place staged evidence shows up: a
-**staged-evidence strip** sits on the main surface itself, directly above
-the composer, so staging is visible without opening the
-Inspector at all. Staged, it lists the titles (up to three, "+N more"
+**staged-evidence strip** sits on the main surface itself, at the top of
+the control deck above the status chips, so staging is visible without
+opening the Inspector at all. Staged, it lists the titles (up to three, "+N more"
 beyond that) with an **Un-stage** button that drops the whole bundle in
 one click; after a send that used it, the strip briefly instead reads
 "Evidence sent with this message · N sources". Staged evidence rides only
@@ -407,3 +407,7 @@ injected block back ("the evidence sections [S1] through [S15] …") — the
 end-to-end proof that retrieved evidence reaches the provider. A send
 beginning with a slash command fired no retrieval at all: no placeholder,
 no chip flip, no evidence line.*
+
+*Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
+(task-17662, after the bottom-stack programme moved the status chips above
+the composer and the staged-evidence strip above the status chips).*

@@ -13,7 +13,7 @@ MCP tools plug in. For the Console screen itself see [Console](../console.md).
 Open Console (**Ctrl+2**) and send a message — runs happen wherever you
 chat, no separate mode to enable. The surfaces this page covers: the
 transcript's inline tool rows, the **Agent** section in the left "Console
-context" rail, the Inspector's status rows, the status chips below the
+context" rail, the Inspector's status rows, the status chips above the
 composer, and the approval and confirm cards that appear above the
 transcript.
 
@@ -67,7 +67,7 @@ reply:
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
 sources / tools / approvals for the next send.
 
-**In the status chips** (below the composer) — "Tools: N ready" counts the
+**In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
@@ -1105,3 +1105,8 @@ that way). Answering through the rendered control is pinned by the
 automated first-open suite (a press on the painted button resolves the
 round); in the tmux rig the round was ended through the documented
 quit-denies path, and nothing was written to disk while it waited.*
+
+*Chip position re-verified against dev @ b6036515e — 2026-08-18
+(task-17662: the status chips sit above the composer since the
+bottom-stack programme; a Settings ▸ Console Behavior toggle can move
+them below).*

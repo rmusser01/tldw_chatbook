@@ -200,6 +200,13 @@ Tune it under `[chat_defaults]` in `config.toml`:
 
 ### Composer
 
+The composer is a slim bar that floats one blank line clear of the status
+row above and the footer below (compact terminals under 35 rows drop both
+gaps). It is exactly as tall as your draft — one row when empty, growing
+to eight as text wraps, shrinking back as it empties. The one-column edge
+on its left carries its state: muted at rest, ready-green while a draft is
+present, and thick focus-blue while the composer has focus.
+
 Editing keys, send/stream/stop, attachments, and Mic dictation live in
 [Chat basics](console/chat-basics.md) and
 [Attachments, images & voice](console/attachments-images-voice.md).
@@ -428,33 +435,15 @@ a far jump mounted 5 rows instead of 490); not re-checked live. The
 head-pinned-selection pause (TASK-16851) verified by shipped tests — a
 post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
 it previously grew to 1966 and kept growing; not re-checked live. Verified
-against 22d156155 + TASK-17650 — 2026-08-17 (headless row-map probe at
-150×44): the permanent blank row between the status row and the footer is
-gone, and the transcript gained the row (region height 28 → 29). Verified
-against TASK-17652 — 2026-08-17 (headless row-map probes at 150×44, both
-placements): the status chip strip now defaults to sitting ABOVE the
-composer, directly under the conversation pane; Settings ▸ Console
-Behavior ▸ Status row placement restores the below-composer bottom row;
-the Status ▾ collapse choice persists across Console re-entry and app
-restart. Verified against TASK-17651 — 2026-08-17 (headless row-map
-probes at 150×44 and 150×30, ready/long-draft/collapsed/setup-blocked
-states): the composer is now a one-row dense-form bar growing to four
-rows with the draft, the workbench frame closes at the grid's single
-bottom border (the transcript and region no longer draw their own bottom
-edges), and the conversation gained seven content rows; transcript
-keyboard focus is carried by the region's column lines and the scrollbar
-accent. Verified against TASK-17657 — 2026-08-17 (headless probes, both
-status-row placements): one deliberate blank row now sits below the
-composer so it reads apart from the footer/status row; compact mode
-(under 35 rows) drops the gap. Verified against TASK-17659 — 2026-08-17
-(headless probes, both placements): a matching blank row now sits above
-the composer too, so the bar floats clear of the status row; the
-prompt-queue shelf and staged evidence sit immediately above that gap;
-compact mode drops both rows. Verified
-against TASK-17654 — 2026-08-17 (headless probe at 150×44): the draft
-now grows to eight rows (was four), head-elided with "... " while
-windowed, and returns to one row as the draft empties. Verified against
-TASK-17661 — 2026-08-18 (painted probe with staged sources): the
-staged-evidence strip and prompt-queue shelf now sit at the top of the
-control deck, above the status row, keeping the composer's surroundings
-quiet.*
+against the Console bottom-stack de-clutter programme — tasks 17650-17661,
+eight merged PRs, dev @ b6036515e — 2026-08-18 (headless painted probes at
+150×44 and 150×30, both status-row placements, ready/long-draft/collapsed/
+setup-blocked states, plus a staged-sources probe): the control deck below
+the conversation is now transient strips (staged evidence, prompt queue)
+→ status row → blank → composer (1-8 rows, demand-grown, dense-form left
+edge) → blank → footer; the workbench frame closes at the grid's single
+border; transcript message rules reach edge to edge at any terminal
+width; the footer token counter is retired in favor of the status row's
+cost chip; the Status ▾ collapse choice and the status-row placement
+setting persist; compact mode (under 35 rows) drops the breathing-room
+rows. This page's layout tour re-verified against that build.*
