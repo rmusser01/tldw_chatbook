@@ -55,6 +55,7 @@ from .agent_models import (
     clamp_child_budget,
     contain_child_budget,
     definition_from_row,
+    format_steering_message,
     # Aliased: `_run_one` below has its own `definition_fingerprint: str |
     # None` keyword parameter (the audit value to persist), and that
     # parameter shadows this module-level function for the rest of
@@ -71,7 +72,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
 )
 from .agent_runtime import LoopDeps, render_tool_protocol, run_agent_loop
-from .fleet_coordinator import FleetCoordinator, FleetHandle
+from .fleet_coordinator import (
+    DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
+    DEFAULT_RETAINED_TRANSCRIPTS,
+    FleetCoordinator,
+    FleetHandle,
+)
 from .human_input_wait import human_input_wait_active
 from .native_tools import (
     ensure_tool_call_ids,
@@ -129,6 +135,14 @@ TRUNCATION_NOTICE = "\n[truncated]"
 #: `max_live=1` / config-of-one tests in `Tests/Agents/test_fleet_runtime`.
 MAX_LIVE_SUBAGENTS_KEY = "max_live_subagents"
 DEFAULT_MAX_LIVE_SUBAGENTS = 3
+#: PR3b Task 4 (finished-agent continuation): the retention caps, read by
+#: the bridge's coordinator factory beside `max_live_subagents` above and
+#: applied via `FleetCoordinator(retained_transcripts=...,
+#: retained_transcript_max_chars=...)` / `set_retention_caps`. The
+#: canonical default NUMBERS live on the pure coordinator (this module
+#: imports them); these are the `[agents]` key names.
+RETAINED_TRANSCRIPTS_KEY = "retained_transcripts"
+RETAINED_TRANSCRIPT_MAX_CHARS_KEY = "retained_transcript_max_chars"
 #: ``[agents]`` key deciding whether a sub-agent still running when its
 #: turn returns KEEPS RUNNING (PR3a-1 Task 2). Default **true**: a child
 #: the supervisor deliberately left working is background work, and
@@ -280,6 +294,61 @@ def _coerce_max_live_subagents(value) -> int:
             logger.warning("invalid max_live_subagents setting; using default")
             return DEFAULT_MAX_LIVE_SUBAGENTS
     return max(parsed, 1)
+
+
+def _coerce_retained_transcripts(value) -> int:
+    """Read the retention COUNT cap from config, tolerating any junk.
+
+    Same posture as ``_coerce_max_live_subagents`` (int-or-float parse,
+    junk falls back to the default -- a malformed config key must never
+    stop an agent run) with one difference: the floor is 0, not 1,
+    because 0 is a meaningful opt-out (retain nothing; finished children
+    cannot be resumed).
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured cap, floored at 0.
+    """
+    text = str(value).strip()
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        try:
+            parsed = int(float(text))
+        except (TypeError, ValueError, OverflowError):
+            logger.warning("invalid retained_transcripts setting; using default")
+            return DEFAULT_RETAINED_TRANSCRIPTS
+    return max(parsed, 0)
+
+
+def _coerce_retained_transcript_max_chars(value) -> int:
+    """Read the retention SIZE cap from config, tolerating any junk.
+
+    Same rules as ``_coerce_retained_transcripts`` directly above: junk
+    falls back to the default; the floor is 0 (a meaningful opt-out --
+    nothing fits, so nothing is retained; ruling #2 forbids truncating a
+    transcript to fit).
+
+    Args:
+        value: Whatever ``_setting`` returned.
+
+    Returns:
+        The configured ceiling, floored at 0.
+    """
+    text = str(value).strip()
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        try:
+            parsed = int(float(text))
+        except (TypeError, ValueError, OverflowError):
+            logger.warning(
+                "invalid retained_transcript_max_chars setting; using default"
+            )
+            return DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS
+    return max(parsed, 0)
 
 
 def _coerce_child_max_wall_seconds(value) -> float:
@@ -1433,6 +1502,11 @@ class AgentService:
         assistant_message_id: str | None = None,
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
+        # PR3b Task 4 (finished-agent continuation): the run this one was
+        # seeded from, recorded onto the new row for lineage. Set only by
+        # send_to_agent's continuation branch; None for every other
+        # caller (an ordinary run).
+        resumed_from_run_id: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
         # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
         # by spawn's fleet branch as a closure over THIS child's own
@@ -1497,6 +1571,7 @@ class AgentService:
             assistant_message_id=assistant_message_id,
             agent_definition=agent_definition,
             definition_fingerprint=definition_fingerprint,
+            resumed_from_run_id=resumed_from_run_id,
         )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
@@ -1775,6 +1850,12 @@ class AgentService:
                 # staying at their own "nothing to report" defaults on that
                 # path.
                 total_tokens_spent = 0
+                # PR3b Task 4: the coherent transcript, retained by
+                # `fleet.finish` below ATOMICALLY with the terminal
+                # transition. Stays None on the raise path -- a child that
+                # died before the loop returned has no coherent transcript
+                # to retain, and retention honestly refuses None.
+                final_messages = None
                 try:
                     # PR3a-1 Task 1: this child's own model-call lifeline,
                     # entered HERE -- on the child's thread, before its run
@@ -1793,6 +1874,7 @@ class AgentService:
                     status = child_outcome.status
                     result_text = child_outcome.final_text
                     total_tokens_spent = child_outcome.total_tokens
+                    final_messages = child_outcome.final_messages
                     if status != RUN_DONE:
                         error_text = f"sub-agent {status}"
                 except BaseException as exc:  # noqa: BLE001 — see below
@@ -1806,12 +1888,24 @@ class AgentService:
                     error_text = f"sub-agent failed: {exc}"
                     logger.warning("sub-agent thread raised")
                 finally:
+                    # PR3b Task 4: `transcript=` makes retention atomic
+                    # with the terminal transition -- ONE coordinator
+                    # critical section, so a send_to_agent continuation
+                    # racing this teardown can never observe a retainable
+                    # child terminal-but-unretained (the Qodo race finding
+                    # on plan PR #1773; the plan's original
+                    # retain-after-finish two-step had that window).
+                    # First-writer-wins covers retention too: if a
+                    # settle-cancel already finished this handle, this
+                    # whole call -- transcript included -- is ignored, so
+                    # a user-cancelled child is never retained.
                     fleet.finish(
                         handle.handle_id,
                         status,
                         result=result_text,
                         error=error_text,
                         total_tokens=total_tokens_spent,
+                        transcript=final_messages,
                     )
                     # Review fix (PR2a final review): `_persist` -- called
                     # from INSIDE `_run_one`'s own try/except -- is
@@ -2367,6 +2461,180 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
 
+        def _resume_retained_child(retained, steer_text: str) -> ToolResult:
+            """Continuation (PR3b Task 4, spec SS6): a NEW run from a
+            retained transcript.
+
+            Order of operations mirrors spawn's own gauntlet so every
+            refusal costs what spawn's would: definition re-resolution
+            FIRST (a vanished definition costs no slot -- "a typo costs
+            no sub-agent slot"), then the spawn-slot check/consume, then
+            `_launch_fleet_child` (whose cap refusal and thread-start
+            failure both unwind the slot).
+
+            Ruling #1 on the definition: a still-existing one re-resolves
+            to its CURRENT form -- the new row's fresh
+            `definition_fingerprint` records the change, which is exactly
+            what that audit column exists for; a deleted/disabled one
+            refuses clearly, because silently downgrading the child to a
+            generic spawn would change its behavior with no record.
+
+            The seed is the retained coherent transcript, then any
+            undelivered queued steering the retention claimed (ORIGINAL
+            labels -- the user's entry stays the user's), then the new
+            supervisor-labeled message. The new row's `parent_run_id` is
+            THIS (the resuming) primary; `resumed_from_run_id` records
+            the old run.
+            """
+            nonlocal sub_agent_spawns
+            resolved = None
+            if retained.agent:
+                resolved = next(
+                    (
+                        d
+                        for d in self._turn_definitions
+                        if d.name == retained.agent
+                    ),
+                    None,
+                )
+                if resolved is None:
+                    available = (
+                        ", ".join(d.name for d in self._turn_definitions)
+                        or "none"
+                    )
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            f"send_to_agent: sub-agent "
+                            f"'{retained.handle_id}' was spawned from "
+                            f"agent definition '{retained.agent}', which "
+                            f"no longer exists (or is disabled), so it "
+                            f"cannot be resumed as it was. Spawn a fresh "
+                            f"sub-agent instead (available agents: "
+                            f"{available})."
+                        ),
+                    )
+            if sub_agent_spawns >= config.budget.max_subagents:
+                # Spawn's own budget-refusal shape: a resume starts a NEW
+                # run, so it costs a spawn slot like any other spawn.
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        "send_to_agent: sub-agent budget exhausted -- "
+                        "resuming a finished sub-agent starts a new run "
+                        "and costs a spawn slot."
+                    ),
+                )
+            sub_agent_spawns += 1
+            # A resumed child is a THREADED survivor candidate by
+            # construction (it is launched through the fleet tail below),
+            # so it gets `contain_child_budget`'s independent ceiling --
+            # never the turn-scoped parent-remainder clamp.
+            child_max_wall_seconds = _coerce_child_max_wall_seconds(
+                _setting(
+                    CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS
+                )
+            )
+            child_budget = contain_child_budget(
+                config.budget, child_max_wall_seconds
+            )
+            # Composition mirrors spawn's default path exactly (inherit
+            # minus the spawn tool and any skill-tool names; a resolved
+            # definition APPENDS instructions and INTERSECTS the
+            # allow-list -- never grants). Duplicated deliberately rather
+            # than extracted: the plan mandates only the launch TAIL be
+            # shared (`_launch_fleet_child`); spawn's composition block
+            # stays byte-identical where it is, and each site cites the
+            # other.
+            child_allowed_tools = tuple(
+                n
+                for n in config.allowed_tools
+                if n != SPAWN_TOOL_NAME
+                and not (
+                    self.skill_runner is not None
+                    and self.skill_runner.is_skill_tool(n)
+                )
+            )
+            child_system_prompt = get_internal_prompt("agents.subagent_system")
+            child_model = config.model
+            if resolved is not None:
+                # IDENTITY CONTRACT: instructions APPEND, never prepend
+                # (fleet spec SS4; console_agent_bridge._is_subagent
+                # prefix-matches the base prompt).
+                child_system_prompt = (
+                    child_system_prompt + "\n\n" + resolved.instructions
+                )
+                if resolved.model:
+                    child_model = resolved.model
+                if resolved.tool_allowlist:
+                    wanted = set(resolved.tool_allowlist)
+                    child_allowed_tools = tuple(
+                        n for n in child_allowed_tools if n in wanted
+                    )
+            child_config = AgentConfig(
+                model=child_model,
+                system_prompt=child_system_prompt,
+                allowed_tools=child_allowed_tools,
+                budget=child_budget,
+                native_tools=config.native_tools,
+                workspace_context_note=config.workspace_context_note,
+            )
+            seed = [dict(m) for m in retained.messages]
+            for source, queued_text in retained.steering:
+                seed.append(
+                    {
+                        "role": "user",
+                        "content": format_steering_message(source, queued_text),
+                    }
+                )
+            seed.append(
+                {
+                    "role": "user",
+                    "content": format_steering_message(
+                        STEERING_SOURCE_SUPERVISOR, steer_text
+                    ),
+                }
+            )
+            child_kwargs = dict(
+                conversation_id=conversation_id,
+                messages=seed,
+                config=child_config,
+                api_endpoint=api_endpoint,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                task=retained.task,
+                parent_run_id=run_id,
+                agent_definition=(resolved.name if resolved else None),
+                definition_fingerprint=(
+                    compute_definition_fingerprint(resolved) if resolved else None
+                ),
+                continuation_durability=continuation_durability,
+                run_log_writer=writer,
+                resumed_from_run_id=retained.run_id,
+            )
+            handle, failure = _launch_fleet_child(
+                retained.task, (resolved.name if resolved else None), child_kwargs
+            )
+            if failure is not None:
+                return failure
+            queued = len(retained.steering)
+            queued_note = (
+                f" plus {queued} undelivered queued steering "
+                f"entr{'y' if queued == 1 else 'ies'}"
+                if queued
+                else ""
+            )
+            return ToolResult(
+                ok=True,
+                content=(
+                    f"resumed {retained.handle_id} as a NEW run: started "
+                    f"{handle.handle_id}, seeded with its retained "
+                    f"transcript ({len(retained.messages)} messages"
+                    f"{queued_note}) and your message. The finished run "
+                    f"itself was not restarted. It is running now. Call "
+                    f"wait_agents to collect its result before you answer."
+                ),
+            )
+
         def send_to_agent(target_id: str, message: str) -> ToolResult:
             """Queue a steering message for a LIVE child (PR3b Task 2).
 
@@ -2394,16 +2662,31 @@ class AgentService:
             the mailbox and touches nothing else -- no cancel Event, no
             run row, no coordinator status.
 
+            PR3b Task 4 (continuation): when the id is NOT live, the
+            RETENTION store resolves next -- before the coordinator's
+            terminal handles -- because `prune_terminal` drops those at
+            every turn start while retention survives it (Task 2's
+            concern (a)). A retained finished child is RESUMED (a new
+            run, seeded; see `_resume_retained_child` above); a real
+            finished child with nothing retained, or a run id only the
+            database remembers (an earlier session), each get their own
+            honest refusal; only an id nothing has ever seen gets the
+            unknown-id copy.
+
             Args:
-                target_id: A live child's handle id, or its run id.
+                target_id: A live child's handle id, or its run id --
+                    or a RETAINED finished child's (either vocabulary).
                 message: The steering text (validated, then posted
-                    stripped; the drain point prepends the label).
+                    stripped; the drain point prepends the label -- or,
+                    for a resume, seeds the new run supervisor-labeled).
 
             Returns:
                 ok with honest queued-plus-latency copy naming the
-                resolved handle id; a refusal with its own copy for an
-                empty message, an oversize one, a finished child, or an
-                unknown id. Never raises.
+                resolved handle id (live), or the resumed-as-new-run copy
+                (retained); a refusal with its own copy for an empty
+                message, an oversize one, a finished-but-unretained
+                child, a pre-restart run id, or an unknown id. Never
+                raises.
             """
             if fleet is None:  # pragma: no cover — not wired without a fleet
                 return ToolResult(
@@ -2462,6 +2745,19 @@ class AgentService:
                     if handle.status not in TERMINAL_RUN_STATUSES
                 ]
             live_ids = ", ".join(h.handle_id for h in live) or "none"
+            # PR3b Task 4: not live -- try the RETENTION store next, and
+            # FIRST among the finished-child surfaces (Task 2's concern
+            # (a)): `prune_terminal` drops terminal handles at every turn
+            # start, so a finished child's ids may already be gone from
+            # the coordinator's handle map -- but its transcript survives
+            # in the retention store, keyed by both vocabularies (handle
+            # id first, Task 2's pinned order). Retention is ATOMIC with
+            # `finish` (one critical section), so a real retainable child
+            # can never be observed terminal-but-unretained by this
+            # lookup.
+            retained = fleet.get_retained(target_id)
+            if retained is not None:
+                return _resume_retained_child(retained, text)
             finished = next(
                 (
                     h
@@ -2471,19 +2767,48 @@ class AgentService:
                 None,
             )
             if finished is not None:
-                # PR3b Task 4's continuation seam: THIS branch becomes
-                # "resume the finished child with the retained transcript
-                # + this message" (spawn-slot accounting, definition
-                # re-resolution, resumed_from_run_id). Until then the
-                # honest answer is that the child finished.
+                # A REAL finished child with nothing retained: cancelled/
+                # superseded are never retained (the user killed it / it
+                # was replaced), and an oversize or evicted transcript is
+                # gone too. Honest refusal, never the unknown-id copy.
                 return ToolResult(
                     ok=False,
                     error=(
                         f"send_to_agent: sub-agent '{target_id}' has "
-                        f"finished ({finished.status}); a finished "
-                        f"sub-agent takes no more model turns, so there "
-                        f"is nothing to deliver to. Live sub-agent ids: "
-                        f"{live_ids}."
+                        f"finished ({finished.status}) and no retained "
+                        f"transcript is available for it (a cancelled or "
+                        f"superseded child is never retained; an oversize "
+                        f"or evicted transcript is not either), so it "
+                        f"cannot be resumed. Spawn a fresh sub-agent for "
+                        f"follow-up work. Live sub-agent ids: {live_ids}."
+                    ),
+                )
+            # A run id the DATABASE still knows but this process does not:
+            # a child that finished in an earlier session. Retention is
+            # in-memory by design (spec SS6: cross-restart resurrection is
+            # out of scope), so the honest answer names the real limit
+            # instead of pretending the id is unknown. Scoped to THIS
+            # conversation's sub-agent runs -- a foreign conversation's
+            # run id stays an unknown id here.
+            past = None
+            try:
+                past = self.db.get_run(target_id)
+            except Exception:  # noqa: BLE001 — a read failure is "unknown"
+                past = None
+            if (
+                past is not None
+                and past.get("agent_kind") == AGENT_KIND_SUBAGENT
+                and past.get("conversation_id") == conversation_id
+                and past.get("status") in TERMINAL_RUN_STATUSES
+            ):
+                return ToolResult(
+                    ok=False,
+                    error=(
+                        f"send_to_agent: run '{target_id}' finished in an "
+                        f"earlier session and its transcript is no longer "
+                        f"available -- retained transcripts live in memory "
+                        f"and do not survive an app restart. Spawn a fresh "
+                        f"sub-agent instead."
                     ),
                 )
             return ToolResult(

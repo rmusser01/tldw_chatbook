@@ -426,10 +426,14 @@ def test_an_unknown_id_is_refused_naming_the_live_ids(db):
 
 
 def test_a_terminal_id_states_the_child_has_finished(db):
-    """Steering a FINISHED child -- by its handle id or its run id -- is
-    refused with copy saying it finished, with no live ids left to name.
-    (PR3b Task 4 upgrades this branch to continuation; this pins the
-    pre-continuation refusal.)"""
+    """Steering a FINISHED, UNRETAINED child -- by its handle id or its
+    run id -- is refused with copy saying it finished, with no live ids
+    left to name. PR3b Task 4 upgraded the terminal branch to
+    continuation, so a retainable finished child now RESUMES (the
+    continuation suite owns that path); THIS test pins the honest
+    refusal for the child whose transcript is NOT retained, by switching
+    retention off (caps 0) before the run -- the same copy a cancelled/
+    superseded/oversize/evicted child draws."""
     holder: dict = {}
 
     def steer_terminal_handle():
@@ -465,6 +469,10 @@ def test_a_terminal_id_states_the_child_has_finished(db):
         {"quick task": ["quick answer"]},
     )
     holder["coordinator"] = coordinator
+    # Retention OFF: with the caps at 0 the finished child's transcript is
+    # never retained, which is what routes both steers into the honest
+    # not-retained refusal instead of Task 4's continuation.
+    coordinator.set_retention_caps(0, 0)
     run_id, outcome = service.run_turn(
         conversation_id="c",
         messages=[{"role": "user", "content": "go"}],
@@ -476,6 +484,8 @@ def test_a_terminal_id_states_the_child_has_finished(db):
     assert len(sends) == 2
     for send in sends:
         assert "ERROR" in send and "finished" in send
+        assert "no retained transcript" in send
+        assert "Spawn a fresh sub-agent" in send
         assert "Live sub-agent ids: none" in send
 
 
@@ -610,9 +620,20 @@ def test_a_live_handle_id_beats_a_colliding_run_id(db):
     assert holder["queued"] == (0, 1)
     sends = _sends(db, run_id)
     assert sends and "ERROR" not in sends[0] and holder["b"] in sends[0]
-    # Neither child took another model turn, so B's entry is still queued
-    # after the run -- and A's mailbox stayed empty throughout.
-    assert coordinator.get(holder["b"]).queued_steering == 1
+    # Neither child took another model turn, so B never DRAINED the entry
+    # -- and A's mailbox stayed empty throughout. PR3b Task 4: at finish
+    # time retention CLAIMED B's undelivered remnant (Task 1's pinned
+    # window), so the mailbox reads 0 and the entry -- still B's, still
+    # supervisor-labeled -- now rides B's retained transcript, where a
+    # resume would replay it.
+    assert coordinator.get(holder["b"]).queued_steering == 0
+    retained_b = coordinator.get_retained(holder["b"])
+    assert retained_b is not None
+    assert list(retained_b.steering) == [
+        (STEERING_SOURCE_SUPERVISOR, "for b only")
+    ]
+    retained_a = coordinator.get_retained(holder["a"])
+    assert retained_a is not None and retained_a.steering == ()
     assert coordinator.get(holder["a"]).queued_steering == 0
 
 
