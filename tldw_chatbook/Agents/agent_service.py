@@ -153,13 +153,17 @@ RETAINED_TRANSCRIPT_MAX_CHARS_KEY = "retained_transcript_max_chars"
 #: panel is a thing the user watches ACROSS turns).
 #:
 #: `false` restores the phase-2 rule in full -- wait for stragglers within
-#: the parent's remaining wall-clock, cooperative-cancel, then abandon --
-#: and is the supported kill switch, guarded by the turn-scoped tests in
-#: `Tests/Agents/test_fleet_runtime`. Two cases settle regardless of this
-#: key, both in `_surviving_handles`: a turn nobody left a child running
-#: in (nothing to decide), and a turn the USER cancelled (Stop must stay a
-#: kill switch for the whole run tree; spec Sec 10 puts any change to Stop
-#: semantics in PR 3b).
+#: the parent's remaining wall-clock, cooperative-cancel, then abandon;
+#: a user Stop kills the whole run tree -- and is the supported kill
+#: switch, guarded by the turn-scoped tests in
+#: `Tests/Agents/test_fleet_runtime` and the probes in
+#: `Tests/Agents/test_fleet_stop_semantics`. One case settles regardless
+#: of this key: a turn nobody left a child running in (nothing to
+#: decide). PR3b Task 5 (spec Sec 8) removed the other: with this key ON,
+#: a USER-CANCELLED turn no longer settles its children -- Stop stops the
+#: supervisor only, and the children's own kill switches are the panel's
+#: per-row Cancel and "Cancel all agents"
+#: (`ConsoleAgentBridge.cancel_all_subagents`).
 SUBAGENTS_OUTLIVE_TURN_KEY = "subagents_outlive_turn"
 DEFAULT_SUBAGENTS_OUTLIVE_TURN = True
 #: ``[agents]`` key sizing a THREADED, non-inline child's OWN wall-clock
@@ -1328,7 +1332,6 @@ class AgentService:
         self,
         fleet: FleetCoordinator,
         handle_ids: list[str],
-        should_cancel: Callable[[], bool],
     ) -> set[str]:
         """Which of this turn's children are allowed to outlive it.
 
@@ -1339,18 +1342,29 @@ class AgentService:
         delegation pointless for anything slower than one reply.
 
         Ordered so the common case costs nothing: a turn that left no
-        child running reads no config and does not probe cancellation,
-        which is what keeps the turn-scoped path byte-identical.
+        child running reads no config, which is what keeps the
+        turn-scoped path byte-identical.
+
+        PR3b Task 5 (spec Sec 8): a USER-CANCELLED turn no longer settles
+        its children. Stop stops the SUPERVISOR; a child the supervisor
+        deliberately left working is the same background work whether the
+        turn ended by answering or by being stopped, and the user keeps
+        real kill switches for the children themselves -- the panel's
+        per-row Cancel, "Cancel all agents"
+        (``ConsoleAgentBridge.cancel_all_subagents``), and the
+        ``subagents_outlive_turn = false`` config switch, under which a
+        cancelled turn still settles everything exactly as phase 2 did
+        (pinned by ``test_probe_b_stop_kills_everything_through_the_
+        cancel_event_path``).
 
         Args:
             fleet: This turn's coordinator.
             handle_ids: This turn's handles (``mine`` in ``_settle_fleet``).
-            should_cancel: The run-wide cancellation probe.
 
         Returns:
             The handles to leave running. Empty -- i.e. settle everything,
-            exactly as phase 2 did -- when nothing is still running, when
-            the kill switch is off, or when the USER cancelled this turn.
+            exactly as phase 2 did -- when nothing is still running or
+            when the kill switch is off.
         """
         pending = self._pending_handles(fleet, handle_ids)
         if not pending:
@@ -1358,13 +1372,6 @@ class AgentService:
         if not _coerce_subagents_outlive_turn(
             _setting(SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN)
         ):
-            return set()
-        if should_cancel():
-            # Stop means stop, for the whole run tree. A cancelled turn is
-            # not a turn that ENDED -- it is one the user killed, and
-            # leaving its children running would take away the only kill
-            # switch they have (spec Sec 10 keeps Stop-semantics changes
-            # in PR 3b).
             return set()
         return set(pending)
 
@@ -1409,7 +1416,7 @@ class AgentService:
         # merely defensive: an earlier turn's survivor is visible in a
         # long-lived coordinator, and settling THIS turn must not kill it.
         mine = list(self._fleet_cancels)
-        survivors = self._surviving_handles(fleet, mine, should_cancel)
+        survivors = self._surviving_handles(fleet, mine)
         if survivors:
             logger.info(
                 "{} sub-agents are outliving their turn", len(survivors)
@@ -1816,8 +1823,35 @@ class AgentService:
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
 
-            def child_should_cancel() -> bool:
-                return should_cancel() or child_cancel.is_set()
+            # PR3b Task 5 (spec Sec 8, Stop-semantics decoupling): with
+            # `subagents_outlive_turn` ON, a child's cancellation is ITS
+            # OWN Event only -- the parent's run-wide probe stays out of
+            # its poll, so a user Stop (which flips that probe and leaves
+            # it flipped forever) no longer kills background work at the
+            # child's next loop boundary. Every path that must still stop
+            # a child sets the Event (`_cancel_fleet_handles`: the
+            # end-of-turn settle for non-survivors, `wait_agents`' budget
+            # branch, per-row Cancel, and "Cancel all agents"). Read ONCE,
+            # at spawn: a child's Stop-coupling contract is fixed when it
+            # launches, not flappable mid-run by a config write --
+            # `_surviving_handles` still reads the key at settle time, so
+            # flipping the switch OFF mid-run still lets the very next
+            # settle cancel the child through its Event. With the key OFF
+            # the closure is the pre-Task-5 line, byte-identical.
+            child_outlives_turn = _coerce_subagents_outlive_turn(
+                _setting(
+                    SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN
+                )
+            )
+            if child_outlives_turn:
+
+                def child_should_cancel() -> bool:
+                    return child_cancel.is_set()
+
+            else:
+
+                def child_should_cancel() -> bool:
+                    return should_cancel() or child_cancel.is_set()
 
             def run_child(
                 handle: FleetHandle = handle,
@@ -2356,6 +2390,7 @@ class AgentService:
                         ),
                     )
             note = ""
+            stopped_children = False
             # See `_settle_fleet`: a real-time bound runs alongside the
             # budget deadline so an injected (possibly frozen) clock can
             # never turn this into an unbounded wait.
@@ -2365,8 +2400,34 @@ class AgentService:
                 if not pending:
                     break
                 if should_cancel():
+                    # PR3b Task 5 (spec Sec 8): a user Stop releases the
+                    # WAIT, not the children. With the outlive default ON
+                    # the pending children keep working in the background
+                    # (the settle spares them too -- `_surviving_handles`);
+                    # under the kill switch this branch is the pre-Task-5
+                    # cancel, byte-identical. Read here, at the moment of
+                    # the Stop, matching `_surviving_handles`' settle-time
+                    # read -- the two must agree on the SAME Stop. The
+                    # note promises only what is true on EVERY path from
+                    # here (Qodo #1808 finding 4): `pending` is non-empty
+                    # by the loop guard, so children genuinely continue --
+                    # but result DELIVERY depends on the auto-wake key (a
+                    # completion is only ever marked when that is off),
+                    # so the copy does not promise delivery.
+                    if _coerce_subagents_outlive_turn(
+                        _setting(
+                            SUBAGENTS_OUTLIVE_TURN_KEY,
+                            DEFAULT_SUBAGENTS_OUTLIVE_TURN,
+                        )
+                    ):
+                        note = (
+                            "\n(The run was cancelled; sub-agents continue "
+                            "in the background.)"
+                        )
+                        break
                     note = "\n(The run was cancelled; sub-agents were stopped.)"
                     self._cancel_fleet_handles(pending)
+                    stopped_children = True
                     break
                 if (
                     self.clock() - started >= config.budget.max_wall_seconds
@@ -2377,11 +2438,16 @@ class AgentService:
                         "working were stopped.)"
                     )
                     self._cancel_fleet_handles(pending)
+                    stopped_children = True
                     break
                 time.sleep(_FLEET_POLL_SECONDS)
-            if note:
+            if stopped_children:
                 # Give the children just cancelled a bounded chance to
                 # unwind and record a real status before we report them.
+                # Gated on an actual cancel (not the note): the Task 5
+                # not-cancelling Stop branch above has nothing to drain,
+                # and waiting out the grace for children that are not
+                # stopping would hold the stopped turn open for nothing.
                 self._drain_fleet_handles(fleet, targets)
             return ToolResult(
                 ok=True,
@@ -3620,9 +3686,11 @@ class AgentService:
 
             A sub-agent's record is NOT (PR3a-1 Task 2). It is persisted
             before return only if that child settled -- it had already
-            finished, the ``[agents] subagents_outlive_turn`` kill switch
-            is off, or the user cancelled this turn (see
-            ``_surviving_handles``). Otherwise the child keeps running:
+            finished, or the ``[agents] subagents_outlive_turn`` kill
+            switch is off (see ``_surviving_handles``; PR3b Task 5
+            removed user cancellation from this list -- with the switch
+            ON a stopped turn's children keep running). Otherwise the
+            child keeps running:
             its row is still ``running`` when this returns, and its own
             thread persists its terminal status later, from
             ``run_child``'s ``finally``. Anything reading a sub-agent's

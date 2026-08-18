@@ -73,7 +73,7 @@ from ...Widgets.destination_rail import (
     DestinationRailSectionHeader,
 )
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
-from .agent import CONSOLE_AGENT_FLEET_SECTION_ID
+from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 
 
@@ -130,6 +130,7 @@ class ConsoleLeftRail(Vertical):
         agent_drilldown_active: bool,
         agent_full_log_available: bool,
         agent_steering_state: ConsoleAgentSteeringState | None = None,
+        agent_cancel_all_visible: bool = False,
         show_character_section: bool,
         character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
@@ -174,6 +175,13 @@ class ConsoleLeftRail(Vertical):
                 drilled in must paint the bar correctly immediately,
                 without waiting for the next equality-guarded sync tick.
                 ``None`` (bare test constructions) means hidden.
+            agent_cancel_all_visible: Whether the "Cancel all agents"
+                button paints (PR3b Task 5) -- true only while the
+                conversation has a LIVE child, computed by
+                ``ConsoleAgentController._console_agent_cancel_all_
+                visible``. Passed at construction for the same
+                recompose-mid-state reason as ``agent_steering_state``;
+                the default keeps bare test constructions valid (hidden).
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
@@ -218,6 +226,7 @@ class ConsoleLeftRail(Vertical):
         self._agent_drilldown_active = agent_drilldown_active
         self._agent_full_log_available = agent_full_log_available
         self._agent_steering_state = agent_steering_state
+        self._agent_cancel_all_visible = agent_cancel_all_visible
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
@@ -560,6 +569,28 @@ class ConsoleLeftRail(Vertical):
                     "block" if self._agent_fleet_section_state.rows else "none"
                 )
                 yield fleet_section
+                # PR3b Task 5: the whole-fleet kill switch. With Stop
+                # decoupled from the children (a stopped turn's survivors
+                # keep working), this is how the user stops ALL of them
+                # at once -- each through the existing per-handle
+                # cancel/revoke path (`ConsoleAgentBridge.
+                # cancel_all_subagents`). Offered only while a LIVE child
+                # exists; a fleet of finished rows hides it (a kill
+                # switch for ended work would be a lie).
+                cancel_all_button = Button(
+                    "Cancel all agents",
+                    id=CONSOLE_AGENT_CANCEL_ALL_ID,
+                    classes="console-workspace-action console-agent-cancel-all",
+                    compact=True,
+                )
+                cancel_all_button.tooltip = (
+                    "Stop every running sub-agent of this conversation. "
+                    "Each is cancelled cooperatively and any pending "
+                    "approval cards are withdrawn."
+                )
+                if not self._agent_cancel_all_visible:
+                    cancel_all_button.styles.display = "none"
+                yield cancel_all_button
                 # PR3b Task 3: the drill-in steering input + queued line.
                 # Part of the drill-in chrome beside the Back button --
                 # visible only while drilled into a LIVE child (the state
