@@ -1,0 +1,415 @@
+# Tests/Agents/test_fleet_stop_semantics.py
+"""Fleet PR 3b Task 5: Stop semantics decoupled from child cancellation.
+
+Spec `Docs/superpowers/specs/2026-08-08-supervisor-agent-fleet-design.md`
+section 8 (Stop semantics move to PR 3b) via the plan's Task 5
+(`Docs/superpowers/plans/2026-08-17-fleet-pr3b-steering.md`).
+
+The contract under test, both directions of the existing
+`[agents] subagents_outlive_turn` key:
+
+* **Outlive ON (the shipped default)** -- a user Stop cancels the
+  SUPERVISOR's turn only. A child still working keeps working: its own
+  cancel Event is never set, `_surviving_handles` keeps it at settle, and
+  `wait_agents`' cancel branch stops waiting WITHOUT cancelling. The
+  user's kill switches for the children themselves are the panel's
+  per-row Cancel and the new "Cancel all agents" (bridge
+  `cancel_all_subagents`), plus the `subagents_outlive_turn = false`
+  config kill switch.
+* **Outlive OFF (the kill switch)** -- byte-identical to the phase-2
+  rule: Stop kills the whole run tree, THROUGH THE CANCEL-EVENT PATH
+  (`_cancel_fleet_handles` -> per-child Event + approval revocation),
+  exactly as it always has.
+
+MERGE-BASE PROBES (C1 style). The `_probe_a_*` tests were measured RED at
+the untouched merge-base `98a189015` -- at that base a user Stop cancels
+a child that should survive, via `child_should_cancel`'s `should_cancel()`
+term and `_surviving_handles`' user-cancel branch (both of whose comments
+literally cite "spec Sec 10 keeps Stop-semantics changes in PR 3b").
+The `_probe_b_*` tests were measured GREEN at that same base and must
+stay green UNTOUCHED through the change -- they are the byte-identical
+guarantee for the kill-switch path.
+
+Scripting note (Task 2's lesson, re-owned here): `_settle_fleet` sets
+every SETTLING child's Event unconditionally at end of turn, so "the
+Event is unset" is only meaningful for a SURVIVING child -- which is
+exactly what these tests assert; a settling child's Event being set is
+asserted through the terminal end-state as well, never the raw Event
+alone.
+"""
+
+import threading
+import time
+
+import pytest
+
+from Tests.Agents.conftest import pin_agent_settings, pin_turn_scoped_children
+from Tests.Agents.test_agent_service import fence
+from Tests.Agents.test_fleet_runtime import (
+    FLEET_CFG,
+    _after,
+    _child_row,
+    _gated_child,
+    _tool_results,
+    _wait_until,
+    db,  # noqa: F401  -- pytest fixture, resolved via this import
+    make_fleet_service,
+)
+from tldw_chatbook.Agents import agent_service
+from tldw_chatbook.Agents.agent_models import (
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_RUNNING,
+    SPAWN_TOOL_NAME,
+    STEERING_SOURCE_USER,
+    WAIT_AGENTS_TOOL_NAME,
+    format_steering_message,
+)
+
+_JOIN_TIMEOUT = 5.0
+
+
+def _pin_outlive_on(monkeypatch):
+    """Pin the shipped default EXPLICITLY -- these tests are about it.
+
+    The default already is True; pinning keeps each probe's subject
+    independent of any future default flip, the same way
+    `pin_turn_scoped_children` pins the opposite pole.
+    """
+    pin_agent_settings(
+        monkeypatch, **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: True}
+    )
+
+
+def _two_turn_child(entered, release, timeout=10.0):
+    """A gated child that needs ONE MORE loop boundary after release.
+
+    First (gated) provider call returns a calculator fence; the result is
+    appended and the child crosses its loop-top cancellation check before
+    its second model call, which answers. That extra boundary is the
+    whole point: a child that answers straight off its gated call would
+    never poll cancellation again, and the mutation this suite must kill
+    -- re-adding the parent-poll term to `child_should_cancel` -- would
+    go unnoticed.
+    """
+
+    def gated_fence():
+        entered.set()
+        if not release.wait(timeout):
+            raise AssertionError("child was never released by the test")
+        return fence("calculator", {"expression": "1+1"})
+
+    return [gated_fence, "late answer"]
+
+
+# -- probe (a): outlive ON -- Stop spares the children ---------------------
+
+
+def test_probe_a_stop_mid_turn_leaves_the_child_running(db, monkeypatch):
+    """Outlive ON: a user Stop kills the TURN; the child survives it.
+
+    RED at the untouched merge-base (the child came back `cancelled`):
+    `_surviving_handles` settled everything on a user cancel, and
+    `child_should_cancel` polled the parent's own probe. GREEN after the
+    change: the turn returns `cancelled` promptly, the child's own Event
+    is untouched, and the child later finishes DONE with its real result
+    -- which is also what kills the re-added parent-poll mutant (the
+    parent's cancel probe stays True forever, so a re-coupled child dies
+    at its first post-release loop boundary instead of answering).
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def spawn_then_cancel():
+        # Stop once the child is provably live, so the turn ends with a
+        # running child AND a user cancellation -- the combination whose
+        # fate this task changes.
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        return "parent stopped"
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), spawn_then_cancel],
+        {"slow task": _two_turn_child(entered, release)},
+        allow_unconsumed=True,  # red-at-base strands the child's turns
+    )
+    try:
+        started_at = time.monotonic()
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=cancelled.is_set,
+        )
+        elapsed = time.monotonic() - started_at
+        assert entered.is_set(), "precondition: the child reached its model call"
+        # The user's Stop still stops the SUPERVISOR...
+        assert outcome.status == RUN_CANCELLED
+        # ... promptly: no settle-wait, no join, no abandonment grace.
+        assert elapsed < 3.0, f"the stopped turn was held open for {elapsed:.2f}s"
+        # ... and ONLY the supervisor: the child was not cancelled, not
+        # abandoned, not forced terminal in the DB.
+        handle = coordinator.snapshot()[0]
+        assert handle.status == RUN_RUNNING, handle
+        assert not service._fleet_cancels[handle.handle_id].is_set(), (
+            "a user Stop set the surviving child's own cancel Event"
+        )
+        assert _child_row(db)["status"] == RUN_RUNNING
+    finally:
+        release.set()
+    _wait_until(coordinator.all_finished, "the released child never finished")
+    survivor = coordinator.snapshot()[0]
+    assert survivor.status == RUN_DONE, survivor
+    assert survivor.result == "late answer"
+    assert _child_row(db)["status"] == RUN_DONE
+
+
+def test_probe_a_wait_agents_cancel_stops_waiting_without_cancelling(
+    db, monkeypatch
+):
+    """Outlive ON: Stop during `wait_agents` releases the WAIT, not the kids.
+
+    RED at the untouched merge-base (`wait_agents`' cancel branch called
+    `_cancel_fleet_handles` on everything pending). GREEN after: the wait
+    breaks immediately, the note says the sub-agents continue in the
+    background, no Event is set, and the child finishes DONE afterwards.
+
+    The cancel is triggered from INSIDE the wait loop deterministically:
+    `should_cancel` flips on its SECOND call after the wait fence was
+    returned -- call one is the loop's own pre-dispatch check
+    (`agent_runtime.py`'s per-call cancellation gate), call two is
+    `wait_agents`' first poll. Flipping any earlier would kill the parent
+    before `wait_agents` ever ran (which is exactly what the pre-existing
+    `test_wait_agents_cancellation_*` script does, making it a settle
+    test in disguise); if a future edit adds another pre-dispatch check
+    this fails LOUDLY (no wait_agents result recorded), never silently.
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    wait_dispatched = threading.Event()
+    polls_after_dispatch = {"count": 0}
+
+    def wait_after_child_entered():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        wait_dispatched.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    def should_cancel():
+        if not wait_dispatched.is_set():
+            return False
+        polls_after_dispatch["count"] += 1
+        return polls_after_dispatch["count"] >= 2
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            wait_after_child_entered,
+        ],
+        {"slow task": _two_turn_child(entered, release)},
+        allow_unconsumed=True,  # red-at-base strands the child's turns
+    )
+    try:
+        started_at = time.monotonic()
+        run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=should_cancel,
+        )
+        elapsed = time.monotonic() - started_at
+        assert outcome.status == RUN_CANCELLED
+        # The wait released without the drain grace or the settle wait.
+        assert elapsed < 3.0, f"the stopped turn was held open for {elapsed:.2f}s"
+        waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
+        assert waits, "wait_agents never ran -- the cancel landed too early"
+        assert "sub-agents continue in the background" in waits[0], waits[0]
+        assert "sub-agents were stopped" not in waits[0], waits[0]
+        # Not cancelled: no Event, still running, row still running.
+        handle = coordinator.snapshot()[0]
+        assert handle.status == RUN_RUNNING, handle
+        assert not service._fleet_cancels[handle.handle_id].is_set()
+        assert _child_row(db)["status"] == RUN_RUNNING
+    finally:
+        release.set()
+    _wait_until(coordinator.all_finished, "the released child never finished")
+    assert coordinator.snapshot()[0].status == RUN_DONE
+    assert coordinator.snapshot()[0].result == "late answer"
+
+
+def test_a_stopped_parents_survivor_still_drains_steering(db, monkeypatch):
+    """The steering interaction pin: Stop does not disconnect the mailbox.
+
+    A survivor of a stopped turn is still steerable (the mailbox lives on
+    the conversation-lifetime coordinator, not the dead turn) AND still
+    drains: an entry posted AFTER the Stop is delivered at the child's
+    next model boundary, exactly as for any live child. RED at the
+    merge-base by construction (the child there is already cancelled, so
+    `post_steering` refuses it).
+    """
+    _pin_outlive_on(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def spawn_then_cancel():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        return "parent stopped"
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), spawn_then_cancel],
+        {"slow task": _two_turn_child(entered, release)},
+        allow_unconsumed=True,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=cancelled.is_set,
+        )
+        assert outcome.status == RUN_CANCELLED
+        handle = coordinator.snapshot()[0]
+        assert handle.status == RUN_RUNNING
+        # Steer the survivor AFTER its parent turn was stopped -- the
+        # panel path's post (USER source), which must still say yes...
+        assert coordinator.post_steering(
+            handle.handle_id, STEERING_SOURCE_USER, "check the appendix"
+        ) is True
+    finally:
+        release.set()
+    _wait_until(coordinator.all_finished, "the released child never finished")
+    assert coordinator.snapshot()[0].status == RUN_DONE
+    # ... and must still DELIVER: the child's second (post-release) model
+    # call carries the labeled message, after its tool result.
+    second_payload = chat.child_calls["slow task"][1]["messages_payload"]
+    steer_text = format_steering_message(STEERING_SOURCE_USER, "check the appendix")
+    assert any(
+        message.get("role") == "user"
+        and message.get("content") == steer_text
+        for message in second_payload
+    ), second_payload
+
+
+# -- probe (b): outlive OFF -- byte-identical kill-switch path -------------
+
+
+def test_probe_b_stop_kills_everything_through_the_cancel_event_path(
+    db, monkeypatch
+):
+    """Outlive OFF: Stop still takes the whole run tree, via the Events.
+
+    GREEN at the untouched merge-base and required to stay green through
+    the change UNTOUCHED -- this is the byte-identical guarantee for the
+    kill switch. The child's own Event being SET is the path assertion:
+    the kill goes through `_cancel_fleet_handles` (Event + approval
+    revocation), not through some new mechanism.
+    """
+    pin_turn_scoped_children(monkeypatch)
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+
+    def spawn_then_cancel():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        return "parent stopped"
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), spawn_then_cancel],
+        {"slow task": [_gated_child(entered, release)]},
+        allow_unconsumed=True,
+    )
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=cancelled.is_set,
+        )
+        assert entered.is_set()
+        assert outcome.status == RUN_CANCELLED
+        # The whole tree died, and died through the Event path.
+        handle = coordinator.snapshot()[0]
+        assert handle.status == RUN_CANCELLED, handle
+        assert service._fleet_cancels[handle.handle_id].is_set(), (
+            "the kill-switch stop must go through the cancel-Event path"
+        )
+        assert coordinator.all_finished()
+        assert _child_row(db)["status"] == RUN_CANCELLED
+    finally:
+        release.set()
+
+
+def test_probe_b_wait_agents_cancel_still_stops_children(db, monkeypatch):
+    """Outlive OFF: `wait_agents`' cancel branch cancels, byte-identically.
+
+    GREEN at the untouched merge-base: the same in-wait cancel trigger as
+    probe (a2), under the kill switch -- children are cancelled through
+    their Events and the note says so, in the exact pre-change copy.
+    """
+    pin_turn_scoped_children(monkeypatch)
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.2)
+    entered = threading.Event()
+    release = threading.Event()
+    wait_dispatched = threading.Event()
+    polls_after_dispatch = {"count": 0}
+
+    def wait_after_child_entered():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        wait_dispatched.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    def should_cancel():
+        if not wait_dispatched.is_set():
+            return False
+        polls_after_dispatch["count"] += 1
+        return polls_after_dispatch["count"] >= 2
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "slow task"}),
+            wait_after_child_entered,
+        ],
+        {"slow task": [_gated_child(entered, release)]},
+        allow_unconsumed=True,  # the cancelled child strands its turn
+    )
+    try:
+        run_id, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "go"}],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+            should_cancel=should_cancel,
+        )
+        assert outcome.status == RUN_CANCELLED
+        waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
+        assert waits, "wait_agents never ran -- the cancel landed too early"
+        assert "(The run was cancelled; sub-agents were stopped.)" in waits[0]
+        handle = coordinator.snapshot()[0]
+        assert service._fleet_cancels[handle.handle_id].is_set(), (
+            "the kill-switch wait-cancel must go through the cancel-Event path"
+        )
+        assert handle.status == RUN_CANCELLED, handle
+        assert coordinator.all_finished()
+        assert _child_row(db)["status"] == RUN_CANCELLED
+    finally:
+        release.set()
