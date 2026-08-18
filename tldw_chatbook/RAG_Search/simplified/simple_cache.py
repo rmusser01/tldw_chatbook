@@ -436,12 +436,38 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """
         Thread-safe synchronous cache get.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use get_async() directly.
+
+        TASK-15701: the three search-defining dimensions below are accepted
+        and forwarded so this path renders the SAME key as `get_async`. They
+        were previously absent from the signature entirely, which made the
+        sync key a legacy, construction-less one -- harmless while `and` was
+        both the legacy value and the shipped default, and a WRONG-HIT risk
+        once the default moved (twice). The API was kept rather than removed
+        because it is the cache's ergonomic test surface (58 call sites);
+        production reads and writes go through the async path only, re-verified
+        at fix time.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
+
+        Returns:
+            The cached (results, context) pair, or None on a miss.
         """
         if not self.enabled:
             return None
@@ -461,6 +487,9 @@ class SimpleRAGCache:
                     top_k,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 return future.result(
                     timeout=1.0
@@ -468,7 +497,14 @@ class SimpleRAGCache:
         except RuntimeError:
             # No running loop, safe to run directly
             return self._sync_get_impl(
-                query, search_type, top_k, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_get_impl(
@@ -478,6 +514,9 @@ class SimpleRAGCache:
         top_k: int,
         filters: Optional[Dict[str, Any]],
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> Optional[Tuple[List[Any], str]]:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
@@ -489,7 +528,16 @@ class SimpleRAGCache:
                 self._prune_expired_sync()
                 self._last_prune_time = current_time
 
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
             log_counter("cache_request", labels={"type": search_type})
 
             if key not in self._cache:
@@ -676,12 +724,32 @@ class SimpleRAGCache:
         context: str,
         filters: Optional[Dict[str, Any]] = None,
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """
         Thread-safe synchronous cache put.
 
         This method is safe to call from any context and will not cause deadlocks.
         For better performance in async contexts, use put_async() directly.
+
+        TASK-15701: forwards the same three search-defining dimensions as
+        `put_async`, so an entry cannot be STORED under a key asserting a
+        construction that did not produce it. See `get` for why the sync API
+        was kept rather than removed.
+
+        Args:
+            query: The search query.
+            search_type: Which retrieval mode ran.
+            top_k: The result window.
+            results: The rows to cache.
+            context: The rendered context string.
+            filters: Optional metadata filters.
+            metadata_allowlist: Optional per-source-type allowlist.
+            keyword_source_types: Which sub-legs the keyword leg queried.
+            hybrid_fusion: (alpha, rrf_k, pool) for the fusion step.
+            fts_match_construction: How the FTS MATCH expression was built.
         """
         if not self.enabled:
             return
@@ -703,12 +771,24 @@ class SimpleRAGCache:
                     context,
                     filters,
                     metadata_allowlist,
+                    keyword_source_types,
+                    hybrid_fusion,
+                    fts_match_construction,
                 )
                 future.result(timeout=1.0)  # 1 second timeout for cache operations
         except RuntimeError:
             # No running loop, safe to run directly
             self._sync_put_impl(
-                query, search_type, top_k, results, context, filters, metadata_allowlist
+                query,
+                search_type,
+                top_k,
+                results,
+                context,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
             )
 
     def _sync_put_impl(
@@ -720,10 +800,22 @@ class SimpleRAGCache:
         context: str,
         filters: Optional[Dict[str, Any]],
         metadata_allowlist: Optional[Union[Mapping[str, Any], Sequence[Mapping[str, Any]]]] = None,
+        keyword_source_types: Optional[Collection[str]] = None,
+        hybrid_fusion: Optional[Tuple[float, int, int]] = None,
+        fts_match_construction: Optional[str] = None,
     ) -> None:
         """Internal synchronous implementation using threading lock."""
         with self._lock:
-            key = self._make_key(query, search_type, top_k, filters, metadata_allowlist)
+            key = self._make_key(
+                query,
+                search_type,
+                top_k,
+                filters,
+                metadata_allowlist,
+                keyword_source_types,
+                hybrid_fusion,
+                fts_match_construction,
+            )
 
             # Create cache entry
             entry = CacheEntry(key=key, value=(results, context), timestamp=time.time())
