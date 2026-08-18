@@ -501,6 +501,41 @@ load on what it must then SUMMARIZE and WRITE**, and every one of those stages
 had a bound calibrated for the single-query runs this document used to record.
 
 
+
+### Synthesis wall clock against pool size (task-17386)
+
+Measured from the arms above, pairing each question's admitted-evidence count
+with the wall clock of its single synthesis call:
+
+| arm | admitted (cumulative) | synthesis |
+|---|---|---|
+| B | 14 / 26 / 32 | 241s / 328s / 287s |
+| G | 22 / 38 / 50 | 185s / 247s / 282s |
+| H | 22 / 46 / 66 | 155s / **1200s FAILED** / 970s |
+
+The two large numbers are the shape of the failure. With a 600s per-attempt
+provider timeout and one retry, **1200s is two timeouts** (the run's log ends in
+`MaxRetryError`), and the 970s "success" is a first attempt timing out and the
+retry landing. So synthesis on a default multi-hop pool routinely exceeds the
+per-attempt budget: retries hide it sometimes and lose the entire run other
+times.
+
+A lost run used to be invisible. The pipeline returned a generic "Could not
+create the report due to an error" with no verdict, the run COMPLETED, and the
+eval -- finding no citation payload -- simply left the sample out of the
+aggregate. A metric computed over surviving runs looks better precisely because
+the failures removed themselves from the sample. Runs now carry
+`synthesis_failed` (the failure class and the pool size it failed on) in their
+warnings and verification summary, so the stage that failed is nameable.
+
+**Not fixed here**: making a large-pool synthesis actually complete. The
+per-call timeout is not plumbable through `chat_api_call`, whose signature is
+shared by ~9 providers, so a size-aware synthesis budget is its own change.
+Until then, an install running default multi-hop against a local model needs a
+provider `api_timeout` well above the 600s these measurements used -- the 66
+source pool took 970s of successful synthesis.
+
+
 ### Reading gate_pass_rate
 
 It is a ratio, and multi-hop adds to its denominator. Pulling in more marginal

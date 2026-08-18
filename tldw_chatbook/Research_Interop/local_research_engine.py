@@ -853,6 +853,19 @@ class LocalResearchEngine:
             )
             final_answer = (phase2 or {}).get("final_answer") or {}
             relevant_results = (phase2 or {}).get("relevant_results") or {}
+            # task-17386: recorded HERE, while the round's warning list is still
+            # being built, so the reason reaches the run's warnings and its
+            # bundle -- not just the verification summary written later. A
+            # synthesis that never returns leaves no citation verdict, which
+            # made such a run indistinguishable from one nobody scored.
+            synthesis_failure = final_answer.get("synthesis_failed")
+            if isinstance(synthesis_failure, dict):
+                merged_warnings.append(
+                    "synthesis produced no report ("
+                    f"{synthesis_failure.get('error_type')}; "
+                    f"{synthesis_failure.get('evidence_count')} sources, "
+                    f"{synthesis_failure.get('chunk_count')} chunks)"
+                )
 
             # Gap analysis runs after EVERY synthesis so the final report can
             # name what is still unresolved; iterating further is bounded by
@@ -930,6 +943,13 @@ class LocalResearchEngine:
         }
         if "gate" in final_answer:
             verification_summary["gate"] = final_answer["gate"]
+        # task-17386: a run whose synthesis never returned carries no citation
+        # verdict, which used to make it indistinguishable from a run nobody
+        # scored. Record the reason on the run and in its verification summary
+        # so it is legible as a failure of the synthesis stage.
+        if isinstance(final_answer.get("synthesis_failed"), dict):
+            verification_summary["synthesis_failed"] = final_answer["synthesis_failed"]
+        verification_summary["warnings"] = list(merged_warnings)
         if "citation_verification" in final_answer:
             verification_summary["citation_verification"] = final_answer[
                 "citation_verification"

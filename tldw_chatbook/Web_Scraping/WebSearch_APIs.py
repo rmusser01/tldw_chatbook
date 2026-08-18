@@ -1591,6 +1591,11 @@ class FinalAnswerDict(TypedDict):
     # and quote-check counts from deep_search_citations.verify_citations.
     # Failure/empty branches omit it rather than fabricating a clean verdict.
     citation_verification: NotRequired[Dict[str, Any]]
+    #: Present only when the synthesis stage produced no report (task-17386):
+    #: the failure's class, and the pool size it failed on. A run carrying this
+    #: has no citation verdict, and without it such a run is indistinguishable
+    #: from one nobody scored.
+    synthesis_failed: NotRequired[Dict[str, Any]]
     # Present whenever relevance outcomes are known (task-16333):
     # {"relevant": int, "raw": int, "fallback": bool} -- fallback marks a
     # report built from gate-unverified evidence.
@@ -1890,6 +1895,7 @@ def aggregate_results(
 
     input_data = "Follow the above instructions."
 
+    synthesis_error: str | None = None
     try:
         logger.info("Generating the report")
         messages_payload = [
@@ -1948,15 +1954,31 @@ def aggregate_results(
             return success_answer
     except Exception as e:
         logger.error(f"Error aggregating results: {e}")
+        # task-17386: keep the CLASS of failure, not the message -- a timeout's
+        # text carries host:port, and this value travels into a run's artifacts.
+        synthesis_error = type(e).__name__
 
     logger.error("Could not create the report due to an error.")
+    # task-17386: a synthesis that never returns used to leave a generic string
+    # and no verdict, so the run "completed", the eval found no verification
+    # payload, and the sample vanished from the aggregate rather than counting
+    # as a failure. Measured: on a local model, synthesis of a 46-66 source pool
+    # ran 600-1200s against a 600s per-attempt provider timeout, so this is the
+    # normal shape of a large-pool run, not an exotic error.
+    reason = f" ({synthesis_error})" if synthesis_error else ""
     failure_answer: FinalAnswerDict = {
-        "text": "Could not create the report due to an error.",
+        "text": f"Could not create the report due to an error{reason}.",
         "evidence": evidence_payload,
         "confidence": _estimate_confidence(
             len(evidence_payload), len(chunk_infos), len(chunk_infos), has_llm=False
         ),
         "chunks": chunk_metadata,
+        "synthesis_failed": {
+            "stage": "synthesis",
+            "error_type": synthesis_error or "empty_response",
+            "evidence_count": len(evidence_payload),
+            "chunk_count": len(chunk_infos),
+        },
     }
     return failure_answer
 

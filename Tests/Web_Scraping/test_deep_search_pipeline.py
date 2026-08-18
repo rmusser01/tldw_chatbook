@@ -361,7 +361,14 @@ def test_aggregate_llm_failure_still_typed(monkeypatch):
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
-    assert set(out) == {"text", "evidence", "confidence", "chunks"}  # no "summary" key ever
+    # Typed shape holds and no "summary" key ever appears; task-17386 adds
+    # synthesis_failed so the run records WHY it has no citation verdict.
+    assert set(out) == {
+        "text", "evidence", "confidence", "chunks", "synthesis_failed",
+    }
+    assert "summary" not in out
+    assert out["synthesis_failed"]["error_type"] == "RuntimeError"
+    assert "RuntimeError" in out["text"]
 
 
 def test_aggregate_no_llm_fallback():
