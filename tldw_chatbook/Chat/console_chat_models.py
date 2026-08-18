@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -561,6 +562,9 @@ class ConsoleChatMessage:
     #: ``attachments`` (index i describes attachment position i). An empty
     #: tuple (the default) means this is NOT a generation message.
     generation_metadata: tuple["GenerationVariantMeta", ...] = ()
+    #: Captured provider exchanges for this turn (Conversation Inspector).
+    #: Tuple for snapshot-safety; the store replaces, never mutates.
+    exchanges: tuple["ExchangeCapture", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
     #: TASK-1860: the FULL, untruncated tool result behind a TOOL marker.

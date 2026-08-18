@@ -879,6 +879,35 @@ class ChatPersistenceService:
         """
         return self.db.update_message_usage_local(message_id, usage_json)
 
+    def append_message_exchanges(
+        self, *, message_id: str, rows: Sequence[Mapping[str, Any]]
+    ) -> bool:
+        """Local-only exchange-capture flush (Conversation Inspector).
+
+        Same contract as ``update_message_usage``: version-neutral, never
+        enqueues sync rows. Unlike that sibling, this never lets a database
+        error escape -- exchange captures are best-effort diagnostic
+        payloads, not user-visible content, so a write failure is logged
+        (row COUNT only, never capture contents) and reported as ``False``
+        rather than propagated.
+
+        Args:
+            message_id: UUID of the owning message row.
+            rows: Exchange rows to upsert; see
+                :meth:`CharactersRAGDB.append_message_exchanges_local`.
+
+        Returns:
+            True if the rows were written; False if the write failed.
+        """
+        try:
+            self.db.append_message_exchanges_local(message_id, rows)
+            return True
+        except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
+            logger.bind(message_id=message_id, error=repr(exc)).warning(
+                "exchange_append_failed"
+            )
+            return False
+
     def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
         """Atomically tombstone one persisted branch and return its versions."""
         current_message = self.db.get_message_by_id(message_id)
