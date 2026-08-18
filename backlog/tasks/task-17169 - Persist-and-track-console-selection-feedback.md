@@ -1,7 +1,7 @@
 ---
 id: TASK-17169
 title: Persist and track console selection feedback
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-08-16 13:57'
@@ -24,7 +24,7 @@ User request (2026-08-16): feedback sent via the selection menu (Request changes
 - [x] #3 Option B evaluated: spec phase-4 annotations table
 - [x] #4 Decision recorded (A, B, or both) with rationale + ADR if storage changes
 - [x] #5 Feedback history viewable (trace viewer and/or inline badges per decision)
-- [ ] #6 Tests green
+- [x] #6 Tests green
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -78,6 +78,13 @@ tick, derived into a "Review note(s)" sub-row with the notes riding the
 signature. Live Comment writes update the map immediately; a conversation
 switch reloads it off-thread (exit_on_error=False) and re-keys persisted
 message ids to current native ids, discarding stale in-flight results.
+
+**Test evidence** (scoped per maintainer to touched code): selection e2e 56,
+annotation markers 9, citation sources 55, trajectory capture/projection/
+screen/timeline 91, migration 4, annotation store 5, DB suites 1226 -- all
+green on the shipped tree; Tests/Chat full run at byte-identical baseline
+parity with clean dev (same 14 failures, same params). Post-push Qodo
+finding (duplicate-dispatch hazard) closed with the in-flight guard.
 
 **Ripple fixes carried by this task** (all pre-existing red): the v39
 landing's forgotten test pins (now tracking _CURRENT_SCHEMA_VERSION) and
