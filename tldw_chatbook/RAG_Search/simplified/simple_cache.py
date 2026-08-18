@@ -610,23 +610,21 @@ class SimpleRAGCache:
                 a cache entry. Defaults to ``None`` (no change for existing
                 callers).
             keyword_source_types: Optional keyword-leg source-type selection;
-                also part of the key. The synchronous ``get``/``put`` twins
-                do not take it: no caller can hand them one, so they key
-                without it. Across a MIXED sync/async workload that can only
-                produce a miss (the two paths render different keys). It is
-                NOT safe between two SYNC calls: two sync searches differing
-                only in a dimension the sync key omits render the SAME key,
-                so the second is served the first's rows -- a wrong hit.
-                Latent only because no production code calls the sync API
-                (re-verified at the close of TASK-15400); **TASK-15701**
-                owns closing it.
+                also part of the key. **TASK-15701 closed the sync-twin gap
+                this argument used to describe**: ``get``/``put`` now accept
+                and forward this dimension too, so both paths render the same
+                key and two sync searches differing only in it can no longer
+                collide. (The historical hazard, for anyone reading a git
+                blame: the sync twins could not take it, so two sync searches
+                differing only in an omitted dimension rendered the SAME key
+                and the second was served the first's rows -- a wrong hit,
+                latent only because no production code called the sync API.)
             hybrid_fusion: The resolved ``(alpha, rrf_k, pool_multiplier)``
                 for a hybrid search; see ``_make_key`` for why this must be
-                part of the key. Same sync-twin exclusion rationale as
-                ``keyword_source_types`` above.
+                part of the key. Carried by both paths since TASK-15701.
             fts_match_construction: The keyword leg's MATCH construction
-                (hybrid/keyword searches); see ``_make_key``. Same sync-twin
-                exclusion rationale.
+                (hybrid/keyword searches); see ``_make_key``. Carried by both
+                paths since TASK-15701.
         """
         if not self.enabled:
             return
