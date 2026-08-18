@@ -538,6 +538,14 @@ NOTE_MAX_LENGTH = 2000
 #: ``ConsoleTurnFileCard``'s ``_GLYPH_NOTE``/``_GLYPH_DELETE``.
 _GLYPH_NOTE = "✎"
 _GLYPH_DELETE = "✕"
+#: TASK-18060 Task 7 fix round (spec §3 Note display): the inline marker
+#: appended to a diff line carrying a `diff_line` note. Deliberately the
+#: SAME "●" the run-marker vocabulary already maps to `"[*]"` in ASCII
+#: mode (`Widgets/glyph_fallback.py`'s character-keyed table) -- reusing
+#: it (rather than minting a new mapping) is what the reviewer asked for
+#: ("via resolve_glyph for ●"), and the fallback still reads sensibly as
+#: a generic marker glyph ahead of the literal word "comment".
+_GLYPH_LINE_COMMENT_MARKER = "●"
 
 
 def _validate_note_text(raw: str) -> "str | None":
@@ -804,6 +812,14 @@ class ChangeReviewScreen(Screen):
         #: range inside ``_render_diff`` itself against that render's own
         #: line count, never against a stale one.
         self._cursor_line: int = 0
+        #: TASK-18060 Task 7 fix round (review rework #1): the focused
+        #: leaf's ``diff_line`` note indices, over the FULL diff text —
+        #: spec §3's inline "● comment" marker. Recomputed alongside the
+        #: notes strip (``_focus_leaf``, and after every save/delete via
+        #: ``_refresh_notes_ui_for_focused_leaf``) and consulted READ-ONLY
+        #: inside ``_render_diff`` (including on every cursor-move
+        #: re-render) so a marker never costs a DB query per keypress.
+        self._marked_diff_lines: "set[int]" = set()
 
     # -- compose -----------------------------------------------------------
 
@@ -1156,11 +1172,17 @@ class ChangeReviewScreen(Screen):
         # top rather than carrying over an unrelated file's line index.
         self._cursor_line = 0
         row, change = self._leaves[self._focused_leaf]
+        # TASK-18060 Task 7 fix round: ONE synchronous notes read, shared by
+        # both the inline diff-line marker (spec §3's "● comment") and the
+        # strip below — `_render_diff` needs the marker set computed BEFORE
+        # it renders, so this must happen ahead of that call.
+        leaf_notes = self._notes_for_leaf(row, change)
+        self._marked_diff_lines = self._marked_diff_line_indices(leaf_notes)
         self._render_diff(row, change)
         # TASK-18060 Task 7 (review-rail spec §3): the strip's one refresh
         # choke point — every leaf focus (a fresh selection, j/k, or a
         # mouse click) shows exactly the newly-focused file's notes.
-        self._refresh_notes_strip()
+        self._refresh_notes_strip(leaf_notes)
 
     def _move_diff_cursor(self, delta: int) -> None:
         """Move the diff-pane line cursor by ``delta`` and re-render.
@@ -1442,7 +1464,7 @@ class ChangeReviewScreen(Screen):
                 ).focus()
             except Exception:  # noqa: BLE001 -- focus-return is cosmetic
                 pass
-            self._refresh_notes_strip()
+            self._refresh_notes_ui_for_focused_leaf()
         except Exception:
             logger.opt(exception=True).warning(
                 "change_review: comment save failed"
@@ -1478,7 +1500,7 @@ class ChangeReviewScreen(Screen):
                     severity="warning",
                 )
                 return
-            self._refresh_notes_strip()
+            self._refresh_notes_ui_for_focused_leaf()
         except Exception:
             logger.opt(exception=True).warning(
                 "change_review: note delete failed"
@@ -1489,15 +1511,97 @@ class ChangeReviewScreen(Screen):
         event.stop()
         await self._delete_review_note(event.button)
 
-    def _refresh_notes_strip(self) -> None:
+    def _notes_for_leaf(self, row: dict, change: ChangedFile) -> list[dict]:
+        """All notes (any kind) anchored to ``(row, change)``, filtered.
+
+        TASK-18060 Task 7 fix round: the ONE synchronous ``notes_for_run``
+        read + root/path/snapshot filter, shared by the notes strip
+        (``_refresh_notes_strip``) and the diff pane's inline "● comment"
+        marker (``_marked_diff_line_indices``) — a single file focus or
+        note mutation costs exactly one query, not two. Spec §3's posture
+        correction: synchronous, matching this screen's existing
+        diff-load posture (only the comment WRITE paths run off-thread).
+
+        Args:
+            row: The focused leaf's owning ``change_snapshots`` row.
+            change: The focused leaf's ``ChangedFile``.
+
+        Returns:
+            The leaf's notes, oldest first (``notes_for_run``'s own
+            order); empty when the read itself fails (logged, never
+            raised — a note-load failure must never break the pane).
+        """
+        if self._active_turn is None:
+            return []
+        try:
+            notes = self._provider.notes_for_run(self._active_turn.run_id)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "change_review: notes load failed"
+            )
+            return []
+        return [
+            note
+            for note in notes
+            if note.get("root") == row.get("root")
+            and note.get("path") == change.path
+            and _note_matches_leaf(note, row.get("id"))
+        ]
+
+    @staticmethod
+    def _marked_diff_line_indices(notes: list[dict]) -> "set[int]":
+        """``diff_line`` note indices from an already-filtered leaf list.
+
+        Pure (no I/O) — ``_render_diff`` re-renders on every cursor move,
+        so the marker set is computed once per file-focus/note-mutation
+        (``_focus_leaf``/``_refresh_notes_ui_for_focused_leaf``) and
+        merely CONSULTED here, keeping the render itself O(lines).
+
+        Args:
+            notes: ``_notes_for_leaf``'s output.
+
+        Returns:
+            The set of 0-based full-diff line indices carrying a
+            ``diff_line`` note.
+        """
+        marked: set[int] = set()
+        for note in notes:
+            if note.get("anchor_kind") != "diff_line":
+                continue
+            index = note.get("diff_line_index")
+            if index is not None:
+                marked.add(int(index))
+        return marked
+
+    def _refresh_notes_ui_for_focused_leaf(self) -> None:
+        """The ONE choke point after any note mutation (save/delete).
+
+        Recomputes the marker set and re-renders the diff (so a new/
+        removed inline "● comment" marker shows immediately) AND
+        refreshes the strip — both fed by a single ``_notes_for_leaf``
+        read. A save/delete when nothing is focused degrades to just
+        clearing the strip (mirrors ``_refresh_notes_strip``'s own
+        no-leaves guard).
+        """
+        if not self._leaves or self._focused_leaf < 0:
+            self._refresh_notes_strip()
+            return
+        row, change = self._leaves[self._focused_leaf]
+        leaf_notes = self._notes_for_leaf(row, change)
+        self._marked_diff_lines = self._marked_diff_line_indices(leaf_notes)
+        self._render_diff(row, change)
+        self._refresh_notes_strip(leaf_notes)
+
+    def _refresh_notes_strip(self, notes: "list[dict] | None" = None) -> None:
         """Repopulate the focused file's notes strip.
 
-        Spec §3's posture correction: this is a SYNCHRONOUS read
-        (``notes_for_run`` is a plain SQLite query), matching the
-        screen's existing diff-load posture — only the comment WRITE
-        paths (save/delete above) run off-thread. Called after every
-        file focus change (``_focus_leaf``) and after every successful
-        save/delete.
+        Args:
+            notes: The focused leaf's already-filtered notes
+                (``_notes_for_leaf``'s output), when the caller already
+                has them (``_focus_leaf``/
+                ``_refresh_notes_ui_for_focused_leaf``) — avoids a second
+                query. ``None`` (callers with no notes in hand) fetches
+                fresh.
         """
         try:
             strip = self.query_one("#change-review-notes-strip", Vertical)
@@ -1517,24 +1621,11 @@ class ChangeReviewScreen(Screen):
         ):
             strip.display = False
             return
-        row, change = self._leaves[self._focused_leaf]
-        try:
-            notes = self._provider.notes_for_run(self._active_turn.run_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "change_review: notes load failed"
-            )
-            strip.display = False
-            return
-        matching = [
-            note
-            for note in notes
-            if note.get("root") == row.get("root")
-            and note.get("path") == change.path
-            and _note_matches_leaf(note, row.get("id"))
-        ]
-        strip.display = bool(matching)
-        for note in matching:
+        if notes is None:
+            row, change = self._leaves[self._focused_leaf]
+            notes = self._notes_for_leaf(row, change)
+        strip.display = bool(notes)
+        for note in notes:
             try:
                 strip.mount(self._build_note_row(note))
             except Exception:
@@ -1723,12 +1814,31 @@ class ChangeReviewScreen(Screen):
                 style = "cyan"
             else:
                 style = ""
-            if index == self._cursor_line:
+            cursor_here = index == self._cursor_line
+            if cursor_here:
                 style = f"{style} {_CURSOR_LINE_STYLE}".strip()
             if style:
                 text.append(line, style=style)
             else:
                 text.append(line)
+            if index in self._marked_diff_lines:
+                # TASK-18060 Task 7 fix round (spec §3 Note display): a
+                # line carrying a `diff_line` note gets a dim "● comment"
+                # marker APPENDED to the same logical line -- never a new
+                # line, so the row==index invariant the Task 6 follow-up
+                # fix established (`_scroll_cursor_into_view`) is
+                # untouched (this only widens the line; wrapping stays
+                # off). Composes with the cursor highlight: when this IS
+                # the cursor's own line, the marker also carries the
+                # cursor's background so the highlighted band doesn't
+                # visibly break partway through.
+                marker_style = (
+                    f"dim {_CURSOR_LINE_STYLE}" if cursor_here else "dim"
+                )
+                text.append(
+                    f" {resolve_glyph(_GLYPH_LINE_COMMENT_MARKER)} comment",
+                    style=marker_style,
+                )
             text.append("\n")
         if hidden:
             text.append(

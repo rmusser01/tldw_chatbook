@@ -20,7 +20,9 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
+    _hunk_containing_line,
 )
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 
@@ -1633,7 +1635,11 @@ async def test_line_comment_save_persists_exact_anchor(review_fixture):
         row, change = screen._leaves[screen._focused_leaf]
         assert change.path == "edit.txt"
         full_diff = provider.diff_text(row, change.path)
-        lines = full_diff.split("\n")
+        # `.splitlines()` -- matching `_render_diff`/`_save_comment_input`'s
+        # own line-indexing exactly (a bare `split("\n")` diverges from it
+        # on `\r`-bearing content and trailing-newline handling; fix-round
+        # review catch).
+        lines = full_diff.splitlines()
         target_index = next(
             i for i, line in enumerate(lines) if line.startswith("+after")
         )
@@ -2031,3 +2037,250 @@ async def test_binary_file_c_noops_C_still_works(review_fixture):
         assert len(notes) == 1
         assert notes[0]["anchor_kind"] == "file"
         assert notes[0]["path"] == "image.bin"
+
+
+# -- Task 7 fix round (review): pure `_hunk_containing_line` pins -----------
+
+
+def test_hunk_containing_line_multi_hunk_and_prelude_fallback():
+    """Pure pin for `_hunk_containing_line` (no prior art in this codebase
+    for reconstructing a hunk's absolute line offset) -- inspection-only
+    before this test, per the review round. A prelude line (before the
+    first `@@`) degrades to hunk 0; a line inside the SECOND hunk (its
+    header AND a body line) maps to `hunk_index == 1` with that hunk's own
+    header, never hunk 0's."""
+    from tldw_chatbook.Chat.console_display_state import split_unified_diff
+
+    diff_text = (
+        "diff --git a/f.py b/f.py\n"
+        "index aaa..bbb 100644\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " context1\n"
+        "-old1\n"
+        "+new1\n"
+        "@@ -10,2 +10,2 @@\n"
+        " context2\n"
+        "-old2\n"
+        "+new2\n"
+    )
+    lines = diff_text.splitlines()
+    hunks = split_unified_diff(diff_text)
+    assert len(hunks) == 2, "fixture must produce two real hunks"
+
+    # A prelude line (before ANY hunk header) degrades to hunk 0 rather
+    # than reporting "no hunk" -- the documented fallback.
+    prelude_index = lines.index("diff --git a/f.py b/f.py")
+    idx0, hunk0 = _hunk_containing_line(hunks, prelude_index)
+    assert idx0 == 0
+    assert hunk0 is hunks[0]
+
+    # The SECOND hunk's own header line.
+    second_header_index = lines.index("@@ -10,2 +10,2 @@")
+    idx_header, hunk_header = _hunk_containing_line(hunks, second_header_index)
+    assert idx_header == 1
+    assert hunk_header.header == "@@ -10,2 +10,2 @@"
+
+    # A BODY line inside the second hunk (not the header itself) -- must
+    # still map to hunk_index 1, not fall back to hunk 0.
+    body_index = lines.index("+new2")
+    idx_body, hunk_body = _hunk_containing_line(hunks, body_index)
+    assert idx_body == 1
+    assert hunk_body.header == "@@ -10,2 +10,2 @@"
+
+    # And the FIRST hunk's own body line maps back to hunk_index 0.
+    first_body_index = lines.index("+new1")
+    idx_first, hunk_first = _hunk_containing_line(hunks, first_body_index)
+    assert idx_first == 0
+    assert hunk_first.header == "@@ -1,2 +1,2 @@"
+
+
+# -- Task 7 fix round (review): inline "● comment" diff-line marker ---------
+
+
+@pytest.mark.asyncio
+async def test_line_comment_marker_appears_on_its_line_and_survives_cursor_moves(
+    review_fixture,
+):
+    """Spec §3 Note display: a saved `diff_line` note appends a dim
+    `● comment` marker to its OWN rendered diff line -- other lines stay
+    unchanged, and the marker survives further cursor movement (it is
+    screen state, not recomputed from a stale render)."""
+    provider, root, run1, run2 = review_fixture
+    app = _Harness(provider, initial_run_id=run2, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (lambda t: t if "after" in t else None)(screen.diff_pane_text()),
+            "edit.txt diff",
+        )
+        row, change = screen._leaves[screen._focused_leaf]
+        full_diff = provider.diff_text(row, change.path)
+        lines = full_diff.splitlines()
+        target_index = next(
+            i for i, line in enumerate(lines) if line.startswith("+after")
+        )
+        other_index = next(i for i in range(len(lines)) if i != target_index)
+
+        marker = f"{resolve_glyph('●')} comment"
+        before_lines = screen.diff_pane_text().split("\n")
+        assert not before_lines[target_index].endswith(marker), (
+            "marker must not appear before any note is saved"
+        )
+
+        screen.action_focus_diff()
+        await pilot.pause()
+        await _press_n(pilot, "down", target_index)
+        await pilot.pause()
+
+        await pilot.press("c")
+        note_input = await _open_comment_input(pilot, screen)
+        note_input.value = "marker check"
+        note_input.focus()
+        await pilot.press("enter")
+        await _wait_input_closed(pilot, screen)
+
+        text_lines = await _wait_for(
+            pilot,
+            lambda: (
+                lambda ls: ls if ls[target_index].endswith(marker) else None
+            )(screen.diff_pane_text().split("\n")),
+            "marker rendered on the target line",
+        )
+        assert text_lines[target_index].endswith(marker), text_lines[target_index]
+        assert not text_lines[other_index].endswith(marker), (
+            "an unrelated line must not carry the marker"
+        )
+
+        # Moving the cursor elsewhere and back must not drop the marker --
+        # it is recomputed only on file focus/note mutation, never
+        # silently lost on an ordinary cursor-move re-render.
+        await pilot.press("down")
+        await pilot.press("up")
+        await pilot.pause()
+        text_lines_after_move = screen.diff_pane_text().split("\n")
+        assert text_lines_after_move[target_index].endswith(marker), (
+            "the marker must survive cursor movement"
+        )
+
+
+# -- Task 7 fix round (review): two-window `_note_matches_leaf` at the ------
+# -- screen level -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_notes_strip_scoped_to_its_own_window_not_the_sibling_window(
+    tmp_path,
+):
+    """A run's `change_snapshots` can hold TWO windows on the SAME
+    root+path (the turn's own window and its surviving sub-agents'
+    post-turn window) -- a note saved with window 1's `snapshot_id` must
+    render in window 1's strip ONLY, never window 2's, even though both
+    leaves share the same path (mirrors the turn file card's proven
+    two-window note test shape,
+    `test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header`).
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "shared.txt").write_text("seed\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+    run_id = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    _record_window(
+        CHANGE_KIND_TURN,
+        lambda: (root / "shared.txt").write_text("ALPHA_ONLY_MARKER\n"),
+    )
+    _record_window(
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        lambda: (root / "shared.txt").write_text("BRAVO_ONLY_MARKER\n"),
+    )
+
+    rows = db.change_snapshots_for_run_review(run_id)
+    assert len(rows) == 2, f"fixture must produce exactly two windows, got {rows}"
+    window1_id, window2_id = int(rows[0]["id"]), int(rows[1]["id"])
+    assert window1_id != window2_id
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    # A note saved against window 1's OWN snapshot id.
+    provider.add_change_note(
+        run_id=run_id,
+        root=str(root),
+        path="shared.txt",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-seed\n+ALPHA_ONLY_MARKER",
+        note="belongs to window 1 only",
+        snapshot_id=window1_id,
+    )
+
+    async def _strip_texts_for(snapshot_id: int) -> list[str]:
+        app = _Harness(
+            provider,
+            initial_run_id=run_id,
+            initial_path="shared.txt",
+            initial_snapshot_id=snapshot_id,
+        )
+        async with app.run_test(size=(160, 48)) as pilot:
+            screen = await _wait_for(
+                pilot,
+                lambda: app.screen
+                if isinstance(app.screen, ChangeReviewScreen)
+                else None,
+                "review screen",
+            )
+            await _wait_for(
+                pilot, lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+                "leaf focused",
+            )
+            _row, change = screen._leaves[screen._focused_leaf]
+            assert change.path == "shared.txt"
+            # Let the strip settle (mount is synchronous, but give the
+            # event loop a beat like every other test in this file).
+            await pilot.pause()
+            return _note_strip_texts(screen)
+
+    window1_texts = await _strip_texts_for(window1_id)
+    assert any("belongs to window 1 only" in t for t in window1_texts), (
+        f"window 1's own note must render in window 1's strip: {window1_texts}"
+    )
+
+    window2_texts = await _strip_texts_for(window2_id)
+    assert not any("belongs to window 1 only" in t for t in window2_texts), (
+        f"window 1's note leaked into window 2's strip: {window2_texts}"
+    )
