@@ -82,7 +82,8 @@ Top to bottom:
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft.
 - **Footer** — shortcut hints (F6, Shift+F6, F1, Enter, Ctrl+K, Ctrl+T,
-  Ctrl+P), a word count, the "Tokens:" counter, and database sizes.
+  Ctrl+P), a word count, and database sizes. (Token usage lives in the
+  status row's cost chip — e.g. "2.7k tok" — not in the footer.)
 
 ### Small terminals
 
@@ -442,4 +443,8 @@ keyboard focus is carried by the region's column lines and the scrollbar
 accent. Verified against TASK-17657 — 2026-08-17 (headless probes, both
 status-row placements): one deliberate blank row now sits below the
 composer so it reads apart from the footer/status row; compact mode
-(under 35 rows) drops the gap.*
+(under 35 rows) drops the gap. Verified against TASK-17659 — 2026-08-17
+(headless probes, both placements): a matching blank row now sits above
+the composer too, so the bar floats clear of the status row; the
+prompt-queue shelf and staged evidence sit immediately above that gap;
+compact mode drops both rows.*
