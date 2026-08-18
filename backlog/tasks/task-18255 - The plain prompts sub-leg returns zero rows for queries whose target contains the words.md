@@ -32,6 +32,11 @@ nothing. Production wires it (`app.py:5682`,
 **vacuous by construction**, and TASK-17855's reading of them as a retrieval
 failure was wrong.
 
+Note what this does and does not settle: the defect claim is **withdrawn as
+unsupported, not disproven.** No arc has exercised the plain prompts sub-leg
+against a real `PromptScopeService`, so whether it retrieves is still an open
+question — which is a second, independent reason to wire the seam.
+
 **What remains is the work the harness comment defers**, and it is worth
 doing for the reason the wrong conclusion demonstrates: a 0.000 cell that
 means "not measured" is indistinguishable, to every reader, from one that

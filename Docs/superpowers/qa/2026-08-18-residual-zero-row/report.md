@@ -37,7 +37,15 @@ for prompts while the shipped app's plain mode does find them."*
 
 So `plain`'s `category.prompt.*` cells are **vacuous by construction**, and
 reading them as a retrieval failure — as the section below does — is the
-mistake. TASK-18255 is re-scoped accordingly.
+mistake.
+
+**Stated precisely, so this correction does not overclaim in the other
+direction:** what is established is that the measurement was vacuous, not
+that the seam works. Production wires the service; whether it then retrieves
+`prompt-vendor-chaser` is **untested here** — no arc has ever exercised the
+plain prompts sub-leg against a real `PromptScopeService`. The defect claim
+is withdrawn as unsupported, not disproven. Establishing which it is, is
+exactly what TASK-18255 now exists to do.
 
 **The rest of this report stands**: the 19-unreachable / 11-reachable split
 is a lexical property of the corpus and does not depend on any seam being
