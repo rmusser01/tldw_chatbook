@@ -31,11 +31,27 @@ which is the point.
 
 ## Acceptance Criteria (the what)
 
-- [ ] The tiered and untiered merges are measured against each other on the
-      gated instrument's `plain` cells, from the same corpus and queries
+- [ ] **The fixture is extended FIRST so the comparison can say anything.**
+      TASK-17755's final review established that tiering is provably the
+      IDENTITY on today's corpus: **0 of 60 queries mix primary and fallback
+      rows, and 0 have more than one primary row**, so a tiered-vs-untiered
+      comparison would close on a meaningless `+0.000`. The fixture needs a
+      query that has a multi-row primary seam AND a rescued (fallback-only)
+      seam, which is the only shape where the orderings differ
+- [ ] Only then: the tiered and untiered merges are measured against each
+      other on the gated instrument's `plain` cells, same corpus and queries
 - [ ] A decision is recorded: tier the merge, or record untiered as the
       measured choice and retire TASK-16071's note so it stops reading as an
       unpaid debt
 - [ ] Whichever ships, the merge-site comment states which construction was
       measured and when — the note that prompted this task was accurate but
       undated, which is why it survived two arcs unresolved
+
+## Note (2026-08-18, TASK-17755 final review)
+
+The real exposure is **displacement, not loss**: a rescued seam's loose rows
+can interleave ahead of a good seam's deeper primary rows under a `top_k`
+cut. Ship-untiered was accepted for TASK-17755 because tiering is equally
+unmeasurable on today's corpus — not because untiered was shown safe. Record
+in the outcome that TASK-17755 closed the *form* divergence with the engine
+leg while leaving an *ordering* divergence.

@@ -140,3 +140,35 @@ structural — a reranker cannot reorder a window it was never given.
 `Tests/RAG_Search/test_fts5_match_forms_shared.py` (new),
 `Tests/RAG_Eval/test_cross_encoder_probe_run.py`,
 `Tests/RAG_Eval/baselines/plain.json`, `Tests/RAG_Eval/README.md`.
+
+## Final-review corrections (2026-08-18, applied before merge)
+
+- **F1 — the rescue is 1 query, not 7.** TASK-3997's "7 of 32" came from an
+  analytically-composed arm (whole-query fallback, a crude prefix form) that
+  was not the shipped construction (per-sub-leg fallback, the engine's
+  stopword-trimmed prefix), and its harness was never committed. The
+  delivered rescue is `kw-thimble-relay` with the right document — which is
+  the ENTIRE +0.022 MRR / +0.062 keyword-category move — plus
+  `ng-mains-supply` gaining 6 non-relevant rows. TASK-3997's record is
+  corrected in place. **The decision stands on the gate's own measurement**,
+  which the reviewer reproduced including a control mutation that restores
+  the old baseline bit-for-bit.
+- **F2 — the "≥2 rows: 0 → 1" census line** is that negation query gaining
+  non-relevant rows, invisible to the gate's scored cells. Disclosed here
+  rather than left to look like a second rescue. Mitigating: the engine leg
+  has returned those same rows since TASK-15700, so this is the convergence
+  this arc exists to produce.
+- **F3 — the re-stamp carries a latency move** the report did not mention:
+  plain mean 14.2 → 18.4 ms, p95 24.8 → 31.1 (reproduced independently at
+  18.6 / 30.8). Expected — a zero-row sub-leg now runs a second query — and
+  recorded so the next person reading the baseline diff does not have to
+  rediscover it.
+- **F5 — AC#3's instrument.** The 0.396 figure from TASK-3997 was never
+  re-measured on the shipped code; AC#3 is satisfied by the GATE's plain
+  cells (0.304 → 0.326, all 105 metrics re-verified) rather than by that
+  number. TASK-17955's AC#1 was also vacuous as filed — tiering is provably
+  the identity on this corpus — and now requires the fixture to be extended
+  first.
+- **F4** (`rag_service._FTS5_STOPWORDS` is now an inert monkeypatch point) is
+  left as-is: it is the shared object, and the identity guard is what keeps
+  it honest.
