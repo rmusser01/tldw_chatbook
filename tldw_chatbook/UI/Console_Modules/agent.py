@@ -1058,7 +1058,17 @@ class ConsoleAgentController:
 
     def _console_agent_section_payload(
         self,
-    ) -> tuple[str, str, ConsoleInspectorSectionState, str, bool, bool, bool]:
+    ) -> tuple[
+        str,
+        str,
+        ConsoleInspectorSectionState,
+        str,
+        bool,
+        bool,
+        bool,
+        ConsoleAgentSteeringState,
+        bool,
+    ]:
         """Derive everything the mounted Agent rail should be showing.
 
         TASK-251: equality-guarded against the last successfully-applied
@@ -1106,14 +1116,17 @@ class ConsoleAgentController:
 
         Returns:
             ``(status_line, steps_text, fleet_section_state, fleet_line,
-            back_visible, section_open, full_log_visible,
-            steering_state)`` -- the exact tuple the screen compares
+            back_visible, section_open, full_log_visible, steering_state,
+            cancel_all_visible)`` -- the exact tuple the screen compares
             against its last applied payload. ``steering_state`` (PR3b
             Task 3) is the drill-in steering bar's
             ``ConsoleAgentSteeringState`` -- a frozen dataclass, so the
             payload's ``==`` equality guard keeps working unchanged, the
             same argument PR2b Task 4 recorded for
-            ``ConsoleInspectorSectionState``.
+            ``ConsoleInspectorSectionState``. ``cancel_all_visible``
+            (PR3b Task 5) is the "Cancel all agents" affordance's
+            visibility -- extending THIS payload rather than adding a
+            second equality guard, per Task 3's landing note.
         """
         status_line, steps_text, _subagents_text = self._console_agent_section_lines()
         fleet_section_state = self._console_agent_fleet_section_state()
@@ -1152,6 +1165,7 @@ class ConsoleAgentController:
             # self-heals a stale drill-in scope first (Finding C) -- though
             # the derivation re-checks the scope itself defensively.
             self._console_agent_steering_state(),
+            self._console_agent_cancel_all_visible(),
         )
 
     # -- PR2b Task 4: the fleet mini-section (states 1/2, spec §7) ---------
@@ -1283,6 +1297,61 @@ class ConsoleAgentController:
         if cancel_subagent is None:
             return False
         return bool(cancel_subagent(conversation_id, row_id))
+
+    def _console_agent_cancel_all_visible(self) -> bool:
+        """Whether the "Cancel all agents" affordance should be offered.
+
+        PR3b Task 5: visible exactly while the conversation has at least
+        one LIVE child -- read from ``bridge.fleet_snapshot``, the SAME
+        live source the fleet rows and the steering-bar visibility read,
+        so the three surfaces can never disagree about whether live work
+        exists. A fleet of finished children (rows still on screen) hides
+        it: offering a kill switch for work that already ended would be
+        a lie.
+
+        Returns:
+            ``True`` only with a bridge, an active conversation, and a
+            live (non-terminal) handle in its fleet snapshot; ``False``
+            -- never raises -- otherwise.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return False
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return False
+        fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
+        if fleet_snapshot is None:
+            return False
+        return any(
+            handle.status not in TERMINAL_RUN_STATUSES
+            for handle in fleet_snapshot(conversation_id)
+        )
+
+    def _cancel_all_console_agents(self) -> int:
+        """Cancel every live child of the active conversation (PR3b Task 5).
+
+        The exact shape of ``_cancel_console_agent_fleet_row`` above, for
+        the same reasons: ``getattr`` guards degrade a bare test double
+        to "nothing cancelled", never a raise, and no enumeration happens
+        here -- ``ConsoleAgentBridge.cancel_all_subagents`` owns the
+        owner walk and delegates each handle to the existing per-handle
+        revocation path (no second mechanism).
+
+        Returns:
+            The number of children actually cancelled -- 0 for no
+            bridge, no active conversation, or an idle fleet.
+        """
+        bridge = self._ensure_console_agent_bridge()
+        if bridge is None:
+            return 0
+        conversation_id = self._current_console_rail_conversation_id() or ""
+        if not conversation_id:
+            return 0
+        cancel_all = getattr(bridge, "cancel_all_subagents", None)
+        if cancel_all is None:
+            return 0
+        return int(cancel_all(conversation_id))
 
     def _console_agent_steering_state(self) -> ConsoleAgentSteeringState:
         """Derive the drill-in steering bar's state (PR3b Task 3).

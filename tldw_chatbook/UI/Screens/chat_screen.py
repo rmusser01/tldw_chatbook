@@ -2166,6 +2166,22 @@ class ChatScreen(BaseAppScreen):
         if cancelled:
             self._request_console_agent_fleet_sync()
 
+    @on(Button.Pressed, "#console-agent-cancel-all")
+    def on_console_agent_cancel_all(self, event: Button.Pressed) -> None:
+        """Cancel every live child of the conversation (PR3b Task 5).
+
+        Same delegation grammar as the per-row cancel handler above: the
+        controller routes to ``ConsoleAgentBridge.cancel_all_subagents``,
+        which walks the current service plus the retained survivor owners
+        and cancels each live handle through the EXISTING per-handle
+        cancel/approval-revoke path -- no second mechanism. A non-zero
+        count requests one coalesced fleet resync so the rows and the
+        affordance's own visibility reflect the stop on the next tick.
+        """
+        event.stop()
+        if self._agent._cancel_all_console_agents():
+            self._request_console_agent_fleet_sync()
+
     @on(ConsoleAgentSteeringBar.SteeringSubmitted)
     def on_console_agent_steering_submitted(
         self, message: ConsoleAgentSteeringBar.SteeringSubmitted
@@ -5008,6 +5024,7 @@ class ChatScreen(BaseAppScreen):
             section_open,
             full_log_visible,
             steering_state,
+            cancel_all_visible,
         ) = payload
         try:
             self.query_one("#console-agent-section-status", Static).update(status_line)
@@ -5031,6 +5048,13 @@ class ChatScreen(BaseAppScreen):
             self.query_one(
                 "#console-agent-steering-bar", ConsoleAgentSteeringBar
             ).sync_state(steering_state)
+            # PR3b Task 5: the whole-fleet kill switch paints only while
+            # a live child exists (derived beside the steering state so
+            # the two surfaces move together).
+            cancel_all_button = self.query_one("#console-agent-cancel-all", Button)
+            cancel_all_button.styles.display = (
+                "block" if cancel_all_visible else "none"
+            )
             agent_body = self.query_one("#console-rail-section-body-agent")
             agent_body.styles.display = "block" if section_open else "none"
             agent_header = self.query_one(
@@ -13964,6 +13988,9 @@ class ChatScreen(BaseAppScreen):
                     ),
                     agent_steering_state=(
                         self._agent._console_agent_steering_state()
+                    ),
+                    agent_cancel_all_visible=(
+                        self._agent._console_agent_cancel_all_visible()
                     ),
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
