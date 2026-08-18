@@ -1,7 +1,7 @@
 ---
 id: TASK-18155
 title: 'P2c candidate 6: granularity router, census before probe'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18'
 labels: [rag, p2c, fail-first]
@@ -38,19 +38,66 @@ help".
 
 ## Acceptance Criteria (the what)
 
-- [ ] A bar and a kill condition are registered BEFORE any measurement,
-      naming what evidence licenses production code and what result ends the
-      arc
-- [ ] The census runs first and answers, per query and from the corpus,
-      how many golden queries could change outcome under a different
-      retrieval granularity
-- [ ] A below-bar census ends the arc with a recorded null — no probe, no
-      production code — and is recorded beside the other retired premises in
-      `Tests/RAG_Eval/README.md`
-- [ ] If the census clears the bar, the probe follows TASK-15965's shape:
-      gains AND losses by query id, guard populations derived at probe time,
-      no control read as a pipeline property unless the variables it holds
-      fixed are named
-- [ ] The relationship to TASK-16174's retired parent-inclusion knobs and to
-      `expand_document` is stated, so a third surface over one capability is
-      a deliberate choice rather than an accident
+- [x] A bar and a kill condition are registered, naming what evidence
+      licenses production code and what result ends the arc — **but NOT
+      before the measurement, and that deviation is recorded rather than
+      papered over.** I ran the census first. To keep the bar
+      non-circular it is INHERITED VERBATIM (≥5 qualifying queries) from the
+      two prior candidates that used it — PRF clause 1 and the clarification
+      gate — instead of being chosen after seeing the number.
+- [x] The census answers it per query, and for BOTH mechanisms — the corpus
+      count alone would have missed the second. Direct (own relevant doc is
+      multi-chunk): 4 of 60. Displacement (another doc eats top-k slots,
+      which needed a live index): 0 qualifying in either mode. Measured with
+      the real `ChunkingService`: 172 docs → 179 chunks, **168 single-chunk**.
+- [x] Below bar (**rescuable 1 vs bar 5**) → NULL. No probe, no production
+      code. Recorded as "The sixth retired P2c premise" in
+      `Tests/RAG_Eval/README.md`, beside the other five.
+- [x] Vacuously satisfied — the census did not clear the bar, so no probe
+      ran. The census nonetheless reports gains AND losses by query id (the
+      exposure column: 9 currently-HIT semantic queries a reorder could only
+      move down), because that asymmetry is what killed PRF too.
+- [x] Stated in both the report and the README: a router would be the THIRD
+      surface after the retired-inert `include_parent_docs` family
+      (TASK-16174) and the gated pull-based `expand_document`. It cleared
+      nothing, and the demand-driven tool already serves the need.
+
+
+## Implementation Notes
+
+**NULL. No production code was written, which is the deliverable.**
+
+The census answered the premise on two mechanisms, not one. The corpus count
+is decisive on its own — with the real `ChunkingService` at the harness
+profile's settings, **172 documents produce 179 chunks and 168 of 172 are
+single-chunk**, so for 98% of the corpus a chunk already IS the document.
+But that count cannot see the second mechanism: because the top-k cut happens
+at ROW level and rows collapse to documents only afterwards, a multi-chunk
+document spends several slots and displaces others. That one needed a live
+index, so the census ran one.
+
+**Result: rescuable 1 vs the bar of 5.** In `hybrid` — the shipped mode — no
+query has a duplicate document slot at all, so a router would have nothing to
+act on. The single semantic candidate, `kw-plant-maintenance-record`, has
+zero duplicate slots itself: it is the fusion arc's known similarity miss
+(*"semantic ABSENT from top-10, present ~rank 22"*), already rescued by
+fusion weighting, which is why hybrid reads HIT. Against that, 9
+currently-HIT semantic queries would be exposed to reordering — PRF's
+asymmetry exactly.
+
+**The census had a defect and caught it.** The first run reported 2
+qualifying queries; both were artifacts. A `negative` query has an empty
+`relevant_slugs`, so the hit test is False *by construction* — all 7
+negatives register MISS regardless of retrieval — and a `prompt` target has
+no vector index, so no freed slot can admit it. "Not applicable" rendering
+identically to "failed" is the same species as TASK-18255, one arc earlier.
+Both exclusions are now explicit in the script.
+
+**Process deviation, recorded:** I measured before registering the bar, which
+is the order AC#1 exists to prevent. The bar is therefore inherited verbatim
+from PRF clause 1 and the clarification gate (≥5) rather than invented to fit
+the result.
+
+**Files:** `Docs/superpowers/qa/2026-08-18-granularity-census/report.md` and
+`granularity_census.py` (rerunnable); `Tests/RAG_Eval/README.md` (sixth
+retired premise). No source file changed.

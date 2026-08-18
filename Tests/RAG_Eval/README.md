@@ -38,8 +38,14 @@ every golden query through the real seam across all three profile modes.
 > ask the user to discard a right one. Qualifying queries: 0 against a
 > pre-registered bar of 5. The census cost one query over the fixture and
 > reached the same kind of answer PRF needed a full probe for, which is why
-> the next candidate (TASK-18155, granularity router) requires a census
-> first. Start at the **headroom table**
+> the next candidate (TASK-18155, granularity router) required a census
+> first. A **sixth** died on 2026-08-18 (TASK-18155): the **granularity
+> router**, killed by that census — **168 of the 172 corpus documents fit in
+> a single chunk**, so a chunk already IS the document for them, and in
+> `hybrid` (the shipped mode) **no query has a duplicate document slot at
+> all**. Rescuable: **1** against the same inherited bar of 5, and that one
+> is a similarity miss fusion already fixed. See "The sixth retired P2c
+> premise". Start at the **headroom table**
 > below: it names, per category, what is left to improve and what can only
 > be regressed.
 
@@ -815,6 +821,71 @@ audited in place rather than by re-authoring the candidates.
   measures corpus sparseness, not the pipeline.** Every class needed anchor
   company before its ranks meant anything; 24 documents were added purely
   for that.
+
+### The sixth retired P2c premise: the granularity router, killed by census (TASK-18155, 2026-08-18)
+
+**Verdict: NULL.** Full record:
+`Docs/superpowers/qa/2026-08-18-granularity-census/report.md`; rerunnable
+census: `granularity_census.py` beside it.
+
+The premise was per-query routing between chunk-level and document-level
+retrieval. It has **two** mechanisms, and the cheap corpus count only sees
+the first:
+
+1. **Direct** — the query's own relevant document is multi-chunk.
+2. **Displacement** — another document eats several top-k slots, because the
+   cut happens at ROW level and rows collapse to documents afterwards
+   (`canonicalize.py`: *"one document can occupy several of the top-k
+   slots"*). This one needs a live index, and the census ran one.
+
+`plain` is structurally exempt: it returns whole items, so it is already
+document-granular.
+
+**Measured with the real `ChunkingService` at the profile's own settings
+(384 words / 64 overlap): 172 documents produce 179 chunks. 168 of 172 are
+single-chunk** — a chunk already IS the document for 98% of the corpus. Only
+four documents chunk at all.
+
+| population | semantic | hybrid |
+|---|---|---|
+| direct (relevant doc multi-chunk) | 4, of which 3 already HIT | 4, **all HIT** |
+| displacement-qualifying | **0** | **0** (no query has ANY duplicate slot) |
+| **rescuable** | **1** | **0** |
+| exposure: already-HIT queries a reorder could only move DOWN | 9 | 0 |
+
+**1 against the bar of 5 → BELOW.** Three things make the null solid rather
+than marginal:
+
+- The single rescuable query, `kw-plant-maintenance-record`, has **zero**
+  duplicate slots — displacement is not its mechanism. It is the fusion
+  arc's known similarity miss (*"semantic ABSENT from top-10, present ~rank
+  22"*), and **fusion weighting already rescued it**, which is why hybrid
+  reads HIT.
+- In the **shipped** mode there is nothing to act on at all: zero duplicate
+  slots across all 60 queries.
+- The exposure asymmetry is PRF's again — no gain available, nine
+  currently-correct semantic queries put at risk of reordering.
+
+**Two apparent qualifiers were instrument artifacts**, and the exclusions are
+now explicit in the script: a `negative` query has an empty `relevant_slugs`,
+so it registers MISS *by construction* (all 7 do, regardless of retrieval);
+and a `prompt` target has **no vector index**, so no freed slot can admit it.
+Both are "not applicable" rendering as "failed" — the same species as
+TASK-18255.
+
+**Why the bar was not chosen to fit**: the census was run BEFORE the bar was
+registered (the wrong order). The bar is therefore **inherited verbatim** —
+≥5, the number PRF's clause 1 and the clarification gate both used — rather
+than invented after the fact.
+
+**On surfaces**: a router would be the third over one capability, after the
+`include_parent_docs` family (retired inert, TASK-16174) and
+`expand_document` (the gated pull-based replacement). Where whole-document
+context is genuinely wanted, the demand-driven tool already serves it.
+
+**What would reopen it**: this is a property of THIS corpus. 168 of 172 docs
+fit one chunk; a long-form corpus would move every number. Re-run the script
+if the fixture gains substantial long documents.
 
 ### The fourth retired P2c premise: PRF, probed before built (TASK-15965, 2026-08-13)
 
