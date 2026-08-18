@@ -469,8 +469,8 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert composer.region.y + composer.region.height <= console.size.height
         assert command_input.display is False
         assert visible_draft.region.width > 20
-        # task-17651: dense-form composer — zero chrome rows, 1-4 total.
-        assert 1 <= composer.region.height <= 4
+        # task-17651/17654: dense-form composer — zero chrome rows, 1-8 total.
+        assert 1 <= composer.region.height <= 8
         assert visible_draft.region.height == 1
         composer.load_draft("visible composer text")
         await pilot.pause(0.1)
@@ -1060,11 +1060,11 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == long_draft
-        # task-17651: growth is draft rows alone (no chrome), capped at 4.
+        # task-17651/17654: growth is draft rows alone (no chrome), capped at 8.
         assert composer.region.height > 1
-        assert composer.region.height <= 4
+        assert composer.region.height <= 8
         assert visible_draft.region.height > 1
-        assert visible_draft.region.height <= 4
+        assert visible_draft.region.height <= 8
         assert "\n" in visible_plain
         assert "Pasted text |" not in visible_plain
         assert "long composer qa" in visible_plain
@@ -1092,8 +1092,8 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
         assert command_input.value == pasted_text
-        assert composer.region.height <= 4
-        assert visible_draft.region.height <= 4
+        assert composer.region.height <= 8
+        assert visible_draft.region.height <= 8
         assert expected_token in visible_plain
         assert pasted_text not in visible_plain
         assert len(visible_plain) < len(pasted_text)
