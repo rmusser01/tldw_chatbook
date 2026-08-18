@@ -9,7 +9,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -46,10 +46,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
-from tldw_chatbook.Chat.console_exchange_capture import (
-    ExchangeCapture,
-    capture_to_blob,
-)
+from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     effective_user_display_name,
@@ -84,6 +81,13 @@ from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
+
+if TYPE_CHECKING:
+    # Annotation-only: ``from __future__ import annotations`` (top of file)
+    # defers evaluation of every type hint below, so this class never needs
+    # to exist at runtime here -- only ``capture_to_blob`` (imported above)
+    # is actually called.
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -5004,6 +5008,15 @@ class ConsoleChatStore:
                 self._persist_existing_message(
                     message, preserve_provider_continuation=True
                 )
+                # ``_persist_existing_message`` only reaches its own
+                # exchanges hook when the message ALREADY had a
+                # persisted_message_id -- an empty-content deferred message
+                # never gets one there (no content to create a row for), so
+                # this call is normally a silent no-op via
+                # ``_persist_exchanges_only``'s own guard. It stays here for
+                # the rare case where the row already existed.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
                 self._record_message_completed(session_id, message.id)
                 return self._snapshot(message)
 
@@ -5025,6 +5038,13 @@ class ConsoleChatStore:
                     force_stable_message_id=True,
                     terminal_persistence=True,
                 )
+                # This branch creates the durable row directly via
+                # ``_persist_new_message`` rather than
+                # ``_persist_existing_message``, so it never passes through
+                # that method's own exchanges hook -- flush explicitly here,
+                # mirroring it, now that ``persisted_message_id`` exists.
+                if message.exchanges:
+                    self._persist_exchanges_only(message)
             except Exception:
                 self._pending_persistence_message_ids.discard(message.id)
                 logger.warning("terminal_citation_persistence_abandoned")
@@ -6234,19 +6254,27 @@ class ConsoleChatStore:
         writer = getattr(self.persistence, "append_message_exchanges", None)
         if not callable(writer):
             return
-        abandoned_tags = self._abandoned_exchange_run_tags.get(message.id, set())
-        rows = [
-            {
-                "run_tag": c.run_tag,
-                "seq": c.seq,
-                "status": c.status,
-                "abandoned": c.run_tag in abandoned_tags,
-                "capture_blob": capture_to_blob(c),
-                "created_at": c.created_at,
-            }
-            for c in message.exchanges
-        ]
+        # Row-building (including ``capture_to_blob``'s JSON serialization)
+        # lives INSIDE the try, not just the writer call: a malformed
+        # capture (non-str-keyed nested dict, a circular reference in
+        # ``request``/``response``) can raise during serialization, and the
+        # never-raise contract here covers the whole flush, not just the
+        # network/DB half of it -- a serialization error must degrade to
+        # the same warning log as a write failure, never unwind past this
+        # method into an already-committed terminal mark.
         try:
+            abandoned_tags = self._abandoned_exchange_run_tags.get(message.id, set())
+            rows = [
+                {
+                    "run_tag": c.run_tag,
+                    "seq": c.seq,
+                    "status": c.status,
+                    "abandoned": c.run_tag in abandoned_tags,
+                    "capture_blob": capture_to_blob(c),
+                    "created_at": c.created_at,
+                }
+                for c in message.exchanges
+            ]
             writer(message_id=message.persisted_message_id, rows=rows)
         except Exception as exc:
             logger.bind(message_id=message.id, error=repr(exc)).warning(

@@ -888,8 +888,9 @@ class ChatPersistenceService:
         enqueues sync rows. Unlike that sibling, this never lets a database
         error escape -- exchange captures are best-effort diagnostic
         payloads, not user-visible content, so a write failure is logged
-        (row COUNT only, never capture contents) and reported as ``False``
-        rather than propagated.
+        (the warning binds only ``message_id`` and the exception's
+        ``repr()`` -- never row contents or capture payloads) and reported
+        as ``False`` rather than propagated.
 
         Args:
             message_id: UUID of the owning message row.
