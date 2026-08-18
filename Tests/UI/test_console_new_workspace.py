@@ -9,11 +9,19 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
 
 @pytest.mark.asyncio
 async def test_console_new_workspace_creates_and_activates() -> None:
-    """Pressing [New] in the Session rail creates and activates a local workspace."""
+    """Pressing [New] in the Session rail opens the shared create modal;
+    confirming it creates and activates a local workspace.
+
+    The PR that introduced WorkspaceCreateModal changed this button from an
+    instant-create action to opening the shared dialog first (spec
+    2026-08-17 Sec4.3) -- see Tests/UI/test_settings_workspaces_category.py's
+    create flow for the same pattern.
+    """
     app = _build_test_app()
     registry_service = app.workspace_registry_service
     host = ConsoleHarness(app)
@@ -25,8 +33,20 @@ async def test_console_new_workspace_creates_and_activates() -> None:
         new_button = console.query_one("#console-new-workspace", Button)
         assert new_button.disabled is False
         new_button.press()
-        await pilot.pause(0.2)
-        assert len(registry_service.list_workspaces()) == before + 1
+        await pilot.pause()
+
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, WorkspaceCreateModal)
+
+        modal.query_one("#workspace-create-confirm", Button).press()
+
+        created = ()
+        for _ in range(200):
+            created = registry_service.list_workspaces()
+            if len(created) == before + 1:
+                break
+            await pilot.pause(0.01)
+        assert len(created) == before + 1
         active = registry_service.get_active_workspace()
         assert active is not None
         assert active.workspace_id.startswith("workspace-local-")
@@ -35,7 +55,11 @@ async def test_console_new_workspace_creates_and_activates() -> None:
 @pytest.mark.asyncio
 async def test_console_new_workspace_announces_creation() -> None:
     """TASK-713: creating a workspace must not be silent - the user should be
-    told what was created and that Console switched to it."""
+    told what was created and that Console switched to it.
+
+    Drives the shared create modal (opened by [New]) to completion first --
+    see test_console_new_workspace_creates_and_activates's docstring.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -47,9 +71,23 @@ async def test_console_new_workspace_announces_creation() -> None:
             (str(message), kwargs)
         )
         console.query_one("#console-new-workspace", Button).press()
-        await pilot.pause(0.2)
+        await pilot.pause()
 
-        active = app.workspace_registry_service.get_active_workspace()
+        modal = host.screen_stack[-1]
+        assert isinstance(modal, WorkspaceCreateModal)
+
+        modal.query_one("#workspace-create-confirm", Button).press()
+
+        active = None
+        for _ in range(200):
+            active = app.workspace_registry_service.get_active_workspace()
+            messages = [message for message, _ in notifications]
+            if active is not None and any(
+                "switched" in message.lower() for message in messages
+            ):
+                break
+            await pilot.pause(0.01)
+
         assert active is not None
         messages = [message for message, _ in notifications]
         assert any(
