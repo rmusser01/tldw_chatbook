@@ -214,3 +214,35 @@ Sidecar half — two load-bearing details, both found by tests:
 
 The annotations half (migration, `row_key` spike, badge/popover UI) is the
 second slice of task-17169; its details land here as they are built.
+
+### Amendment 5 (2026-08-18, task-18156): keyboard selection mode + Create note
+
+Phase 5 ships **single-row** keyboard selection — the 2026-08-14 spec §42's
+"shift+j/k grows a row-range" wording is superseded by the maintainer's
+2026-08-18 scope decision (recorded in the 2026-08-18 design spec): multi-row
+selection stays out, keyboard reaches exactly the states the mouse can.
+`s` on the j/k-selected message arms a vim-style mode whose motions
+(h/l/w/b/0/$ chars on plain AND markdown rows — markdown's live-spike
+char-range storage made the original line-granularity wording stale —
+j/k lines everywhere, `o` swaps ends) drive the SAME `SelectionManager`
+via `begin_drag`/`extend_drag` re-anchoring; Enter replays the
+mouse-release path by posting `TranscriptTextSelected` with row-region
+coordinates.
+
+Three load-bearing facts for future key work, each test-pinned:
+
+1. `_active_selection_row()` resolves rows through the manager's state, so
+   any input path that bypasses the manager opens a menu whose actions all
+   silently no-op.
+2. While the mode is armed, EVERY printable character plus enter/up/down
+   must be consumed — up/down alias the j/k selection-nav bindings (they do
+   not scroll), and an unclaimed key desyncs the mode from message
+   selection (found live by the Task-2 review).
+3. `finish_drag()` arms a one-shot release-click suppression token for the
+   mouse path; a keyboard finish must drain it (plus `just_finished`) or
+   the next genuine row click's selection toggle is eaten.
+
+The selection menu also gains a fourth base action, **Create note**
+(maintainer request): title = first line capped at 48 chars, body = quote +
+provenance line, written off-thread through the store's persistence DB —
+the same seam as the annotation write, with the same never-raises contract.

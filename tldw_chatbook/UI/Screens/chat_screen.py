@@ -471,6 +471,7 @@ from ...Widgets.Console.console_feedback_comment_modal import (
 )
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -19559,6 +19560,83 @@ class ChatScreen(BaseAppScreen):
                 auto_send_prompt=auto_send_prompt,
             )
         )
+
+    @on(ConsoleSelectionNoteRequested)
+    def on_console_selection_note_requested(
+        self, event: ConsoleSelectionNoteRequested
+    ) -> None:
+        """Save a transcript selection as a note (task-18156 Task 6).
+
+        Title = the quote's first line capped at 48 characters; content =
+        the quote plus a provenance line naming the session and date. The
+        write goes through the store's persistence DB (the same seam the
+        annotation write uses) off-thread -- never sqlite on the UI loop --
+        and every failure is a toast, never an exception: losing a note
+        must not disturb the selection flow that produced it.
+
+        Args:
+            event: The note request carrying the capped selection quote.
+        """
+        event.stop()
+        quote = event.quote.strip()
+        if not quote:
+            return
+        self.run_worker(
+            self._create_console_selection_note(event.quote),
+            group="console-selection-note",
+            exit_on_error=False,
+        )
+
+    async def _create_console_selection_note(self, quote: str) -> None:
+        """Worker body: derive title/content and write the note."""
+        from tldw_chatbook.Utils.input_validation import validate_text_input
+        from tldw_chatbook.Widgets.Console.console_selection import (
+            SELECTION_QUOTE_CAP,
+        )
+
+        # Boundary check through the shared module (PR #1813 review). The
+        # quote is already cap_quote-bounded at the transcript; this is the
+        # belt-and-suspenders size gate for any future caller. allow_html
+        # because transcript selections legitimately contain code --
+        # "<script" included -- and notes render as plain text.
+        if not validate_text_input(
+            quote, max_length=SELECTION_QUOTE_CAP + 64, allow_html=True
+        ):
+            self.notify("Selection is too large to save as a note.", severity="warning")
+            return
+        first_line = quote.strip().splitlines()[0]
+        title = first_line if len(first_line) <= 48 else first_line[:47] + "\u2026"
+        try:
+            controller = self._ensure_console_chat_controller()
+            store = controller.store
+            database = getattr(store.persistence, "db", None) if store.persistence else None
+            if database is None:
+                self.notify(
+                    "Notes are unavailable (no notes database).",
+                    severity="warning",
+                )
+                return
+            session = getattr(store, "_sessions", {}).get(store.active_session_id)
+            session_title = str(getattr(session, "title", "") or "Console")
+            from datetime import datetime as _dt
+
+            stamp = _dt.now().strftime("%Y-%m-%d")
+            content = f"{quote}\n\n\u2014 Console selection, {session_title}, {stamp}"
+            await asyncio.to_thread(database.add_note, title, content)
+        except Exception:
+            # Never log the title: it is arbitrary selected transcript text
+            # and can be a secret (PR #1813 review).
+            logger.warning(
+                f"Console selection note: write failed (title length {len(title)})",
+                exc_info=True,
+            )
+            self.notify("Could not create the note.", severity="warning")
+            return
+        # Selection text is untrusted markup: Textual's toast silently EATS
+        # bracketed spans ("[INFO] server up" loses its tag; "[x for x in y]"
+        # erases the whole title) -- and this toast is the only confirmation
+        # the user gets.
+        self.notify(f"Note created: {escape_markup(title)}")
 
     @on(ConsoleSelectionFeedbackRequested)
     def on_console_selection_feedback_requested(

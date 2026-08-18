@@ -34,6 +34,7 @@ point. Which buttons appear depends on what you selected:
 | **Add to chat** | When the selection can be quoted into the composer |
 | **More Details** | Always |
 | **Ask in Side Chat** | Always |
+| **Create note** | Always |
 | **Request changes** | Only for agent output (assistant replies, tool markers, diff rows) |
 | **LGTM** | Same as above |
 | **Comment** | Same as above |
@@ -70,6 +71,14 @@ closing the modal discards it. **Stop** cancels a stream in flight, **Retry**
 re-sends, and Escape / clicking the backdrop / **Close** all cancel and
 dismiss. By default the side chat uses your current session's model; set
 "Side chat model" to pin a different (usually cheaper) one.
+
+### Create note
+
+Saves the selection straight into your notes. The note's title is the
+selection's first line (capped at 48 characters); its body is the full
+selection plus a provenance line naming the conversation and date. A toast
+confirms with the title. Available for any selection — your own messages
+included — and works with or without a run.
 
 ### Review feedback: Request changes, LGTM, Comment
 
@@ -133,7 +142,25 @@ line or a marker should never cost you the actual message.
 
 ## Keyboard & commands
 
-The menu has no global shortcut; it exists only while a selection does.
+Text selection is fully keyboard-reachable: select a message with `j`/`k`,
+press **`s`**, and a vim-style selection mode starts on that message with
+its first character selected and a hint line showing the active keys.
+
+| Key (in selection mode) | Action |
+|---|---|
+| h / l | Move the selection end by one character |
+| w / b | Jump by word |
+| 0 / $ | Start / end of the current line |
+| j / k | Grow / shrink by one line |
+| o | Swap which end of the selection you're moving |
+| Enter | Open the action menu on the selection |
+| Esc | Leave selection mode (your message selection survives) |
+
+Diff rows are **not** keyboard-selectable — drag with the mouse for
+hunk-level selection. A second **Esc** clears the message selection as
+before.
+
+Inside the menu itself:
 
 | Key | Action |
 |---|---|
@@ -158,11 +185,15 @@ The menu has no global shortcut; it exists only while a selection does.
   with a marker before they leave the transcript.
 - **Request changes / LGTM look broken with no run.** They're disabled on
   purpose — hover for the hint, or use **Comment**.
-- **No keyboard way to open the menu.** Text selection is mouse-only for now;
-  message-level selection (`j`/`k`) is a separate mechanism.
+- **Keyboard selection always starts at the text's beginning.** Use `o` to
+  swap ends when you want a span that starts mid-text (note: after `o`,
+  forward motions stop one unit short of the other end rather than
+  crossing it, unlike vim).
+- **Diff rows are mouse-only for text selection.** `s` on a tool message
+  selects its marker text, not the diff hunks.
 - **Side-chat replies can't be recovered** after the modal closes. Copy
   anything you want to keep before dismissing it.
 
 —
-*Verified against feat/console-selection-feedback @ cc597fc88 — 2026-08-17
-(shipped tests; live verification of phases 1–3 by the maintainer)*
+*Verified against feat/console-keyboard-selection @ a4286a199 — 2026-08-18
+(shipped tests + live tmux verification: s→motions→Enter→menu→Create note→real DB row; two-stage Esc)*

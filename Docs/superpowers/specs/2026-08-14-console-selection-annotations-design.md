@@ -39,7 +39,7 @@ Decisions:
 - **Non-selectable rows.** Banners, action rows, scrollbars, and other `PROTECTED_CLICK_CLASSES`-style regions never start a selection.
 - **Terminal interplay.** Plain drag reaches the app (Textual mouse reporting); shift+drag remains terminal-native copy. Verify with an early spike test in phase 1.
 - **Selection size cap.** Actions quote at most a capped number of characters (e.g. 4,000; configurable constant) — larger selections are truncated with an ellipsis marker. Prevents blowing the composer draft, side-chat prompt, or stored annotation with a whole-file dump.
-- **Keyboard fallback (phase 5).** shift+j/k grows a row-range over the existing j/k selection; entering a row activates character mode. Reuses the same `SelectionManager` and menu so all actions are shared. Keybindings must follow ADR-031 (htop-style single letters, no terminal-convention keys, footer hints truthful 1:1 — test-enforced).
+- **Keyboard fallback (phase 5).** *(Amended 2026-08-18: shipped SINGLE-ROW per the maintainer's scope decision — see the 2026-08-18 keyboard-selection design spec and ADR-068 amendment 5; the row-range wording below is superseded.)* shift+j/k grows a row-range over the existing j/k selection; entering a row activates character mode. Reuses the same `SelectionManager` and menu so all actions are shared. Keybindings must follow ADR-031 (htop-style single letters, no terminal-convention keys, footer hints truthful 1:1 — test-enforced).
 
 ### Selection Menu
 
