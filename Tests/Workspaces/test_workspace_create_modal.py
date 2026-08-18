@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Input
+from textual.widgets import Checkbox, Input, Static
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
@@ -67,3 +67,74 @@ async def test_escape_dismisses_with_none(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
         assert app.result is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_folder_shows_inline_error(tmp_path):
+    app = _HarnessApp(_registry(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(
+            tmp_path / "missing"
+        )
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "does not exist" in str(error.renderable)
+        assert app.result == "unset"  # still open
+
+
+@pytest.mark.asyncio
+async def test_create_with_folder_returns_result_and_binds(tmp_path):
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    assert result.name == "Video Tool"
+    assert result.bound_folders == (str(project.resolve()),)
+    assert result.failed_folders == ()
+    assert result.make_active is True
+    stored = registry.get_workspace(result.workspace_id)
+    assert stored is not None and stored.name == "Video Tool"
+    locators = [b.locator for b in registry.list_folder_bindings(result.workspace_id)]
+    assert locators == [str(project.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_name_error_keeps_modal_open(tmp_path):
+    registry = _registry(tmp_path)
+    registry.create_workspace(workspace_id="workspace-local-9", name="Video Tool")
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Video Tool"
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+        error = modal.query_one("#workspace-create-error", Static)
+        assert "already exists" in str(error.renderable)
+        assert app.result == "unset"
+
+
+@pytest.mark.asyncio
+async def test_make_active_checkbox_carried_on_result(tmp_path):
+    app = _HarnessApp(_registry(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-make-active", Checkbox).value = False
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    assert app.result.make_active is False
