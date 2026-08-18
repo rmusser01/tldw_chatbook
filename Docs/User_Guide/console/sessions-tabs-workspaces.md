@@ -119,6 +119,15 @@ switching Console to it. **Escape cancels the dialog — nothing is created.**
 A name that collides with an existing workspace renders inline and keeps the
 dialog open.
 
+If a folder you add contains a `.SKILLS/` project skills folder, its row in
+the list gains a "— contains N project skill(s)" annotation. After Create
+finishes (the workspace is created either way), a separate import prompt
+offers to bring those skills into your skill library — see
+[Project skills](../library/skills.md#project-skills-skills) for the full
+convention and what "trust-pending" means for an imported skill. Declining
+here or at app startup is remembered per project, so you're not asked again
+until the project's skill set changes.
+
 The built-in Default workspace has no "Rename" or "Archive" buttons. If you
 archive the workspace you are in, the Console switches back to Default.
 
@@ -224,6 +233,10 @@ nothing is created, no matter what you had typed or added.
 - A brand-new conversation can't be starred until it has been sent or saved —
   the star's tooltip says "Send or save this conversation before starring."
 - The Default workspace can't be renamed or archived.
+- Launching the app from inside a project with a `.SKILLS/` folder can pop
+  its own import prompt on startup, separately from anything workspace- or
+  tab-related — see [Project skills](../library/skills.md#project-skills-skills).
+  Turn it off with `[skills] project_skills_prompt_enabled = false`.
 
 —
 *Verified against dev @ ff435772c — 2026-07-31*
@@ -233,3 +246,7 @@ name, optional validated folder bindings with Browse…, a "Switch to this
 workspace" checkbox default on, and Escape/Cancel creating nothing —
 instead of instant "Workspace N" creation; the walkthrough split into
 create-and-switch / create-without-switching / cancel tasks to match).*
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+"— contains N project skill(s)" in the dialog, and a chained import prompt
+follows workspace creation).*

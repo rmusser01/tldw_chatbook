@@ -76,6 +76,51 @@ SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
   "Unsupported file type.", "Skill import is unavailable.", and
   `Skipped — a skill named "name" already exists.`
 
+### Project skills (`.SKILLS/`)
+
+A project with a `.SKILLS/` (or `.skills/`) folder at its root can offer its
+skills for import automatically instead of one-at-a-time manual imports. The
+convention: each skill is either a subdirectory containing a top-level
+`SKILL.md` (skill name = the directory name) or a loose `*.md` file (name
+derived from the filename). Anything else in the folder — a subdirectory
+without `SKILL.md`, a non-markdown file — is listed as skipped with a
+reason, never silently ignored. A symlinked `.SKILLS/` directory, or a
+symlinked entry inside it, is refused.
+
+Chatbook offers to import from `.SKILLS/` at two moments, never silently:
+
+- **App startup**, when launched from inside such a project (or a
+  subdirectory of one — the search walks upward looking for `.SKILLS/`,
+  stopping at the first ancestor containing `.git`, at your home folder, or
+  at the filesystem root).
+- **After creating a workspace** bound to a folder that contains `.SKILLS/`
+  (the folder row in the "New Workspace" dialog shows "— contains N project
+  skill(s)" while you're adding it).
+
+The prompt lists each discovered skill with a checkbox — **new** entries
+checked by default, entries that match an **already installed** skill name
+left unchecked (an existing skill is never silently overwritten), and
+**invalid** entries (bad name, unparseable frontmatter) shown unselectable
+with a reason. **Import selected** runs the same importer as a manual
+import; **Not now** declines for this launch only — you're asked again only
+if the project's skill set actually changes (a new or removed skill file
+changes its fingerprint); **Never for this folder** declines permanently for
+that project. Declining or importing from either trigger (startup or
+workspace creation) is remembered for both.
+
+**Every import still lands trust-pending, exactly like a manual import** —
+the prompt states this up front ("Imported skills require a one-time trust
+review in Library ▸ Skills before they can run") because a project-imported
+skill is otherwise indistinguishable from any other skill in the list. The
+result view's **Review in Library ▸ Skills** button brings you straight
+here to review and approve them (see [Trust panel](#trust-panel) above).
+
+The whole feature can be turned off — no scanning, no prompts, at either
+trigger — with `[skills] project_skills_prompt_enabled = false` in
+`config.toml`; it defaults to on. This does not affect the manual
+**Import…** row above, which is always available regardless of this
+setting.
+
 ### Editor
 
 | Field / control | Notes |
@@ -185,8 +230,10 @@ through (Esc also cancels the passphrase dialogs).
   deep dive on how bundled scripts run and are sandboxed.
 - [Library](../library.md) — the surrounding screen; [Prompts](prompts.md)
   are the simpler cousin (inserted text, no trust or execution).
-- This panel owns no `config.toml` keys; trust lives in a local,
-  passphrase-protected store on this machine. Guide index:
+- Trust itself lives in a local, passphrase-protected store on this
+  machine, not in `config.toml`. The one config key this panel's flow does
+  read is `[skills] project_skills_prompt_enabled` (default `true`) —
+  see [Project skills](#project-skills-skills) above. Guide index:
   [index](../index.md).
 
 ## Quirks & troubleshooting
@@ -212,6 +259,14 @@ through (Esc also cancels the passphrase dialogs).
   re-check.
 - **Model override does nothing yet** — it is kept only so SKILL.md files
   round-trip without losing the field.
+- **Skills imported from a project's `.SKILLS/` folder are quarantined like
+  any other import** — a fresh `$mention` of one in Console is refused with
+  a pointer back here until you review and approve it; the import prompt's
+  header says this explicitly, but it's easy to miss.
+- **`.SKILLS/` scanning is opt-out, not opt-in** — set `[skills]
+  project_skills_prompt_enabled = false` in `config.toml` if you don't want
+  Chatbook checking project directories for skill folders at startup or on
+  workspace creation.
 
 —
 *Verified against dev @ bd05a692a — 2026-07-31*
@@ -222,3 +277,9 @@ chooser-strip pattern (press → Name / Status with ✓ on the active one,
 direct pick, Escape cancels); the editor's three two-state switches stay
 one-press toggles with their full option set now on the label —
 "User can invoke: ✓ yes ⇄ no" — so the option space is on screen.)*
+
+*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
+(task-17651: documented the new "Project skills (`.SKILLS/`)" convention —
+per-project discovery at startup and workspace creation, the fingerprint
+gated prompt ledger, the quarantine/trust-review expectation, and the
+`[skills] project_skills_prompt_enabled` kill-switch.)*
