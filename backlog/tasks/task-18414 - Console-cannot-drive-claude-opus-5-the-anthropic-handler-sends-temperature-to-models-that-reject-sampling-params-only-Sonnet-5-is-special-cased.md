@@ -3,10 +3,11 @@ id: TASK-18414
 title: >-
   Console cannot drive claude-opus-5: the anthropic handler sends temperature to
   models that reject sampling params (only Sonnet 5 is special-cased)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-18 16:20'
-updated_date: '2026-08-18 18:51'
+updated_date: '2026-08-18 23:54'
 labels:
   - llm
   - console
@@ -45,11 +46,42 @@ Repro: scratch profile, `[chat_defaults] provider="anthropic" model="claude-opus
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A Console turn against claude-opus-5 completes successfully with thinking effort unset
-- [ ] #2 A Console turn against claude-opus-5 completes successfully with a thinking effort configured
-- [ ] #3 No request to a model that rejects sampling parameters includes temperature, top_p or top_k (covering the Fable 5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5 families)
-- [ ] #4 No request to a model that rejects a fixed thinking budget includes budget_tokens
-- [ ] #5 claude-opus-4-8 and claude-opus-4-7 omit sampling parameters even when no thinking effort is configured
-- [ ] #6 Models that still accept sampling parameters and budget_tokens (e.g. Opus 4.6 and earlier) are unchanged, pinned by a regression test
-- [ ] #7 The model-family decision is expressed once as a capability predicate rather than duplicated name checks in the request builder
+- [x] #1 A Console turn against claude-opus-5 completes successfully with thinking effort unset
+- [x] #2 A Console turn against claude-opus-5 completes successfully with a thinking effort configured
+- [x] #3 No request to a model that rejects sampling parameters includes temperature, top_p or top_k (covering the Fable 5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5 families)
+- [x] #4 No request to a model that rejects a fixed thinking budget includes budget_tokens
+- [x] #5 claude-opus-4-8 and claude-opus-4-7 omit sampling parameters even when no thinking effort is configured
+- [x] #6 Models that still accept sampling parameters and budget_tokens (e.g. Opus 4.6 and earlier) are unchanged, pinned by a regression test
+- [x] #7 The model-family decision is expressed once as a capability predicate rather than duplicated name checks in the request builder
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Capture the real 400 bodies from api.anthropic.com for every shape the builder can emit (temperature/top_p/top_k, budget_tokens) plus controls that must still succeed (Opus 4.6, Sonnet 4.5, Haiku 4.5).
+2. Write payload pins RED first: no-sampling model with effort unset / set, opus-4-8+4-7 with no effort, and a legacy model that must still receive temperature.
+3. Add two capability predicates to tldw_chatbook/model_capabilities.py (rejects sampling params / rejects a fixed thinking budget) over one Anthropic family table with a boundary-safe matcher covering bare, dotted, dated, suffixed and provider-prefixed ids.
+4. Rewire LLM_API_Calls.py: sampling suppression keys off the predicate (not thinking_config is None + a sonnet-5 name check); the adaptive-thinking branch fires for every model that rejects a fixed budget.
+5. Mutation-test the core predicate, run the targeted suites, then live-verify a real Console turn on claude-opus-5 with effort unset and with an effort set.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Both model-gated questions in the Anthropic request builder are now capability predicates in `tldw_chatbook/model_capabilities.py` -- `anthropic_model_rejects_sampling_params` and `anthropic_model_rejects_fixed_thinking_budget` -- over one family table matched by (tier, major, minor).
+
+**Step 1 first: the 400 bodies were captured before any fix** (the task's open question). Direct curl against api.anthropic.com with the real key. Both shapes the code can emit for claude-opus-5 are rejected, and the provider names the parameter:
+- temperature/top_p/top_k -> 400 ```X` is deprecated for this model.`
+- thinking={type: enabled, budget_tokens: N} -> 400 `"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.`
+Same rejection confirmed on opus-4-8, opus-4-7, fable-5, sonnet-5. Controls confirmed still 200: opus-4-6 (temperature AND budget_tokens), sonnet-4-5, haiku-4-5. claude-mythos-5 returns 404 on this key (Project Glasswing only), so it is the one row documented rather than live-observed.
+
+**Approach.** The predicates deliberately sit outside the config-driven capability tables in that module, for two concrete reasons: (1) `get_model_capabilities` returns on a direct mapping before consulting patterns, and `claude-sonnet-5` already has one -- a pattern-based implementation would have missed exactly the one model that already worked; (2) those tables are wholly replaceable from config.toml, and the only edit a user can make to a request-validity fact is one that reintroduces the 400. Pinned by `test_predicates_survive_a_user_configured_capability_table`.
+
+**Trade-off.** `_anthropic_is_sonnet_5` was kept, narrowed to Sonnet 5's thinking *shape* only, rather than generalised. Widening its 'effort = off' branch to the whole family would introduce a NEW 400 on Fable 5, which rejects an explicit thinking={type: disabled} outright. That third capability is filed as TASK-18800, not half-fixed here.
+
+**Key fix detail.** AC #5 came from decoupling sampling suppression from `thinking_config is None`: Opus 4.8/4.7 are in the adaptive set but produce no thinking config when no effort is set, which reopened the temperature branch. The hand-maintained marker list shrank to `sonnet-4-6` alone -- the one model that merely prefers adaptive thinking rather than requiring it.
+
+**Evidence.** Red-first 12 failed/56 passed -> green 68 passed. Targeted gate 1620 passed, 3 failed (the 3 are test_summarization_diagnostic_privacy manifest-boundary tests, reproduced identically on a clean origin/dev worktree at 3 failed/254 passed -- filed as TASK-18801). Collect-only sweep 50634 tests, 0 errors. Mutation-tested the predicate twice: narrowing the table to sonnet-5 killed 30 pins, shifting the 4-7 boundary to 4-6 killed 9 in both directions (including the AC #6 over-match pins). Live: scratch tmux profile with the shipped default sampling values, real key -- claude-opus-5 completes a Console turn with effort unset and with effort=high, opus-4-8 and opus-4-6 also complete, and the same scratch config driven by clean origin/dev reproduces the filed HTTP 400 verbatim in both directions.
+
+**Files.** tldw_chatbook/model_capabilities.py (predicates), tldw_chatbook/LLM_Calls/LLM_API_Calls.py (both gates rewired), Tests/Chat/test_anthropic_model_capabilities.py (new, 68 pins), Tests/Chat/test_chat_functions.py (one dev test asserted the retired warning string and patched logger.warning with a single-arg list.append; message updated, payload assertions untouched), Docs/superpowers/plans/2026-08-18-task-18414-report.md.
+<!-- SECTION:NOTES:END -->
