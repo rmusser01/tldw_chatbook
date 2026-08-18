@@ -10281,37 +10281,61 @@ class TldwCli(
         )
 
     def _maybe_offer_project_skills_import(self) -> None:
-        """Offer to import a project's .SKILLS/ folder (spec 2026-08-17 §5.4)."""
+        """Offer to import a project's .SKILLS/ folder (spec 2026-08-17 §5.4).
+
+        ``exit_on_error=False`` matches the repo's own precedent for an
+        optional, best-effort worker (``action_quit``'s ``_confirm_and_quit``,
+        the screen-navigation dispatch worker): Textual's default
+        (``exit_on_error=True``) makes ANY unhandled exception in the worker
+        exit the whole app, which an optional startup nicety must never do.
+        The worker body below additionally never lets an exception reach the
+        worker at all -- this is belt AND suspenders.
+        """
         try:
             self.run_worker(
                 self._discover_project_skills_for_startup,
                 thread=True,
                 exclusive=True,
                 group="project-skills-discovery",
+                exit_on_error=False,
             )
         except Exception:
             logger.opt(exception=True).debug("project-skills startup offer failed")
 
     def _discover_project_skills_for_startup(self) -> None:
-        from tldw_chatbook.config import get_cli_setting, get_user_data_dir
-        from tldw_chatbook.Skills_Interop.project_skills_prompt import (
-            startup_discovery_for,
-        )
+        """Worker body: every line here must be exception-safe.
 
+        This runs on a worker thread with ``exit_on_error=False`` set above,
+        but that alone still leaves an unhandled exception logged as a
+        worker error and the offer silently dropped with a stack trace in
+        the logs -- an entirely optional startup nicety earns a clean,
+        quiet no-op instead. ``get_cli_setting``/``get_user_data_dir`` (I/O,
+        config parsing), ``startup_discovery_for`` (filesystem walk), and
+        ``call_from_thread`` (can raise if the app is already shutting down
+        mid-walk) are all covered by the one try/except below.
+        """
         try:
-            cwd = Path.cwd().resolve()
-        except OSError:
-            return  # launch directory deleted out from under the process
-        discovery = startup_discovery_for(
-            cwd,
-            enabled=bool(
-                get_cli_setting("skills", "project_skills_prompt_enabled", True)
-            ),
-            ledger_dir=get_user_data_dir(),
-        )
-        if discovery is None:
-            return
-        self.call_from_thread(self._push_project_skills_import_modal, discovery)
+            from tldw_chatbook.config import get_cli_setting, get_user_data_dir
+            from tldw_chatbook.Skills_Interop.project_skills_prompt import (
+                startup_discovery_for,
+            )
+
+            try:
+                cwd = Path.cwd().resolve()
+            except OSError:
+                return  # launch directory deleted out from under the process
+            discovery = startup_discovery_for(
+                cwd,
+                enabled=bool(
+                    get_cli_setting("skills", "project_skills_prompt_enabled", True)
+                ),
+                ledger_dir=get_user_data_dir(),
+            )
+            if discovery is None:
+                return
+            self.call_from_thread(self._push_project_skills_import_modal, discovery)
+        except Exception:
+            logger.opt(exception=True).debug("project-skills startup discovery failed")
 
     def _push_project_skills_import_modal(self, discovery) -> None:
         from tldw_chatbook.Widgets.project_skills_import_modal import (

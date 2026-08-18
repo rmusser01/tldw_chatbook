@@ -386,23 +386,47 @@ async def _offer_next_project_skills_discovery(
     )
 
     def _on_dismiss(result: ImportDecision) -> None:
-        decision, _outcomes = result
-        _record_project_skills_decision(discovery, decision)
-        if decision == "review":
-            app.post_message(NavigateToScreen("skills"))
-        # Continue the SAME already-active chain directly rather than
-        # routing back through the public entry point below -- the
-        # re-entrancy guard there would see ``_project_skills_offer_active``
-        # still True (it stays True for the whole chain, cleared only at
-        # the terminal step here) and mistake this continuation for a
-        # second concurrent caller, dropping it.
-        if not remaining:
-            app._project_skills_offer_active = False
-            return
-        app.run_worker(
-            _run_project_skills_offer_chain(app, remaining),
-            exclusive=False,
-        )
+        try:
+            decision, _outcomes = result
+            _record_project_skills_decision(discovery, decision)
+            if decision == "review":
+                app.post_message(NavigateToScreen("skills"))
+        except Exception:
+            # The ledger write and the review-navigation post are both
+            # best-effort: this callback runs synchronously out of
+            # Textual's own dismiss handling (NOT a worker), so an
+            # uncaught exception here would reach App._handle_exception on
+            # the main thread and exit the whole app over what is, at
+            # worst, a lost ledger record or a missed navigation hint.
+            logger.opt(exception=True).debug(
+                "project-skills dismissal bookkeeping failed"
+            )
+        finally:
+            # The "last discovery -> clear flag" vs "recurse to next"
+            # decision lives in `finally`, not the `try` above, so the
+            # re-entrancy flag can NEVER stay stuck True -- it clears (or
+            # the chain continues) even when the bookkeeping above raised.
+            #
+            # Continuing here calls `_run_project_skills_offer_chain`
+            # directly rather than routing back through the public entry
+            # point below -- that guard would see
+            # ``_project_skills_offer_active`` still True (it stays True
+            # for the whole chain, cleared only at this terminal step) and
+            # mistake this continuation for a second concurrent caller,
+            # dropping it.
+            if not remaining:
+                app._project_skills_offer_active = False
+            else:
+                try:
+                    app.run_worker(
+                        _run_project_skills_offer_chain(app, remaining),
+                        exclusive=False,
+                    )
+                except Exception:
+                    app._project_skills_offer_active = False
+                    logger.opt(exception=True).debug(
+                        "project-skills offer chain continuation failed to start"
+                    )
 
     app.push_screen(modal, _on_dismiss)
 
@@ -439,10 +463,17 @@ def maybe_offer_project_skills_import(
 
     Re-entrancy: while one offer flow is already running for ``app``
     (tracked via ``app._project_skills_offer_active``, set here when the
-    flow starts and cleared when the chain's last modal dismisses or the
-    worker fails), a second call is a no-op. This stops two independent
+    flow starts), a second call is a no-op. This stops two independent
     callers -- e.g. the startup offer and a workspace-create offer -- from
-    both trying to push a modal for the same app at once.
+    both trying to push a modal for the same app at once. The flag is
+    guaranteed to clear -- it can never stay stuck True and permanently
+    silence the feature for the rest of the session -- because every path
+    that can end the flow clears it: the chain worker's own failure
+    (``_run_project_skills_offer_chain``'s ``except``), a failure
+    scheduling the next discovery's worker, and (via a ``finally``, so it
+    runs even if the ledger write or the review-navigation post above it
+    raised) the dismissal callback's terminal step when the last discovery
+    in the chain dismisses.
 
     Args:
         app: The running ``TldwCli`` app (or a test double exposing

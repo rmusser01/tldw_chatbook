@@ -279,3 +279,44 @@ async def test_maybe_offer_reentrancy_guard_blocks_concurrent_calls(
 
     ledger = ProjectSkillsPromptLedger(ledger_dir)
     assert ledger.decision_for(discovery.root) == ("never", discovery.fingerprint)
+
+
+@pytest.mark.asyncio
+async def test_on_dismiss_bookkeeping_failure_still_clears_flag_and_does_not_raise(
+    tmp_path, monkeypatch
+):
+    """A raising ledger write inside ``_on_dismiss`` must not crash the app.
+
+    ``_on_dismiss`` runs synchronously out of Textual's own dismiss
+    handling -- NOT a worker -- so an uncaught exception there reaches
+    ``App._handle_exception`` on the main thread and exits the app.
+    Monkeypatches the ledger-record call to raise and drives a real
+    dismissal through the pilot: the app must survive to the end of the
+    ``async with`` block, and the re-entrancy flag must still end False
+    (never stuck True) since this is the chain's last (only) discovery.
+    """
+    ledger_dir = tmp_path / "data"
+    monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("ledger exploded")
+
+    monkeypatch.setattr(_offer_module, "_record_project_skills_decision", _raise)
+
+    discovery = _discovery(tmp_path, names=("alpha-skill",))
+    service = _StubSkillsScopeService()
+    app = _OfferHarnessApp(service, (discovery,))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, ProjectSkillsImportModal)
+
+        await pilot.click("#project-skills-not-now")
+        await pilot.pause()
+        await pilot.pause()
+
+        # The app is still alive and responsive -- an uncaught exception
+        # in the un-fixed `_on_dismiss` would have exited it here.
+        assert not app._exit
+
+    assert getattr(app, "_project_skills_offer_active", False) is False
