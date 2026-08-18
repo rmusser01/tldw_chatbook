@@ -464,6 +464,7 @@ from ...Widgets.Console.console_feedback_comment_modal import (
 )
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -19458,6 +19459,58 @@ class ChatScreen(BaseAppScreen):
                 auto_send_prompt=auto_send_prompt,
             )
         )
+
+    @on(ConsoleSelectionNoteRequested)
+    def on_console_selection_note_requested(
+        self, event: ConsoleSelectionNoteRequested
+    ) -> None:
+        """Save a transcript selection as a note (task-18156 Task 6).
+
+        Title = the quote's first line capped at 48 characters; content =
+        the quote plus a provenance line naming the session and date. The
+        write goes through the store's persistence DB (the same seam the
+        annotation write uses) off-thread -- never sqlite on the UI loop --
+        and every failure is a toast, never an exception: losing a note
+        must not disturb the selection flow that produced it.
+        """
+        event.stop()
+        quote = event.quote.strip()
+        if not quote:
+            return
+        self.run_worker(
+            self._create_console_selection_note(event.quote),
+            group="console-selection-note",
+            exit_on_error=False,
+        )
+
+    async def _create_console_selection_note(self, quote: str) -> None:
+        """Worker body: derive title/content and write the note."""
+        first_line = quote.strip().splitlines()[0]
+        title = first_line if len(first_line) <= 48 else first_line[:47] + "\u2026"
+        try:
+            controller = self._ensure_console_chat_controller()
+            store = controller.store
+            database = getattr(store.persistence, "db", None) if store.persistence else None
+            if database is None:
+                self.notify(
+                    "Notes are unavailable (no notes database).",
+                    severity="warning",
+                )
+                return
+            session = getattr(store, "_sessions", {}).get(store.active_session_id)
+            session_title = str(getattr(session, "title", "") or "Console")
+            from datetime import datetime as _dt
+
+            stamp = _dt.now().strftime("%Y-%m-%d")
+            content = f"{quote}\n\n\u2014 Console selection, {session_title}, {stamp}"
+            await asyncio.to_thread(database.add_note, title, content)
+        except Exception:
+            logger.warning(
+                f"Console selection note: write failed for {title!r}", exc_info=True
+            )
+            self.notify("Could not create the note.", severity="warning")
+            return
+        self.notify(f"Note created: {title}")
 
     @on(ConsoleSelectionFeedbackRequested)
     def on_console_selection_feedback_requested(

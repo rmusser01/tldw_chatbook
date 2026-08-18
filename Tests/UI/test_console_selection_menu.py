@@ -81,11 +81,13 @@ async def test_menu_offers_three_stacked_options_in_order():
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
+            "console-selection-create-note",
         ]
         assert [str(button.label) for button in buttons] == [
             "Add to chat",
             "More Details",
             "Ask in Side Chat",
+            "Create note",
         ]
 
 
@@ -498,7 +500,7 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
 
 
 class _TinyTranscriptFeedbackApp(App[None]):
-    """Transcript box (6 rows) shorter than the compact feedback menu.
+    """Transcript box (7 rows) shorter than the compact feedback menu.
 
     Clamp-fix review: on 24-30 row terminals the transcript box can be
     shorter than even the compact menu; the shrink guard must trade the
@@ -507,7 +509,7 @@ class _TinyTranscriptFeedbackApp(App[None]):
 
     CSS = """
     ConsoleTranscript {
-        height: 6;
+        height: 7;
     }
     #composer-standin {
         height: 1fr;
@@ -540,7 +542,7 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment():
         transcript = app.query_one(ConsoleTranscript)
         row = app.query_one("#console-message-m0")
         region = transcript.region
-        assert region.height == 6  # box shorter than the 9-row compact menu
+        assert region.height == 7  # box shorter than the 10-row compact menu
         transcript.selection_manager.begin_drag(row.id, 0)
         transcript.selection_manager.extend_drag(row.id, 5)
         row.set_selection_range(0, 5)
@@ -560,7 +562,7 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment():
         assert menu.has_class("shrunk-for-short-owner")
         assert not menu.query_one("#console-selection-feedback-hint").display
         # All six actions stay mounted and displayed (no action-hiding).
-        assert len([b for b in menu.query("Button") if b.display]) == 6
+        assert len([b for b in menu.query("Button") if b.display]) == 7
         assert menu.region.height <= region.height
         assert menu.region.bottom <= region.bottom
         assert menu.region.x >= region.x
@@ -758,7 +760,10 @@ async def test_touching_above_row_when_gap_does_not_fit():
     for the menu itself must ABDUT the selected row (touching placement)
     rather than pin to the box bottom and land on top of the highlight --
     the reachable corner on small terminals (box <= ~2x menu height)."""
-    app = _GeometryOwnerApp(selection_top=5, screen_y=10)
+    # selection_top tracks the menu's grown height (4 actions -> 6 rows):
+    # the gap row still does not fit (needs top >= 7) but the menu itself
+    # exactly does (top == height), which is this test's whole scenario.
+    app = _GeometryOwnerApp(selection_top=6, screen_y=10)
     async with app.run_test(size=(80, 24)) as pilot:
         owner = app.query_one("#owner")
         await pilot.pause()  # owner lays out before the menu mounts
@@ -767,11 +772,11 @@ async def test_touching_above_row_when_gap_does_not_fit():
         await pilot.pause()
         await pilot.pause()  # measured clamp settles
         box = owner.region
-        assert menu.region.height == 5  # base-menu geometry pin
-        # Menu occupies rows 0..4: no gap row, but the row at y5 (and its
+        assert menu.region.height == 6  # base-menu geometry pin (4 actions + border)
+        # Menu occupies rows 0..5: no gap row, but the row at y6 (and its
         # highlight strip) stays visible below the menu.
         assert menu.region.y == 0
-        assert menu.region.bottom == 5
+        assert menu.region.bottom == 6
         assert box.contains_region(menu.region)
 
 
@@ -790,7 +795,7 @@ async def test_selection_top_below_box_keeps_menu_contained():
         await pilot.pause()
         await pilot.pause()  # measured clamp settles
         box = owner.region
-        assert menu.region.height == 5  # base-menu geometry pin
+        assert menu.region.height == 6  # base-menu geometry pin (4 actions + border)
         assert box.contains_region(menu.region)
         assert menu.region.bottom <= box.bottom
 
@@ -1089,6 +1094,7 @@ _FEEDBACK_BUTTON_IDS = [
     "console-selection-add-to-chat",
     "console-selection-more-details",
     "console-selection-ask-side-chat",
+    "console-selection-create-note",
     "console-selection-request-changes",
     "console-selection-lgm",
     "console-selection-comment",
@@ -1218,6 +1224,7 @@ async def test_feedback_buttons_absent_without_availability():
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
+            "console-selection-create-note",
         ]
         assert not menu.query("#console-selection-feedback-hint")
 
@@ -1296,6 +1303,7 @@ async def test_key_navigation_down_cycle_skips_disabled_buttons():
             "console-selection-add-to-chat",
             "console-selection-more-details",
             "console-selection-ask-side-chat",
+            "console-selection-create-note",
             "console-selection-comment",
         }
 
@@ -1427,3 +1435,41 @@ async def test_feedback_messages_owner_routed_when_gated_comment():
         await pilot.click("#console-selection-comment")
         await pilot.pause()
         assert [kind for kind, _ in app.owner.received] == ["comment"]
+
+
+# --- Create note (task-18156 Task 6, maintainer request) ---------------------
+
+
+@pytest.mark.asyncio
+async def test_create_note_button_present_for_every_selection():
+    """Create note is a base action like Add to chat: present with and
+    without feedback availability, never run-gated."""
+    for feedback_available in (False, True):
+        app = _FeedbackMenuApp(feedback_available=feedback_available, run_active=False)
+        async with app.run_test(size=(80, 40)):
+            menu = app.query_one(ConsoleSelectionMenu)
+            button = menu.query_one("#console-selection-create-note")
+            assert not button.disabled
+            ids = [b.id for b in menu.query("Button")]
+            assert ids.index("console-selection-create-note") == ids.index(
+                "console-selection-ask-side-chat"
+            ) + 1
+
+
+@pytest.mark.asyncio
+async def test_create_note_button_posts_the_menu_message():
+    class _NoteMenuApp(_FeedbackMenuApp):
+        def __init__(self) -> None:
+            super().__init__(feedback_available=False, run_active=False)
+            self.create_note_events: list[ConsoleSelectionMenu.CreateNote] = []
+
+        def on_console_selection_menu_create_note(
+            self, event: ConsoleSelectionMenu.CreateNote
+        ) -> None:
+            self.create_note_events.append(event)
+
+    app = _NoteMenuApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.click("#console-selection-create-note")
+        await pilot.pause()
+    assert len(app.create_note_events) == 1

@@ -74,6 +74,21 @@ class ConsoleSideChatRequested(Message):
         self.mode = mode
 
 
+class ConsoleSelectionNoteRequested(Message):
+    """Bubbled when the user saves the active selection as a note.
+
+    task-18156 Task 6 (maintainer request): the transcript posts this after
+    the menu's "Create note" action; the owning ``ChatScreen`` derives a
+    title from the quote and writes the note off-thread through the store's
+    persistence DB. Available for EVERY selection -- notes are not review
+    feedback, so there is no row-kind or run gating.
+    """
+
+    def __init__(self, quote: str) -> None:
+        super().__init__()
+        self.quote = quote
+
+
 class ConsoleSelectionFeedbackRequested(Message):
     """Bubbled when the user sends review feedback about a selection.
 
@@ -186,6 +201,9 @@ class ConsoleSelectionMenu(Vertical):
     class AskInSideChat(Message):
         """User chose 'Ask in Side Chat' (freeform) for the selection."""
 
+    class CreateNote(Message):
+        """User chose 'Create note' for the active selection."""
+
     class RequestChanges(Message):
         """User chose 'Request changes' review feedback for the selection.
 
@@ -254,6 +272,7 @@ class ConsoleSelectionMenu(Vertical):
             yield Button("Add to chat", id="console-selection-add-to-chat", variant="primary")
         yield Button("More Details", id="console-selection-more-details")
         yield Button("Ask in Side Chat", id="console-selection-ask-side-chat")
+        yield Button("Create note", id="console-selection-create-note")
         if self._feedback_available:
             gated = not self._run_active
             request = Button(
@@ -433,6 +452,10 @@ class ConsoleSelectionMenu(Vertical):
     @on(Button.Pressed, "#console-selection-ask-side-chat")
     def _ask_side_chat(self) -> None:
         self._post(self.AskInSideChat())
+
+    @on(Button.Pressed, "#console-selection-create-note")
+    def _create_note(self) -> None:
+        self._post(self.CreateNote())
 
     @on(Button.Pressed, "#console-selection-request-changes")
     def _request_changes(self) -> None:

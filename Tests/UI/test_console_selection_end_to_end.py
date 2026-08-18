@@ -60,6 +60,7 @@ from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
 from tldw_chatbook.Widgets.Console.console_selection import TextSelection
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -508,6 +509,7 @@ class _FeedbackTranscriptApp(App[None]):
         self._role = role
         self._run_status = run_status
         self.feedback_events: list[ConsoleSelectionFeedbackRequested] = []
+        self.note_events: list[ConsoleSelectionNoteRequested] = []
 
     def get_default_screen(self) -> Screen:
         if self._run_status is None:
@@ -520,6 +522,11 @@ class _FeedbackTranscriptApp(App[None]):
     # Module-level Message classes carry no widget namespace, so the
     # auto-generated handler is ``on_console_selection_feedback_requested``
     # (matching how ``on_console_side_chat_requested`` works for phase 2).
+    def on_console_selection_note_requested(
+        self, event: ConsoleSelectionNoteRequested
+    ) -> None:
+        self.note_events.append(event)
+
     def on_console_selection_feedback_requested(
         self, event: ConsoleSelectionFeedbackRequested
     ) -> None:
@@ -1598,3 +1605,104 @@ async def test_keyboard_only_journey_selects_and_dispatches_feedback():
         assert store.calls[0]["anchor_message_id"] == assistant.id
         assert store.calls[0]["quote"] == quote
         assert store.annotation_calls[0]["comment"] == "kb note"
+
+
+# --- Create note from selection (task-18156 Task 6) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_note_posts_request_and_cleans_up():
+    """Menu's Create note mirrors Add-to-chat plumbing: one app-level
+    ConsoleSelectionNoteRequested with the capped quote, then the standard
+    selection cleanup."""
+    app = _FeedbackTranscriptApp(role=ConsoleMessageRole.TOOL, run_status="idle")
+    async with app.run_test(size=(80, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _drag_select_first_row(pilot, app)
+        assert row.get_selection_text() == "tool"
+
+        await pilot.click("#console-selection-create-note")
+        await pilot.pause()
+
+        assert len(app.note_events) == 1
+        assert app.note_events[0].quote == "tool"
+        assert row.get_selection_text() == ""
+        assert transcript.selection_manager.state.selection is None
+        assert not app.screen.query(ConsoleSelectionMenu)
+
+
+@pytest.mark.asyncio
+async def test_create_note_writes_a_real_note(tmp_path):
+    """Unmocked screen->store->SQLite: the note lands with a first-line
+    title (48-char cap) and quote + provenance content."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "note_e2e")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            controller = screen._ensure_console_chat_controller()
+            controller.store = store
+            store.ensure_session(title="Note e2e")
+
+            long_first_line = (
+                "This first line is deliberately much longer than the "
+                "forty-eight character title cap"
+            )
+            quote = f"{long_first_line}\nsecond line stays in the body"
+            screen.post_message(ConsoleSelectionNoteRequested(quote=quote))
+            await pilot.pause()
+            for _ in range(20):
+                await pilot.pause()
+                notes = db.list_notes(limit=5)
+                if notes:
+                    break
+
+            assert len(notes) == 1
+            note = notes[0]
+            assert note["title"] == long_first_line[:47] + "…"
+            assert quote in note["content"]
+            assert "— Console selection," in note["content"]
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_create_note_with_empty_quote_is_a_no_op(tmp_path):
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "note_noop")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            screen._ensure_console_chat_controller().store = store
+
+            screen.post_message(ConsoleSelectionNoteRequested(quote="   "))
+            for _ in range(6):
+                await pilot.pause()
+
+            assert db.list_notes(limit=5) == []
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_create_note_without_a_database_toasts_and_never_raises():
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        toasts = []
+        screen.notify = lambda *a, **k: toasts.append((a, k))
+
+        screen.post_message(ConsoleSelectionNoteRequested(quote="orphan quote"))
+        for _ in range(6):
+            await pilot.pause()
+
+        assert toasts, "expected a warning toast when no notes database exists"

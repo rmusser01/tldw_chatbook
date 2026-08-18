@@ -80,6 +80,7 @@ from tldw_chatbook.Widgets.Console.console_selection import (
 )
 from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
+    ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
@@ -4952,6 +4953,27 @@ class ConsoleTranscript(VerticalScroll):
         """Send comment feedback for the active selection."""
         event.stop()
         self._request_selection_feedback(ConsoleSelectionFeedbackRequested.ACTION_COMMENT)
+
+    @on(ConsoleSelectionMenu.CreateNote)
+    def _selection_create_note(self, event: ConsoleSelectionMenu.CreateNote) -> None:
+        """Save the active selection as a note (task-18156 Task 6).
+
+        Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
+        capped quote leaves the transcript in an app-level message; the
+        owning screen derives the title and writes the note off-thread.
+        """
+        event.stop()
+        row = self._active_selection_row()
+        if row is not None:
+            self.post_message(
+                ConsoleSelectionNoteRequested(
+                    quote=cap_quote(row.get_selection_text())
+                )
+            )
+            row.clear_selection()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
+        self._remove_selection_menu()
 
     def _request_selection_feedback(self, action: str) -> None:
         """Post a capped-selection feedback request and clean up (phase 3).
