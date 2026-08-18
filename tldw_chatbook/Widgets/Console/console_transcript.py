@@ -4408,7 +4408,10 @@ class ConsoleTranscript(VerticalScroll):
         elif key in _KB_CHAR_KEYS or key in _KB_LINE_KEYS:
             text = row.get_display_text()
             if key == "h":
-                candidate = max(end - 1, 0)
+                # min(..., len(text)) heals a shrink-stranded end in one
+                # press (PR #1813 Qodo bug 6): every other motion already
+                # self-clamps through the pure helpers.
+                candidate = min(max(end - 1, 0), len(text))
                 forward = False
             elif key == "l":
                 candidate = min(end + 1, len(text))
@@ -5537,6 +5540,12 @@ class ConsoleTranscript(VerticalScroll):
                 self.release_mouse()
             self.selection_manager.cancel()
             self._selection_origin_row = None
+            # PR #1813 review (Qodo bug 5 + whole-branch warning): a removed
+            # row must drop keyboard-selection mode EAGERLY -- lingering
+            # state kept the hint advertising a mode that no longer existed
+            # until the next keypress noticed the detached row.
+            if self._kb_selection_row is not None:
+                self._exit_keyboard_selection(clear=False)
 
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]

@@ -610,3 +610,64 @@ async def test_enter_with_no_active_selection_row_opens_nothing():
         await pilot.press("enter")
         await pilot.pause()
         assert not app.screen.query(ConsoleSelectionMenu)
+
+
+# --- PR #1813 Qodo fixes: eager row-removal cleanup + h upper clamp ----------
+
+
+@pytest.mark.asyncio
+async def test_row_removal_exits_mode_eagerly_hint_included():
+    """Qodo bug 5 (and the whole-branch review's lazy-cleanup warning): when
+    reconciliation removes the armed row, the mode and its hint must drop
+    IMMEDIATELY -- not linger until the next keypress advertising a
+    selection mode that no longer exists."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        await pilot.press("s")
+        assert transcript._kb_selection_row is not None
+
+        transcript.set_messages(
+            [
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.ASSISTANT, content="fresh", id="z1"
+                )
+            ]
+        )
+        await transcript.refresh_messages()  # run reconciliation now
+        await pilot.pause()
+
+        assert transcript._kb_selection_row is None
+        assert transcript._kb_anchor is None and transcript._kb_end is None
+        hint = transcript.query_one("#console-kb-selection-hint")
+        assert hint.display is False
+
+
+@pytest.mark.asyncio
+async def test_h_heals_a_stale_end_after_text_shrink():
+    """Qodo bug 6: a streaming shrink can strand _kb_end past the new text
+    length; h must clamp back into bounds in ONE press like every other
+    motion, not appear dead until it traverses the removed suffix."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        await pilot.press("s")
+        row = transcript._kb_selection_row
+        text_len = len(row.get_display_text())  # "answer text" -> 11
+
+        transcript._kb_end = text_len + 30  # simulate a shrink-stranded end
+        await pilot.press("h")
+
+        # Healed INTO bounds in one press: len(text) is a valid exclusive
+        # end; the next h moves normally from there.
+        assert transcript._kb_end == text_len
+        sel = transcript.selection_manager.state.selection
+        assert sel is not None and sel.end <= text_len
+        await pilot.press("h")
+        assert transcript._kb_end == text_len - 1

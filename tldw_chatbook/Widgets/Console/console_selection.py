@@ -125,7 +125,14 @@ def _clamp(text: str, offset: int) -> int:
 
 
 def word_forward_offset(text: str, offset: int) -> int:
-    """Vim-w: the start of the next word (whitespace-delimited), else end."""
+    """Vim-w: the start of the next word (whitespace-delimited), else end.
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The next word's start offset, or ``len(text)`` past the last word."""
     i = _clamp(text, offset)
     n = len(text)
     while i < n and not text[i].isspace():
@@ -136,7 +143,14 @@ def word_forward_offset(text: str, offset: int) -> int:
 
 
 def word_back_offset(text: str, offset: int) -> int:
-    """Vim-b: the start of the previous word, else 0."""
+    """Vim-b: the start of the previous word, else 0.
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The previous word's start offset, or ``0`` before the first word."""
     i = _clamp(text, offset)
     while i > 0 and text[i - 1].isspace():
         i -= 1
@@ -146,20 +160,42 @@ def word_back_offset(text: str, offset: int) -> int:
 
 
 def line_start_offset(text: str, offset: int) -> int:
-    """Vim-0: start of the line containing ``offset``."""
+    """Vim-0: start of the line containing ``offset``.
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The offset just after the preceding newline (``0`` on line one)."""
     i = _clamp(text, offset)
     return text.rfind("\n", 0, i) + 1
 
 
 def line_end_offset(text: str, offset: int) -> int:
-    """Vim-$: end of the line containing ``offset`` (before its newline)."""
+    """Vim-$: end of the line containing ``offset`` (before its newline).
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The offset of the line's newline, or ``len(text)`` on the last line."""
     i = _clamp(text, offset)
     nl = text.find("\n", i)
     return len(text) if nl == -1 else nl
 
 
 def next_line_offset(text: str, offset: int) -> int:
-    """One line down, preserving the column where the next line allows."""
+    """One line down, preserving the column where the next line allows.
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The column-preserving offset on the following line, clamped to its
+        end; ``len(text)`` when already on the last line."""
     i = _clamp(text, offset)
     column = i - line_start_offset(text, i)
     end = line_end_offset(text, i)
@@ -170,7 +206,15 @@ def next_line_offset(text: str, offset: int) -> int:
 
 
 def prev_line_offset(text: str, offset: int) -> int:
-    """One line up, preserving the column where the previous line allows."""
+    """One line up, preserving the column where the previous line allows.
+
+    Args:
+        text: The row's display text (the selection domain).
+        offset: Current character offset, clamped into ``[0, len(text)]``.
+
+    Returns:
+        The column-preserving offset on the preceding line, clamped to its
+        end; ``0`` when already on the first line."""
     i = _clamp(text, offset)
     start = line_start_offset(text, i)
     if start == 0:
