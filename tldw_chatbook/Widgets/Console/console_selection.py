@@ -115,3 +115,66 @@ def offset_for_cell(text: str, cell_x: int) -> int:
     monotone and clamped to ``[0, len(text)]``).
     """
     return max(0, min(cell_x, len(text)))
+
+# --- keyboard motion helpers (phase 5) -----------------------------------------
+
+
+def _clamp(text: str, offset: int) -> int:
+    """Clamp offset to [0, len(text)]."""
+    return max(0, min(offset, len(text)))
+
+
+def word_forward_offset(text: str, offset: int) -> int:
+    """Vim-w: the start of the next word (whitespace-delimited), else end."""
+    i = _clamp(text, offset)
+    n = len(text)
+    while i < n and not text[i].isspace():
+        i += 1
+    while i < n and text[i].isspace():
+        i += 1
+    return i
+
+
+def word_back_offset(text: str, offset: int) -> int:
+    """Vim-b: the start of the previous word, else 0."""
+    i = _clamp(text, offset)
+    while i > 0 and text[i - 1].isspace():
+        i -= 1
+    while i > 0 and not text[i - 1].isspace():
+        i -= 1
+    return i
+
+
+def line_start_offset(text: str, offset: int) -> int:
+    """Vim-0: start of the line containing ``offset``."""
+    i = _clamp(text, offset)
+    return text.rfind("\n", 0, i) + 1
+
+
+def line_end_offset(text: str, offset: int) -> int:
+    """Vim-$: end of the line containing ``offset`` (before its newline)."""
+    i = _clamp(text, offset)
+    nl = text.find("\n", i)
+    return len(text) if nl == -1 else nl
+
+
+def next_line_offset(text: str, offset: int) -> int:
+    """One line down, preserving the column where the next line allows."""
+    i = _clamp(text, offset)
+    column = i - line_start_offset(text, i)
+    end = line_end_offset(text, i)
+    if end >= len(text):
+        return len(text)
+    nstart = end + 1
+    return min(nstart + column, line_end_offset(text, nstart))
+
+
+def prev_line_offset(text: str, offset: int) -> int:
+    """One line up, preserving the column where the previous line allows."""
+    i = _clamp(text, offset)
+    start = line_start_offset(text, i)
+    if start == 0:
+        return 0
+    column = i - start
+    pstart = line_start_offset(text, start - 1)
+    return min(pstart + column, line_end_offset(text, pstart))
