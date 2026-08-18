@@ -416,6 +416,73 @@ def test_probe_b_wait_agents_cancel_still_stops_children(db, monkeypatch):
         release.set()
 
 
+def test_probe_b_a_mid_loop_child_notices_stop_before_settle_under_the_kill_switch(
+    db, monkeypatch
+):
+    """Outlive OFF: the child-side parent poll itself, isolated.
+
+    Every other kill-switch test kills its child through the settle or
+    `wait_agents` (the Event path), which makes the OFF closure's
+    `should_cancel()` term outcome-redundant there -- a mutant dropping
+    it would survive them. Here the parent is held INSIDE its own model
+    call after Stop, so no settle has run and no Event is set when the
+    released child crosses its next loop boundary: the ONLY thing that
+    can kill it there is the parent poll. With the term, the child dies
+    `cancelled` after exactly one model call; without it, it would
+    finish `done` off a second call. GREEN at the untouched merge-base;
+    byte-identical through the change; the owner for the
+    OFF-branch-altered mutation.
+    """
+    pin_turn_scoped_children(monkeypatch)
+    entered = threading.Event()
+    go = threading.Event()
+    cancelled = threading.Event()
+
+    def gated_fence():
+        entered.set()
+        if not go.wait(10.0):
+            raise AssertionError("the child was never released by the test")
+        return fence("calculator", {"expression": "1+1"})
+
+    def stop_then_watch():
+        if not entered.wait(_JOIN_TIMEOUT):
+            raise AssertionError("the child never reached its model call")
+        cancelled.set()
+        # Release the child INTO its loop while the parent is still held
+        # inside THIS model call -- pre-settle, pre-Event.
+        go.set()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            handle = coordinator.snapshot()[0]
+            if handle.status != RUN_RUNNING:
+                return "parent stopped"
+            time.sleep(0.01)
+        raise AssertionError(
+            "the child never went terminal while the parent was held -- "
+            "the OFF parent poll did not fire"
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "slow task"}), stop_then_watch],
+        {"slow task": [gated_fence, "late answer"]},
+        allow_unconsumed=True,  # the poll-killed child strands its 2nd turn
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+        should_cancel=cancelled.is_set,
+    )
+    assert outcome.status == RUN_CANCELLED
+    assert coordinator.snapshot()[0].status == RUN_CANCELLED
+    # Killed at the boundary BEFORE any second provider call: the poll,
+    # not a stray completion.
+    assert len(chat.child_calls["slow task"]) == 1
+    assert _child_row(db)["status"] == RUN_CANCELLED
+
+
 # -- the teardown / app-exit audit (plan Task 5's audit bullet) ------------
 #
 # Audit result, measured at the merge-base and recorded honestly: NO
