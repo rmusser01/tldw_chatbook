@@ -526,6 +526,17 @@ class RunOutcome:
     final_text: str = ""
     subagents_spawned: int = 0
     total_tokens: int = 0
+    # PR3b Task 4 (finished-agent continuation, spec SS6): the run's
+    # message history sliced at the last protocol-coherent drain boundary
+    # (``run_agent_loop``'s ``coherent_len``), plus -- on RUN_DONE only --
+    # the final assistant text the done-return excludes. By construction
+    # this can never end inside a split native ``tool_calls`` <->
+    # ``role:"tool"`` batch (the mid-batch cancel/cycle-stuck returns
+    # slice the whole in-flight batch away), so it is safe to seed a
+    # resumed child's first provider call with. IN-MEMORY ONLY: the
+    # coordinator's retention store reads it off the outcome;
+    # ``AgentService._persist`` never writes it to the database.
+    final_messages: list[dict] | None = None
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
