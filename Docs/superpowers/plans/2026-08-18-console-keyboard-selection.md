@@ -336,3 +336,19 @@ if event.key == "enter":
 - [ ] **Step 3: LIVE tmux verification** (scratch profile recipe in memory `console-selection-feedback-program`; llama.cpp :9191): journey = boot → skip wizard → consent modal "Don't check" → Console → send prompt → j/k select reply → `s` → `l l l w` → Enter → menu visible → Comment → note → marker appears. Also verify: Esc twice layering; `s` on empty transcript toasts. Kill server, delete scratch profile.
 - [ ] **Step 4:** Task → Done with Implementation Notes; commit docs; push branch; PR against dev titled `feat(console): keyboard text selection (phase 5)`; body cites the spec + the three refinements; then the maintainer's standing flow (Qodo loop → merge) ONLY on explicit instruction.
 
+
+---
+
+### Task 6 (added mid-execution, maintainer request 2026-08-18): "Create note" selection action
+
+**Files:**
+- Modify: `tldw_chatbook/Widgets/Console/console_selection_menu.py` (message + button)
+- Modify: `tldw_chatbook/Widgets/Console/console_transcript.py` (action handler, mirrors `_selection_add_to_chat` cleanup)
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (screen handler: off-thread note write, toasts)
+- Test: `Tests/UI/test_console_selection_menu.py` + `Tests/UI/test_console_selection_end_to_end.py`
+
+**Interfaces:**
+- Produces: `ConsoleSelectionNoteRequested(quote: str)` message; menu button id `console-selection-create-note` between "Ask in Side Chat" and the feedback group, available for EVERY selection (no feedback/run gating).
+- Screen handler contract: title = first line of the quote capped at 48 chars (+ `…`), content = quote + `\n\n— Console selection, <session title or "Console">, <YYYY-MM-DD>`; write via `controller.store.persistence.db.add_note(title, content)` in `asyncio.to_thread` inside `run_worker(..., exit_on_error=False)`; success toast names the title; no-DB/failure toasts a warning and NEVER raises; empty quote no-ops (same guard as feedback).
+
+Steps: TDD (menu shows button for plain and feedback-capable selections alike; click posts the message with the capped quote and runs the standard cleanup; screen handler writes a REAL note read back from SQLite unmocked incl. title-derivation cases (multi-line, >48 chars, empty); failure/no-DB paths toast without dispatching anything else), implement, suites (menu + e2e + keyboard files), ruff, commit.

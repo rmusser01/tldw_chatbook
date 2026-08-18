@@ -29,4 +29,5 @@ Docs/superpowers/specs/2026-08-18-console-keyboard-selection-and-note-management
 - [ ] The in-mode hint advertises exactly the keys the active row kind honors; the static footer gains only `s`
 - [ ] Keyboard finish drains the release-click suppression tokens so the next genuine row click is not eaten
 - [ ] Tests green across the selection suites; ruff clean on touched files
+- [ ] Selection menu offers Create note for any selection; a note titled from the selection's first line is durably created with quote + provenance content; failures toast and never block
 - [ ] Docs updated: user guide keyboard section, ADR-068 amendment, spec §42 amendment note
