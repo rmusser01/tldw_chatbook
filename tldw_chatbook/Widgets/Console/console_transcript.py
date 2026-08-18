@@ -17,7 +17,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content, Span
-from textual.css.query import NoMatches
+from textual.css.query import NoMatches, QueryError
 from textual.dom import NoScreen
 from textual.events import Click, Key, MouseDown, MouseMove, MouseUp
 from textual.geometry import Region
@@ -2328,6 +2328,21 @@ def _diff_cell_to_offset(text: str, height: int, cell_x: int, cell_y: int) -> in
     return _markdown_cell_to_offset(text, height, cell_x, cell_y)
 
 
+def _kb_selection_hint_text(
+    row: "ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow",
+) -> str:
+    """Status-line copy for keyboard text-selection mode (phase 5 skeleton).
+
+    Task 3 fills in the real motion-key copy once the mode actually moves;
+    this only distinguishes the (currently unreachable via keyboard entry,
+    but protocol-eligible) diff-row granularity from the plain/markdown
+    rows' so the seam is ready.
+    """
+    if isinstance(row, ConsoleToolDiffRow):
+        return "Text selection (diff) -- Esc to exit"
+    return "Text selection -- Esc to exit"
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -2357,6 +2372,7 @@ class ConsoleTranscript(VerticalScroll):
         ("up,k", "select_previous", "Previous message"),
         ("enter", "confirm_selection", "Toggle message selection"),
         ("escape", "clear_selection", "Clear selection"),
+        ("s", "enter_text_selection", "Select text"),
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
@@ -2527,6 +2543,20 @@ class ConsoleTranscript(VerticalScroll):
         #: extra chunk mounted ABOVE the target. Latched in
         #: ``_recenter_window_on``, released once the placement lands.
         self._suppress_boundary_hydration = False
+        #: Console selection phase 5 (keyboard mode): the row currently
+        #: armed for keyboard-driven text selection via `s`, or ``None``
+        #: when the mode is off. Distinct from ``_selection_origin_row``
+        #: (shared with the mouse-drag path) so exit can restore ownership
+        #: cleanly -- entry sets both.
+        self._kb_selection_row: (
+            ConsoleTranscriptMessage | ConsoleMarkdownMessage | ConsoleToolDiffRow | None
+        ) = None
+        #: Task 3's motion-cursor endpoints over the armed row's display
+        #: text (anchor = fixed end, end = moving end). Kept next to
+        #: ``_kb_selection_row`` so exit clears all three together; unused
+        #: until Task 3 wires the motion keys.
+        self._kb_anchor: int | None = None
+        self._kb_end: int | None = None
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -2562,6 +2592,17 @@ class ConsoleTranscript(VerticalScroll):
         # sync re-applies to this new widget (recompose creates a new pill).
         self._jump_pill_state = None
         yield pill
+        # Console selection phase 5: keyboard text-selection mode's status
+        # line. Hidden until `_enter_keyboard_selection` shows it (mirrors
+        # the jump pill above) -- a fresh recompose always starts hidden;
+        # re-entering the mode after one always takes a fresh `s` press.
+        hint = Static(
+            "",
+            id="console-kb-selection-hint",
+            classes="console-kb-selection-hint",
+        )
+        hint.display = False
+        yield hint
 
     @property
     def allow_vertical_scroll(self) -> bool:
@@ -4218,6 +4259,97 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self._notify_selection_changed)
             self.call_later(self._paint_debug_dump, "after-clear-selection")
 
+    def action_enter_text_selection(self) -> None:
+        """`s` binding: arm keyboard text-selection mode.
+
+        Thin wrapper over ``_enter_keyboard_selection`` -- Tasks 3/4 call
+        the latter directly (e.g. to re-arm after a motion lands on a new
+        row) without going through the binding.
+        """
+        self._enter_keyboard_selection()
+
+    def _enter_keyboard_selection(self) -> bool:
+        """Arm keyboard-driven text selection on the j/k-selected row.
+
+        Console selection phase 5 (keyboard mode skeleton). Requires an
+        existing message selection (Enter) whose row implements the
+        selection protocol (``ConsoleTranscriptMessage`` /
+        ``ConsoleMarkdownMessage`` / ``ConsoleToolDiffRow``); anything else
+        is a toast, not a mode -- there is no eligible row to arm a cursor
+        on. Diff rows are addressed by a different id
+        (``console-tool-diff-*``, not ``console-message-*``) and are never
+        reachable through the selected MESSAGE's own row, so entry is
+        effectively scoped to the message's own row; diff-row keyboard
+        entry is out of scope for this phase.
+
+        Seeds a one-character selection at the row's start (offsets
+        ``[0, 1)``) through the same ``SelectionManager`` the mouse drag
+        drives; Task 3 wires the motion keys that move it from there.
+
+        Returns:
+            True if the mode was entered, False if there was no eligible
+            target (a toast explains why in that case).
+        """
+        if self.selected_message_id is None:
+            self.notify(
+                "Select a message first (j/k, then Enter) to select its text.",
+                severity="warning",
+            )
+            return False
+        try:
+            row = self.query_one(
+                f"#console-message-{self.selected_message_id}",
+                (ConsoleTranscriptMessage, ConsoleMarkdownMessage, ConsoleToolDiffRow),
+            )
+        except QueryError:
+            self.notify("This message has no selectable text.", severity="warning")
+            return False
+        text = row.get_display_text()
+        if not text:
+            self.notify("This message has no text to select.", severity="warning")
+            return False
+        row.scroll_visible(animate=False)
+        self.selection_manager.begin_drag(row.id, 0)
+        self.selection_manager.extend_drag(row.id, 1)
+        row.set_selection_range(0, 1)
+        self._selection_origin_row = row
+        self._kb_selection_row = row
+        self._kb_anchor, self._kb_end = 0, 1
+        hint = self._kb_selection_hint_widget()
+        if hint is not None:
+            hint.update(_kb_selection_hint_text(row))
+            hint.display = True
+        return True
+
+    def _exit_keyboard_selection(self, *, clear: bool = True) -> None:
+        """Leave keyboard text-selection mode.
+
+        Args:
+            clear: When True (the normal Escape/mouse-takeover path), also
+                clears the row's highlight and cancels the selection
+                manager. False skips both -- used when the armed row has
+                already been destroyed (streaming replacement, prune,
+                session switch): the reconciliation guard that removed it
+                (``_cancel_selection_if_row_removed``) already cancelled
+                the manager, and the row itself can no longer be touched.
+        """
+        if clear and self._kb_selection_row is not None:
+            self._kb_selection_row.clear_selection()
+            self.selection_manager.cancel()
+        self._kb_selection_row = None
+        self._kb_anchor = None
+        self._kb_end = None
+        self._selection_origin_row = None
+        hint = self._kb_selection_hint_widget()
+        if hint is not None:
+            hint.display = False
+
+    def _kb_selection_hint_widget(self) -> Static | None:
+        try:
+            return self.query_one("#console-kb-selection-hint", Static)
+        except NoMatches:
+            return None
+
     def _paint_debug_dump(self, label: str) -> None:
         """task-623 live probe: append DOM truth about action rows to the file
         named by ``TLDW_TRANSCRIPT_PAINT_LOG``. No-op unless the env var is
@@ -4448,6 +4580,12 @@ class ConsoleTranscript(VerticalScroll):
 
     def on_mouse_down(self, event: MouseDown) -> None:
         """Arm a text-selection drag on a left press over a selectable row."""
+        if self._kb_selection_row is not None:
+            # Console selection phase 5: a mouse press takes over cleanly --
+            # exit keyboard mode first, then let the normal drag-arming
+            # logic below run as usual (a press on the same row starts a
+            # fresh mouse drag).
+            self._exit_keyboard_selection()
         press_control = self._selection_press_widget(event)
         # Click-outside dismissal, row-body half (final review): rows stop
         # their own Clicks (the message-selection toggle), so with a menu
@@ -4922,6 +5060,25 @@ class ConsoleTranscript(VerticalScroll):
             event.stop()
 
     def on_key(self, event: Key) -> None:
+        if self._kb_selection_row is not None:
+            # Console selection phase 5 (keyboard mode). A row destroyed out
+            # from under the mode (streaming replacement, prune, session
+            # switch) must never crash the next keypress -- the
+            # reconciliation guard (`_cancel_selection_if_row_removed`)
+            # already cancelled the selection manager when the row was
+            # removed, so this only needs to drop the mode's own state.
+            if not self._kb_selection_row.is_attached:
+                self._exit_keyboard_selection(clear=False)
+                return
+            if event.key == "escape":
+                # Preempt the clear-selection BINDING below: the first Esc
+                # only leaves the mode, keeping the message (j/k) selection
+                # intact for a second Esc to clear normally.
+                self._exit_keyboard_selection()
+                event.stop()
+                event.prevent_default()
+                return
+            # Task 3 wires the motion keys (h/l/w/b/0/$/j/k) here.
         if event.key in {"down", "j"}:
             self.action_select_next()
             event.stop()
