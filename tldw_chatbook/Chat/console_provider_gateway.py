@@ -2438,10 +2438,10 @@ class ConsoleProviderGateway:
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
                     )
-                    if completion:
-                        yield completion
                     if call_signals is not None:
                         call_signals.record_exchange_content(completion)
+                    if completion:
+                        yield completion
                     completed = True
                     return
                 async for chunk in self.stream_llamacpp_chat(

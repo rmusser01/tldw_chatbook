@@ -6522,3 +6522,35 @@ class TestLlamaCppExchangeCapture:
         assert wire["stream"] is False
         assert captures[0].response["content"] == "done"
         assert "local-secret" not in _json.dumps(captures[0].request)
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_non_streaming_abort_after_first_item_keeps_recorded_content(
+        self, monkeypatch
+    ):
+        """A consumer that takes the single non-streaming item then closes
+        the generator (Stop/cancel) throws GeneratorExit at the suspended
+        `yield completion`. Content must already be recorded before that
+        yield -- recording after it would be skipped by the abort and the
+        resulting 'stopped' tail capture would show empty content even
+        though the text was genuinely delivered."""
+        gateway = ConsoleProviderGateway()
+
+        async def fake_complete(self, **kwargs):
+            return "done"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+        aggregate = ConsoleProviderStreamSignals()
+        resolution = self._resolution(streaming=False)
+        gen = gateway.stream_chat(
+            resolution, [{"role": "user", "content": "q"}], signals=aggregate
+        )
+        first = await anext(gen)
+        assert first == "done"
+        await gen.aclose()
+
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 1
+        assert captures[0].status == "stopped"
+        assert captures[0].response["content"] == "done"
