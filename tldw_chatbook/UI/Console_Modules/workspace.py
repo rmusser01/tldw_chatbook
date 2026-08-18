@@ -73,7 +73,6 @@ from ...Workspaces.display_state import (
 from ...Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
-    next_local_workspace_identity,
 )
 from ..character_display_text import sanitize_character_display_label
 
@@ -1617,7 +1616,7 @@ class ConsoleWorkspaceController:
         )
 
     def _create_console_workspace(self) -> None:
-        """Create a new local workspace and activate it."""
+        """Open the shared create dialog (spec 2026-08-17 §4.3)."""
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -1626,41 +1625,50 @@ class ConsoleWorkspaceController:
                 "Workspace service is not ready.", severity="warning"
             )
             return
-        try:
-            workspace_id, workspace_name = next_local_workspace_identity(
-                registry_service
-            )
-            registry_service.create_workspace(
-                workspace_id=workspace_id,
-                name=workspace_name,
-                description="Local workspace created from Console.",
-            )
-            registry_service.set_active_workspace(workspace_id)
-        except WorkspaceRegistryServiceError:
-            logger.opt(exception=True).warning("Unable to create Console workspace")
+        from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+
+        self.push_screen(
+            WorkspaceCreateModal(registry_service=registry_service),
+            self._handle_workspace_create_result,
+        )
+
+    def _handle_workspace_create_result(self, result) -> None:
+        """Console-side post-create sync; the modal already created/bound."""
+        if result is None:
+            return
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        if registry_service is None:
+            return
+        for _folder, message in result.failed_folders:
+            self.app_instance.notify(message, severity="warning")
+        if not result.make_active:
+            self._sync_console_workspace_context()
             self.app_instance.notify(
-                "Workspace could not be created.", severity="error"
+                f"Created {result.name}.", severity="information"
             )
             return
-        except Exception:
+        try:
+            registry_service.set_active_workspace(result.workspace_id)
+        except WorkspaceRegistryServiceError:
             logger.opt(exception=True).warning(
-                "Unexpected error creating Console workspace"
+                "Unable to activate new Console workspace"
             )
             self.app_instance.notify(
-                "Workspace could not be created.", severity="error"
+                "Workspace created but could not be activated.", severity="error"
             )
             return
         self._sync_console_chat_core_state()
-        self._activate_console_session_for_workspace(workspace_id)
+        self._activate_console_session_for_workspace(result.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
         )
-        # TASK-713: creation also activates the workspace and opens a tab;
-        # without a notification the whole sequence is invisible when the
-        # Workspace status row is scrolled out of view.
+        # TASK-713: the whole sequence is invisible when the Workspace status
+        # row is scrolled out of view -- keep the toast even with the modal.
         self.app_instance.notify(
-            f"Created {workspace_name} and switched Console to it.",
+            f"Created {result.name} and switched Console to it.",
             severity="information",
         )
 
