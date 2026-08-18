@@ -333,6 +333,7 @@ class AgentRunsChangeReviewProvider:
         hunk_header: str,
         hunk_excerpt: str,
         note: str,
+        snapshot_id: int | None = None,
     ) -> int:
         """Record a user-authored note anchored to one hunk of a turn's diff.
 
@@ -350,6 +351,11 @@ class AgentRunsChangeReviewProvider:
             hunk_excerpt: The hunk body captured at note time (already
                 capped/elided by the caller).
             note: The user's note text.
+            snapshot_id: The owning ``change_snapshots`` row's own DB
+                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
+                which of two same-run/root/path windows this note's hunk
+                came from. ``None`` when the caller has no snapshot row
+                to anchor to.
 
         Returns:
             The newly created note's row id.
@@ -362,6 +368,7 @@ class AgentRunsChangeReviewProvider:
             hunk_header=hunk_header,
             hunk_excerpt=hunk_excerpt,
             note=note,
+            snapshot_id=snapshot_id,
         )
 
     def delete_change_note(self, note_id: int) -> bool:

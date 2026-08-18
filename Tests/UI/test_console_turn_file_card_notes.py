@@ -875,6 +875,191 @@ async def test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header(
 
 
 @pytest.mark.asyncio
+async def test_two_windows_same_hunk_header_note_scoped_by_snapshot_id(tmp_path):
+    """Qodo #6 (PR #1779 fix round): the sibling test above proves
+    hunk_header disambiguates the common two-window collision -- but a
+    hunk header ("@@ -a,b +c,d @@") encodes only POSITIONS and COUNTS,
+    never content. Two windows that each replace the exact same line
+    POSITION with a 1-for-1 line-count edit (no other change) therefore
+    produce a byte-IDENTICAL header, even though their diffs are against
+    different baselines and their content differs. hunk_index+hunk_header
+    matching alone can no longer tell the windows apart in that case; the
+    `snapshot_id` column (Qodo #6) must.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        CHANGE_KIND_SUBAGENT_POST_TURN,
+        CHANGE_KIND_TURN,
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    lines = [f"line{i}\n" for i in range(1, 11)]
+    (root / "shared.py").write_text("".join(lines))
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    run_id = db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+
+    def _record_window(kind: str, mutate) -> None:
+        handle = tracker.begin_turn([root])
+        handle.await_baseline()
+        mutate()
+        for rec in tracker.end_turn(handle):
+            db.record_change_snapshot(
+                run_id=run_id,
+                root=rec.root,
+                baseline_sha=rec.baseline_sha,
+                end_sha=rec.end_sha,
+                files_changed=rec.files_changed,
+                adds=rec.adds,
+                dels=rec.dels,
+                tracking_error=rec.tracking_error,
+                untracked_oversize=rec.untracked_oversize,
+                nested_repos=rec.nested_repos,
+                kind=kind,
+            )
+
+    def _mutate_window1() -> None:
+        edited = lines[:]
+        edited[1] = "line2-WINDOW1\n"
+        (root / "shared.py").write_text("".join(edited))
+
+    def _mutate_window2() -> None:
+        # Window 2's baseline is window 1's END state -- a SECOND 1-for-1
+        # replacement of the exact same line position (never touching any
+        # other line), so the resulting hunk header is
+        # position/count-identical to window 1's own header.
+        current = (root / "shared.py").read_text().splitlines(keepends=True)
+        current[1] = "line2-WINDOW2\n"
+        (root / "shared.py").write_text("".join(current))
+
+    _record_window(CHANGE_KIND_TURN, _mutate_window1)
+    _record_window(CHANGE_KIND_SUBAGENT_POST_TURN, _mutate_window2)
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=CONV_ID
+    )
+
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows: list = []
+        for _ in range(120):
+            rows = list(card.query(".console-turn-file-row"))
+            if len(rows) >= 2:
+                break
+            await pilot.pause(0.02)
+        assert len(rows) == 2, "row count must equal one entry per window"
+
+        async def _expand_body(index: int):
+            rows[index].focus()
+            await pilot.press("enter")
+            for _ in range(60):
+                bodies = list(card.query(".console-turn-file-diff"))
+                if bodies[index].display:
+                    return bodies[index]
+                await pilot.pause(0.02)
+            raise AssertionError(f"diff body {index} never displayed")
+
+        window1_body = await _expand_body(0)
+        window1_hunk_text = str(
+            window1_body.query_one(".console-turn-file-hunk").render()
+        )
+        assert "line2-WINDOW1" in window1_hunk_text
+
+        window2_body = await _expand_body(1)
+        window2_hunk_text = str(
+            window2_body.query_one(".console-turn-file-hunk").render()
+        )
+        assert "line2-WINDOW2" in window2_hunk_text
+
+        # Fixture invariant: confirm this really does exercise the
+        # ambiguous same-header collision, not accidentally two different
+        # headers (which the sibling test above already covers).
+        window1_header = next(
+            line for line in window1_hunk_text.splitlines() if line.startswith("@@")
+        )
+        window2_header = next(
+            line for line in window2_hunk_text.splitlines() if line.startswith("@@")
+        )
+        assert window1_header == window2_header, (
+            "fixture invariant: both windows must share one hunk header "
+            "text for this to exercise the ambiguous-collision case"
+        )
+
+        # Save a note on window 1's hunk only.
+        note_btn = window1_body.query_one(".console-turn-file-note-btn", Button)
+        note_btn.focus()
+        await pilot.press("enter")
+        note_input = None
+        for _ in range(60):
+            inputs = window1_body.query(".console-turn-file-note-input")
+            if inputs:
+                note_input = inputs.first()
+                break
+            await pilot.pause(0.02)
+        assert note_input is not None, "note input never opened on window 1's hunk"
+        note_input.value = "belongs to window 1's hunk only"
+        note_input.focus()
+        await pilot.press("enter")
+        for _ in range(60):
+            if window1_body.query(".console-turn-file-note"):
+                break
+            await pilot.pause(0.02)
+        assert window1_body.query(".console-turn-file-note"), (
+            "note never rendered on window 1's own entry"
+        )
+
+        await pilot.pause(0.1)
+        window2_notes = list(window2_body.query(".console-turn-file-note"))
+        assert window2_notes == [], (
+            "a note saved on window 1's hunk must not bleed into window "
+            "2's SAME-HEADER hunk -- exactly the ambiguity snapshot_id "
+            "disambiguates"
+        )
+
+        stored = db.notes_for_run(run_id)
+        assert len(stored) == 1
+        assert stored[0]["hunk_header"] == window1_header
+        assert stored[0]["snapshot_id"] is not None
+
+    # Resume round trip: a FRESH card instance, reading the persisted note
+    # (with its persisted snapshot_id) back from the DB, must scope it
+    # identically -- proving the fix holds on reload, not just for the
+    # in-session cached note_record.
+    async with _Host(lambda: provider, run_id).run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        rows = []
+        for _ in range(120):
+            rows = list(card.query(".console-turn-file-row"))
+            if len(rows) >= 2:
+                break
+            await pilot.pause(0.02)
+        assert len(rows) == 2
+
+        async def _expand_body(index: int):
+            rows[index].focus()
+            await pilot.press("enter")
+            for _ in range(60):
+                bodies = list(card.query(".console-turn-file-diff"))
+                if bodies[index].display:
+                    return bodies[index]
+                await pilot.pause(0.02)
+            raise AssertionError(f"diff body {index} never displayed")
+
+        window1_body = await _expand_body(0)
+        assert window1_body.query(".console-turn-file-note"), (
+            "resumed note never rendered on window 1's own entry"
+        )
+        window2_body = await _expand_body(1)
+        await pilot.pause(0.1)
+        assert list(window2_body.query(".console-turn-file-note")) == [], (
+            "resumed note must still not bleed into window 2's same-header "
+            "hunk after a fresh reload from the DB"
+        )
+
+
+@pytest.mark.asyncio
 async def test_note_input_swallows_up_down_arrow_keys_no_selection_move(
     notes_fixture,
 ):

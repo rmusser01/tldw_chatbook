@@ -66,6 +66,35 @@ def _validate_note_text(raw: str) -> "str | None":
     return text
 
 
+def _note_matches_snapshot(note: dict, current_snapshot_id: "int | None") -> bool:
+    """Qodo #6 (PR #1779 fix round): the snapshot-identity leg of a note's
+    hunk match, on top of the existing hunk_index+hunk_header check.
+
+    Two windows on the SAME run+root+path (a turn's own window and its
+    surviving sub-agents' post-turn window, PR3a-1 Task 6c) can
+    theoretically produce the exact same ``hunk_index``/``hunk_header`` --
+    identical position/line-count edits against different baselines yield
+    byte-identical ``"@@ ... @@"`` headers, since a header encodes only
+    positions/counts, never content. When a note carries a non-null
+    ``snapshot_id`` it must equal the CURRENT entry's own snapshot row id
+    to match; a legacy note (``snapshot_id`` is ``None``, saved before
+    this column existed) falls back to matching on hunk_index+hunk_header
+    alone, exactly as before this fix.
+
+    Args:
+        note: A note record (DB row dict or in-session ``note_record``).
+        current_snapshot_id: The entry currently being rendered's own
+            ``change_snapshots`` row id (``None`` when unavailable).
+
+    Returns:
+        Whether this note belongs under the current entry's hunk.
+    """
+    note_snapshot_id = note.get("snapshot_id")
+    if note_snapshot_id is None:
+        return True
+    return note_snapshot_id == current_snapshot_id
+
+
 class ConsoleTurnFileCard(Vertical):
     """Stacked, expandable per-file diff card rendered under a turn marker."""
 
@@ -509,6 +538,15 @@ class ConsoleTurnFileCard(Vertical):
         # floor-guarded so a diff with more hunks than cap lines still shows
         # at least 1 body line each.
         per_hunk_cap = max(1, cap // max(1, len(hunks)))
+        # Qodo #6 (PR #1779 fix round): this entry's own snapshot row id,
+        # used by `_note_matches_snapshot` below to disambiguate two
+        # same-header windows on the same root+path.
+        current_snapshot_row = self._row_for_entry.get(idx)
+        current_snapshot_id = (
+            current_snapshot_row.get("id")
+            if current_snapshot_row is not None
+            else None
+        )
         for hunk_idx, hunk in enumerate(hunks):
             await body.mount(
                 Static(
@@ -548,7 +586,12 @@ class ConsoleTurnFileCard(Vertical):
                 # hunk N bleed into the OTHER window's same-index hunk N,
                 # rendering under the wrong diff there (final-review fix
                 # wave). The hunk's header text is what actually
-                # disambiguates which window's hunk a note anchors to.
+                # disambiguates which window's hunk a note anchors to --
+                # EXCEPT when both windows happen to produce the exact
+                # same header (Qodo #6): `_note_matches_snapshot` adds the
+                # snapshot-identity tiebreaker on top for notes that carry
+                # one, falling back to today's hunk_index+hunk_header-only
+                # match for legacy (``snapshot_id is None``) notes.
                 existing_notes = [
                     note
                     for note in self._notes_by_key.get(
@@ -556,6 +599,7 @@ class ConsoleTurnFileCard(Vertical):
                     )
                     if int(note.get("hunk_index", -1)) == hunk_idx
                     and note.get("hunk_header") == hunk.header
+                    and _note_matches_snapshot(note, current_snapshot_id)
                 ]
                 for note in existing_notes:
                     await notes_box.mount(self._build_note_row(note))
@@ -897,6 +941,17 @@ class ConsoleTurnFileCard(Vertical):
             # spec §1/§3: the excerpt is the retention safety net, and the
             # card's own cached hunk is the full-diff-derived source for it.
             excerpt = hunk_excerpt(hunk)
+            # Qodo #6 (PR #1779 fix round): the owning snapshot row's own
+            # DB id -- disambiguates which of two same-run/root/path
+            # windows (a turn's own window and its post-turn window) this
+            # note's hunk actually came from, for the rare case where both
+            # windows produce the exact same hunk_index/hunk_header. None
+            # when the row isn't available (degrades to the legacy
+            # hunk_index+hunk_header matching, same as any pre-fix note).
+            snapshot_row = self._row_for_entry.get(idx)
+            snapshot_id = (
+                snapshot_row.get("id") if snapshot_row is not None else None
+            )
             provider = self._provider_factory()
             if provider is None:
                 return
@@ -913,6 +968,7 @@ class ConsoleTurnFileCard(Vertical):
                     hunk_header=hunk.header,
                     hunk_excerpt=excerpt,
                     note=text,
+                    snapshot_id=snapshot_id,
                 )
 
             note_id = await asyncio.to_thread(_write)
@@ -931,6 +987,8 @@ class ConsoleTurnFileCard(Vertical):
                 # `_mount_hunk_blocks`'s hunk_header-qualified filter the
                 # same way a reloaded-from-DB note record does.
                 "hunk_header": hunk.header,
+                # Mirrors the DB row's own column too, same reason.
+                "snapshot_id": snapshot_id,
             }
             self._notes_by_key.setdefault(
                 (entry.root, entry.path), []

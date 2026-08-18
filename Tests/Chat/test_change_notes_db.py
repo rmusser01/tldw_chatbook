@@ -109,11 +109,45 @@ def test_mark_notes_delivered_stamps_only_given_ids_and_sets_timestamp(db):
         hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
     )
 
-    db.mark_notes_delivered([note_1])
+    stamped = db.mark_notes_delivered([note_1])
+    assert stamped == [note_1]
 
     notes = {row["id"]: row for row in db.notes_for_run(run_id)}
     assert notes[note_1]["delivered_at"] is not None
     assert notes[note_2]["delivered_at"] is None
+
+
+def test_mark_notes_delivered_returns_only_actually_stamped_ids(db):
+    """Qodo #4 (PR #1779 fix round): the return value must reflect what
+    THIS call actually stamped, not merely echo back its own input -- a
+    note already delivered (by a concurrent caller, simulated here via a
+    direct pre-stamp) is silently skipped by the UPDATE's own
+    `delivered_at IS NULL` guard, and the return value must say so.
+    """
+    run_id = _make_run(db)
+    note_1 = db.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="one",
+    )
+    note_2 = db.add_change_note(
+        run_id=run_id, root="/r", path="b.py", hunk_index=1,
+        hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="two",
+    )
+
+    # Simulate a lost race: note_2 gets delivered by someone else first.
+    rival_stamped = db.mark_notes_delivered([note_2], delivered_by_run_id="rival-run")
+    assert rival_stamped == [note_2]
+
+    # This caller captured BOTH ids before the rival's stamp landed (the
+    # same shape as the bridge's attach-then-complete seam) and now tries
+    # to stamp both.
+    stamped = db.mark_notes_delivered([note_1, note_2], delivered_by_run_id="this-run")
+    assert stamped == [note_1]
+
+    notes = {row["id"]: row for row in db.notes_for_run(run_id)}
+    assert notes[note_1]["delivered_by_run_id"] == "this-run"
+    # note_2 keeps the RIVAL's stamp -- never re-stamped/overwritten.
+    assert notes[note_2]["delivered_by_run_id"] == "rival-run"
 
 
 def test_mark_notes_delivered_stamps_delivered_by_run_id_when_given(db):
@@ -254,7 +288,8 @@ def test_mark_notes_delivered_empty_list_is_noop(db):
         run_id=run_id, root="/r", path="a.py", hunk_index=0,
         hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="untouched",
     )
-    db.mark_notes_delivered([])
+    stamped = db.mark_notes_delivered([])
+    assert stamped == []
     assert db.notes_for_run(run_id)[0]["delivered_at"] is None
 
 
@@ -429,6 +464,127 @@ def test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9(
         assert post_row["delivered_by_run_id"] == run_id
     finally:
         reopened.close()
+
+
+def test_migration_adds_snapshot_id_column_and_appends_audit_version_10(tmp_path):
+    """Qodo #6 (PR #1779 fix round): same idempotent-ALTER precedent as
+    `test_migration_adds_delivered_by_run_id_column_and_appends_audit_version_9`,
+    now for `snapshot_id` -- a file whose `change_notes` table predates
+    that column must pick it up without losing existing rows, and the
+    reopened instance's API must keep working against it.
+    """
+    db_path = tmp_path / "migrate_v10.db"
+
+    first = AgentRunsDB(db_path, client_id="t")
+    run_id = first.create_run(conversation_id="c", agent_kind="primary")
+    pre_migration_note_id = first.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="pre-existing",
+    )
+    first.close()
+
+    # Simulate a pre-v10 file: recreate change_notes with the OLD
+    # (11-column, no snapshot_id) shape and remove the version-10 audit
+    # row. Same DROP-and-recreate approach as the v9 test above (`ALTER
+    # TABLE ... DROP COLUMN` hits the same SQLite schema-reconstruction
+    # quirk against this table's commented DDL).
+    raw = sqlite3.connect(str(db_path))
+    try:
+        old_rows = raw.execute(
+            "SELECT id, run_id, root, path, hunk_index, hunk_header, "
+            "hunk_excerpt, note, created_at, delivered_at, delivered_by_run_id "
+            "FROM change_notes"
+        ).fetchall()
+        raw.execute("DROP TABLE change_notes")
+        raw.execute(
+            """
+            CREATE TABLE change_notes (
+                id INTEGER PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                root TEXT NOT NULL,
+                path TEXT NOT NULL,
+                hunk_index INTEGER NOT NULL,
+                hunk_header TEXT NOT NULL,
+                hunk_excerpt TEXT NOT NULL,
+                note TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                delivered_at TEXT,
+                delivered_by_run_id TEXT
+            )
+            """
+        )
+        raw.executemany(
+            "INSERT INTO change_notes "
+            "(id, run_id, root, path, hunk_index, hunk_header, hunk_excerpt, "
+            "note, created_at, delivered_at, delivered_by_run_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            old_rows,
+        )
+        raw.execute("DELETE FROM schema_version WHERE version = 10")
+        raw.commit()
+    finally:
+        raw.close()
+
+    raw = sqlite3.connect(str(db_path))
+    try:
+        columns = {row[1] for row in raw.execute("PRAGMA table_info(change_notes)")}
+        assert "snapshot_id" not in columns
+        versions = {row[0] for row in raw.execute("SELECT version FROM schema_version")}
+        assert 10 not in versions
+    finally:
+        raw.close()
+
+    reopened = AgentRunsDB(db_path, client_id="t")
+    try:
+        raw = sqlite3.connect(str(db_path))
+        try:
+            columns = {
+                row[1] for row in raw.execute("PRAGMA table_info(change_notes)")
+            }
+            assert "snapshot_id" in columns
+            versions = {
+                row[0] for row in raw.execute("SELECT version FROM schema_version")
+            }
+            assert 10 in versions
+        finally:
+            raw.close()
+
+        # The pre-existing row survived the ALTER, reading NULL for the
+        # new column (no DEFAULT), and the API still works against it.
+        pre_row = reopened.notes_for_run(run_id)[0]
+        assert pre_row["id"] == pre_migration_note_id
+        assert pre_row["snapshot_id"] is None
+
+        post_note_id = reopened.add_change_note(
+            run_id=run_id, root="/r", path="b.py", hunk_index=1,
+            hunk_header="@@ -2,1 +2,1 @@", hunk_excerpt="y", note="post-migration",
+            snapshot_id=42,
+        )
+        post_row = {r["id"]: r for r in reopened.notes_for_run(run_id)}[post_note_id]
+        assert post_row["snapshot_id"] == 42
+    finally:
+        reopened.close()
+
+
+def test_add_change_note_snapshot_id_defaults_to_none(db):
+    run_id = _make_run(db)
+    note_id = db.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="no snapshot id",
+    )
+    assert db.notes_for_run(run_id)[0]["id"] == note_id
+    assert db.notes_for_run(run_id)[0]["snapshot_id"] is None
+
+
+def test_add_change_note_round_trips_snapshot_id(db):
+    run_id = _make_run(db)
+    note_id = db.add_change_note(
+        run_id=run_id, root="/r", path="a.py", hunk_index=0,
+        hunk_header="@@ -1,1 +1,1 @@", hunk_excerpt="x", note="with snapshot id",
+        snapshot_id=7,
+    )
+    assert db.notes_for_run(run_id)[0]["id"] == note_id
+    assert db.notes_for_run(run_id)[0]["snapshot_id"] == 7
 
 
 def test_migration_reopening_twice_is_idempotent(tmp_path):

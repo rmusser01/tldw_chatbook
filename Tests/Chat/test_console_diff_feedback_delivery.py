@@ -195,6 +195,58 @@ def test_pending_notes_attach_stamp_and_disclose_on_success(tmp_path):
     assert tool_rows[0].change_review_run_id is None
 
 
+# -- (a2) lost race: a captured note stamped by a rival BEFORE this run's
+# own completion gets to it -- disclosure must not claim it (Qodo #4) -----
+
+
+def test_lost_race_pre_stamped_note_is_excluded_from_disclosure(tmp_path):
+    """Qodo #4 (PR #1779 fix round): the attach seam captures BOTH ids
+    before `run_turn` is even called (see the seam's own comment); this
+    simulates a concurrent delivery elsewhere stamping ONE of them first,
+    between capture and this run's own completion -- `mark_notes_
+    delivered`'s own `delivered_at IS NULL` guard correctly skips
+    re-stamping it, and the completion seam must disclose only the note
+    it ACTUALLY (verifiably) delivered, not the whole captured set.
+    """
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    gateway = _ChunkGateway([["Done."]])
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway, db=db)
+
+    earlier_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    note_a = _add_note(db, earlier_run, path="a.py", note="note a survives")
+    note_b = _add_note(db, earlier_run, path="b.py", note="note b stolen")
+
+    real_run_turn = AgentService.run_turn
+
+    def _steal_note_b(self, **kwargs):
+        # Simulate a concurrent delivery elsewhere stamping note_b BEFORE
+        # this run's own completion runs its own mark_notes_delivered --
+        # after the attach seam above already captured both ids.
+        db.mark_notes_delivered([note_b], delivered_by_run_id="rival-run")
+        return real_run_turn(self, **kwargs)
+
+    with patch.object(AgentService, "run_turn", _steal_note_b):
+        run_id, outcome = bridge.run_reply(**_run_kwargs(session, aid))
+
+    assert outcome.status == "done"
+
+    delivered = {n["id"]: n for n in db.notes_for_run(earlier_run)}
+    assert delivered[note_a]["delivered_at"] is not None
+    assert delivered[note_a]["delivered_by_run_id"] == run_id
+    # note_b keeps the rival's stamp -- this run's own stamp call must not
+    # have overwritten it.
+    assert delivered[note_b]["delivered_by_run_id"] == "rival-run"
+
+    tool_rows = [
+        m
+        for m in store.messages_for_session(session.id)
+        if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert len(tool_rows) == 1
+    assert "note a survives" in tool_rows[0].content
+    assert "note b stolen" not in tool_rows[0].content
+
+
 # -- (b) failed run: still pending, no disclosure -------------------------
 
 

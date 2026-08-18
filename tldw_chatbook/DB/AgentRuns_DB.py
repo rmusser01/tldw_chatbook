@@ -296,7 +296,23 @@ class AgentRunsDB(BaseDB):
                     -- instead of fragmenting/mis-anchoring at the
                     -- annotated run. NULL until stamped, and NULL forever
                     -- on rows stamped by code that predates this column.
-                    delivered_by_run_id TEXT
+                    delivered_by_run_id TEXT,
+                    -- v10 (Qodo #6, PR #1779 fix round): the exact
+                    -- change_snapshots row (its own DB `id`) this note's
+                    -- hunk was read from. Two windows on the SAME run+
+                    -- root+path (a turn's own window and its surviving
+                    -- sub-agents' post-turn window, PR3a-1 Task 6c) can
+                    -- theoretically carry the same hunk_header at the
+                    -- same hunk_index (identical position/line-count
+                    -- edits against different baselines produce
+                    -- byte-identical "@@ ... @@" headers, since a header
+                    -- encodes only positions/counts, never content) --
+                    -- (run_id, hunk_index, hunk_header) alone can't then
+                    -- say which window's diff was actually annotated.
+                    -- NULL for legacy rows saved before this column
+                    -- existed; the card falls back to hunk_index+
+                    -- hunk_header matching for those.
+                    snapshot_id INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_notes_pending
                     ON change_notes(run_id) WHERE delivered_at IS NULL;
@@ -382,6 +398,17 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE change_notes ADD COLUMN delivered_by_run_id TEXT"
                 )
+            # v9->v10 (Qodo #6, PR #1779 fix round): a file created while
+            # change_notes existed but before snapshot_id did keeps its
+            # old 11-column table -- same idempotent-ALTER mechanism as
+            # every column above. No DEFAULT: every pre-existing row
+            # correctly reads as NULL (unknown snapshot), which is exactly
+            # the legacy hunk_index+hunk_header fallback the card's
+            # matching is built to handle.
+            if "snapshot_id" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -403,6 +430,9 @@ class AgentRunsDB(BaseDB):
             )
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (9)"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (10)"
             )
 
     def record_change_snapshot(
@@ -597,6 +627,7 @@ class AgentRunsDB(BaseDB):
         hunk_header: str,
         hunk_excerpt: str,
         note: str,
+        snapshot_id: int | None = None,
     ) -> int:
         """Record a user-authored note anchored to one hunk of a turn's diff.
 
@@ -615,6 +646,18 @@ class AgentRunsDB(BaseDB):
             hunk_excerpt: The hunk body captured at note time (already
                 capped/elided by the caller).
             note: The user's note text.
+            snapshot_id: The owning ``change_snapshots`` row's own DB
+                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
+                which of TWO same-``run_id``/root/path windows (a turn's
+                own window and its surviving sub-agents' post-turn
+                window, PR3a-1 Task 6c) this note's hunk actually came
+                from, for the rare case where both windows happen to
+                produce the exact same ``hunk_index``/``hunk_header``
+                (identical position/line-count edits against different
+                baselines yield byte-identical headers, since a header
+                encodes only positions/counts, never content). ``None``
+                (the default) only by callers that predate this column or
+                have no snapshot row to anchor to.
 
         Returns:
             The newly created note's row id.
@@ -624,8 +667,9 @@ class AgentRunsDB(BaseDB):
                 """
                 INSERT INTO change_notes
                     (run_id, root, path, hunk_index, hunk_header,
-                     hunk_excerpt, note, created_at, delivered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                     hunk_excerpt, note, created_at, delivered_at,
+                     snapshot_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     run_id,
@@ -636,6 +680,7 @@ class AgentRunsDB(BaseDB):
                     hunk_excerpt,
                     note,
                     _now_iso(),
+                    snapshot_id,
                 ),
             )
             return int(cursor.lastrowid)
@@ -737,7 +782,7 @@ class AgentRunsDB(BaseDB):
 
     def mark_notes_delivered(
         self, note_ids: Sequence[int], delivered_by_run_id: str | None = None
-    ) -> None:
+    ) -> list[int]:
         """Stamp exactly the given notes as delivered.
 
         Spec §4: the delivery seam captures the precise id list it
@@ -745,6 +790,17 @@ class AgentRunsDB(BaseDB):
         completion -- never "all pending for the conversation". A note
         created after the list was captured (the mid-run race) is not in
         ``note_ids`` and so stays pending, riding the next send.
+
+        Qodo #4 (PR #1779 fix round): the UPDATE's own
+        ``AND delivered_at IS NULL`` guard means a note already stamped by
+        a concurrent delivery (elsewhere) is silently skipped rather than
+        re-stamped -- correct for the DB, but the caller previously had no
+        way to know that skip happened, so the bridge's completion seam
+        disclosed every id it captured regardless of what actually got
+        stamped. Concurrent replies on one conversation are architecturally
+        serialized today, so that race is not currently reachable in
+        practice, but this makes the seam self-defending rather than
+        relying on that invariant holding forever.
 
         Args:
             note_ids: The note ids to stamp delivered.
@@ -757,18 +813,40 @@ class AgentRunsDB(BaseDB):
                 disclosure at the run that actually delivered it. Left
                 ``None`` (the default) only by callers that predate this
                 column or do not know/care which run is delivering.
+
+        Returns:
+            The subset of ``note_ids`` that this call ACTUALLY stamped
+            (i.e. were still pending at the moment of the UPDATE) -- never
+            more than ``note_ids``, and possibly fewer when a concurrent
+            caller already delivered one of them first. Order is not
+            significant to callers, all of which only ever test set
+            membership against it.
         """
         ids = [int(note_id) for note_id in note_ids]
         if not ids:
-            return
+            return []
         placeholders = ",".join("?" for _ in ids)
+        stamp = _now_iso()
         with self.transaction() as conn:
             conn.execute(
                 f"UPDATE change_notes SET delivered_at = ?, "
                 f"delivered_by_run_id = ? "
                 f"WHERE id IN ({placeholders}) AND delivered_at IS NULL",
-                (_now_iso(), delivered_by_run_id, *ids),
+                (stamp, delivered_by_run_id, *ids),
             )
+            # Portable (works against any bundled SQLite -- no RETURNING
+            # dependency): re-select, in the SAME transaction/connection,
+            # exactly the rows this UPDATE just wrote. `delivered_at =
+            # stamp` alone (a value only this call could have produced)
+            # already uniquely identifies them; `delivered_by_run_id IS ?`
+            # is belt-and-suspenders (SQLite's `IS` compares correctly
+            # against a NULL-bound parameter too).
+            rows = conn.execute(
+                f"SELECT id FROM change_notes WHERE id IN ({placeholders}) "
+                f"AND delivered_at = ? AND delivered_by_run_id IS ?",
+                (*ids, stamp, delivered_by_run_id),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:

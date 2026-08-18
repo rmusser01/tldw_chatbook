@@ -3643,16 +3643,35 @@ class ConsoleAgentBridge:
                     # actually doing the delivering, which resume
                     # re-derivation anchors the disclosure row to. `run_id`
                     # is already known-bound by the `locals()` check above.
-                    self._db.mark_notes_delivered(
-                        diff_feedback_included_ids, delivered_by_run_id=run_id
+                    #
+                    # Qodo #4 (PR #1779 fix round): disclose only the ids
+                    # `mark_notes_delivered` reports ACTUALLY stamped, not
+                    # every id this seam captured -- a concurrent delivery
+                    # elsewhere could have already stamped one of them
+                    # first (the UPDATE's own `delivered_at IS NULL` guard
+                    # silently skips it), and disclosing a note nobody
+                    # verifiably delivered on THIS run's completion would
+                    # be dishonest. Concurrent replies on one conversation
+                    # are architecturally serialized today, so this is
+                    # defense in depth, not a reachable-today bug.
+                    stamped_ids = set(
+                        self._db.mark_notes_delivered(
+                            diff_feedback_included_ids, delivered_by_run_id=run_id
+                        )
                     )
-                    self._store.append_message(
-                        session_id,
-                        role=ConsoleMessageRole.TOOL,
-                        content=format_diff_feedback_disclosure(
-                            diff_feedback_included_notes
-                        ),
-                    )
+                    disclosed_notes = [
+                        note
+                        for note in diff_feedback_included_notes
+                        if int(note["id"]) in stamped_ids
+                    ]
+                    if disclosed_notes:
+                        self._store.append_message(
+                            session_id,
+                            role=ConsoleMessageRole.TOOL,
+                            content=format_diff_feedback_disclosure(
+                                disclosed_notes
+                            ),
+                        )
                 except Exception:  # noqa: BLE001 -- notes must never break the reply
                     logger.opt(exception=True).warning(
                         "change_review: could not stamp/disclose diff feedback"
