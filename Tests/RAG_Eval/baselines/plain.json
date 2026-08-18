@@ -1,6 +1,6 @@
 {
   "baseline_id": "plain",
-  "created_at": "2026-08-18T02:04:39.534789+00:00",
+  "created_at": "2026-08-18T23:33:29.980780+00:00",
   "pipeline_config": {
     "mode": "plain",
     "k": 10,
@@ -13,11 +13,11 @@
     ]
   },
   "metrics": {
-    "overall.precision": 0.32608695652173914,
-    "overall.recall": 0.31521739130434784,
-    "overall.mrr": 0.32608695652173914,
-    "overall.ndcg": 0.3176771128862056,
-    "overall.f1": 0.3188405797101449,
+    "overall.precision": 0.34782608695652173,
+    "overall.recall": 0.33695652173913043,
+    "overall.mrr": 0.34782608695652173,
+    "overall.ndcg": 0.33941624332098824,
+    "overall.f1": 0.34057971014492755,
     "category.keyword.precision": 0.9375,
     "category.keyword.recall": 0.90625,
     "category.keyword.mrr": 0.9375,
@@ -33,11 +33,11 @@
     "category.paraphrase.mrr": 0.0,
     "category.paraphrase.ndcg": 0.0,
     "category.paraphrase.f1": 0.0,
-    "category.prompt.precision": 0.0,
-    "category.prompt.recall": 0.0,
-    "category.prompt.mrr": 0.0,
-    "category.prompt.ndcg": 0.0,
-    "category.prompt.f1": 0.0,
+    "category.prompt.precision": 0.2,
+    "category.prompt.recall": 0.2,
+    "category.prompt.mrr": 0.2,
+    "category.prompt.ndcg": 0.2,
+    "category.prompt.f1": 0.2,
     "category.scoped.precision": 1.0,
     "category.scoped.recall": 1.0,
     "category.scoped.mrr": 1.0,
@@ -59,17 +59,17 @@
       "platform": "darwin"
     },
     "environment_info": {
-      "sentence_transformers": "5.7.0"
+      "sentence_transformers": "5.4.1"
     },
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 18.4,
-        "p95_ms": 31.1,
-        "max_ms": 41.6,
-        "total_s": 1.1
+        "mean_ms": 17.3,
+        "p95_ms": 29.6,
+        "max_ms": 39.7,
+        "total_s": 1.0
       },
-      "mean_docs_at_k": 0.457,
+      "mean_docs_at_k": 0.478,
       "num_queries": 46,
       "num_golden_queries": 60,
       "num_negative": 7,

@@ -221,7 +221,7 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | 0.000 &nbsp;⚠️ | **0.200** | ⚠️ **the `plain` cell is VACUOUS, not measured** — the harness leaves `prompt_scope_service=None` so that seam reports itself unavailable (TASK-18255); read only the `semantic`/`hybrid` cells as retrieval. 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
+| `prompt` | 5 | 0.000 | **0.200** | **0.200** | `plain`'s cell was VACUOUS until TASK-18255 wired the harness prompts seam; it now MEASURES retrieval and reads 0.200 (`pm-vendor-chaser` hits, the other four are blocked by absent content words). 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
 | **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
 
@@ -1417,18 +1417,22 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
   and do not read the other categories' hybrid numbers as evidence that the
   keyword leg is contributing to them.
 
-  **`plain`'s 0.000 has a DIFFERENT cause, and this paragraph used to give
-  the wrong one** (corrected 2026-08-18, TASK-18255). The missing vector
-  index cannot explain `plain`, which never consults a vector index at all.
-  `plain` fans out over the Library's own four seams, and the harness
-  **deliberately does not wire the prompts one** — its fake app sets
-  `prompt_scope_service=None`, so `_search_prompts` returns `(False, [])`:
-  the seam reporting itself UNAVAILABLE. The cell is therefore **vacuous by
-  construction**, not a measured zero, and production does wire the service
-  (`app.py:5682`). The warning above was right for the wrong reason in
-  `plain`'s case — and TASK-17855 nonetheless filed the defect this sentence
-  warns against, because a `0.000` renders identically whether it means "not
-  measured" or "measured and found nothing".
+  **`plain`'s cell had a DIFFERENT cause, now FIXED** (TASK-18255). The
+  missing vector index never explained `plain`, which does not consult a
+  vector index at all — it fans out over the Library's own four seams, and
+  the harness did not wire the prompts one (`prompt_scope_service=None`, so
+  `_search_prompts` returned `(False, [])`: the seam reporting itself
+  UNAVAILABLE). The cell was **vacuous by construction**, not a measured
+  zero. TASK-17855 read it as a production retrieval defect — the exact
+  misreading the sentence above warns against — because a `0.000` renders
+  identically whether it means "not measured" or "measured and found
+  nothing".
+
+  **The seam is wired as of TASK-18255 and `plain`'s prompt cell now reads
+  0.200**: `pm-vendor-chaser` retrieves, which disproves the defect claim
+  rather than merely withdrawing it. The other four prompt goldens miss for
+  the reason TASK-17855 established and which survives — their targets do
+  not contain the queries' content words.
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and
