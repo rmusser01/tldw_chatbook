@@ -751,15 +751,21 @@ class ChangeReviewScreen(Screen):
         dels = sum(int(r["dels"] or 0) for r in turn.rows)
         totals.update(f"{len(self._leaves)} files  +{adds} −{dels}")
 
+        # TASK-18060 Task 3: the initials are constructor state consumed
+        # exactly ONCE -- cleared here, UNCONDITIONALLY, so a later turn
+        # switch (this same method, via select_turn/Select.Changed) reverts
+        # to the first leaf like today. This must happen before the
+        # `self._leaves` branch below: a zero-leaf initial turn (a
+        # tracking-error row, or one whose snapshots were pruned) must not
+        # leave the initials sitting around to hijack focus on the NEXT
+        # `_load_turn` call once a later turn happens to contain a
+        # same-named path (reviewer catch on the first cut of this task).
+        initial_path = self._initial_path
+        initial_snapshot_id = self._initial_snapshot_id
+        self._initial_path = None
+        self._initial_snapshot_id = None
+
         if self._leaves:
-            # TASK-18060 Task 3: the initials are constructor state consumed
-            # exactly ONCE -- cleared here so a later turn switch (this same
-            # method, via select_turn/Select.Changed) reverts to the first
-            # leaf like today.
-            initial_path = self._initial_path
-            initial_snapshot_id = self._initial_snapshot_id
-            self._initial_path = None
-            self._initial_snapshot_id = None
             # A path that doesn't exist in this turn (stale rail cache, a
             # revert since) degrades to the first leaf rather than an empty
             # pane -- select_file itself stays a no-op on an unmatched path

@@ -1053,3 +1053,90 @@ async def test_turn_switch_after_initial_selection_reverts_to_first_file(
         )
         _row2, change2 = screen._leaves[0]
         assert change2.path != "edit.txt"
+
+
+@pytest.mark.asyncio
+async def test_initials_survive_a_zero_leaf_initial_turn_regression(tmp_path):
+    """Reviewer catch on the Task 3 commit: a tracking-error initial turn
+    has ZERO leaves (the ``if error: ... continue`` short-circuit in
+    ``_load_turn`` never reaches ``changed_files`` for that row), so the
+    initials -- pre-fix -- were cleared only inside the ``if self._leaves:``
+    branch and survived untouched into the NEXT ``_load_turn`` call. A
+    later MANUAL turn switch to a turn that happens to contain a
+    same-named path then silently hijacked focus onto it instead of
+    leaf 0 -- exactly the "initials cleared after first use" contract
+    this task pinned, just reached through the empty-leaves door.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "edit.txt").write_text("before\n")
+
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    tracker = ChangeTurnTracker(service=service)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    conv = "conv-1"
+
+    run1 = db.create_run(conversation_id=conv, agent_kind="primary")
+    # A real tracking-error row -- zero leaves for this turn.
+    db.record_change_snapshot(
+        run_id=run1,
+        root=str(root),
+        baseline_sha="",
+        end_sha="",
+        tracking_error="git failed",
+    )
+
+    run2 = db.create_run(conversation_id=conv, agent_kind="primary")
+
+    def _turn_two():
+        (root / "aaa_first.txt").write_text("new\n")
+        (root / "edit.txt").write_text("after\n")
+
+    _record_turn(db, tracker, root, run2, _turn_two)
+
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id=conv
+    )
+    # Opens on run1 (zero leaves) with a stale initial_path that DOES exist
+    # in run2 -- but is NOT run2's first leaf ("aaa_first.txt" sorts into
+    # the Added group, ahead of "edit.txt"'s Modified group).
+    app = _Harness(provider, initial_run_id=run1, initial_path="edit.txt")
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: app.screen if isinstance(app.screen, ChangeReviewScreen) else None,
+            "review screen",
+        )
+        await _wait_for(
+            pilot,
+            lambda: (
+                "tracking failed"
+                in str(screen.query_one("#change-review-banner", Static).renderable)
+            )
+            or None,
+            "run1's tracking-error banner (zero leaves)",
+        )
+        assert screen._leaves == [], "run1 must load with zero leaves"
+
+        # A later MANUAL switch to run2, which DOES contain "edit.txt".
+        screen.select_turn(run2)
+        await _wait_for(
+            pilot,
+            lambda: screen._active_turn is not None
+            and screen._active_turn.run_id == run2
+            or None,
+            "switched to run2",
+        )
+        await _wait_for(
+            pilot,
+            lambda: screen._leaves and screen._focused_leaf >= 0 or None,
+            "run2 leaves focused",
+        )
+        assert screen._focused_leaf == 0, (
+            "a stale initial_path from a zero-leaf initial turn hijacked "
+            "a later manual turn switch"
+        )
+        _row, change = screen._leaves[0]
+        assert change.path != "edit.txt", (
+            f"leaf 0 must be run2's OWN first leaf, got {change.path!r}"
+        )
