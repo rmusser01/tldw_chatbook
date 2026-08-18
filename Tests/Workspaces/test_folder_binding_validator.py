@@ -81,14 +81,15 @@ def test_add_folder_binding_still_enforces(tmp_path):
 def test_add_folder_binding_path_validation_before_db_lookup(tmp_path):
     """Verify path validation happens before list_folder_bindings is called.
 
-    Regression test: ensures that add_folder_binding validates the path
-    before looking up existing bindings, preserving the original evaluation
-    order. If the order was wrong, an invalid path with an invalid workspace_id
-    would raise ValueError instead of WorkspaceRegistryServiceError.
+    Regression test (evaluation-order guard): with broken ordering, the call
+    list_folder_bindings("") would raise ValueError("workspace_id is required")
+    before path validation could reject the bad path. With correct ordering,
+    _validate_folder_path_rules runs first and raises WorkspaceRegistryServiceError
+    about the missing directory.
     """
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="validator-tests")
     service = LocalWorkspaceRegistryService(db)
-    # Don't create the workspace - test that path validation happens first
     bad_path = tmp_path / "does_not_exist"
+    # Empty workspace_id would fail in list_folder_bindings if called first
     with pytest.raises(WorkspaceRegistryServiceError, match="does not exist"):
-        service.add_folder_binding("invalid-workspace-id", bad_path)
+        service.add_folder_binding("", bad_path)
