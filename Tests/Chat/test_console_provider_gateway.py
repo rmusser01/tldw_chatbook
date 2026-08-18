@@ -6179,3 +6179,102 @@ class TestSignalsExchangeCapture:
 
     def test_run_tags_differ_across_signals_objects(self):
         assert ConsoleProviderStreamSignals().run_tag != ConsoleProviderStreamSignals().run_tag
+
+
+class TestGatewayExchangeCapture:
+    @staticmethod
+    def _resolution() -> ConsoleProviderResolution:
+        return ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://proxy.example.test/v1",
+            model="gpt-4.1",
+            ready=True,
+            execution_key="openai",
+            api_key="k",
+            streaming=False,
+        )
+
+    @staticmethod
+    async def _drain(gen):
+        return [chunk async for chunk in gen]
+
+    @pytest.mark.asyncio
+    async def test_one_capture_per_call_with_request_and_response(self):
+        calls = []
+
+        def fake_chat_api_call(**kwargs):
+            calls.append(kwargs)
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        resolution = self._resolution()
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "ping"},
+        ]
+        await self._drain(gateway.stream_chat(resolution, messages, signals=signals))
+        await self._drain(gateway.stream_chat(resolution, messages, signals=signals))
+        captures = signals.exchange_captures()
+        assert len(captures) == 2
+        assert captures[0].status == "complete"
+        assert captures[0].request["system_message"] == "sys"
+        assert captures[0].request["messages_payload"] == [
+            {"role": "user", "content": "ping"}
+        ]
+        assert "api_key" not in captures[0].request
+        assert "api_key" in captures[0].omitted_keys
+        assert captures[0].response["content"] == "pong"
+
+    @pytest.mark.asyncio
+    async def test_transcript_output_byte_identical_with_capture(self):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "exact bytes"}}]}
+
+        resolution = self._resolution()
+        messages = [{"role": "user", "content": "q"}]
+        with_signals = await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                resolution, messages, signals=ConsoleProviderStreamSignals()
+            )
+        )
+        without = await self._drain(
+            ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call).stream_chat(
+                resolution, messages, signals=None
+            )
+        )
+        assert with_signals == without
+
+    @pytest.mark.asyncio
+    async def test_provider_error_closes_capture_as_error(self):
+        def fake_chat_api_call(**kwargs):
+            raise RuntimeError("boom")
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals()
+        with pytest.raises(Exception):
+            await self._drain(
+                gateway.stream_chat(
+                    self._resolution(),
+                    [{"role": "user", "content": "q"}],
+                    signals=signals,
+                )
+            )
+        captures = signals.exchange_captures()
+        assert len(captures) == 1 and captures[0].status == "error"
+
+    @pytest.mark.asyncio
+    async def test_disabled_signals_capture_nothing(self):
+        def fake_chat_api_call(**kwargs):
+            return {"choices": [{"message": {"content": "pong"}}]}
+
+        gateway = ConsoleProviderGateway(chat_api_call_fn=fake_chat_api_call)
+        signals = ConsoleProviderStreamSignals(exchange_capture_enabled=False)
+        await self._drain(
+            gateway.stream_chat(
+                self._resolution(),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        )
+        assert signals.exchange_captures() == []

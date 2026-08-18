@@ -344,7 +344,12 @@ class ConsoleProviderCallSignals:
     def begin_exchange(self, *, provider: str, model: str, endpoint: str | None,
                        request: dict, omitted_keys: tuple[str, ...]) -> None:
         """Open this call's capture. ONE stream_chat invocation == one
-        exchange; close_exchange in stream_chat's finally is the close site."""
+        exchange; close_exchange in stream_chat's finally is the close site.
+
+        ``request`` must be a freshly built, allowlisted dict -- i.e.
+        ``build_request_capture``'s output -- never raw ``chat_api_call``
+        kwargs, which would alias live state and re-admit credentials.
+        """
         if not self._aggregate.exchange_capture_enabled:
             return
         self._aggregate._begin_scoped_exchange(self._token, {
@@ -2419,6 +2424,7 @@ class ConsoleProviderGateway:
                 return
         finally:
             if call_signals is not None:
+                call_signals.close_exchange()
                 call_signals.close_usage_call()
 
     async def _stream_generic_chat(
@@ -2471,6 +2477,17 @@ class ConsoleProviderGateway:
         def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
+                if signals is not None:
+                    try:
+                        capture_request, omitted = build_request_capture(kwargs)
+                        signals.begin_exchange(
+                            provider=str(resolution.provider or ""),
+                            model=str(resolution.model or ""),
+                            endpoint=getattr(resolution, "base_url", None),
+                            request=capture_request, omitted_keys=omitted,
+                        )
+                    except Exception:
+                        logger.opt(exception=True).warning("exchange_capture_begin_failed")
                 response = self._chat_api_call(**kwargs)
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
@@ -2495,11 +2512,15 @@ class ConsoleProviderGateway:
                         break
                     if text:
                         emitted_content = True
+                    if signals is not None and text:
+                        signals.record_exchange_content(text)
                     enqueue(_QueueItem.content(text))
                 if stop_event.is_set():
                     return
                 if accumulator is not None:
                     calls = accumulator.calls()
+                    if signals is not None and calls:
+                        signals.record_exchange_tool_calls(calls)
                     metadata = _provider_turn_metadata(provider_response)
                     if calls or metadata is not None:
                         enqueue(_QueueItem.native_tool_calls(calls, metadata))
@@ -2531,6 +2552,8 @@ class ConsoleProviderGateway:
                     model=resolution.model,
                     status_code=status_code,
                 )
+                if signals is not None:
+                    signals.close_exchange(status="error")
                 enqueue(
                     _QueueItem.error(
                         error_copy,
