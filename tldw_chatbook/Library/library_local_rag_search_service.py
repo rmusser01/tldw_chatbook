@@ -505,9 +505,22 @@ class LibraryLocalRagSearchService:
         # row loses a position it used to hold at the front of the merge --
         # position 0 of each seam still comes first, in seam order. Deeper
         # in the list a fallback row can interleave ahead of a primary one,
-        # which is exactly what tiering would fix. Tiering this path is a
-        # follow-up that must be re-measured on the golden set, not a
-        # tidy-up; `Tests/Library/test_library_keyword_and_then_prefix.py`
+        # which is exactly what tiering would fix.
+        #
+        # MEASURED AND CLOSED (TASK-17955, 2026-08-18): that displacement
+        # cannot occur on the gated corpus, and for a more basic reason than
+        # "the orderings happen to coincide" -- **the plain path never fills
+        # a retrieval window**. Zero of 60 golden queries return `>= top_k`
+        # rows at either depth (k=10 and k=20; the maximum seen is 6), so no
+        # row is ever CUT and the order cannot change what a consumer
+        # receives. Untiered is therefore the MEASURED choice here, not an
+        # unpaid debt, and TASK-16071's "the 15700 tier design would apply"
+        # note is retired. The one-command re-check, should the corpus or the
+        # construction ever change, is the census in
+        # `Docs/superpowers/qa/2026-08-18-merge-tiering/report.md`: if any
+        # plain query starts returning `>= top_k` rows, tiering becomes
+        # measurable and this decision is due for review. Tiering it BEFORE
+        # then would ship an ordering nothing can distinguish; `Tests/Library/test_library_keyword_and_then_prefix.py`
         # pins the untiered order so the change cannot happen silently.
         #
         # Dedup across seams is structurally vacuous -- the seams are
