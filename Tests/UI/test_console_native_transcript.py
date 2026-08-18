@@ -649,7 +649,15 @@ def test_console_transcript_renderable_uses_full_width_rules():
     assert "world" in plain
 
 
-def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
+def test_console_transcript_widget_rules_carry_no_dash_text():
+    """task-17658: separators paint via the stylesheet hatch, not text.
+
+    The old fixed 200-dash renderable stopped ~4/5 across very wide
+    terminals; the hatch spans any width (painted full-width contract in
+    test_console_transcript_rule_spans_full_width_on_wide_terminals), so
+    the widget itself must stay empty — dash text over the hatch would
+    reintroduce a width-dependent seam in a different color layer.
+    """
     transcript = ConsoleTranscript()
     transcript.set_messages(
         [
@@ -660,7 +668,7 @@ def test_console_transcript_widget_rules_are_long_enough_to_clip_full_width():
     first_rule = transcript._message_widgets()[0]
     renderable = getattr(first_rule, "renderable", "")
 
-    assert len(str(renderable)) >= 160
+    assert str(renderable) == ""
 
 
 @pytest.mark.asyncio
@@ -1272,6 +1280,28 @@ async def test_console_transcript_click_rule_separator_preserves_selection():
         await pilot.pause()
 
         assert "Save as..." in _visible_text(app)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
+    """task-17658: message separators reach edge to edge at any width.
+
+    The rule used to be a fixed 200-dash string, stopping ~4/5 of the way
+    across very wide terminals; the hatch fill spans whatever width the
+    transcript actually has.
+    """
+
+    class _BundledTranscriptHarness(TranscriptHarness):
+        CSS_PATH = str(_BUNDLE)
+
+    app = _BundledTranscriptHarness()
+    async with app.run_test(size=(250, 20)) as pilot:
+        await pilot.pause()
+        rule = app.query(".console-transcript-rule").first()
+        strips = app.screen._compositor.render_strips()
+        row = "".join(seg.text for seg in strips[rule.region.y])
+        painted = row[rule.region.x : rule.region.x + rule.region.width]
+        assert set(painted) == {"─"}, repr(painted[:24] + "…" + painted[-12:])
 
 
 @pytest.mark.asyncio
