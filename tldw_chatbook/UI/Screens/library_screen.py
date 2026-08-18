@@ -31730,6 +31730,12 @@ class LibraryScreen(BaseAppScreen):
             for _folder, message in result.failed_folders:
                 if callable(notify):
                     notify(message, severity="warning")
+            # Finding 2: the workspace record was already created by the
+            # modal regardless of what happens below, so the rail must
+            # always be rebuilt to show it -- activation failure only
+            # changes which toast fires, it must not skip the
+            # invalidate/scroll-preserve/recompose seam entirely.
+            activation_failed = False
             if result.make_active:
                 try:
                     registry_service.set_active_workspace(result.workspace_id)
@@ -31737,18 +31743,18 @@ class LibraryScreen(BaseAppScreen):
                     logger.opt(exception=True).warning(
                         "Failed to activate new Library workspace"
                     )
-                    if callable(notify):
-                        notify(
-                            "Workspace created but could not be activated.",
-                            severity="error",
-                        )
-                    return
+                    activation_failed = True
             self._invalidate_library_workspace_depth_state()
             # TASK-716: preserve the rail's scroll offset across the rebuild.
             self._preserve_library_rail_scroll()
             self.refresh(recompose=True)
             if callable(notify):
-                if result.make_active:
+                if activation_failed:
+                    notify(
+                        "Workspace created but could not be activated.",
+                        severity="error",
+                    )
+                elif result.make_active:
                     # TASK-713: activation retargets Console from another screen.
                     notify(
                         f"Created local workspace {result.name} and made it "
