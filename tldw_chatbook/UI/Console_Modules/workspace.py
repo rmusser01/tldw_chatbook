@@ -53,6 +53,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     ConsoleConversationBrowserInputRow,
@@ -1648,6 +1649,10 @@ class ConsoleWorkspaceController:
             self.app_instance.notify(
                 f"Created {result.name}.", severity="information"
             )
+            if result.project_skills:
+                maybe_offer_project_skills_import(
+                    self.app_instance, result.project_skills
+                )
             return
         try:
             registry_service.set_active_workspace(result.workspace_id)
@@ -1658,6 +1663,10 @@ class ConsoleWorkspaceController:
             self.app_instance.notify(
                 "Workspace created but could not be activated.", severity="error"
             )
+            if result.project_skills:
+                maybe_offer_project_skills_import(
+                    self.app_instance, result.project_skills
+                )
             return
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(result.workspace_id)
@@ -1671,6 +1680,10 @@ class ConsoleWorkspaceController:
             f"Created {result.name} and switched Console to it.",
             severity="information",
         )
+        if result.project_skills:
+            maybe_offer_project_skills_import(
+                self.app_instance, result.project_skills
+            )
 
     # -- Workspace RAG-scope picker ------------------------------------------
 

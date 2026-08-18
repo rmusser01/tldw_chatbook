@@ -414,3 +414,25 @@ async def test_escape_after_partial_create_returns_partial_result(tmp_path):
     created = inner.list_workspaces()
     assert len(created) == 1
     assert result.workspace_id == created[0].workspace_id
+
+
+@pytest.mark.asyncio
+async def test_folder_with_skills_annotated_and_carried_on_result(tmp_path):
+    registry = _registry(tmp_path)
+    project = tmp_path / "project"
+    skill = project / ".SKILLS" / "alpha-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\ndescription: x\n---\nB\n", encoding="utf-8")
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await pilot.click("#workspace-create-folder-add")
+        await pilot.pause()
+        rows = [str(s.renderable) for s in modal.query(".workspace-create-folder-locator")]
+        assert any("1 project skill" in row for row in rows)
+        await pilot.click("#workspace-create-confirm")
+        await pilot.pause()
+    assert len(app.result.project_skills) == 1
+    assert app.result.project_skills[0].entries[0].name == "alpha-skill"

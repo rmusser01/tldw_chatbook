@@ -31753,6 +31753,14 @@ class LibraryScreen(BaseAppScreen):
                         f"Created local workspace {result.name}.",
                         severity="information",
                     )
+            if result.project_skills:
+                from tldw_chatbook.Widgets.project_skills_import_modal import (
+                    maybe_offer_project_skills_import,
+                )
+
+                maybe_offer_project_skills_import(
+                    self.app_instance, result.project_skills
+                )
 
         self.app.push_screen(
             WorkspaceCreateModal(registry_service=registry_service), _done
