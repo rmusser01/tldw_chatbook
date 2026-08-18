@@ -86,5 +86,10 @@ wiring it moves plain-mode numbers for non-prompt queries too.
 - [ ] Whichever way the numbers go, the gate is re-stamped DELIBERATELY with
       the reason recorded — this changes what the instrument can see, so a
       moved cell is the deliverable rather than a regression
-- [ ] TASK-17855's report and this programme's README stop describing the
-      plain prompt cells as a retrieval result
+- [x] TASK-17855's report and this programme's README stop describing the
+      plain prompt cells as a retrieval result (done in PR #1807: the report
+      carries a correction block, and `Tests/RAG_Eval/README.md` now flags
+      the `plain` cell as vacuous in the category table, the P2c-targets
+      paragraph, and the keyword-limits section — where the stated REASON was
+      also wrong, blaming the absent vector index for a mode that never uses
+      one)

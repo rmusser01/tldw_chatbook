@@ -5194,11 +5194,22 @@ It was wrong. The harness's fake app sets `prompt_scope_service=None`, so
 renders "not measured" and "measured, found nothing" as the same `0.000`,
 and I read the second.
 
-**Three written warnings sat in the tree, all unread**: the harness's own
+**Four written warnings sat in the tree, all unread**: the harness's own
 comment directly above the line (*"Leaving it None means the harness's plain
 column reports 0.000 for prompts while the shipped app's plain mode does
-find them"*), and the B2 plan twice (*"the Library four-seam path already
-searches prompts its own way — do not touch it"*).
+find them"*); the B2 plan twice (*"the Library four-seam path already
+searches prompts its own way — do not touch it"*); and — most pointedly —
+the eval README, which says in as many words: ***"Do not read a `prompt`
+0.000 as a prompts-retrieval defect."*** I filed that exact defect.
+
+That fourth one carries its own sub-lesson, because the README's *reason*
+was wrong even though its conclusion was right: it attributed `plain`'s
+0.000 to prompts having no vector index, and `plain` never consults a vector
+index. A warning with a wrong rationale is weak protection — the rationale
+is what a reader checks against their case, and mine visibly did not apply,
+which made the warning easy to step past. **When you write a "do not read X
+as Y" note, the reason has to be correct per-mode, or it invites exactly the
+misreading it forbids.**
 
 **This is the dual of the trap already recorded here.** The known family is
 *the intervention silently did not take* — the monkeypatch bound at import

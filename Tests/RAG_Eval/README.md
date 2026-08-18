@@ -209,13 +209,14 @@ cells):
 | `paraphrase` | 13 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only |
 | `vocabulary_mismatch` | 9 | 1.000 | 0.000 | 1.000 | **none in the vector modes** — regression-only (see the caveat under Category meanings) |
 | `negation` | 3 | 0.000 | 0.000 | **0.000** | **full** — nothing retrieves these today |
-| `prompt` | 5 | 0.000 | 0.000 | **0.200** | 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
+| `prompt` | 5 | 0.000 | 0.000 &nbsp;⚠️ | **0.200** | ⚠️ **the `plain` cell is VACUOUS, not measured** — the harness leaves `prompt_scope_service=None` so that seam reports itself unavailable (TASK-18255); read only the `semantic`/`hybrid` cells as retrieval. 1 of 5. TASK-15400's construction flip took it; TASK-15700's merge fix + `and_then_prefix` flip held the cell at 0.200 while the MECHANISM under it moved (stopword trim → prefix fallback). The residual 4 are bounded by absent CONTENT words — see below |
 | `scoped` | 7 | 0.000 | 1.000 | **1.000** | hybrid flipped from 0.000 in this arc (B1); MRR 0.163 is the remaining headroom, not recall |
 | **overall** | **46** | **0.804** | **0.293** | **0.848** | hybrid is **0.152** off the ceiling |
 
 **The remaining 0.000 rows are P2c's admission targets.** `negation` (all
-three modes) and `prompt` (still 0.000 in `semantic` and `plain`) are the
-cells with room to rise, and they are not the same kind of problem:
+three modes) and `prompt` (0.000 in `semantic`; `plain`'s 0.000 is **vacuous** — see the
+⚠️ note) are the cells with room to rise, and they are not the same kind of
+problem:
 
 - **`negation` 0.000 in all three modes is a genuine open capability gap.**
   Three fixtures, each describing the exception *without ever naming the
@@ -1272,11 +1273,24 @@ Two columns need context before you read the P/R/MRR/NDCG numbers as
 
   For media, notes and conversations the semantic leg covers all of this
   completely. Prompts have no semantic leg — B2 gave them an FTS sub-leg and
-  deliberately no vector index — so the `prompt` category still reads 0.000
-  in `semantic` and `plain`, and reads 0.200 in `hybrid` on the strength of
-  that single rescued query. Do not read a `prompt` 0.000 as a
-  prompts-retrieval defect, and do not read the other categories' hybrid
-  numbers as evidence that the keyword leg is contributing to them.
+  deliberately no vector index — so the `prompt` category reads 0.000 in
+  `semantic`, and reads 0.200 in `hybrid` on the strength of that single
+  rescued query. Do not read a `prompt` 0.000 as a prompts-retrieval defect,
+  and do not read the other categories' hybrid numbers as evidence that the
+  keyword leg is contributing to them.
+
+  **`plain`'s 0.000 has a DIFFERENT cause, and this paragraph used to give
+  the wrong one** (corrected 2026-08-18, TASK-18255). The missing vector
+  index cannot explain `plain`, which never consults a vector index at all.
+  `plain` fans out over the Library's own four seams, and the harness
+  **deliberately does not wire the prompts one** — its fake app sets
+  `prompt_scope_service=None`, so `_search_prompts` returns `(False, [])`:
+  the seam reporting itself UNAVAILABLE. The cell is therefore **vacuous by
+  construction**, not a measured zero, and production does wire the service
+  (`app.py:5682`). The warning above was right for the wrong reason in
+  `plain`'s case — and TASK-17855 nonetheless filed the defect this sentence
+  warns against, because a `0.000` renders identically whether it means "not
+  measured" or "measured and found nothing".
 - **Plain's MRR and NDCG track recall, not ranking.** The four-seam keyword
   path deliberately drops the FTS rank ("an FTS ranking artifact, not a
   retrieval similarity score" — every plain row carries `score=None`), and
