@@ -1,7 +1,7 @@
 ---
 id: TASK-16072
 title: 'P2c candidate 5: clarification gate, probed before built'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-14 01:52'
 labels:
@@ -79,9 +79,76 @@ A recorded null is a success outcome of this arc, exactly as it was for PRF.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Step 0 runs first and answers, from the corpus rather than from argument, whether any golden query carries an ambiguity or underspecification signal a gate could fire on — and its per-query answer is reported before any design or code
-- [ ] #2 The admission bar and the kill condition are written down BEFORE the probe runs, including what evidence would license production code and what result ends the arc
-- [ ] #3 If the gate's value cannot be measured on this instrument without user-interaction fixtures, that is recorded as the finding and the arc ends there — a paper analysis is an acceptable deliverable; an unmeasurable improvement claim is not
-- [ ] #4 Any measurement reports gains AND losses by query id, with guard populations derived from a baseline pass at probe time, and no control is read as a property of the pipeline unless the variables it holds fixed are named
-- [ ] #5 No production code exists before the verdict; a below-bar result is recorded beside the retired premises in Tests/RAG_Eval/README.md with the next candidate filed
+- [x] #1 Step 0 runs first and answers, from the corpus rather than from argument, whether any golden query carries an ambiguity or underspecification signal a gate could fire on — and its per-query answer is reported before any design or code
+- [x] #2 The admission bar and the kill condition are written down BEFORE the probe runs, including what evidence would license production code and what result ends the arc
+- [x] #3 If the gate's value cannot be measured on this instrument without user-interaction fixtures, that is recorded as the finding and the arc ends there — a paper analysis is an acceptable deliverable; an unmeasurable improvement claim is not
+- [x] #4 Any measurement reports gains AND losses by query id, with guard populations derived from a baseline pass at probe time, and no control is read as a property of the pipeline unless the variables it holds fixed are named
+- [x] #5 No production code exists before the verdict; a below-bar result is recorded beside the retired premises in Tests/RAG_Eval/README.md with the next candidate filed
 <!-- AC:END -->
+
+## Outcome (2026-08-18): NULL — the premise is dead, no code was written
+
+**Step 0 (AC#1), from the corpus — CORRECTED after Qodo's review of PR
+#1791.** The first census counted RELEVANCE LABELS, which answers what the
+fixture intends rather than what the corpus contains. Re-measured against
+document text: **1** of 60 queries has an unlabelled alternative reading in
+the corpus (`match > rel`); 59 have none. The per-query answer for all 60 is
+committed as `per-query-census.md`, produced by `census.py`.
+
+The single qualifying query is `negation` — *"which outstation does not take
+a standard maintenance record"* — where the two extra matches exist **because
+the corpus asserts what the query excludes**. A clarifying question cannot
+repair that, which is why `negation` reads 0.000 under every construction
+this programme has measured. Qualifying under all three conditions: **0**;
+under condition 2 alone: **1**. Bar was 5, so the kill fires either way.
+
+**The 2 candidates fail the third condition, and badly.**
+`kw-nimbus-rollback` and `kw-calyx-limiter` each have two relevant documents
+— both correct. A clarifying question there would ask the user to discard one
+of two right answers, making retrieval worse rather than ambiguous-then-
+better. Qualifying count under all three conditions: **0**, against a
+pre-registered bar of 5. The kill condition fires.
+
+**Twelve short queries are not twelve gate cases.** ≤3-word queries like
+`'plant maintenance record'` all have exactly one relevant document: terse,
+not ambiguous. That distinction is what the bar was written to force.
+
+**Why this generalises past the fixture:** every failing class fails for a
+reason a question cannot repair — `negation` because the corpus asserts what
+the query excludes, `prompt` and the residual zero-row queries on absent
+CONTENT words, `paraphrase`/`vocabulary_mismatch` in `plain` on no shared
+content word. No answer to any question puts a missing document into an index.
+
+Reaching the bar would have required authoring ambiguity fixtures, which the
+kill condition pre-declared a kill: the admission protocol admits only what
+today's pipeline is measured to fail, and a class invented to give a feature
+something to show measures the class.
+
+**The fifth P2c premise to die before being built** (after `expansion`,
+`acronym`, `compositional`, PRF). Four died on measurement; this one died on
+a **census** — one query over the fixture, a fraction of PRF's cost. That is
+the transferable lesson and it is carried into the next candidate,
+**TASK-18155** (granularity router), whose ACs require the census first.
+
+Artifacts: `Docs/superpowers/qa/2026-08-18-clarification-gate/bar.md`
+(registered before the probe) and `step0.md` (the census and verdict).
+
+### Review corrections (2026-08-18, Qodo on PR #1791)
+
+- **"Census misses corpus ambiguity" — right, and it changed the method.**
+  Re-measured against document text rather than label counts; verdict
+  unchanged but now resting on a corpus-derived measure.
+- **"`plant maintenance record` has industrial and botanical readings" —
+  factually wrong, checked in one query.** Exactly one corpus document
+  mentions "plant" (`note-saltmarsh-hide`) and it is the labelled relevant
+  one. Plausible claim, hence checked rather than believed.
+- **"Per-query census missing" — right.** All 60 rows are now committed.
+- **"Every ≤3-word query has one relevant doc" — my error.**
+  `kw-nimbus-rollback` is three words with two (both correct — a multi-target
+  query, not an ambiguous one). My own script printed both facts and I failed
+  to cross-check them.
+- **Task id case** — `TASK-18155` canonicalised; lowercase breaks discovery.
+- **Method note:** the corrected census first reported `match = 0` almost
+  everywhere because it read `body`/`text` while `CorpusDoc` uses `content` —
+  a measure reading nothing looks exactly like a clean null. `census.py` now
+  prints how many documents it actually read before any result.
