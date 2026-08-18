@@ -113,6 +113,26 @@ class StatusRowApp(ConsolidatedCSSApp):
         )
 
 
+class PanelStatusRowApp(StatusRowApp):
+    """Mount the status row exactly as the Console screen does.
+
+    The real screen composes the chips with ``classes="ds-panel"``
+    (chat_screen.py), which carries a bottom margin the id rule must
+    cancel; a stand-in neighbor below makes the resulting gap, if any,
+    observable as real geometry.
+    """
+
+    def compose(self) -> ComposeResult:
+        """Compose the ds-panel status row above a stand-in neighbor."""
+        yield ConsoleStatusChips(
+            _state(),
+            collapsed=self._collapsed,
+            id="console-status-chips",
+            classes="ds-panel",
+        )
+        yield Static("footer stand-in", id="footer-stand-in")
+
+
 def _ready_console_host() -> tuple[ConsoleHarness, object]:
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -220,6 +240,25 @@ async def test_expanded_status_row_keeps_toggle_left_and_scroller_in_viewport(
         assert scroller.region.right == viewport.right
 
 
+@pytest.mark.asyncio
+async def test_status_row_panel_class_reserves_no_margin_row() -> None:
+    """ds-panel's bottom margin must not open a blank row under the chips.
+
+    ``.ds-panel`` declares ``margin: 0 0 1 0``; the ``#console-status-chips``
+    rule overrides the class's other box styles and must cancel the margin
+    too, or a zero-information blank row renders between the chips and the
+    footer on the real screen (TASK-17650).
+    """
+    app = PanelStatusRowApp()
+    async with app.run_test(size=(100, 32)) as pilot:
+        await pilot.pause()
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        neighbor = app.query_one("#footer-stand-in", Static)
+
+        assert chips.styles.margin.bottom == 0
+        assert neighbor.region.y == chips.region.y + chips.region.height
+
+
 def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
     """Keep source and bundled status-row geometry contracts equivalent."""
     for stylesheet in (_AGENTIC_SOURCE, _BUNDLED_STYLESHEET):
@@ -236,6 +275,7 @@ def test_status_row_stylesheet_contract_is_in_source_and_bundle() -> None:
             "layout: horizontal;",
             "border: none;",
             "padding: 0 1;",
+            "margin: 0;",
         )
 
         presentations = _rule_body(
