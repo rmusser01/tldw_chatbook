@@ -31,9 +31,13 @@ task...".
   e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
   Esc clear". The guide follows the row: a message without the 🔊 button
   does not list "Speak".
-- **Composer** — the input strip at the bottom: the "Composer ▾" collapse
-  button, the **Menu** button (Prompts, Attach, Save as Chatbook, Generate
-  Image/Caption, Impersonate), the draft area, and the Send / Mic buttons.
+- **Composer** — the slim input bar near the bottom, floating one blank
+  line clear of the status row above and the footer below. Its one-column
+  left edge shows its state (muted at rest, green with a draft, thick blue
+  focused), and the bar is exactly as tall as your draft. Left to right:
+  the "Composer ▾" collapse button, the **Menu** button (Prompts, Attach,
+  Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
+  and the Send / Mic buttons.
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
@@ -81,7 +85,14 @@ tool, code, and link styling keeps priority over immersive coloring.
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in
   any terminal) or **Shift+Enter** (only in terminals that deliver it).
-- The draft area grows from one row up to four as your text wraps.
+- The draft area grows from one row up to eight as your text wraps, and
+  shrinks back as the draft empties; drafts taller than eight rows window
+  with a leading "... " and follow the caret.
+- **Up** on the draft's first row (and **Down** on its last) steps
+  through this app's past prompts, most recent first; on middle rows they
+  move the caret between wrapped lines. While you type, a dim ghost
+  completion of the most recent matching past prompt may appear after the
+  caret — press **Right** at the end of the draft to accept it.
 - **Ctrl+A** selects the whole draft; with that full selection active,
   **Ctrl+C** copies it to the clipboard. **Ctrl+U** clears the draft;
   **Ctrl+W** deletes the word left of the caret.
@@ -128,8 +139,8 @@ in **Settings > Console Behavior**.
 ### Prompt queue
 
 After the current turn is accepted, **Send** changes to **Queue**. Each Console
-tab can hold up to 10 text-only follow-up prompts. The one-row shelf above the
-composer shows `Queue N/10`, whether it is draining or paused, a safe preview
+tab can hold up to 10 text-only follow-up prompts. The one-row shelf at the
+top of the control deck (above the status row) shows `Queue N/10`, whether it is draining or paused, a safe preview
 of the next prompt, and **Manage** plus a state-specific action such as
 **Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
@@ -220,6 +231,8 @@ Composer:
 | Ctrl+U | Clear the draft |
 | Ctrl+W | Delete the word left of the caret |
 | Home / End | Move the caret to the start / end of the draft |
+| Up / Down | Recall past prompts on the draft's first/last row; move the caret between wrapped rows otherwise |
+| Right (at the end of the draft) | Accept the dim ghost-text suggestion |
 | PageUp / PageDown | Scroll the transcript |
 | Esc | Expand a collapsed composer / return focus to the draft |
 
@@ -251,9 +264,11 @@ Transcript:
 
 ## Quirks & troubleshooting
 
-- **No input history recall** — pressing up/down never cycles through your
-  past inputs. Each session keeps its unsent draft when you switch away and
-  back, but there is no history browsing.
+- **History recall is per-app, not per-session** — Up/Down on the
+  draft's boundary rows and the ghost-text suggestions draw on prompts
+  accepted in this app, newest first, regardless of which session sent
+  them. Each session still keeps its own unsent draft when you switch
+  away and back.
 - **Actions wait for the stream** — every per-message action is disabled
   while a reply is generating. Stop the run first if you need to act on a
   message immediately.
@@ -267,4 +282,8 @@ Transcript:
 
 —
 *Verified against dev @ ff435772c — 2026-07-31. Verified against
-9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped code/tests).*
+9f90e17b8 — 2026-08-06 (PR-T3, docs pass against shipped code/tests).
+Composer geometry, history recall, and ghost text re-verified against
+dev @ b6036515e — 2026-08-18 (task-17662: keys checked against the
+composer's key handling; geometry against the bottom-stack programme's
+painted probes).*
