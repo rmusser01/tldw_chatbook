@@ -551,10 +551,18 @@ def summarize_with_kobold(
                 else:
                     logging.warning("Kobold: No API key found in config file")
             # Get the Streaming API IP from the config
+            # Qodo (PR 1788): these two endpoints are NOT interchangeable.
+            # The streaming branch parses OpenAI-compatible SSE, and the
+            # OpenAI-compatible endpoint is the legacy `api_streaming_ip`
+            # (".../v1/chat/completions"), while BOTH `api_settings.koboldcpp.
+            # api_url` and the legacy `api_ip` point at Kobold's NATIVE
+            # ".../api/v1/generate". Preferring the modern url here sent
+            # streaming requests to the native endpoint and produced no
+            # summary, because the modern key is normally populated.
             kobold_openai_api_IP = (
-                kobold_modern.get("api_url")
-                or kobold_legacy.get("api_streaming_ip")
-                or kobold_legacy.get("api_ip")
+                kobold_legacy.get("api_streaming_ip")
+                or kobold_modern.get("api_streaming_url")
+                or kobold_modern.get("api_url")
             )
 
         if kobold_api_key is None:

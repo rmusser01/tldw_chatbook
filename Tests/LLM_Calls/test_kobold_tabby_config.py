@@ -201,3 +201,104 @@ def test_missing_sections_do_not_raise(monkeypatch, captured_post):
     assert isinstance(result, str)
     assert _is_summary_failure(result), result
     assert "KeyError" not in result
+
+
+def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
+    """Qodo (PR 1788): the streaming branch parses OpenAI SSE, but both the
+    modern api_url and the legacy api_ip point at Kobold's NATIVE generate
+    endpoint -- only `api_streaming_ip` is OpenAI-compatible. Preferring the
+    modern url sent streaming to the native endpoint and yielded nothing."""
+    conf = settings()
+    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
+    conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
+    conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
+    monkeypatch.setattr(lib, "load_settings", lambda: conf)
+
+    seen = {}
+
+    class StreamResponse:
+        status_code = 200
+        text = ""
+
+        def iter_lines(self):
+            yield b'data: {"choices":[{"delta":{"content":"chunk"}}]}'
+            yield b"data: [DONE]"
+
+        def json(self):
+            return {}
+
+        def raise_for_status(self):
+            return None
+
+    class StreamSession:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, url, **_kw):
+            seen["url"] = url
+            return StreamResponse()
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: StreamSession())
+
+    drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
+
+    assert seen["url"] == "http://kobold.invalid/v1/chat/completions", seen
+
+
+def test_kobold_non_streaming_uses_the_native_endpoint(monkeypatch, captured_post):
+    """The complement: the non-streaming branch parses `results[].text`, so it
+    must go to the NATIVE generate endpoint. Shaped like the real config, where
+    both the modern api_url and the legacy api_ip are native."""
+    conf = settings()
+    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
+    conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
+    conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
+    monkeypatch.setattr(lib, "load_settings", lambda: conf)
+
+    drain(lib.summarize_with_kobold("text", None, "Summarize."))
+
+    assert captured_post["url"] == "http://kobold.invalid/api/v1/generate"
+
+
+def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
+    """Qodo (PR 1788): the other tests call the summarizers directly. This one
+    goes through `analyze`, the seam the deep-search pipeline actually uses, so
+    the resolution is verified where a caller meets it."""
+    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+
+    monkeypatch.setattr(lib, "load_settings", lambda: settings())
+    seen = {}
+
+    class Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, url, headers=None, json=None, stream=False, **_kw):
+            seen["url"] = url
+            return FakeResponse()
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: Session())
+
+    result = drain(
+        analyze(
+            input_data="a chunk of packed evidence",
+            custom_prompt_arg="Summarize.",
+            api_name="tabbyapi",
+            api_key=None,
+            temp=0.3,
+            system_message=None,
+            streaming=False,
+        )
+    )
+
+    # The configuration resolution is what this asserts: the request went to
+    # the endpoint the modern table names, through the public seam.
+    assert seen["url"] == "http://tabby.invalid/v1/chat/completions", seen
+    # The VALUE a caller gets back is still unusable, and deliberately so: these
+    # functions are generators (task-17387), so `analyze` hands back something
+    # a non-streaming caller cannot treat as a summary. Pinned here rather than
+    # asserted away, so this test starts telling the truth about the return
+    # value the moment task-17387 lands.
+    assert result.strip() == "", (
+        "task-17387 fixed? then assert the summary here instead: " + repr(result)
+    )
