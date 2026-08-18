@@ -417,4 +417,7 @@ by the watermarks — measured ~150 rows / height ~600 at the default marks;
 a far jump mounted 5 rows instead of 490); not re-checked live. The
 head-pinned-selection pause (TASK-16851) verified by shipped tests — a
 post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
-it previously grew to 1966 and kept growing; not re-checked live.*
+it previously grew to 1966 and kept growing; not re-checked live. Verified
+against 22d156155 + TASK-17650 — 2026-08-17 (headless row-map probe at
+150×44): the permanent blank row between the status row and the footer is
+gone, and the transcript gained the row (region height 28 → 29).*
