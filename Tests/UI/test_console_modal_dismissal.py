@@ -103,6 +103,9 @@ from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsMo
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
 )
+from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
+    ConsoleReviewNotesModal,
+)
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
@@ -1096,7 +1099,11 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
-    inventory_only_types: set[type[ModalScreen[Any]]] = set()
+    # task-18515 review-note management, task 2: ConsoleReviewNotesModal is
+    # built but not yet launched from anywhere -- task 3 wires it into the
+    # `n`/marker-click flow. Until then it is discovered but not reachable,
+    # same escape hatch ConsoleReactionPickerModal used before it was wired.
+    inventory_only_types: set[type[ModalScreen[Any]]] = {ConsoleReviewNotesModal}
 
     assert discovered_console_types - console_contract_types == inventory_only_types
     assert discovered_console_types == console_contract_types | inventory_only_types
