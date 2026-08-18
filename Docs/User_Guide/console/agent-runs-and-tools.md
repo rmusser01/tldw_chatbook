@@ -375,10 +375,19 @@ finishes.
 **Cancel one child.** Focus a still-running row (Tab into the panel, or
 click a row then Tab) and press **Delete** — this cooperatively cancels
 just that child and withdraws (denies) any of its own approval cards still
-pending, the same mechanism **Stop** uses for a whole run; a sibling child
-keeps running, untouched. A row for a finished, errored, or already-
-cancelled child — or any historical/resumed row — doesn't offer this
-gesture at all, since there's nothing left to stop.
+pending; a sibling child keeps running, untouched. A row for a finished,
+errored, or already-cancelled child — or any historical/resumed row —
+doesn't offer this gesture at all, since there's nothing left to stop.
+
+**Cancel all agents.** While at least one child of the conversation is
+live, the rail's Agent section also offers a **Cancel all agents** button
+— one press cancels every live child of that conversation, including
+survivors of earlier replies, through the same per-child mechanism as the
+row's Delete (so each child's pending approval cards are withdrawn too).
+The button only appears while something is actually live; a panel full of
+finished rows doesn't offer it. See
+[Stopping a run vs. stopping its sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)
+for how this differs from **Stop**.
 
 **Token spend.** A live child's measured token spend (prompt and
 completion combined) appears on its row once it finishes — but only while
@@ -423,6 +432,83 @@ survivor's post-turn spend shows on the chip line only.
   above it, you may need to scroll the rail manually to reach the last
   rows (task-15201).
 
+#### Steering a running sub-agent
+
+You — and the supervisor — can send a message to a sub-agent **while it is
+still working**, without cancelling or restarting it. Two paths, one
+mechanism:
+
+- **You, from the panel.** Drill into a *live* child's row: a compact
+  steering input appears in the Agent rail (between the child's view and
+  its Back button). Type and press Enter. The child sees your text as a
+  user-role message in its own transcript, prefixed
+  `[Steering from user]`. The input only exists for a live child's
+  drill-in — the overview and a finished child's drill-in never show it
+  (a finished child takes no more model turns).
+- **The supervisor, mid-turn.** The supervisor has its own internal
+  `send_to_agent` step for the same mailbox — its entries arrive prefixed
+  `[Steering from supervisor]`, so the child (and its run log) can always
+  tell the two sources apart. This works on any live child of the
+  conversation, including a survivor an *earlier* reply spawned.
+
+**Queued, honestly.** Steering is not injected mid-thought: it is queued,
+and delivered at the child's next model turn — at a safe boundary that
+never splits a tool call from its result. Until the child consumes it, the
+child's panel row appends `· steering queued (N)` and the drill-in input
+shows its own `steering queued (N)` line; both clear when the child picks
+the entries up. If the child is inside a long tool call, delivery waits for
+that call to return — so "queued" can stand for a while, and that is the
+honest state, not a failure.
+
+What steering **never** does:
+
+- It never cancels, restarts, or reorders the child — the run continues
+  exactly as it was (the supervisor's `send_to_agent` confirmation says
+  so in as many words).
+- It never satisfies an approval. If the child is waiting on one of your
+  approval cards, the card is completely unaffected — the child only sees
+  the steering after you answer the card and its next model turn comes.
+- The prefix is applied by the mechanism, never trusted from the text —
+  typing your own `[Steering from …]` prefix doesn't impersonate anyone.
+
+One message is capped at 4,000 characters; the panel input refuses an
+oversize entry with a note and keeps your draft so you can shorten it.
+The **primary** agent has no steering input — you steer it by talking to
+it — and inline (non-fleet) sub-agents cannot be steered at all.
+
+#### Continuing a finished sub-agent
+
+Once a child has **finished**, steering is over — but the supervisor can
+still follow up: a `send_to_agent` to a finished child starts a **new run
+of the same agent, seeded with the finished child's full transcript**, any
+steering it never got to read (original labels preserved), and the new
+message. This is supervisor-only: the panel watches and steers, it never
+launches — ask the supervisor in chat ("ask the researcher to also check
+X") and it resumes the child itself.
+
+- **It is a new run, honestly labeled.** The old run is not restarted —
+  the supervisor's confirmation names the new run's id, the panel gets a
+  fresh row, and the drill-in header of the resumed run reads
+  `· resumed from <old run id>`. A resume costs a spawn slot and counts
+  against the live cap, exactly like any spawn. Its token figure is the
+  new run's own — the finished original's spend stays with the original
+  row while it lasts, so a continued task's *combined* spend is never
+  shown as one number (task-18311).
+- **What can be resumed.** Retention is per-conversation and in-memory:
+  the last `[agents] retained_transcripts` finished children (default
+  **5**; `0` disables retention entirely) with transcripts up to
+  `[agents] retained_transcript_max_chars` (default **200 000**) are kept,
+  oldest evicted first. A **cancelled or superseded** child is never
+  retained — cancelling is a statement you're done with it. An oversize
+  transcript is not retained either (truncating it would silently change
+  the agent's memory), and the refusal says so.
+- **Restarts forget transcripts.** After an app restart the supervisor is
+  told the transcript "does not survive an app restart — spawn a fresh
+  sub-agent instead". Cross-restart resurrection is deliberately out of
+  scope.
+- A second resume of the same finished child forks from the same snapshot
+  (the first resume does not consume it).
+
 #### When a sub-agent outlives the reply
 
 The supervisor doesn't have to wait for every sub-agent it started. If it
@@ -451,11 +537,10 @@ What this means in practice:
   waiting on a model response the row can stay `●` for another several
   seconds before flipping to cancelled — whatever it had produced up to
   that point is kept as its result.
-- **Stop is different before and after.** Pressing **Stop** during the
-  turn that spawned it cancels the whole tree, survivors included — Stop
-  stays a kill switch for everything that turn started. Once that turn
-  has returned, Stop no longer reaches the child; the row's **Delete** is
-  the gesture that does.
+- **Stop doesn't reach it — or any other background sub-agent.** Pressing
+  **Stop** cancels the supervisor's *turn*; sub-agents keep working. See
+  [Stopping a run vs. stopping its sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)
+  for the full contract and the kill switches that *do* reach them.
 
 **What bounds it.** Three separate limits, none of which is a promise the
 others make:
@@ -534,6 +619,43 @@ first's genuinely-running rows.
 `config.toml`: sub-agents are then settled at the end of the turn that
 spawned them, exactly as before this behavior existed. Setting
 `max_live_subagents = 1` removes it too, by removing the fleet entirely.
+
+#### Stopping a run vs. stopping its sub-agents
+
+With `[agents] subagents_outlive_turn` on (the shipped default), **Stop
+cancels the supervisor's turn only** — sub-agents are not part of the
+blast radius. A child that was mid-work when you pressed Stop keeps
+working; if the Stop landed while the supervisor was collecting results,
+the stopped reply ends with "(The run was cancelled; sub-agents continue
+in the background.)". That "continue" connects to
+[auto-wake](#when-a-background-sub-agent-finishes--auto-wake): each
+survivor's completion wakes the supervisor and delivers its result in a
+fresh turn — unless you've set `[agents] autowake_enabled = false`, in
+which case "continue" yields a *recorded* completion (toast, `◈` marker,
+ledger) that is delivered only when you turn the wake back on. A stopped
+turn's survivor is still a first-class fleet member: its row stays live,
+it still [drains steering](#steering-a-running-sub-agent), and its pending
+approval card — if it was waiting on one — stays waiting for your answer
+rather than being denied by the Stop.
+
+The kill switches that **do** stop sub-agents:
+
+- **Delete on a row** — cancels that one child (and denies its pending
+  approval cards).
+- **Cancel all agents** — the panel button; every live child of the
+  conversation, one press.
+- **Closing the session** (the tab's destructive close) — a closed
+  session's messages are purged, so its fleet dies with it; every live
+  child is cancelled through the same per-child path as Cancel all.
+  (Navigating away from Console is different — that keeps survivors; see
+  [Stopping & leaving](#stopping--leaving).)
+- **`[agents] subagents_outlive_turn = false`** — restores the old
+  contract wholesale: Stop (and end-of-turn settle) takes the whole tree
+  down, exactly as before, and the stopped reply's note reads "(…
+  sub-agents were stopped.)" instead.
+
+Quitting the app still takes everything with it — a sub-agent cannot
+outlive the process (see "If the app restarts", above).
 
 #### When a background sub-agent finishes — auto-wake
 
@@ -811,14 +933,20 @@ may send the approved evidence to its client or model.
 ### Stopping & leaving
 
 - **Stop** (appears next to Send while a run is active) stops **this tab's
-  run only** — other tabs keep going. Any sub-agents still working for that
-  run are cancelled with it, and any of their approval cards still pending
-  are withdrawn (denied) at the same time — a sibling sub-agent's card
-  belonging to a *different* tab's run is untouched. The partial reply is
-  `[stopped]` and a System row records "Response stopped by user." If that
-  tab has queued prompts, they pause. Choose **Retry stopped** to retry the
-  stopped turn before continuing, or **Resume next** to keep the stopped turn
-  and continue with the next prompt.
+  run only** — other tabs keep going, and (with the shipped
+  `[agents] subagents_outlive_turn = true`) so do this run's own
+  sub-agents: Stop cancels the supervisor's turn, not its fleet — see
+  [Stopping a run vs. stopping its sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)
+  for the contract and the sub-agent kill switches (per-row Delete,
+  Cancel all agents, closing the session, the config switch). The partial
+  reply is `[stopped]` and a System row records "Response stopped by
+  user." If that tab has queued prompts, they pause. Choose **Retry
+  stopped** to retry the stopped turn before continuing, or **Resume
+  next** to keep the stopped turn and continue with the next prompt.
+- **Closing a session tab** is destructive — its messages are purged — so
+  it takes that session's fleet with it: every live sub-agent, survivors
+  included, is cancelled as part of the close (a survivor would otherwise
+  outlive its own conversation, with no row left to cancel it from).
 - Leaving the Console screen is different: after the "Leave Console?" confirm,
   every in-flight **turn** is cancelled and every pending or parked approval is
   denied — never approved. One thing survives the leave: a background
@@ -888,8 +1016,18 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   outlives the reply](#when-a-sub-agent-outlives-the-reply) above.
 - **`[agents] subagents_outlive_turn`** in `config.toml` — whether a
   sub-agent may keep working after the reply that spawned it finishes
-  (default `true`). Set it to `false` to settle every sub-agent at the end
-  of its own turn. No Settings UI switch.
+  (default `true`). This is also the Stop-semantics switch: `true` means
+  Stop cancels the supervisor's turn only, `false` restores
+  Stop-kills-the-whole-tree and settles every sub-agent at the end of its
+  own turn (see [Stopping a run vs. stopping its
+  sub-agents](#stopping-a-run-vs-stopping-its-sub-agents)). No Settings UI
+  switch.
+- **`[agents] retained_transcripts`** and
+  **`[agents] retained_transcript_max_chars`** in `config.toml` — how many
+  finished sub-agents per conversation stay resumable in memory (default
+  `5`; `0` disables continuation) and the largest transcript that will be
+  retained (default `200000`). See [Continuing a finished
+  sub-agent](#continuing-a-finished-sub-agent). No Settings UI switch.
 - **`[agents] autowake_enabled`** in `config.toml` — whether a background
   sub-agent finishing after its turn wakes its supervisor (default
   `true`). `false` still records every completion (toast, `◈` marker,
@@ -1110,3 +1248,25 @@ quit-denies path, and nothing was written to disk while it waited.*
 (task-17662: the status chips sit above the composer since the
 bottom-stack programme; a Settings ▸ Console Behavior toggle can move
 them below).*
+
+*Steering, continuation and the new Stop contract added against dev @
+cf5db6f50 — 2026-08-18 (fleet PR 3b close-out). **Driven live in tmux**
+on an isolated scratch profile against a real Anthropic model
+(`claude-sonnet-5`): the drill-in steering bar accepted a typed message
+and the child's own run record carried it as
+`[Steering from user] …` and obeyed it; the supervisor's `send_to_agent`
+returned the "queued; … delivered before its next model turn … was not
+cancelled or restarted" copy verbatim and the child's record carried
+`[Steering from supervisor] …`; `send_to_agent` to a FINISHED child
+answered "resumed … as a NEW run: started …, seeded with its retained
+transcript (35 messages)" and the resumed child's drill-in header read
+`Sub-agent · running · resumed from <old id>`; a Stop mid-`wait_agents`
+printed "(The run was cancelled; sub-agents continue in the
+background.)" and its survivor finished `done` (never `cancelled`) and
+auto-woke the supervisor; a message steered while an approval card was
+pending sat visible as `steering queued (1)` beside `Approvals: 1
+pending` and reached the child only after the round was answered;
+**Cancel all agents** killed two live children in one press and left the
+rail on the next sync; and closing the session cancelled its live child
+immediately. The rest of this page's content is unchanged from the prior
+stamps.*

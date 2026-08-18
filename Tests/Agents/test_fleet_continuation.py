@@ -1293,3 +1293,92 @@ def test_final_messages_never_reach_the_db(db):
     assert "final_messages" not in child_row
     assert "final_messages" not in db.get_run(run1)
     assert child_row["result"] == "quick answer"
+
+
+# =========================================================================
+# 4. Sec 8's 3b cost-ticker audit (PR 3b Task 6), executed not assumed
+# =========================================================================
+
+
+def test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish(db):
+    """Sec 8's 3b audit, positive half: a RESUMED child's `total_tokens`
+    reaches the fleet rollup through the same `fleet.finish` call as any
+    child (`run_child`'s finally, shared via `_launch_fleet_child`), onto
+    a NEW handle the rollup source sums.
+
+    The rollup source is `ConsoleAgentController._console_agent_fleet_
+    token_total`: `sum(handle.total_tokens for handle in fleet_snapshot(
+    conversation_id))`, and `bridge.fleet_snapshot` returns this
+    coordinator's `snapshot()` copies -- asserted here at the coordinator
+    seam with the exact same summation.
+
+    The audit's negative half -- a finished survivor's spend LEAVES that
+    sum at the next turn's `prune_terminal`, and a continued task's
+    aggregate (old + resumed run) is derivable from no surface (the DB
+    joins `resumed_from_run_id` lineage but persists no tokens) -- is
+    characterized at the tail, filed as TASK-18311, deliberately not
+    patched here (the plan's own scope pin).
+    """
+    holder: dict = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "now double-check it"},
+        )
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "study the logs"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one answer",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two answer",
+        ],
+        {
+            "study the logs": [
+                "a real first answer with enough text for a token count",
+                "a rechecked second answer with enough text for a token count",
+            ]
+        },
+    )
+    run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    old_run_id = finished.run_id
+    _await_retained(coordinator, finished.handle_id)
+    old_spend = coordinator.get(finished.handle_id).total_tokens
+    assert old_spend > 0
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+
+    rows = _subagent_rows(db)
+    resumed_row = next(r for r in rows if r["resumed_from_run_id"] is not None)
+    assert resumed_row["resumed_from_run_id"] == old_run_id
+    resumed_handle = next(
+        h for h in coordinator.snapshot() if h.run_id == resumed_row["id"]
+    )
+    # The audit's claim: the resumed run's measured spend was recorded onto
+    # its handle at finish -- the SAME seam PR2b Task 5 pinned for ordinary
+    # children (`test_finished_children_record_their_measured_token_spend_
+    # on_the_handle`), inherited by the resume with zero new wiring.
+    assert resumed_handle.status == RUN_DONE
+    assert resumed_handle.total_tokens > 0
+    # ...and the rollup summation (the exact `_console_agent_fleet_token_
+    # total` expression over the snapshot copies) includes BOTH figures
+    # while the handles live.
+    rollup = sum(h.total_tokens for h in coordinator.snapshot())
+    assert rollup == old_spend + resumed_handle.total_tokens
+
+    # -- The honest gap, characterized (TASK-18311; do not "fix" this
+    # assertion without that task): the next turn's prune drops both
+    # terminal handles, so the rollup reads 0 -- the finished survivor's
+    # spend has left `fleet_snapshot`, and NO surface can reconstruct the
+    # continued task's old+new aggregate (the DB has the lineage join but
+    # no token column).
+    assert coordinator.prune_terminal() >= 2
+    assert sum(h.total_tokens for h in coordinator.snapshot()) == 0
