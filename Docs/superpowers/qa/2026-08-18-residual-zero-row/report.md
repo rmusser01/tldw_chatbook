@@ -22,7 +22,28 @@ semantic leg permanently.
 The 11 break down as one query with **all** content words present, and ten
 with partial overlap (from 1/8 up to 7/8).
 
-## The finding that changes the task's premise
+## CORRECTION (2026-08-18, before any work on TASK-18255)
+
+**The prompt-seam conclusion below is WRONG, and is retained only so the
+error stays legible.** The plain path returns zero rows for prompt queries
+because the EVAL HARNESS does not wire a prompts seam: its fake app sets
+`prompt_scope_service=None`, so `_search_prompts` returns `(False, [])` —
+the seam reporting itself **unavailable**, which is not the same as matching
+nothing. Production wires it (`app.py:5682`).
+
+The harness states this in its own comment, which I did not read before
+concluding: *"Leaving it None means the harness's plain column reports 0.000
+for prompts while the shipped app's plain mode does find them."*
+
+So `plain`'s `category.prompt.*` cells are **vacuous by construction**, and
+reading them as a retrieval failure — as the section below does — is the
+mistake. TASK-18255 is re-scoped accordingly.
+
+**The rest of this report stands**: the 19-unreachable / 11-reachable split
+is a lexical property of the corpus and does not depend on any seam being
+wired.
+
+## The finding that changes the task's premise (SUPERSEDED — see above)
 
 The task assumed the residual was a *recall* problem to be attacked by
 broadening. Half of that is right — the 19 unreachable ones are the semantic
