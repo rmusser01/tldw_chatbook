@@ -103,7 +103,6 @@ from ...Workspaces.registry_service import (
     DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
-    next_local_workspace_identity,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -14493,13 +14492,9 @@ class SettingsScreen(BaseAppScreen):
         show_archived = bool(self._settings_show_archived_workspaces)
         active = registry.get_active_workspace()
         active_id = active.workspace_id if active is not None else None
-        with Horizontal(classes="settings-input-row"):
-            yield Input(
-                placeholder="New workspace name",
-                id="settings-workspace-create-name",
-                classes="settings-compact-input",
-            )
-            yield Button("Create", id="settings-workspace-create", compact=True)
+        yield Button(
+            "Create workspace…", id="settings-workspace-create", compact=True
+        )
         yield Checkbox(
             "Show archived", show_archived, id="settings-workspaces-show-archived"
         )
@@ -18106,28 +18101,26 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-workspace-create")
     def handle_workspace_create(self, event: Button.Pressed) -> None:
-        """Create a workspace from the typed name, or a generated one when
-        left blank -- the id always comes from `next_local_workspace_identity`
-        (task 9)."""
+        """Open the shared create dialog (spec 2026-08-17 §4.3)."""
         event.stop()
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
             return
-        try:
-            name_input = self.query_one("#settings-workspace-create-name", Input)
-        except QueryError:
-            return
-        typed_name = name_input.value.strip()
-        workspace_id, generated_name = next_local_workspace_identity(registry)
-        try:
-            registry.create_workspace(
-                workspace_id=workspace_id, name=typed_name or generated_name
-            )
-        except WorkspaceRegistryServiceError as exc:
-            self._set_settings_workspaces_result(str(exc))
-            return
-        self._settings_workspaces_result = ""
-        self._refresh_settings_workspaces_pane()
+        from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
+
+        def _done(result) -> None:
+            if result is None:
+                return
+            status_parts = [message for _folder, message in result.failed_folders]
+            if result.make_active:
+                try:
+                    registry.set_active_workspace(result.workspace_id)
+                except WorkspaceRegistryServiceError as exc:
+                    status_parts.append(str(exc))
+            self._settings_workspaces_result = "; ".join(status_parts)
+            self._refresh_settings_workspaces_pane()
+
+        self.app.push_screen(WorkspaceCreateModal(registry_service=registry), _done)
 
     @on(Button.Pressed, "#settings-workspace-rename-apply")
     def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:

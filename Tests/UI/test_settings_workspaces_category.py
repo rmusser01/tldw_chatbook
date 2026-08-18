@@ -72,12 +72,21 @@ async def test_create_rename_archive_unarchive_flow() -> None:
             await _wait_for_selector(
                 screen,
                 pilot,
-                "#settings-workspace-create-name",
+                "#settings-workspace-create",
             )
 
-            # Create with a free-form name.
-            screen.query_one("#settings-workspace-create-name", Input).value = "Client X"
+            # Create with a free-form name via the shared create modal.
             screen.query_one("#settings-workspace-create", Button).press()
+            await pilot.pause()
+            modal = app.screen
+            assert modal is not screen
+            await _wait_for_selector(modal, pilot, "#workspace-create-name")
+            modal.query_one("#workspace-create-name", Input).value = "Client X"
+            # Leave inactive so the rename/duplicate-name/set-active steps
+            # below still exercise the Settings-side "Set active" button.
+            modal.query_one("#workspace-create-make-active", Checkbox).value = False
+            modal.query_one("#workspace-create-confirm", Button).press()
+            await pilot.pause()
             created = []
             for _ in range(200):
                 created = [
