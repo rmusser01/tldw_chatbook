@@ -88,3 +88,23 @@ them — is buying with the wrong currency.
 Artifacts: `Docs/superpowers/qa/2026-08-18-residual-zero-row/report.md` and
 `reachability_census.py` (runnable; prints its document count before any
 result).
+
+### CORRECTION (2026-08-18)
+
+**The prompt-seam finding above was wrong.** `plain` returns zero rows for
+prompt queries because the eval harness sets `prompt_scope_service=None`, so
+the seam reports itself UNAVAILABLE (`_search_prompts` → `(False, [])`) —
+not because it matched nothing. Production wires it (`app.py:5682`), and the
+harness comment says so explicitly: *"the shipped app's plain mode does find
+them."* I read the instrument's numbers without checking whether the
+instrument could see the thing.
+
+The defect claim is **withdrawn as unsupported, not disproven**: whether
+the sub-leg actually retrieves against a real `PromptScopeService` remains
+untested, and TASK-18255 exists to settle it.
+
+**What survives:** the 19-unreachable / 11-reachable split, a lexical
+property of the corpus, independent of any seam. **What does not:** the claim
+that the prompts sub-leg is defective, and the cost table's implication that
+fixing it would reach 5 queries. TASK-18255 is re-scoped from "fix the seam"
+to "wire the seam into the harness so the cells measure something".

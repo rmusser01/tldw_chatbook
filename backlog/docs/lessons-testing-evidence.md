@@ -5178,3 +5178,74 @@ Three mechanics worth keeping:
    When a mounted test drives clicks or asserts geometry, subclass the
    harness with `CSS_PATH = BUNDLED_STYLESHEET` — and treat a red mounted
    test in a bare harness as unattributed until reproduced under the bundle.
+
+## A `0.000` from a seam the harness never wired reads exactly like a real negative (TASK-17855/18255, 2026-08-18)
+
+TASK-17855 censused the RAG eval harness's residual zero-row queries and
+reported a **production defect**: the Library's plain-mode prompts sub-leg
+returned zero rows for all five `prompt` golden queries, including one whose
+target contains *every* content word of the query, and `prompts_fts` indexes
+the matching column. Every term present, every term indexed, zero rows back
+— the conclusion looked forced.
+
+It was wrong. The harness's fake app sets `prompt_scope_service=None`, so
+`_search_prompts` returns `(False, [])` — a seam reporting itself
+**unavailable**. Production wires it (`app.py:5682`). The metrics table
+renders "not measured" and "measured, found nothing" as the same `0.000`,
+and I read the second.
+
+**Four written warnings sat in the tree, all unread**: the harness's own
+comment directly above the line (*"Leaving it None means the harness's plain
+column reports 0.000 for prompts while the shipped app's plain mode does
+find them"*); the B2 plan twice (*"the Library four-seam path already
+searches prompts its own way — do not touch it"*); and — most pointedly —
+the eval README, which says in as many words: ***"Do not read a `prompt`
+0.000 as a prompts-retrieval defect."*** I filed that exact defect.
+
+That fourth one carries its own sub-lesson, because the README's *reason*
+was wrong even though its conclusion was right: it attributed `plain`'s
+0.000 to prompts having no vector index, and `plain` never consults a vector
+index. A warning with a wrong rationale is weak protection — the rationale
+is what a reader checks against their case, and mine visibly did not apply,
+which made the warning easy to step past. **When you write a "do not read X
+as Y" note, the reason has to be correct per-mode, or it invites exactly the
+misreading it forbids.**
+
+**This is the dual of the trap already recorded here.** The known family is
+*the intervention silently did not take* — the monkeypatch bound at import
+so both arms ran identical code; the probe asked for `body` when the field
+was `content` and reported `match=0` everywhere. The fix for those is a
+probe-proof line: make the probe prove it did work. **That fix cannot catch
+this one**, because the probe did run, did execute the real code path, and
+did read a real number. The instrument was honest; it simply could not see
+the thing.
+
+So the check is a different one, and it happens *before* the measurement is
+interpreted:
+
+- **A zero is a result only if the instrument was wired to produce a
+  non-zero.** Establish that first — census the seams, dependencies, and
+  fixtures the metric flows through, not just the rows it returned.
+- **Distinguish "unavailable" from "empty" at the source.** `(False, [])`
+  and `(True, [])` mean opposite things and collapse to the same aggregate
+  one layer up. When a seam can report unavailability, the harness should
+  surface that as a distinct cell value (or fail loudly), never as zero.
+- **Read the comments on the construction you are measuring through.** A
+  deliberately-stubbed dependency is usually documented at the stub, and
+  that comment is the cheapest possible refutation of a defect claim.
+- **Before filing a defect from an aggregate, reproduce it against
+  production wiring.** One grep for the attribute in `app.py` would have
+  ended this in under a minute.
+
+**The same seam collapses a THIRD state into that zero**, found by a reviewer
+on the correction PR: `_search_prompts` ends `except Exception: return True,
+[]`, so a seam that *threw* is reported as available-and-empty. Wiring the
+dependency therefore does not make the metric unambiguous — a zero still
+means no-match **or** threw. When a function's return type encodes status
+(`(bool, list)`), check what the exception path returns before trusting
+either value; a `warning` log is not a substitute, because nothing reads it.
+
+The general form: **any code path that converts a failure into a
+well-formed empty result destroys the distinction the caller needs.** Grep
+for `except` blocks that `return` an empty container whenever a measurement
+built on them surprises you.
