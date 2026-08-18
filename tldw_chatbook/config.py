@@ -1313,6 +1313,22 @@ def load_settings(force_reload: bool = False) -> Dict:
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
     )
+    # task-17652: status-row placement relative to the composer. Validation
+    # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
+    # normalizing here keeps a typo from ever reaching compose order.
+    _status_chips_position = final_console_settings_cli.get("status_chips_position")
+    if not (
+        isinstance(_status_chips_position, str)
+        and _status_chips_position.strip().lower() in ("above", "below")
+    ):
+        _status_chips_position = "above"
+    else:
+        _status_chips_position = _status_chips_position.strip().lower()
+    final_console_settings_cli["status_chips_position"] = _status_chips_position
+    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
+        final_console_settings_cli.get("status_chips_collapsed", False),
+        False,
+    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",

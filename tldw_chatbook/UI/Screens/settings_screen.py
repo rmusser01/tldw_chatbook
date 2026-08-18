@@ -1184,6 +1184,14 @@ def _build_field_search_index() -> None:
                     "settings-console-stack-collapsed-rail-labels",
                     "Stacked vertical Context Inspector",
                 ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status row placement",
+                ),
+                (
+                    "settings-console-status-row-position-toggle",
+                    "Status chips above below composer",
+                ),
                 ("settings-console-paste-collapse-threshold", "Threshold (chars)"),
                 ("settings-console-max-parallel-runs", "Max parallel agent runs"),
                 ("settings-console-tool-result-display-chars", "Display cap (chars)"),
@@ -4273,6 +4281,61 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist render_remote_images.")
+
+    def _status_row_position_value(self) -> str:
+        """Return the live [console].status_chips_position value."""
+        from ..Console_Modules.status_row import resolve_status_chips_position
+
+        return resolve_status_chips_position(
+            getattr(self.app_instance, "app_config", {}) or {}
+        )
+
+    def _status_row_position_button_label(self) -> str:
+        return (
+            "Above composer"
+            if self._status_row_position_value() == "above"
+            else "Below composer"
+        )
+
+    def _toggle_status_row_position(self) -> str:
+        """Flip status_chips_position: persist it AND poke the live config.
+
+        ADR-020-style immediate write (no category draft), the same shape
+        as the remote-images toggle (task-17652). The cached Console screen
+        re-applies the position on resume, so the change lands on return
+        without a restart.
+
+        Returns:
+            The new (post-toggle) position value.
+        """
+        from ..Console_Modules.status_row import (
+            STATUS_CHIPS_POSITION_ABOVE,
+            STATUS_CHIPS_POSITION_BELOW,
+            poke_console_setting,
+        )
+
+        next_value = (
+            STATUS_CHIPS_POSITION_BELOW
+            if self._status_row_position_value() == STATUS_CHIPS_POSITION_ABOVE
+            else STATUS_CHIPS_POSITION_ABOVE
+        )
+        self._persist_status_row_position(next_value)
+        poke_console_setting(
+            getattr(self.app_instance, "app_config", None),
+            "status_chips_position",
+            next_value,
+        )
+        return next_value
+
+    @work(thread=True)
+    def _persist_status_row_position(self, next_value: str) -> None:
+        """Write the status-row placement off the event loop (task-15470 shape)."""
+        try:
+            save_settings_to_cli_config(
+                {"console": {"status_chips_position": next_value}}
+            )
+        except Exception:
+            logger.warning("Failed to persist status_chips_position.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -12431,6 +12494,26 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-rail-label-style-help",
                 classes="settings-help-copy",
             )
+            yield Static("Status row placement", classes="destination-section")
+            yield Static(
+                "Where the Console status chips sit relative to the composer.",
+                id="settings-console-status-row-position-label",
+            )
+            yield Button(
+                self._status_row_position_button_label(),
+                id="settings-console-status-row-position-toggle",
+                tooltip=(
+                    "Place the Provider/Model/Tools status row above or "
+                    "below the composer input. Takes effect when you "
+                    "return to Console."
+                ),
+            )
+            yield Static(
+                "Above keeps the chips directly under the conversation; "
+                "below closes the shell as a bottom status row.",
+                id="settings-console-status-row-position-help",
+                classes="settings-help-copy",
+            )
             yield Static("Composer paste handling", classes="destination-section")
             yield Static(
                 "Collapse large pasted chunks only when they exceed the threshold.",
@@ -18197,6 +18280,19 @@ class SettingsScreen(BaseAppScreen):
             "Linked images in replies will now render."
             if enabled
             else "Linked images in replies will stay ignored.",
+            severity="information",
+        )
+
+    @on(Button.Pressed, "#settings-console-status-row-position-toggle")
+    def handle_console_status_row_position_toggle(
+        self, event: Button.Pressed
+    ) -> None:
+        """Flip the status-row placement: immediate write, no category draft."""
+        event.stop()
+        next_value = self._toggle_status_row_position()
+        event.button.label = self._status_row_position_button_label()
+        self.app.notify(
+            f"Console status row will sit {next_value} the composer.",
             severity="information",
         )
 

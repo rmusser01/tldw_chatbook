@@ -511,15 +511,43 @@ async def test_screen_status_expand_updates_state_and_focuses_collapse() -> None
 
 
 @pytest.mark.asyncio
-async def test_screen_status_collapse_state_resets_on_new_screen() -> None:
-    """Reset screen-local status collapse state on Console recreation."""
+async def test_screen_status_collapse_persists_to_config_and_new_screen() -> None:
+    """Collapse survives Console recreation via the live config (task-17652).
+
+    Inverts the former reset-on-recreation contract: collapsing pokes
+    ``[console] status_chips_collapsed`` synchronously, and a freshly
+    constructed screen seeds its state from that value.
+    """
     host, app = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         await pilot.click("#console-status-collapse")
         await pilot.pause()
         assert console._console_status_chips_collapsed is True
+        assert app.app_config["console"]["status_chips_collapsed"] is True
 
         replacement = ChatScreen(app)
 
-        assert replacement._console_status_chips_collapsed is False
+        assert replacement._console_status_chips_collapsed is True
+
+        await pilot.click("#console-status-expand")
+        await pilot.pause()
+        assert app.app_config["console"]["status_chips_collapsed"] is False
+        assert ChatScreen(app)._console_status_chips_collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_status_collapse_restores_from_persisted_config() -> None:
+    """A stored collapsed=True composes the strip collapsed from first paint."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("console", {})["status_chips_collapsed"] = True
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+
+        assert console._console_status_chips_collapsed is True
+        assert strip.collapsed is True
+        expand = strip.query_one("#console-status-expand", Button)
+        assert _is_effectively_displayed(expand)
