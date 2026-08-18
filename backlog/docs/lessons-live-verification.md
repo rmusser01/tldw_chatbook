@@ -1110,3 +1110,34 @@ press-resolution with the automated widget test (a mounted-widget `press()`
 drives the same production seam) and use a documented keyboard path (here:
 quit-denies) to end the live round. Record which regions accepted synthetic
 mouse so the next rig starts there.
+
+## The Console's provider-error text replaces the provider's own 400 body — go direct with curl to get it back (TASK-18414, 2026-08-18)
+
+**What happened.** TASK-18414 was filed off a live-observed failure: a scratch-profile
+Console on `claude-opus-5` failed every send, and the preserved pane read
+
+    Agent run failed: provider returned HTTP 400 (Provider error from anthropic: bad
+    request. Status: 400. Selected model: claude-opus-5. The provider rejected this
+    request. Confirm the model is still available, or choose another model from the
+    model picker.)
+
+That message is entirely the app's own text. Anthropic had actually answered
+``` `temperature` is deprecated for this model. ``` — naming the offending parameter —
+and the mapping layer discarded it in favour of advice ("confirm the model is still
+available") that points at the wrong cause: the model was fine, the payload was not.
+So the filed task could say a 400 happened but not *which* of two candidate parameters
+caused it, and it explicitly left that as owed work. Recovering it took one `curl`.
+The second failure shape was more valuable still: for `budget_tokens` the provider
+replies ``` "thinking.type.enabled" is not supported for this model. Use
+"thinking.type.adaptive" and "output_config.effort" to control thinking behavior. ``` —
+i.e. the provider hands you the exact remediation, and the app throws it away.
+
+**What to do.** A provider 400 seen through this app is a *report that* a 400 happened,
+never *why*. Before theorising, re-issue the minimal failing request straight at the
+provider with `curl` and the repo-root key file, and paste the verbatim body into the
+task. Two cheap habits that paid off here: probe **every** shape the builder can emit
+(the two shapes had different causes and different fixes), and probe the **controls**
+that must keep working in the same batch — Opus 4.6, Sonnet 4.5 and Haiku 4.5 returning
+200 for the identical payload is what turned "don't break older models" from an
+intention into evidence. Keep this out of the app's config path entirely: a standalone
+`curl` imports no `tldw_chatbook` module and cannot touch the live config.
