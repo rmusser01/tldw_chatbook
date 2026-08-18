@@ -5078,6 +5078,21 @@ class ConsoleTranscript(VerticalScroll):
                 event.stop()
                 event.prevent_default()
                 return
+            if event.key in {"j", "k", "down", "up", "enter"}:
+                # Review fix (Important): these keys are the pre-existing
+                # message-navigation/confirm BINDINGS below. Left unclaimed,
+                # `j`/`k`/`down`/`up` would move `selected_message_id` to a
+                # DIFFERENT message while `_kb_selection_row` (and the
+                # manager state, and the hint) stayed pinned to the OLD row
+                # -- a silent mode/message-selection desync -- and `enter`
+                # would toggle message selection out from under the mode.
+                # Consumed as no-ops for now: Task 3 replaces `j`/`k` with
+                # real line motions and `enter` with the mode's own finish
+                # action. Every other key still falls through below (Task 3
+                # owns the broader interception rule for the rest).
+                event.stop()
+                event.prevent_default()
+                return
             # Task 3 wires the motion keys (h/l/w/b/0/$/j/k) here.
         if event.key in {"down", "j"}:
             self.action_select_next()

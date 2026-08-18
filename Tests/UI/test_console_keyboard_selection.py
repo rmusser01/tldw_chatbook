@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSelectionMenu
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,
@@ -211,3 +212,39 @@ async def test_row_destruction_guard_exits_mode_without_crash():
         assert transcript._kb_selection_row is None
         hint = transcript.query_one("#console-kb-selection-hint")
         assert hint.display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["j", "k", "down", "up", "enter"])
+async def test_message_nav_and_confirm_keys_are_no_ops_in_mode(key):
+    """Task 3 owns real motions; until then these keys must not desync the mode.
+
+    Before this fix, only `escape` was intercepted by the mode branch, so
+    `j`/`k`/`down`/`up`/`enter` fell through to the pre-existing BINDINGS
+    chain: `j`/`k`/`down`/`up` moved `selected_message_id` to a different
+    message while `_kb_selection_row` (and the manager state, and the hint)
+    stayed pinned to the OLD row -- a silent mode/message-selection desync.
+    `enter` toggled message selection (and would open the selection menu
+    once one exists), which must not fire while keyboard text-selection
+    mode owns the keyboard.
+    """
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(40, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        row = await _mounted_row(pilot, "m1")
+        transcript.selected_message_id = row.message_id
+        await pilot.press("s")
+        await pilot.pause()
+        assert transcript._kb_selection_row is row
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert transcript.selected_message_id == row.message_id
+        assert transcript._kb_selection_row is row
+        sel = transcript.selection_manager.state.selection
+        assert sel is not None
+        assert (sel.row_key, sel.start, sel.end) == (row.id, 0, 1)
+        hint = transcript.query_one("#console-kb-selection-hint")
+        assert hint.display is True
+        assert not app.query(ConsoleSelectionMenu)
