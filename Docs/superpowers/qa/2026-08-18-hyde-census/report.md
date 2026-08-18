@@ -102,15 +102,23 @@ The two rescues confirm the reading rather than contradicting it:
 
 So the rule is clean: **HyDE rescues where the target really is a topical
 answer, and cannot where the query's words are present only incidentally.**
-Of the 11, only the 3 `negation` queries are the former, which caps HyDE's
-reachable population at 3 — below the bar before a single token is generated.
+
+Counted honestly, that splits the 11 as **4 topical / 7 lexical-trap** — the
+3 `negation` queries *plus* `sc-valve-pit-access`, whose target does contain
+a real passage about valve-pit access. (An earlier draft of this report said
+3/8 while simultaneously arguing `sc-valve-pit-access` was a genuine topical
+match; a reviewer caught the contradiction. The corrected split is 4/7.)
+
+**4 is still below the bar of 5**, so HyDE's reachable population falls short
+before a single token is generated — but the margin is one query, not two,
+and the report should say so.
 
 ## Generator-bound vs HyDE-bound (AC#5)
 
 Registered in advance: *"a generator-specific null does not retire the
 premise."* Splitting it:
 
-- **HyDE-bound, not fixable by a better model**: the 8 lexical-trap queries.
+- **HyDE-bound, not fixable by a better model**: the 7 lexical-trap queries.
   A better generator writes a *better* passage about pump-chamber inspection,
   which is further still from an icehouse note. More capability makes this
   worse, not better.
@@ -121,9 +129,35 @@ premise."* Splitting it:
   head assembly"* against a target saying *"a single dish"*. A stronger
   generator might close those.
 
-**Even granting both, HyDE reaches 3 of 53 — still below the bar of 5.** The
+**Even granting both, HyDE reaches 4 of 53 — still below the bar of 5.** The
 null does not depend on the generator, which is what makes it safe to record
-as a property of the premise on this corpus.
+as a property of the premise on this corpus. It is worth being precise that
+the margin is **one query**: a corpus with one more genuinely-topical miss
+would have flipped this arc from NULL to a probe-clearing result.
+
+## What review changed (PR #1815)
+
+**The topical/lexical split was internally contradictory.** I argued
+`sc-valve-pit-access` was a genuine topical match and then counted only the 3
+negation queries as topical. Corrected to **4 topical / 7 lexical**; the
+conclusion holds (4 < 5) but the margin is **one query**, not two, and the
+report now says so.
+
+**An empty generation was scored as a HyDE miss** — latent, since 0 came back
+empty, but it would have converted an *unmeasurable* query into a **LOSS** and
+corrupted the harm gate, the one clause HyDE passed. Empty generations are now
+excluded from scoring and reported separately. This is the programme's
+recurring defect in its purest form: "could not measure" rendering identically
+to "measured, and it got worse".
+
+**Pins added.** `Tests/RAG_Eval/test_hyde_probe.py` (15 tests) over
+`score_arms` and the endpoint/model validation. **Mutation-verified**: scoring
+empty generations as misses reds both empty-generation tests; restoring greens
+them. Endpoint validation now fails at startup rather than surfacing later as
+"the generator returned nothing" — the failure mode this programme keeps
+misreading.
+
+Verdict unchanged on a full re-run: 2 gains, 0 losses, NULL.
 
 ## What would reopen this
 

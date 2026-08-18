@@ -29,6 +29,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,13 +40,57 @@ if str(REPO) not in sys.path:
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / "generations.json"
 
-ENDPOINT = os.environ.get("HYDE_ENDPOINT", "http://localhost:9099/v1/chat/completions")
-MODEL = os.environ.get(
-    "HYDE_MODEL", "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf"
+def _validated_endpoint(raw: str) -> str:
+    """Validate the generator endpoint before any request is built.
+
+    Args:
+        raw: Candidate URL, from ``HYDE_ENDPOINT`` or the default.
+
+    Returns:
+        The URL unchanged.
+
+    Raises:
+        SystemExit: The value is not an http(s) URL with a host. A silently
+            malformed endpoint would surface later as "the generator returned
+            nothing", which this programme has repeatedly mistaken for a
+            measured negative.
+    """
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise SystemExit(
+            f"HYDE_ENDPOINT must be an http(s) URL with a host; got {raw!r}"
+        )
+    return raw
+
+
+def _validated_model(raw: str) -> str:
+    """Validate the model id.
+
+    Args:
+        raw: Candidate model id, from ``HYDE_MODEL`` or the default.
+
+    Returns:
+        The stripped model id.
+
+    Raises:
+        SystemExit: The value is blank.
+    """
+    if not raw or not raw.strip():
+        raise SystemExit("HYDE_MODEL must be a non-empty model id")
+    return raw.strip()
+
+
+ENDPOINT = _validated_endpoint(
+    os.environ.get("HYDE_ENDPOINT", "http://localhost:9099/v1/chat/completions")
+)
+MODEL = _validated_model(
+    os.environ.get("HYDE_MODEL", "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf")
 )
 K = 10
-BAR = 5          # registered in TASK-18514 before any measurement
+BAR = 5             # registered in TASK-18514 before any measurement
 MODE = "semantic"
+MAX_TOKENS = 220    # generation budget; also reported in the run header
+GEN_TIMEOUT_S = 180
 
 #: Deliberately plain. A prompt tuned against these 60 queries would measure
 #: the prompt, not HyDE.
@@ -66,12 +111,17 @@ def generate(query: str) -> str:
     Returns:
         The generated passage, stripped. Empty string if the server returned
         no content (reported, never silently treated as a passage).
+
+    Raises:
+        urllib.error.URLError: The generator endpoint is unreachable.
+        TimeoutError: The request exceeded ``GEN_TIMEOUT_S``.
+        KeyError: The response lacked the expected OpenAI-shaped fields.
     """
     payload = {
         "model": MODEL,
         "messages": [{"role": "user", "content": PROMPT.format(q=query)}],
         "temperature": 0,
-        "max_tokens": 220,
+        "max_tokens": MAX_TOKENS,
         # This server fronts a REASONING model: without this it spends the
         # whole budget in `reasoning_content` and returns content="".
         "chat_template_kwargs": {"enable_thinking": False},
@@ -81,10 +131,42 @@ def generate(query: str) -> str:
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=180) as resp:
+    with urllib.request.urlopen(req, timeout=GEN_TIMEOUT_S) as resp:
         body = json.loads(resp.read())
     msg = body["choices"][0]["message"]
     return (msg.get("content") or "").strip()
+
+
+def score_arms(
+    relevant: dict[str, bool],
+    base: dict[str, bool],
+    hyde: dict[str, bool],
+    empty_ids: set[str],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Partition queries into scored / unmeasurable / gains / losses.
+
+    Args:
+        relevant: query id -> whether the query has any ground-truth target.
+        base: query id -> baseline hit at k.
+        hyde: query id -> HyDE-arm hit at k (absent when the arm did not run).
+        empty_ids: query ids whose generation came back empty.
+
+    Returns:
+        ``(scored, unmeasurable, gains, losses)``.
+
+        A query with no target is excluded (a `negative`: a miss is correct).
+        A query with an EMPTY generation is excluded too — its HyDE arm never
+        ran, and scoring it as a miss would turn an unmeasurable query into a
+        LOSS, corrupting the harm gate. That is this programme's recurring
+        defect: "could not measure" rendering identically to "measured, and it
+        got worse".
+    """
+    targeted = [q for q, has in relevant.items() if has]
+    unmeasurable = sorted(q for q in targeted if q in empty_ids)
+    scored = sorted(q for q in targeted if q not in empty_ids)
+    gains = [q for q in scored if hyde.get(q) and not base.get(q)]
+    losses = [q for q in scored if base.get(q) and not hyde.get(q)]
+    return scored, unmeasurable, gains, losses
 
 
 def main() -> int:
@@ -115,7 +197,10 @@ def main() -> int:
     print(f"PROVENANCE tldw_chatbook <- {tldw_chatbook.__file__}")
     assert str(REPO) in tldw_chatbook.__file__, f"WRONG TREE: expected under {REPO}"
     print(f"GENERATOR endpoint={ENDPOINT}\nGENERATOR model={MODEL}")
-    print("GENERATOR decoding: temperature=0, max_tokens=220, enable_thinking=False")
+    print(
+        f"GENERATOR decoding: temperature=0, max_tokens={MAX_TOKENS}, "
+        "enable_thinking=False"
+    )
 
     corpus, golden = load_fixtures()
 
@@ -158,7 +243,11 @@ def main() -> int:
                 scope = build_query_scope(rt.slug_to_source, q)
                 for arm, text in (("base", q.query), ("hyde", cache.get(q.id, ""))):
                     if arm == "hyde" and not text.strip():
-                        hyde[q.id] = False
+                        # An empty generation means the HyDE arm never RAN for
+                        # this query. Scoring it False would convert an
+                        # unmeasurable query into a LOSS and corrupt the harm
+                        # gate -- "could not measure" rendering as "measured,
+                        # and it got worse". Excluded from scoring, reported.
                         continue
                     try:
                         res = rt.run(
@@ -186,11 +275,19 @@ def main() -> int:
         return 1
 
     by_id = {q.id: q for q in golden}
-    scored = [q.id for q in golden if q.relevant_slugs]     # negatives have no target
-    gains = [qid for qid in scored if hyde[qid] and not base[qid]]
-    losses = [qid for qid in scored if base[qid] and not hyde[qid]]
+    # Negatives have no target; queries whose generation came back empty have
+    # no HyDE arm at all and are excluded rather than scored as losses.
+    empty_ids = {qid for qid, txt in cache.items() if not txt.strip()}
+    scored, unmeasurable, gains, losses = score_arms(
+        {q.id: bool(q.relevant_slugs) for q in golden}, base, hyde, empty_ids
+    )
     print(f"\n=== HyDE vs baseline, mode={MODE}, k={K} "
-          f"({len(scored)} target-bearing queries) ===")
+          f"({len(scored)} target-bearing queries scored) ===")
+    if unmeasurable:
+        print(f"  EXCLUDED, empty generation (no HyDE arm ran): "
+              f"{len(unmeasurable)} {unmeasurable}")
+        print("    -- reported, NOT scored as losses: an unmeasurable query is")
+        print("       not a query that got worse.")
     print(f"  baseline hits : {sum(base[q] for q in scored)}")
     print(f"  HyDE hits     : {sum(hyde[q] for q in scored)}")
     print(f"\n  GAINS  ({len(gains)}):")

@@ -875,12 +875,14 @@ the target really is a topical answer — `ng-mains-supply`'s target describes
 a solar-and-battery outstation and the generated passage described exactly
 that.
 
-**So HyDE's true reachable population here is the 3 `negation` queries** —
-below the bar before a token is generated. Two of those three went unrescued
-on generations that were close (*"alternative transport such as air or
-water"* vs a target *"reached only by boat"*), so a stronger generator might
-take them; **even granting all three, 3 < 5**, which is why this null does
-not depend on the generator.
+**So HyDE's true reachable population here is 4 of the 11** — the 3
+`negation` queries plus `sc-valve-pit-access`, whose target does contain a
+real valve-pit-access passage; the other 7 are lexical traps. Two of the
+three negations went unrescued on generations that were close
+(*"alternative transport such as air or water"* vs a target *"reached only by
+boat"*), so a stronger generator might take them; **even granting all four,
+4 < 5**, which is why this null does not depend on the generator — though
+the margin is one query, not two.
 
 **What would reopen it**: HyDE is mismatched to *this corpus*, not shown
 useless in general. `negation` is the only category here with the shape HyDE
