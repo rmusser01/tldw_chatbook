@@ -1,7 +1,7 @@
 ---
 id: task-16450
 title: Shielded-cancellation loop in _execute_library_rag_search never uncancels
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-15'
 labels: [library, rag, async, reliability]
@@ -39,14 +39,56 @@ fix carrying a potential CPU-spin under teardown.
 
 ## Acceptance Criteria (the what)
 
-- [ ] A test demonstrates the repeated-cancel scenario against the drain
+- [x] A test demonstrates the repeated-cancel scenario against the drain
       loop (or the investigation documents concretely why no caller in the
       app can produce it — with the callers named, not assumed)
-- [ ] If reachable: the loop clears the pending cancellation between
+- [x] If reachable: the loop clears the pending cancellation between
       catches (the 3.11+ idiom is `asyncio.current_task().uncancel()` after
       each catch — NOT `retrieval_task.uncancel()`) while preserving the
       retain-and-re-raise contract the worker's docstring states
-- [ ] Cancelled workers still drain the admitted retrieval before
+- [x] Cancelled workers still drain the admitted retrieval before
       re-raising, and no stale outcome is applied (the existing
       Tests/UI/test_library_shell.py supersession tests stay green —
       run the targeted selection, never the whole file)
+
+## Outcome (2026-08-18): the path is reachable; the SPIN is not
+
+**AC#1, both halves answered — and the first correction is to this task's own
+premise.** It records that nobody could construct the repeated-cancel path
+because "Textual's `Worker.cancel()` and asyncio's shutdown each cancel once".
+**That is wrong.** Named, from textual 8.2.8:
+
+- `WorkerManager.add_worker(exclusive=True)` calls `cancel_group(node, group)`.
+- `cancel_group` selects workers by **group and node only — no state filter**,
+  and a worker that is still DRAINING is still in `_workers`.
+- `Worker.cancel()` calls `task.cancel()` **unconditionally**, with no
+  already-cancelled guard.
+
+So every new exclusive Library search re-cancels a worker that is still
+draining. The Library search box starts one exclusive worker per search, so an
+impatient user reaches this on the ordinary path.
+
+**But the loop does not hot-spin, and that is measured rather than argued.**
+`task.cancel()` schedules ONE `CancelledError` at the next await point; the
+loop catches it, loops, and the next await blocks normally until another
+cancel arrives. Fifty cancellations cost fifty extra iterations and the loop
+keeps making progress — bounded by user actions, not CPU-bound.
+`Tests/Library/test_library_rag_drain_loop.py` constructs the path and pins
+that bound (`spins <= 60`), alongside the fixed loop and the single-cancel
+case.
+
+**AC#2 applied as hygiene, not as a bug fix.** `current_task().uncancel()`
+after each catch, because the path IS reachable and leaving `cancelling()`
+elevated on a task that then completes normally is what an enclosing cancel
+scope reads. The tests show single-cancel behaviour is unchanged and repeated
+cancellation stays bounded, so the change is provably harmless rather than
+assumed so — which is the bar this programme applies to cancellation
+semantics.
+
+**AC#3 preserved:** the admitted retrieval still drains and the retained
+`CancelledError` is still re-raised — pinned in both the fixed and
+single-cancel tests. `Tests/Library/` 2019 passed / 0 failed.
+
+The irony the task noted survives intact and is worth keeping: a CPU-spin fix
+carried a *potential* CPU-spin under teardown, and the honest answer is that
+the potential was real in shape and bounded in effect.
