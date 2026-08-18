@@ -27,6 +27,8 @@ This supersedes the earlier framing of the same criterion, which set out to deri
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded
+- [ ] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost
+- [ ] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever
 - [ ] #2 A resumed run restores the budget it already spent instead of being granted it again
 - [ ] #3 A resumed run continues from its last completed phase without repeating searches it already paid for
 - [ ] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did
@@ -44,8 +46,12 @@ This supersedes the earlier framing of the same criterion, which set out to deri
 The design, the measurements behind it, and the alternatives rejected are in
 `Docs/superpowers/specs/2026-08-18-durable-research-jobs-design.md`.
 
-1. Lease a run to exactly one executor, with a heartbeat and stale-lease
-   takeover. Everything else depends on this, so it lands first.
+1. Lease a run to exactly one executor, following the server's job manager
+   (`tldw_Server_API/app/core/Jobs/`, dev): a lease id alongside the worker id
+   as a fencing token, stale-lease reclaim folded into acquisition rather than
+   a separate reaper, a retry budget deciding requeue versus terminal failure,
+   and the existing phase-progress emission doubling as the heartbeat.
+   Everything else depends on this, so it lands first.
 2. Restore the budget ledger from its artifact on resume.
 3. Persist each round's evidence pool under a stated cap, and resume from it.
 4. Drive execution through a scheduler task whose handler claims the run and

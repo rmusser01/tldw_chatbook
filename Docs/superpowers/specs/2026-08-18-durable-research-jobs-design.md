@@ -46,11 +46,38 @@ Today `execute_run` refuses only terminal runs, and the window's guard
 that can invoke the same run makes concurrent execution possible: duplicate
 searches, duplicate spend, racing writes on one row.
 
-A run therefore carries a lease: an owner token and a heartbeat updated as
-phases progress. An executor claims the run atomically or declines it; a lease
-whose heartbeat has gone stale beyond a threshold may be taken over, so a
-process that died does not strand its run forever. This is a precondition for
-everything else here, not a refinement of it.
+A run therefore carries a lease. The shape is taken from the server's job
+manager (`tldw_Server_API/app/core/Jobs/`, dev), which has solved this already;
+four of its decisions are adopted deliberately rather than re-derived:
+
+- **A lease id as well as a worker id.** The server's `jobs` table carries
+  `worker_id`, `lease_id`, `leased_until`, `acquired_at`, and
+  `renew_job_lease` can enforce that BOTH the worker and the lease id match
+  before a renewal or completion is accepted. A worker id alone is not enough:
+  a process that stalled past its lease, had its run taken over, and then woke
+  up would still match on worker id and could complete a run it no longer owns.
+  The lease id is the fencing token that makes takeover safe.
+- **Stale leases are reclaimed at acquisition, not by a reaper.** The server
+  requeues or terminally fails expired `processing` jobs as the first step of
+  `acquire_next_job`, "according to their retry budget". Folding recovery into
+  the acquire path means there is no separate sweeper to schedule, and no
+  window where a dead run is invisible.
+- **A retry budget decides requeue versus terminal failure.** `max_retries` and
+  `retry_count` on the row, with `available_at` carrying the backoff, so a run
+  that keeps dying is eventually failed rather than retried forever. A research
+  run that crashes its executor three times is a broken run, not a slow one.
+- **The heartbeat carries progress.** `renew_job_lease` takes
+  `progress_percent` and `progress_message`, so one call both proves liveness
+  and updates what the user sees. The engine already emits phase progress; that
+  emission becomes the heartbeat rather than a second mechanism beside it.
+
+What is NOT adopted: the server's multi-tenant machinery — domains, queues,
+fair-share scheduling, priority bands, quarantine for poison messages, the
+archive table. A single-user SQLite app with one research queue needs a lease
+and a retry budget, not a scheduler-of-schedulers. Its lease cap
+(`JOBS_LEASE_MAX_SECONDS`, 3600s) is worth noting though, because a synthesis
+measured at 970s sits inside it but a pathological one would not: the lease
+must be renewable mid-phase, not sized to cover a whole phase in one grant.
 
 ### 2. Resume restores the budget, not just the position
 
