@@ -251,6 +251,12 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -301,6 +307,12 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = app.workspace_registry_service.get_active_workspace()
@@ -343,6 +355,12 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
+        await pilot.pause()
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
 
         active_workspace = service.get_active_workspace()
@@ -518,6 +536,11 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
         notifications: list[str] = []
         app.notify = lambda message, **kwargs: notifications.append(str(message))
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.3)
 
         assert any(
@@ -571,6 +594,11 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         assert scrolled_to > 0
 
         screen.query_one("#library-create-local-workspace", Button).press()
+        await pilot.pause()
+        modal = host.screen
+        assert modal is not screen
+        await _wait_for_selector(modal, pilot, "#workspace-create-confirm")
+        modal.query_one("#workspace-create-confirm", Button).press()
         await pilot.pause(0.6)
 
         rail = screen.query_one("#library-rail")
