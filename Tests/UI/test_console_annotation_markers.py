@@ -10,7 +10,9 @@ sub-row by ``_transcript_rows``).
 from __future__ import annotations
 
 import pytest
+from textual.app import ComposeResult
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_console_selection_end_to_end import (
     _RecordingPromptQueue,
@@ -22,7 +24,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_transcript import (
+    ConsoleReviewNotesRequested,
+    ConsoleTranscript,
+)
 
 
 def _message(message_id: str, role=ConsoleMessageRole.ASSISTANT) -> ConsoleChatMessage:
@@ -176,3 +181,103 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
             }
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Task 1: clickable marker + `n` action (task-17169 review-note management)
+# ---------------------------------------------------------------------------
+
+
+class _ReviewNotesTranscriptApp(ConsolidatedCSSApp):
+    """One-message transcript harness with app-level request capture.
+
+    ``previews`` is set on the instance *before* ``run_test()`` enters (i.e.
+    before ``compose()`` runs at mount) so each test can opt a message into
+    having notes without a bespoke App subclass -- the same shape as
+    ``_FeedbackTranscriptApp`` in ``test_console_selection_end_to_end.py``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.previews: dict[str, tuple[str, ...]] = {}
+        self.review_notes_events: list[ConsoleReviewNotesRequested] = []
+
+    def compose(self) -> ComposeResult:
+        transcript = ConsoleTranscript(id="console-native-transcript")
+        transcript.set_messages([_message("m1")])
+        if self.previews:
+            transcript.set_annotation_previews(self.previews)
+        yield transcript
+
+    # Module-level Message classes carry no widget namespace, so the
+    # auto-generated handler is ``on_console_review_notes_requested``
+    # (matching how ``on_console_selection_note_requested`` works above).
+    def on_console_review_notes_requested(
+        self, event: ConsoleReviewNotesRequested
+    ) -> None:
+        self.review_notes_events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_marker_click_requests_notes_not_message_toggle():
+    app = _ReviewNotesTranscriptApp()
+    app.previews = {"m1": ("note",)}
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        # Pre-select the message so a legacy toggle would be visible as a
+        # deselect -- the marker click must leave it alone either way.
+        await pilot.click("#console-message-m1")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m1"
+
+        await pilot.click("#console-annotations-m1")
+        await pilot.pause()
+
+        assert [
+            event.anchor_message_id for event in app.review_notes_events
+        ] == ["m1"]
+        assert transcript.selected_message_id == "m1"
+
+
+@pytest.mark.asyncio
+async def test_n_on_selected_noted_message_requests_notes():
+    app = _ReviewNotesTranscriptApp()
+    app.previews = {"m1": ("note",)}
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        await pilot.click("#console-message-m1")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m1"
+
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert [
+            event.anchor_message_id for event in app.review_notes_events
+        ] == ["m1"]
+
+
+@pytest.mark.asyncio
+async def test_n_without_notes_toasts_and_requests_nothing():
+    app = _ReviewNotesTranscriptApp()
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        notifications: list[tuple[str, str]] = []
+        app.notify = lambda message, *, severity="information", **kwargs: (
+            notifications.append((message, severity))
+        )
+        transcript.focus()
+        await pilot.click("#console-message-m1")
+        await pilot.pause()
+        assert transcript.selected_message_id == "m1"
+
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert app.review_notes_events == []
+        assert len(notifications) == 1
+        assert notifications[0][1] == "warning"
