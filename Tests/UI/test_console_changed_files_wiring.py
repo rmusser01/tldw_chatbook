@@ -42,9 +42,32 @@ from tldw_chatbook.Widgets.Console.console_changed_files_section import (
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
+import tldw_chatbook.Widgets.Console.console_transcript as console_transcript_module
 
 MARKER = "✎ Edited 1 file  +1 −1 — review with `v`"
 CONV_ID = "conv-wiring-1"
+
+
+def _disable_turn_file_cards(monkeypatch) -> None:
+    """Keep a change-summary marker plain (no mounted `ConsoleTurnFileCard`).
+
+    Fix round: the card's own `_load_rows` worker calls the SAME
+    `AgentRunsChangeReviewProvider.changed_files` a per-row-cache spy
+    patches at the class level -- an unrelated mounted card would
+    contaminate the git-call count under test (empirically caught: a
+    stray card's own row-load added exactly one uncounted-for call).
+    Matches `test_console_turn_file_card_factory.py`'s own technique for
+    the config-OFF case.
+    """
+    monkeypatch.setattr(
+        console_transcript_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            False
+            if (section, key) == ("console", "turn_file_cards")
+            else default
+        ),
+    )
 
 
 def _build_real_bridge(store, db: AgentRunsDB, service: ShadowRepoService):
@@ -194,9 +217,9 @@ async def test_guard_skips_idle_ticks_and_recomputes_once_on_new_marker(
         calls: list[int] = []
         original = AgentRunsChangeReviewProvider.conversation_changed_files
 
-        def counting(self):
+        def counting(self, row_cache=None):
             calls.append(1)
-            return original(self)
+            return original(self, row_cache=row_cache)
 
         monkeypatch.setattr(
             AgentRunsChangeReviewProvider, "conversation_changed_files", counting
@@ -281,9 +304,9 @@ async def test_notes_changed_message_resets_guard_without_clearing_summary(
         calls: list[int] = []
         original = AgentRunsChangeReviewProvider.conversation_changed_files
 
-        def counting(self):
+        def counting(self, row_cache=None):
             calls.append(1)
-            return original(self)
+            return original(self, row_cache=row_cache)
 
         import tldw_chatbook.UI.Screens.change_review_screen as cr_module
 
@@ -398,9 +421,9 @@ async def test_config_off_renders_nothing_and_never_dispatches_worker(
     calls: list[int] = []
     original = AgentRunsChangeReviewProvider.conversation_changed_files
 
-    def counting(self):
+    def counting(self, row_cache=None):
         calls.append(1)
-        return original(self)
+        return original(self, row_cache=row_cache)
 
     monkeypatch.setattr(
         AgentRunsChangeReviewProvider, "conversation_changed_files", counting
@@ -434,3 +457,226 @@ async def test_config_off_renders_nothing_and_never_dispatches_worker(
         )
         assert section.display is False
         assert not section.state.entries
+
+
+@pytest.mark.asyncio
+async def test_row_cache_skips_git_for_already_seen_rows_on_note_mutation_refresh(
+    workspace_fixture, monkeypatch
+):
+    """Fix round (reviewer-benchmarked: ~18ms/row-pair, ~900ms at turn 50,
+    quadratic cumulative without this): a note-mutation-forced refresh
+    reuses the screen's row-cache for every row it has already diffed --
+    it does not re-run git on them, only the notes join reruns. A NEW
+    turn's refresh still pays git cost, but ONLY for its own new row(s).
+    """
+    _disable_turn_file_cards(monkeypatch)
+    ws = workspace_fixture
+    run1 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+    _record_turn(
+        ws.db, ws.tracker, ws.root, run1,
+        lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+        session = await _mount_console_session(pilot, console, store, ws)
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run1,
+        )
+
+        await console._sync_native_console_chat_ui()
+        await _wait_for_changed_files_state(
+            console, pilot, lambda state: bool(state.entries)
+        )
+        assert console._console_changed_files_row_cache, (
+            "the first recompute must have populated the screen's per-row memo"
+        )
+
+        recompute_calls: list[int] = []
+        row_calls: list[int | None] = []
+        original_conversation_changed_files = (
+            AgentRunsChangeReviewProvider.conversation_changed_files
+        )
+        original_changed_files = AgentRunsChangeReviewProvider.changed_files
+
+        def counting_conversation_changed_files(self, row_cache=None):
+            # Appended AFTER the real call returns (not before): the poll
+            # loops below wait for this list to signal COMPLETION of the
+            # recompute (including any per-row `changed_files` calls it
+            # makes), not merely that the call was entered -- an
+            # append-before-call signal fired too early once and produced
+            # a real, reproduced flake (the row-cache assertions below ran
+            # against a still-in-flight recompute).
+            result = original_conversation_changed_files(
+                self, row_cache=row_cache
+            )
+            recompute_calls.append(1)
+            return result
+
+        def counting_changed_files(self, row):
+            row_calls.append(row.get("id"))
+            return original_changed_files(self, row)
+
+        monkeypatch.setattr(
+            AgentRunsChangeReviewProvider,
+            "conversation_changed_files",
+            counting_conversation_changed_files,
+        )
+        monkeypatch.setattr(
+            AgentRunsChangeReviewProvider, "changed_files", counting_changed_files
+        )
+
+        # Note-mutation-forced refresh: the guard resets, but the row cache
+        # must survive it (only a genuine conversation switch clears that)
+        # -- this recompute should hit git for ZERO rows.
+        console.handle_console_turn_file_card_notes_changed(
+            ConsoleTurnFileCard.NotesChanged(run1)
+        )
+        for _ in range(150):
+            if recompute_calls:
+                break
+            await pilot.pause(0.02)
+        assert recompute_calls, "the note-mutation reset never triggered a recompute"
+        assert row_calls == [], (
+            "a note-mutation refresh must reuse the row cache for every "
+            f"already-seen row, got {len(row_calls)} git call(s): {row_calls}"
+        )
+
+        # A NEW turn's refresh must compute ONLY the new row.
+        run2 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+        _record_turn(
+            ws.db, ws.tracker, ws.root, run2,
+            lambda: (ws.root / "a.py").write_text("line1\nCHANGED AGAIN\n"),
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run2,
+        )
+        recompute_calls.clear()
+        await console._sync_native_console_chat_ui()
+        for _ in range(150):
+            if recompute_calls:
+                break
+            await pilot.pause(0.02)
+        assert recompute_calls, "the new marker never triggered a recompute"
+        assert len(row_calls) == 1, (
+            f"a new turn's refresh must compute only the NEW row, got "
+            f"{len(row_calls)}: {row_calls}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_leaves_stale_state_and_sync_loop_recovers(
+    workspace_fixture, monkeypatch
+):
+    """A raising `conversation_changed_files` inside the worker: the
+    failure is logged, the summary/section keep their last-known (stale)
+    state rather than being clobbered, and the sync loop itself is
+    unharmed -- a SUBSEQUENT guard-triggered refresh (a new marker) works
+    normally once the provider is healthy again.
+    """
+    from loguru import logger as loguru_logger
+
+    _disable_turn_file_cards(monkeypatch)
+    ws = workspace_fixture
+    run1 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+    _record_turn(
+        ws.db, ws.tracker, ws.root, run1,
+        lambda: (ws.root / "a.py").write_text("line1\nCHANGED\n"),
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        store = console._ensure_console_chat_store()
+        session = await _mount_console_session(pilot, console, store, ws)
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run1,
+        )
+
+        await console._sync_native_console_chat_ui()
+        await _wait_for_changed_files_state(
+            console, pilot, lambda state: bool(state.entries)
+        )
+        stale_summary = console._console_changed_files_summary
+        assert stale_summary
+
+        def boom(self, row_cache=None):
+            raise RuntimeError("simulated provider failure")
+
+        monkeypatch.setattr(
+            AgentRunsChangeReviewProvider, "conversation_changed_files", boom
+        )
+
+        run2 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+        _record_turn(
+            ws.db, ws.tracker, ws.root, run2,
+            lambda: (ws.root / "a.py").write_text("line1\nCHANGED AGAIN\n"),
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run2,
+        )
+
+        warnings: list[str] = []
+        sink_id = loguru_logger.add(
+            lambda message: warnings.append(message.record["message"]),
+            level="WARNING",
+        )
+        try:
+            await console._sync_native_console_chat_ui()
+            for _ in range(150):
+                if warnings:
+                    break
+                await pilot.pause(0.02)
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert any("recompute failed" in w for w in warnings), (
+            f"the worker failure must be logged, got: {warnings}"
+        )
+        # Stale state survives -- neither the cache nor the mounted section
+        # was clobbered by the failed recompute.
+        assert console._console_changed_files_summary == stale_summary
+        section = console.query_one(
+            "#console-changed-files-section", ConsoleChangedFilesSection
+        )
+        assert section.state.entries == stale_summary
+
+        # The sync loop itself survived the exception (it was caught inside
+        # the worker, never escaped to Textual's worker-error handling) --
+        # prove the NEXT guard-triggered recompute still works once the
+        # provider is healthy again.
+        monkeypatch.undo()
+        run3 = ws.db.create_run(conversation_id=CONV_ID, agent_kind="primary")
+        _record_turn(
+            ws.db, ws.tracker, ws.root, run3,
+            lambda: (ws.root / "a.py").write_text("line1\nTHIRD CHANGE\n"),
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content=MARKER,
+            change_review_run_id=run3,
+        )
+        await console._sync_native_console_chat_ui()
+        section = await _wait_for_changed_files_state(
+            console,
+            pilot,
+            lambda state: bool(state.entries) and state.entries[0].run_id == run3,
+        )
+        assert section.state.entries[0].run_id == run3

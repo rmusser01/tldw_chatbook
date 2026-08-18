@@ -423,6 +423,7 @@ class AgentRunsChangeReviewProvider:
 
     def conversation_changed_files(
         self,
+        row_cache: "dict[int, list[ChangedFile]] | None" = None,
     ) -> "tuple[list[ConversationFileEntry], int]":
         """Cross-turn latest-state summary of the WHOLE conversation.
 
@@ -449,6 +450,28 @@ class AgentRunsChangeReviewProvider:
         must run it off-thread (``asyncio.to_thread`` or a worker) and
         land the result via ``call_from_thread``.
 
+        Args:
+            row_cache: Optional per-row git-diff memo, keyed by the
+                owning ``change_snapshots`` row's own DB ``id`` (spec §2's
+                stated per-row memo, fix round). A row already present is
+                reused verbatim instead of re-running :meth:`changed_files`
+                (a git subprocess pair) for it; a row not yet present is
+                computed and then stored into this SAME dict, in place --
+                so a caller that reuses one dict across repeated calls
+                (the rail's cached-summary worker) only pays git cost for
+                turns it has not diffed before (measured: ~18ms per
+                row-pair: a degenerate hundred-turn conversation's
+                recompute cost is otherwise quadratic across the
+                conversation's lifetime, ~900ms already by turn 50).
+                ``None`` (the default -- every pre-fix-round caller,
+                including :class:`ConsoleTurnFileCard`'s per-turn reads
+                via other methods) computes every row fresh each call,
+                byte-identical to behavior before this parameter existed.
+                A row that raises :class:`ChangeTrackingError` (pruned) is
+                NEVER cached -- there is nothing valid to store, and a
+                pruned row is rare enough that re-probing it each call is
+                an acceptable, disclosed cost.
+
         Returns:
             ``(entries, pruned_rows)`` -- the cross-turn summary and how
             many otherwise-clean rows were skipped because retention
@@ -463,11 +486,22 @@ class AgentRunsChangeReviewProvider:
         rows_with_files: list[tuple[dict, list[ChangedFile]]] = []
         pruned_rows = 0
         for row in clean_rows:
+            row_id = row.get("id")
+            cached = (
+                row_cache.get(row_id)
+                if row_cache is not None and row_id is not None
+                else None
+            )
+            if cached is not None:
+                rows_with_files.append((row, cached))
+                continue
             try:
                 files = self.changed_files(row)
             except ChangeTrackingError:
                 pruned_rows += 1
                 continue
+            if row_cache is not None and row_id is not None:
+                row_cache[row_id] = files
             rows_with_files.append((row, files))
         note_counts = self._db.change_note_counts_for_conversation(
             self._conversation_id

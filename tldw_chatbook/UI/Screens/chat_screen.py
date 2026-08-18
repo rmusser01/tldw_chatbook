@@ -563,6 +563,7 @@ from ...Widgets.Console.console_rewind_modal import (
     RewindPromptRow,
 )
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
+from ...Workspaces.change_tracking import ChangedFile
 from ...Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
@@ -3887,6 +3888,20 @@ class ChatScreen(BaseAppScreen):
             "tuple[ConversationFileEntry, ...] | None"
         ) = None
         self._console_changed_files_pruned_rows: int = 0
+        # Per-row git-diff memo (fix round, spec §2's stated per-row memo),
+        # keyed by the owning `change_snapshots` row's own DB id -- handed
+        # to `AgentRunsChangeReviewProvider.conversation_changed_files`'s
+        # `row_cache` param so a recompute only runs git for rows it has
+        # not seen before (a new turn costs its own rows' git calls, not
+        # the whole history's -- benchmarked at ~18ms/row-pair, ~900ms at
+        # turn 50 without this, quadratic cumulative across the
+        # conversation's lifetime). Cleared alongside the summary on a
+        # genuine conversation switch (row ids are globally unique, so this
+        # is hygiene, not correctness); deliberately NOT cleared by a
+        # note-mutation-forced guard reset -- the git content behind an
+        # already-seen row does not change when a note is added/deleted,
+        # only the notes join reruns.
+        self._console_changed_files_row_cache: "dict[int, list[ChangedFile]]" = {}
         # Guard: `(conversation_id, newest change_review_run_id present in
         # the message store)`. `_sync_console_changed_files_if_scope_changed`
         # only dispatches the off-thread recompute when this tuple actually
@@ -12140,32 +12155,49 @@ class ChatScreen(BaseAppScreen):
         exclusive-group semantics cancel any prior in-flight recompute for
         this screen, so no additional in-flight flag is needed (mirrors
         `action_open_trajectory_view`'s `trajectory-launch` group). The
-        provider is acquired INSIDE the worker via the same
-        `_console_change_review_provider()` recipe the card/opener use,
-        never at guard-check time, and the provider's own
-        `conversation_changed_files()` walks the conversation's entire
-        snapshot history with a git subprocess pair per row -- this must
-        never run on the UI thread (see that method's own docstring).
+        provider is acquired INSIDE the worker (fix round, self-review
+        finding: an earlier cut acquired it here, on the UI thread, before
+        this docstring's own claim was true) via the same
+        `_console_change_review_provider()` recipe the card/opener use --
+        confirmed cheap/pure enough for a worker thread (attribute reads
+        and dict lookups on already-constructed objects, no I/O of its
+        own) -- and the provider's own `conversation_changed_files()`
+        walks the conversation's entire snapshot history with a git
+        subprocess pair per UNSEEN row -- this must never run on the UI
+        thread (see that method's own docstring). `_console_changed_files_
+        row_cache` is handed through as `row_cache` so a row this screen
+        has already diffed once is reused rather than re-run.
 
-        No provider (no git / no persisted conversation) degrades to an
-        empty cache rather than dispatching a worker at all -- an ordinary,
-        expected rail state, not an error.
+        A failure inside the worker (the provider raising, or a `None`
+        provider) is caught here and logged -- the summary/section keep
+        their LAST-KNOWN state (stale, not wrong) rather than the whole
+        0.2s sync tick's worker dying; the NEXT guard-triggered dispatch
+        (a new marker, a note mutation, a conversation switch) tries again
+        independently.
         """
-        provider = self._console_change_review_provider()
-        if provider is None:
-            self._console_changed_files_summary = ()
-            self._console_changed_files_pruned_rows = 0
-            self._sync_console_changed_files_section()
-            return
 
         def land(entries: list, pruned_rows: int) -> None:
             self._console_changed_files_summary = tuple(entries)
             self._console_changed_files_pruned_rows = pruned_rows
             self._sync_console_changed_files_section()
 
+        def land_empty() -> None:
+            self._console_changed_files_summary = ()
+            self._console_changed_files_pruned_rows = 0
+            self._sync_console_changed_files_section()
+
         def build_worker() -> None:
             try:
-                entries, pruned_rows = provider.conversation_changed_files()
+                provider = self._console_change_review_provider()
+                if provider is None:
+                    # No git / no persisted conversation -- an ordinary,
+                    # expected rail state, not an error: degrades to an
+                    # empty cache rather than leaving stale entries around.
+                    self.app.call_from_thread(land_empty)
+                    return
+                entries, pruned_rows = provider.conversation_changed_files(
+                    row_cache=self._console_changed_files_row_cache
+                )
             except Exception:
                 logger.opt(exception=True).warning(
                     "Console changed-files recompute failed; the rail "
@@ -12198,7 +12230,11 @@ class ChatScreen(BaseAppScreen):
         0.2s poll ticking) so the rail's `✎ N` badges never go stale. That
         reset must NOT be mistaken for a conversation switch -- see
         `_last_console_changed_files_conversation_id`'s docstring for why a
-        separate tracker (not `prior is None`) decides that.
+        separate tracker (not `prior is None`) decides that. It ALSO must
+        not clear `_console_changed_files_row_cache`: a note mutation
+        never changes a row's git diff, only the notes join reruns, so the
+        per-row memo survives untouched -- only a genuine conversation
+        switch clears it, below.
         """
         if not self._console_changed_files_section_enabled():
             return
@@ -12218,10 +12254,13 @@ class ChatScreen(BaseAppScreen):
             # this, the in-place sync below would flash the PRIOR
             # conversation's file list for the tick(s) before the worker
             # lands the new conversation's summary. Row ids are globally
-            # unique, so this is hygiene, not a correctness requirement
-            # (spec §2).
+            # unique, so clearing the summary/row-cache here is hygiene
+            # (memory + freshness), not a correctness requirement (spec
+            # §2) -- a stale row-cache entry from another conversation
+            # could never collide with this one's row ids.
             self._console_changed_files_summary = None
             self._console_changed_files_pruned_rows = 0
+            self._console_changed_files_row_cache = {}
             self._sync_console_changed_files_section()
         self._dispatch_console_changed_files_worker()
 
