@@ -261,7 +261,7 @@ the backstop.
 | `Tests/UI/test_console_agent_steering_bar.py` | 14 passed | **14 passed** |
 | `Tests/UI/test_console_agent_controller.py` | 7 passed | **7 passed** |
 | `Tests/UI/test_console_reaction_picker.py` (rail-constructor consumer) | 38 passed | **38 passed** |
-| `Tests/UI/test_console_mcp_approval.py` | see attribution note | see attribution note |
+| `Tests/UI/test_console_mcp_approval.py` | 3 failed, 71 passed (dev red, ruling 2 below) | **3 failed, 71 passed — identical set** |
 | `Tests/test_probe_import_provenance.py` | 1 passed (names this worktree) | **1 passed** |
 
 **Two attribution rulings, both measured at the untouched merge-base
@@ -272,18 +272,39 @@ before being called anything:**
    failed twice (alternating owners, `assert 5 == (2 + 1)` — extra
    coalesced sync runs) and once even in isolation. Pre-existing; not
    this branch. It passed 3/3 in this branch's own gate batch.
-2. `Tests/UI/test_console_mcp_approval.py` fails the SAME 3
-   deny-deadline tests (`…cancellation_denies_undecided`,
-   `…records_denied_decision_to_execution_log`,
-   `test_shutdown_still_denies_a_survivors_round`) on BOTH the branch
-   and the untouched merge-base when the machine is loaded (measured
-   back-to-back while the one-process baseline run was executing;
-   identical failure sets), and passes on both when quiet (see the
-   population-gate section). Load-sensitive deadlines; not this branch.
+2. `Tests/UI/test_console_mcp_approval.py` reads **3 failed, 71
+   passed** — a PRE-EXISTING DEV RED AT THE MERGE-BASE, and apparently
+   new with it. The same 3 tests
+   (`test_request_mcp_approvals_cancellation_denies_undecided`,
+   `…cancellation_records_denied_decision_to_execution_log`,
+   `test_shutdown_still_denies_a_survivors_round`) fail IDENTICALLY on
+   the branch and on untouched `98a189015`, under load and on a quiet
+   machine (four branch runs, two base runs — one base run quiet, in a
+   throwaway detached worktree). Bisection by evidence, not by run:
+   this session's pre-restart measurement at `e49c5dba8` read **74
+   passed** for this suite, and the only merge between (`98a189015` =
+   PR #1799) changed `console_chat_controller.py`'s
+   `_bind_visit_cancel_signal` — the never-visited-controller cancel
+   binding these three deny-on-cancellation tests exercise. All three
+   fail with a worker thread still parked after the cancel/shutdown
+   signal ("teardown left a survivor's round parked"). **Routed to the
+   owner as a dev red; nothing in this branch touches that path.**
 
-### The one-process app-lifetime population gate
+### The one-process app-lifetime population gate — VETOED
 
-<!-- POPULATION_GATE_RESULTS -->
+The population comparison was vetoed mid-task by owner directive
+(2026-08-18): *only run tests related to modified files / impacted
+functionality*. The already-running merge-base baseline invocation was
+killed by the owner; the branch-side run was never launched, and no
+partial log was compared against. The gate above is therefore the
+TARGETED set — everything this branch modifies or plausibly impacts
+(the whole `Tests/Agents` package, every fleet/steering/continuation
+suite, the bridge suites, the runtime-lifetime suite, the fleet
+panel/rail/steering-bar/cancel-all UI suites, the provenance probe),
+all with read counts. Stated plainly, what that does NOT prove: a
+cross-suite, one-process app-lifetime interaction (state leaking
+between Console suites that only a whole-population single invocation
+would surface) is not covered by this gate.
 
 ## Concerns for Task 6
 
