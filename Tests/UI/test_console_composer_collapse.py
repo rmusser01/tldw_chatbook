@@ -830,13 +830,174 @@ async def test_console_composer_defaults_expanded_and_toggles_idempotently():
 
 
 @pytest.mark.asyncio
+async def test_console_composer_default_geometry_is_single_row():
+    """task-17651: zero chrome rows — the composer IS its draft rows.
+
+    The old box (border 2 + padding 2, COMPOSER_CHROME_ROWS = 4) rendered
+    5-8 total rows for 1-4 draft rows. The dense-form composer renders
+    exactly its draft height: 1 row empty, capped at 4 for long drafts.
+    """
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+
+        assert composer.region.height == 1
+
+        composer.load_draft("x " * 400)
+        await pilot.pause()
+        assert composer.region.height == 4
+
+        composer.load_draft("short")
+        await pilot.pause()
+        assert composer.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_console_bottom_stack_single_separator_contract():
+    """task-17651: one border row between transcript text and the chips.
+
+    The workbench frame closes at the grid: the transcript widget and the
+    region no longer draw their own bottom edges, and the composer carries
+    no border box at all — grid border, chips, 1-row composer, footer.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _BundledConsoleGeometryHarness(app)
+
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript = console.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        region = console.query_one("#console-transcript-region")
+        grid = console.query_one("#console-workspace-grid")
+        chips = console.query_one("#console-status-chips")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        footer = console.query_one("#screen-footer-status")
+
+        # The transcript draws no border of its own at any size.
+        assert transcript.styles.border.top[0] in ("", "none")
+        assert transcript.styles.border.bottom[0] in ("", "none")
+        # The region's bottom edge is suppressed, so the transcript content
+        # runs flush to the region's last row and the grid's own bottom
+        # border is the only separator line.
+        assert region.styles.border_bottom[0] in ("", "none")
+        assert (
+            transcript.region.y + transcript.region.height
+            == region.region.y + region.region.height
+        )
+        # Below the grid's closing border: chips, 1-row composer, footer,
+        # with no blank or border rows between them.
+        assert chips.region.y == grid.region.y + grid.region.height
+        assert composer.region.y == chips.region.y + chips.region.height
+        assert composer.region.height == 1
+        assert footer.region.y == composer.region.y + composer.region.height
+
+
+@pytest.mark.asyncio
+async def test_console_composer_focus_edge_is_live_and_stable():
+    """task-17651: the dense-form focus edge actually renders.
+
+    The inline workbench frame used to override the stylesheet, leaving
+    the focused composer visually identical to the rest state. With the
+    composer out of the frame grammar, CSS owns the edge: solid at rest,
+    thick focus accent when focused, with no dimensional change.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _BundledConsoleGeometryHarness(app)
+
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        # The Console auto-focuses the composer on mount; move focus away
+        # to capture the genuine rest state first.
+        console.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        ).focus()
+        await pilot.pause()
+        rest_kind, rest_color = composer.styles.border_left
+        rest_region = composer.region
+
+        # Painted evidence for the REST edge too — style reads cannot see
+        # the global *:focus outline overpainting the row (task-17651).
+        rest_row = "".join(
+            seg.text
+            for seg in host.screen._compositor.render_strips()[rest_region.y]
+        )
+        assert rest_row[0] == "│", repr(rest_row[:4])
+
+        composer.focus()
+        await pilot.pause()
+
+        focus_kind, focus_color = composer.styles.border_left
+        assert rest_kind == "solid"
+        assert focus_kind == "thick"
+        assert focus_color != rest_color
+        assert composer.region == rest_region
+        focus_row = "".join(
+            seg.text
+            for seg in host.screen._compositor.render_strips()[composer.region.y]
+        )
+        # Thick edge block + padding cell — never the outline's ┌─ corners.
+        assert focus_row[0] == "█", repr(focus_row[:4])
+        assert focus_row[1] == " ", repr(focus_row[:4])
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_focus_recolors_region_columns():
+    """task-17651: the region's column lines carry transcript focus.
+
+    The transcript widget draws no border of its own any more, so the
+    TASK-359 pane-stop painter recolors the region's inline column lines
+    to the focus accent while the transcript holds focus — and the
+    suppressed top/bottom edges survive the repaint (no resurrected
+    separator rows), with no layout change.
+    """
+    from textual.color import Color as _Color
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _BundledConsoleGeometryHarness(app)
+
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript = console.query_one(
+            "#console-native-transcript", ConsoleTranscript
+        )
+        region = console.query_one("#console-transcript-region")
+        region_rect = region.region
+
+        transcript.focus()
+        await pilot.pause()
+
+        kind, color = region.styles.border_left
+        assert kind == "solid"
+        assert color == _Color.parse("#0178D4")
+        assert region.styles.border_bottom[0] in ("", "none")
+        assert region.styles.border_top[0] in ("", "none")
+        assert region.region == region_rect
+
+        console.query_one("#console-native-composer", ConsoleComposerBar).focus()
+        await pilot.pause()
+
+        blur_kind, blur_color = region.styles.border_left
+        assert blur_kind == "solid"
+        assert blur_color == _Color.parse("#6f7782")
+        assert region.styles.border_bottom[0] in ("", "none")
+
+
+@pytest.mark.asyncio
 async def test_console_composer_geometry_is_bounded_then_exactly_one_row():
     app = _ComposerGeometryApp()
 
     async with app.run_test(size=(140, 42)) as pilot:
         composer = app.query_one("#console-native-composer", ConsoleComposerBar)
 
-        assert 5 <= composer.region.height <= 8
+        # task-17651: dense-form composer — 1-4 rows, no chrome.
+        assert 1 <= composer.region.height <= 4
 
         composer.set_collapsed(True)
         await pilot.pause()
@@ -846,7 +1007,7 @@ async def test_console_composer_geometry_is_bounded_then_exactly_one_row():
         composer.set_collapsed(False)
         await pilot.pause()
 
-        assert 5 <= composer.region.height <= 8
+        assert 1 <= composer.region.height <= 4
 
 
 @pytest.mark.asyncio
@@ -923,7 +1084,10 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
         expand = composer.query_one("#console-composer-expand", Button)
 
         assert composer.region.height == 1
-        assert transcript.region.height >= expanded_transcript_height + 4
+        # task-17651: the expanded composer is already 1 row for a 1-row
+        # draft, so collapse is a content swap, not a row-saving lever —
+        # the transcript must simply not shrink.
+        assert transcript.region.height >= expanded_transcript_height
         assert "Draft retained" in str(status.renderable)
         assert "Attachment retained" in str(status.renderable)
         assert expand.region.right <= status.region.x

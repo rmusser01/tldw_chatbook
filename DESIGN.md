@@ -238,7 +238,12 @@ This system does not use shadow elevation as a primary depth cue. Depth is conve
 
 Dense workbench forms (Settings and its widgets) cannot afford full
 borders: a Textual border costs a row above and below, tripling a
-one-row field. The convention for those fields (task-1586):
+one-row field. The Console composer joined the convention in
+task-17651 — it renders as a one-row bar (growing to four with the
+draft) whose left edge recolors for the has-draft state and flips to
+the thick focus accent, and the Console workbench frame now closes at
+the workspace grid's single bottom border. The convention for these
+fields (task-1586):
 
 - **Rest:** every editable field carries a one-column left edge
   (`border-left: solid $ds-control-edge`). The edge's *presence* is the

@@ -5109,3 +5109,38 @@ fresh/upgraded DBs assert `== CharactersRAGDB._CURRENT_SCHEMA_VERSION`, and a
 "migration X added tables T" claim is a superset check (`T <= delta`), never
 equality. If you are bumping the schema, run `Tests/DB/` and `Tests/ChaChaNotesDB/`
 in full — the tests your bump breaks are not in your feature's test files.
+
+## Removing a widget's border box activates the global focus outline on it (task-17651, 2026-08-17)
+
+**What happened.** Flattening the Console composer to a one-row dense-form bar
+(border box → `border-left` only) shipped green through every style-level
+assertion — `styles.border_left == ("thick", …)`, others empty — and then the
+painted row-map probe showed the row rendering `┌─ Composer ▾ …`: corner glyphs
+overpainting the bar's first two cells. The computed border styles were
+CORRECT; the glyphs came from `core/_reset.tcss`'s global `*:focus { outline:
+solid … }`, which had been landing on the focused composer all along but was
+absorbed invisibly by the old border box's padding rows. The transcript had the
+same latent hit: with its border removed, focusing it would have drawn the
+outline over its outermost CONTENT rows.
+
+Two mechanics worth keeping:
+
+1. **A border removal is also an outline activation.** The reset rule's own
+   comment documents that it obscures widgets that draw content on their
+   perimeter (the TASK-1160 DataTable case) — but the trap here is the inverse
+   direction: a widget that was previously SAFE becomes obscured the moment its
+   border/padding buffer is removed, with zero diff to any focus rule. When
+   removing a border box, grep the resets for `:focus` and add the
+   `outline: none` opt-out with a replacement cue in the same change.
+2. **Style probes cannot see this class of defect at all** — outline is not
+   border, and `styles.border_*` reads stay pristine while the paint is wrong.
+   Only the compositor row (`render_strips()`) showed it. The composer focus
+   test now pins the painted first cells (`│`/`█`, never `┌─`) alongside the
+   style reads; assert the paint whenever the mechanism under test is "what
+   the user sees at this cell".
+
+**A self-inflicted corollary:** the fix (`outline: none;`) then tripped this
+arc's own freshly written pin `assert "outline:" not in focus` — written
+minutes earlier to mean "no focus outline". Ban the specific values
+(`outline: solid`, `outline: heavy`) and PIN the opt-out explicitly; a
+substring ban on the property name bans the cure along with the disease.

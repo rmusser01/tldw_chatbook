@@ -70,7 +70,9 @@ Top to bottom:
   while Library RAG evidence is staged (or briefly after a
   send consumes it); lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md).
-- **Composer row** — the "Composer ▾" collapse toggle, the draft area
+- **Composer row** — a slim one-row bar (it grows with your draft, up to
+  four rows) marked by a one-column edge on its left that brightens and
+  thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
   ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
   and **Save**; a **Stop** button appears between Send and Mic while a
   reply is streaming. **Send** is genuinely disabled whenever a send can't
@@ -430,4 +432,11 @@ placements): the status chip strip now defaults to sitting ABOVE the
 composer, directly under the conversation pane; Settings ▸ Console
 Behavior ▸ Status row placement restores the below-composer bottom row;
 the Status ▾ collapse choice persists across Console re-entry and app
-restart.*
+restart. Verified against TASK-17651 — 2026-08-17 (headless row-map
+probes at 150×44 and 150×30, ready/long-draft/collapsed/setup-blocked
+states): the composer is now a one-row dense-form bar growing to four
+rows with the draft, the workbench frame closes at the grid's single
+bottom border (the transcript and region no longer draw their own bottom
+edges), and the conversation gained seven content rows; transcript
+keyboard focus is carried by the region's column lines and the scrollbar
+accent.*
