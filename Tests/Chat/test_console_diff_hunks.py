@@ -678,3 +678,23 @@ def test_middle_elide_path_best_effort_when_even_elided_form_overflows():
     elided = middle_elide_path(path, 10)
     assert elided == "a_very_long_first_component/…/another_very_long_last_component.py"
     assert len(elided) > 10
+
+
+def test_middle_elide_path_budgets_by_terminal_cell_width_not_char_count():
+    """TASK-17611 (AC#5): a path carrying double-width (CJK) characters must
+    be budgeted by actual terminal CELL width, not raw character count.
+
+    This 3-component path is exactly 10 *characters* long -- pre-fix, the
+    old ``len(path) <= budget`` check reported it as already fitting a
+    10-char budget and returned it unchanged, even though its real
+    on-screen width is 15 cells (each CJK character paints 2 cells) --
+    silently overflowing the row by 5 cells. Budgeting by
+    ``rich.cells.cell_len`` catches this and elides it correctly.
+    """
+    path = "根/目录/文件.py"
+    assert len(path) == 10, "the character-count budget this bug hides behind"
+    elided = middle_elide_path(path, 10)
+    assert elided == "根/…/文件.py", (
+        "a wide-character path within the CHAR budget but over the CELL "
+        "budget must still be elided"
+    )

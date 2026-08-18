@@ -8,6 +8,8 @@ from html import escape as html_escape
 from pathlib import PurePath
 from typing import Any, Mapping, Optional, Sequence
 
+from rich.cells import cell_len
+
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
@@ -1176,9 +1178,19 @@ def middle_elide_path(path: str, budget: int) -> str:
     already a root-relative git path, not a local filesystem path to
     resolve, and git always uses "/" regardless of host OS.
 
+    TASK-17611 (AC#5): budgeted in terminal display CELLS via
+    ``rich.cells.cell_len``, not raw ``len()`` -- a path carrying
+    double-width (CJK etc.) characters can fit comfortably within a
+    character-count budget while still overflowing the actual row width
+    by several cells; ``cell_len`` is the same width function
+    Rich/Textual use to lay out text, so this budget check matches what
+    actually gets painted. ASCII paths are unaffected: ``cell_len(text)
+    == len(text)`` for any text with no wide/zero-width characters, so
+    every existing ASCII-path caller/test keeps its exact prior result.
+
     Args:
         path: The path to elide.
-        budget: Maximum character length of the result.
+        budget: Maximum display-cell width of the result.
 
     Returns:
         ``path`` unchanged when it already fits within ``budget``, or when
@@ -1190,7 +1202,7 @@ def middle_elide_path(path: str, budget: int) -> str:
         overlong component can't be shortened further at this
         path-component granularity.
     """
-    if len(path) <= budget:
+    if cell_len(path) <= budget:
         return path
     parts = path.split("/")
     if len(parts) <= 2:

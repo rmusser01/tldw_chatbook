@@ -524,6 +524,51 @@ def full_step_output(
     return text
 
 
+def _append_to_last_user_message(
+    messages: list[dict], block: str
+) -> tuple[list[dict], bool]:
+    """Append ``block`` to the last role=="user"/str-content entry, copy-on-write.
+
+    TASK-17611 (AC#4): shared by ``run_reply``'s turn-bundle-block and
+    diff-feedback-block attach seams, which used to be two near-identical
+    inline backward-scan loops. Scans ``messages`` from the end for the
+    last entry whose ``role`` is ``"user"`` and whose ``content`` is a
+    ``str`` (a vision/attachment turn's LIST content is correctly excluded
+    as a carrier, same as before this extraction) and appends ``block``
+    after a blank line.
+
+    Never mutates ``messages`` or any of its dicts -- when it attaches, it
+    returns a NEW list with a NEW dict at the matched index; the caller's
+    own list/dict are always safe to reuse afterward. A falsy ``block`` or
+    no eligible carrier both take the same no-op path: ``messages`` is
+    returned unchanged (same object identity), matching the existing
+    no-op contract both call sites relied on before this extraction.
+
+    Args:
+        messages: The message list to scan (never mutated).
+        block: The pre-rendered text block to append; a falsy value is a
+            no-op.
+
+    Returns:
+        ``(result_messages, attached)`` -- ``result_messages`` is
+        ``messages`` itself, unchanged, when ``attached`` is ``False``;
+        otherwise a shallow copy of ``messages`` with the carrier
+        message's dict replaced.
+    """
+    if not block:
+        return messages, False
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        content = message.get("content")
+        if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+            content, str
+        ):
+            result = list(messages)
+            result[index] = {**message, "content": f"{content}\n\n{block}"}
+            return result, True
+    return messages, False
+
+
 def _pair_step_diff(
     pending_diffs: deque[tuple[str, str, str, str]],
     tool_name: str | None,
@@ -3382,20 +3427,9 @@ class ConsoleAgentBridge:
         # run_reply at all, so they drop it unused. No-op (the original
         # `agent_messages` list is used unchanged) when there is no block
         # to append or no user message to append it to.
-        run_messages = agent_messages
-        if turn_bundle_block:
-            for index in range(len(agent_messages) - 1, -1, -1):
-                message = agent_messages[index]
-                content = message.get("content")
-                if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                    content, str
-                ):
-                    run_messages = list(agent_messages)
-                    run_messages[index] = {
-                        **message,
-                        "content": f"{content}\n\n{turn_bundle_block}",
-                    }
-                    break
+        run_messages, _ = _append_to_last_user_message(
+            agent_messages, turn_bundle_block
+        )
         # task-5 (turn-file-annotate, spec §4): auto-attach this
         # conversation's pending diff-feedback notes to the SAME outbound
         # copy, immediately after the bundle block above and by the same
@@ -3422,21 +3456,9 @@ class ConsoleAgentBridge:
                 : len(diff_feedback_included_ids)
             ]
             if diff_feedback_block:
-                attached = False
-                for index in range(len(run_messages) - 1, -1, -1):
-                    message = run_messages[index]
-                    content = message.get("content")
-                    if message.get(
-                        "role"
-                    ) == ConsoleMessageRole.USER.value and isinstance(content, str):
-                        if run_messages is agent_messages:
-                            run_messages = list(agent_messages)
-                        run_messages[index] = {
-                            **message,
-                            "content": f"{content}\n\n{diff_feedback_block}",
-                        }
-                        attached = True
-                        break
+                run_messages, attached = _append_to_last_user_message(
+                    run_messages, diff_feedback_block
+                )
                 if not attached:
                     # No user message with str content could carry the
                     # block (no user message at all, or the only/last one
