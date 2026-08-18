@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 
 from tldw_chatbook.Chat.console_display_state import (
     DiffHunk,
@@ -642,12 +643,20 @@ def test_middle_elide_path_loose_elides_the_middle_keeping_ends():
 def test_middle_elide_path_many_components_still_yields_one_ellipsis():
     """Regardless of how many components sit between the first and last,
     only ONE "…" placeholder replaces all of them -- never one per
-    dropped component."""
+    dropped component.
+
+    Qodo round (TASK-17611): the naive "<first>/…/<last>" candidate here
+    ("a/…/deep_file_name.py", 21 cells) itself overflows a 20-cell budget
+    by one cell -- pre-fix, that overflow went unmeasured and unchecked
+    entirely. The last component's head is now trimmed by exactly the one
+    cell needed to fit.
+    """
     path = "a/b/c/d/e/f/g/h/deep_file_name.py"
     elided = middle_elide_path(path, 20)
-    assert elided == "a/…/deep_file_name.py"
+    assert elided == "a/…/eep_file_name.py"
     assert elided.count("…") == 1
     assert len(elided) < len(path)
+    assert cell_len(elided) <= 20
 
 
 def test_middle_elide_path_degenerate_one_component_returns_unchanged():
@@ -670,14 +679,17 @@ def test_middle_elide_path_empty_string_returns_unchanged():
     assert middle_elide_path("", 10) == ""
 
 
-def test_middle_elide_path_best_effort_when_even_elided_form_overflows():
-    """Neither end is shrinkable at the component granularity this helper
-    works at -- the 3-part elided form is still returned, even though it
-    remains longer than the budget."""
+def test_middle_elide_path_shrinks_endpoints_when_the_elided_form_still_overflows():
+    """Qodo round (TASK-17611): when even the 3-part "<first>/…/<last>"
+    form overflows the budget, the endpoint components themselves are now
+    cell-trimmed (not just the middle) so the final result actually fits
+    -- pre-fix, this case silently returned the still-overflowing 3-part
+    form unchanged (documented then as "best effort"; that was the exact
+    bug this round fixes, not an intentional limit)."""
     path = "a_very_long_first_component/mid/another_very_long_last_component.py"
     elided = middle_elide_path(path, 10)
-    assert elided == "a_very_long_first_component/…/another_very_long_last_component.py"
-    assert len(elided) > 10
+    assert elided == "a_v/…/t.py"
+    assert cell_len(elided) <= 10
 
 
 def test_middle_elide_path_budgets_by_terminal_cell_width_not_char_count():
@@ -690,11 +702,44 @@ def test_middle_elide_path_budgets_by_terminal_cell_width_not_char_count():
     on-screen width is 15 cells (each CJK character paints 2 cells) --
     silently overflowing the row by 5 cells. Budgeting by
     ``rich.cells.cell_len`` catches this and elides it correctly.
+
+    Qodo round (same task): the naive "<first>/…/<last>" candidate here
+    ("根/…/文件.py", 12 cells) STILL overflows a 10-cell budget -- the
+    original AC#5 fix measured the ORIGINAL path but never the
+    CONSTRUCTED elided candidate, so this exact case kept overflowing by
+    2 cells even after that fix. The last component's head is now
+    trimmed (cell-aware, dropping "文" and keeping the extension) so the
+    final result actually respects the budget.
     """
     path = "根/目录/文件.py"
     assert len(path) == 10, "the character-count budget this bug hides behind"
     elided = middle_elide_path(path, 10)
-    assert elided == "根/…/文件.py", (
+    assert elided == "根/…/件.py", (
         "a wide-character path within the CHAR budget but over the CELL "
-        "budget must still be elided"
+        "budget must still be elided, with the endpoint itself trimmed "
+        "when the plain first/…/last candidate still overflows"
     )
+    assert cell_len(elided) <= 10, (
+        "the CONSTRUCTED candidate must itself fit the cell budget, not "
+        "just be shorter than the original path"
+    )
+
+
+def test_middle_elide_path_tiny_budget_degrades_honestly_without_overflowing():
+    """Qodo round (TASK-17611): even a budget far too small for any real
+    content must never produce a result wider than the budget, as long as
+    the budget is at least the ellipsis's own cell width (1) -- there is
+    always at least the bare "…" placeholder to fall back to. Only a
+    budget narrower than the ellipsis itself (0, or negative) is allowed
+    to overflow, since there is nothing left to offer.
+    """
+    path = "根/目录/文件.py"
+    for budget in (1, 2, 3, 4, 5):
+        elided = middle_elide_path(path, budget)
+        assert cell_len(elided) <= budget, (
+            f"budget={budget}: {elided!r} is wider than its own budget"
+        )
+    # Below the ellipsis's own width, overflow is the documented
+    # exception -- but it must still degrade to the smallest possible
+    # placeholder, not the full unelided path.
+    assert middle_elide_path(path, 0) == "…"

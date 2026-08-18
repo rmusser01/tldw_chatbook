@@ -1167,6 +1167,65 @@ def turn_file_entries(
     return paired
 
 
+def _cell_trim_prefix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s START as fits ``budget`` display cells.
+
+    Drops trailing characters once the running cell width would exceed
+    ``budget`` -- used to shorten the FIRST path component in
+    :func:`middle_elide_path` (its directory hint lives at the front).
+    Measured whole-character via ``cell_len``, so a double-width character
+    that would not fully fit is dropped entirely rather than split.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest prefix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in text:
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(kept)
+
+
+def _cell_trim_suffix(text: str, budget: int) -> str:
+    """Keep as much of ``text``'s END as fits ``budget`` display cells.
+
+    The mirror of :func:`_cell_trim_prefix`, used to shorten the LAST path
+    component in :func:`middle_elide_path` -- its recognizable tail (often
+    a file extension) lives at the end, so leading characters are dropped
+    instead.
+
+    Args:
+        text: The component text to trim.
+        budget: Maximum display-cell width of the result.
+
+    Returns:
+        The longest suffix of ``text`` whose ``cell_len`` is ``<=
+        budget``; ``""`` when ``budget <= 0``.
+    """
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for char in reversed(text):
+        width = cell_len(char)
+        if used + width > budget:
+            break
+        kept.append(char)
+        used += width
+    return "".join(reversed(kept))
+
+
 def middle_elide_path(path: str, budget: int) -> str:
     """Middle-elide a path to fit a display budget, preserving both ends.
 
@@ -1188,6 +1247,19 @@ def middle_elide_path(path: str, budget: int) -> str:
     == len(text)`` for any text with no wide/zero-width characters, so
     every existing ASCII-path caller/test keeps its exact prior result.
 
+    Qodo round (same task): the ``"<first>/…/<last>"`` candidate is now
+    itself MEASURED, not just assumed to fit -- a wide first/last
+    component (or just a long one) can overflow the budget even after
+    dropping every middle component, which the original AC#5 fix left
+    unaddressed. When it does, both endpoint components are further
+    trimmed, cell-aware (:func:`_cell_trim_prefix`/:func:`_cell_trim_
+    suffix`), splitting the remaining budget between them (a component
+    that already fits its half-share donates the rest to the other side)
+    so the FINAL result never exceeds ``budget`` whenever ``budget`` is at
+    least the ellipsis's own cell width -- only a budget too small even
+    for the bare "…" placeholder is allowed to overflow, since there is
+    nothing narrower left to offer.
+
     Args:
         path: The path to elide.
         budget: Maximum display-cell width of the result.
@@ -1197,17 +1269,52 @@ def middle_elide_path(path: str, budget: int) -> str:
         it has two or fewer components -- there is no middle left to drop
         without mangling the one meaningful fragment that remains (a bare
         filename, or a directory/filename pair where both ends already
-        ARE the whole path). Otherwise ``"<first>/…/<last>"``, even when
-        that combined form itself still exceeds ``budget`` -- a single
-        overlong component can't be shortened further at this
-        path-component granularity.
+        ARE the whole path). Otherwise ``"<first>/…/<last>"`` when that
+        fits; when it doesn't, the same shape with one or both endpoint
+        components further cell-trimmed to fit ``budget`` exactly (or as
+        close as the budget allows) -- see the Qodo-round note above for
+        the one case still allowed to overflow.
     """
     if cell_len(path) <= budget:
         return path
     parts = path.split("/")
     if len(parts) <= 2:
         return path
-    return f"{parts[0]}/…/{parts[-1]}"
+    first, last = parts[0], parts[-1]
+    candidate = f"{first}/…/{last}"
+    if cell_len(candidate) <= budget:
+        return candidate
+
+    ellipsis_width = cell_len("…")
+    if budget < ellipsis_width:
+        # Not even the bare placeholder fits -- nothing honest to return
+        # that respects the budget; this is the one case allowed to
+        # overflow (an unusably small budget).
+        return "…"
+    slash_width = cell_len("/")
+    endpoints_budget = budget - ellipsis_width - (2 * slash_width)
+    if endpoints_budget <= 0:
+        # Room for the ellipsis (and maybe the slashes) but nothing left
+        # for either endpoint component's own text.
+        return "…"
+
+    first_width = cell_len(first)
+    last_width = cell_len(last)
+    first_budget = endpoints_budget // 2
+    last_budget = endpoints_budget - first_budget
+    # A component that already fits its half-share doesn't need to eat
+    # into the other's -- redistribute the unused allowance so the
+    # tighter side gets more room instead of being trimmed needlessly.
+    if first_width <= first_budget:
+        last_budget += first_budget - first_width
+        first_budget = first_width
+    elif last_width <= last_budget:
+        first_budget += last_budget - last_width
+        last_budget = last_width
+
+    trimmed_first = _cell_trim_prefix(first, first_budget)
+    trimmed_last = _cell_trim_suffix(last, last_budget)
+    return f"{trimmed_first}/…/{trimmed_last}"
 
 
 # --------------------------------------------------------------------------

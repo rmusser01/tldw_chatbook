@@ -569,12 +569,30 @@ class ConsoleTurnFileCard(Vertical):
                 caller).
         """
         cap = int(getattr(provider, "diff_display_max_lines", 2000))
-        # Per-hunk display cap (ruling): every hunk gets its own block even
-        # when its body is elided, so hunks past the old single-Static's
-        # global cap are still present (and, later, annotatable) --
-        # floor-guarded so a diff with more hunks than cap lines still shows
-        # at least 1 body line each.
-        per_hunk_cap = max(1, cap // max(1, len(hunks)))
+        # TASK-17611 (AC#1): a diff with an unusually large number of hunks
+        # (a generated lockfile, a vendored dump) would otherwise mount
+        # ~3-4 widgets PER HUNK with no bound -- past `MAX_MOUNTED_HUNKS`,
+        # stop mounting per-hunk blocks and report the elision honestly
+        # instead (below the loop). `hunks` itself is unchanged -- indices
+        # into it (`hunk_idx`, `_hunk_cache`) stay valid for every already-
+        # mounted hunk and for the elided-notes check below.
+        mounted_hunks = hunks[:MAX_MOUNTED_HUNKS]
+        # Qodo round (TASK-17611): the per-hunk budget must be derived from
+        # how many hunks are actually MOUNTED (`len(mounted_hunks)`), not
+        # the total hunk count -- dividing by the total meant a file with
+        # 1,000 hunks and the default 2,000-line cap mounted only
+        # `MAX_MOUNTED_HUNKS` (50) blocks, each capped to ~2 body lines
+        # (2000 // 1000), when the 50 mounted blocks could honestly afford
+        # ~40 lines each (2000 // 50). The elided hunks past the ceiling
+        # contribute nothing to what is actually on screen, so they must
+        # not shrink the budget for the ones that are.
+        #
+        # Per-hunk display cap (ruling): every MOUNTED hunk gets its own
+        # block even when its body is elided, so hunks past the old
+        # single-Static's global cap are still present (and, later,
+        # annotatable) -- floor-guarded so a diff with more hunks than cap
+        # lines still shows at least 1 body line each.
+        per_hunk_cap = max(1, cap // max(1, len(mounted_hunks)))
         # Qodo #6 (PR #1779 fix round): this entry's own snapshot row id,
         # used by `_note_matches_snapshot` below to disambiguate two
         # same-header windows on the same root+path.
@@ -584,14 +602,6 @@ class ConsoleTurnFileCard(Vertical):
             if current_snapshot_row is not None
             else None
         )
-        # TASK-17611 (AC#1): a diff with an unusually large number of hunks
-        # (a generated lockfile, a vendored dump) would otherwise mount
-        # ~3-4 widgets PER HUNK with no bound -- past `MAX_MOUNTED_HUNKS`,
-        # stop mounting per-hunk blocks and report the elision honestly
-        # instead (below the loop). `hunks` itself is unchanged -- indices
-        # into it (`hunk_idx`, `_hunk_cache`) stay valid for every already-
-        # mounted hunk and for the elided-notes check below.
-        mounted_hunks = hunks[:MAX_MOUNTED_HUNKS]
         for hunk_idx, hunk in enumerate(mounted_hunks):
             await body.mount(
                 Static(

@@ -335,6 +335,52 @@ async def test_hunk_ceiling_tail_flags_when_an_elided_hunk_carries_a_note():
 
 
 @pytest.mark.asyncio
+async def test_hunk_ceiling_budgets_per_hunk_lines_by_mounted_count_not_total():
+    """Qodo round (TASK-17611): ``per_hunk_cap`` must divide
+    ``diff_display_max_lines`` by how many hunks are actually MOUNTED
+    (bounded by ``MAX_MOUNTED_HUNKS``), not the file's total hunk count --
+    a file with many more hunks than the ceiling must not starve the 50
+    hunks that DO get mounted of their fair per-hunk line budget.
+    """
+    n_hunks = 200
+    body_lines_per_hunk = 20
+    diff_display_max_lines = 200
+    provider = _MultiHunkProvider(
+        n_hunks=n_hunks,
+        body_lines_per_hunk=body_lines_per_hunk,
+        diff_display_max_lines=diff_display_max_lines,
+    )
+
+    class _BudgetHost(_Host):
+        def compose(self) -> ComposeResult:
+            yield ConsoleTurnFileCard(
+                MARKER, "run-1", lambda: provider, id="card-under-test"
+            )
+
+    async with _BudgetHost().run_test(size=(120, 40)) as pilot:
+        card = await _settled_card(pilot)
+        body = await _expand_first_row(pilot, card)
+        hunks = list(body.query(".console-turn-file-hunk"))
+        assert len(hunks) == MAX_MOUNTED_HUNKS
+
+        # cap // MOUNTED (200 // 50 == 4 lines/hunk) is the correct
+        # budget -- the pre-fix bug divided by the file's TOTAL hunk count
+        # instead (200 // 200 == 1 line/hunk), starving every mounted
+        # block down to its first body line alone. Hunk index 1 (not 0,
+        # to sidestep the first hunk's extra prelude text) must show its
+        # 4th body line (index 3) and an honest "16 more lines" tail --
+        # neither is reachable under the old total-count division, which
+        # would cap it to 1 line and a "19 more lines" tail instead.
+        second_hunk_text = str(hunks[1].render())
+        assert "hunk1_body_line3" in second_hunk_text, (
+            "per-hunk line budget must be computed from the MOUNTED hunk "
+            "count, not the file's total hunk count"
+        )
+        assert "hunk1_body_line4" not in second_hunk_text
+        assert "16 more lines" in second_hunk_text
+
+
+@pytest.mark.asyncio
 async def test_expand_collapse_reexpand_reuses_cache_single_diff_text_call():
     """Collapsing and re-expanding a row reuses the cached hunks -- the
     provider's ``diff_text`` is called exactly once, not once per expand.
