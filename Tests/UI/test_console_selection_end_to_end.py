@@ -822,6 +822,29 @@ class _RecordingPromptQueue:
     def __init__(self) -> None:
         self.dispatched: list[str] = []
 
+    def presentation_for(self, session_id, **kwargs):
+        """The sync tick reads the queue presentation unconditionally; hand
+        it the REAL dataclass in its idle empty-queue shape so every widget
+        consumer (chips, shelf, send button) sees a total object."""
+        from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+            ConsolePromptQueuePresentation,
+        )
+
+        return ConsolePromptQueuePresentation(
+            revision=0,
+            count=0,
+            send_label="Send",
+            send_enabled=True,
+            send_tooltip="",
+            shelf_visible=False,
+            state_label="",
+            paused=False,
+            next_preview="",
+            pause_label="Pause",
+            primary_action="send",
+            pause_enabled=False,
+        )
+
     async def dispatch(self, draft: str, *, stash: object = None) -> None:
         self.dispatched.append(draft)
 
@@ -1523,3 +1546,55 @@ async def test_feedback_flow_can_run_again_after_completion():
             await pilot.pause()
 
         assert queue.dispatched == ["[LGTM]\n> q0\nnote", "[LGTM]\n> q1\nnote"]
+
+
+@pytest.mark.asyncio
+async def test_keyboard_only_journey_selects_and_dispatches_feedback():
+    """Phase 5 e2e: j/k -> s -> motions -> Enter -> Comment, no mouse at any
+    step until the menu (whose buttons are the same either way). The
+    keyboard path must produce the same dispatch and the same durable
+    records as a mouse drag."""
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        controller = screen._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        assistant = controller.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="keyboard journey target",
+            persist=False,
+        )
+        # Sync with the REAL queue still installed -- the tick consults it
+        # (presentation_for); the doubles go in only once the rows exist.
+        await screen._sync_native_console_transcript()
+        await pilot.pause()
+        queue = _RecordingPromptQueue()
+        screen._prompt_queue = queue
+        _stub_comment_modal(screen, "kb note")
+        store = _RecordingStore()
+        _stub_feedback_store(screen, store)
+
+        transcript = screen.query_one(ConsoleTranscript)
+        transcript.focus()
+        await pilot.pause()
+        # j selects the (only) message; s arms the mode; l l extends.
+        await pilot.press("j")
+        assert transcript.selected_message_id == assistant.id
+        await pilot.press("s")
+        assert transcript._kb_selection_row is not None, "s did not arm the mode"
+        await pilot.press("l", "l")
+        assert transcript._kb_selection_row is not None, "mode lost after motions"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        menu = screen.query_one(ConsoleSelectionMenu)
+        assert not menu.query_one("#console-selection-comment").disabled
+        await pilot.click("#console-selection-comment")
+        await pilot.pause()
+        await pilot.pause()
+
+        quote = "key"  # 3 chars: entry selected 1, l l extended to 3
+        assert queue.dispatched == [f"[Comment]\n> {quote}\nkb note"]
+        assert store.calls[0]["anchor_message_id"] == assistant.id
+        assert store.calls[0]["quote"] == quote
+        assert store.annotation_calls[0]["comment"] == "kb note"

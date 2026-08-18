@@ -5173,6 +5173,39 @@ class ConsoleTranscript(VerticalScroll):
                 event.stop()
                 event.prevent_default()
                 return
+            if event.key == "enter":
+                # Task 4: Enter = mouse-release parity. finish_drag() flips
+                # the manager to its finished state (which _text_selected's
+                # _active_selection_row() reads), and the SAME
+                # TranscriptTextSelected message drives the SAME menu path
+                # (clamping, feedback gating, above-row hop) -- the only
+                # keyboard-specific work is the anchor, derived from the
+                # row's laid-out region because there is no release cell.
+                event.stop()
+                event.prevent_default()
+                row = self._kb_selection_row
+                selection = self.selection_manager.finish_drag()
+                # Keyboard has no release Click to consume the suppression
+                # tokens the finish just armed -- drain them, or the NEXT
+                # genuine row click's selection toggle is eaten.
+                self.selection_manager.consume_release_click()
+                self.selection_manager.consume_just_finished()
+                # clear=False: the highlight and the manager's finished
+                # state ARE the menu's working material; only the mode's
+                # own state (and the hint) go away.
+                self._exit_keyboard_selection(clear=False)
+                if selection is None or row is None:
+                    return
+                region = row.region
+                self.post_message(
+                    self.TranscriptTextSelected(
+                        selection=selection,
+                        screen_x=region.x + min(4, max(0, region.width - 1)),
+                        # The handler's +1 lands the menu just below the row.
+                        screen_y=region.bottom - 1,
+                    )
+                )
+                return
             if event.is_printable or event.key in {"enter", "up", "down"}:
                 # Interception rule (corrected after Task 2's review found
                 # the fall-through desync): every printable single

@@ -233,8 +233,8 @@ async def test_row_destruction_guard_exits_mode_without_crash():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", ["down", "up", "enter"])
-async def test_message_nav_and_confirm_keys_are_no_ops_in_mode(key):
+@pytest.mark.parametrize("key", ["down", "up"])
+async def test_message_nav_keys_are_no_ops_in_mode(key):
     """`down`/`up`/`enter` stay inert in the mode -- `j`/`k` graduated to real
     line motions in Task 3 (see ``test_j_k_move_by_line_preserving_column``
     and ``test_j_is_inert_at_text_end_on_a_single_line_row``) and are no
@@ -521,3 +521,92 @@ async def test_char_keys_are_inert_on_diff_rows():
 
         transcript._kb_apply_motion("o")
         assert (transcript._kb_anchor, transcript._kb_end) == (15, 0)
+
+
+# --- Task 4: Enter finishes the selection and opens the real menu ------------
+
+
+@pytest.mark.asyncio
+async def test_enter_opens_the_same_menu_with_feedback_gating():
+    """Enter in mode = mouse-release parity: the SAME TranscriptTextSelected
+    path mounts the SAME menu, with feedback buttons present for assistant
+    prose and Request/LGTM run-gated (bare harness reports no active run)."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        await pilot.press("s")
+        await pilot.press("l", "l")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        menu = app.screen.query_one(ConsoleSelectionMenu)
+        assert not menu.query_one("#console-selection-comment").disabled
+        assert menu.query_one("#console-selection-request-changes").disabled
+        assert menu.query_one("#console-selection-lgm").disabled
+        # Mode is over; the highlight and manager state survive for the menu.
+        assert transcript._kb_selection_row is None
+        assert transcript.selection_manager.state.selection is not None
+        hint = transcript.query_one("#console-kb-selection-hint")
+        assert hint.display is False
+
+
+@pytest.mark.asyncio
+async def test_keyboard_finish_drains_the_release_click_token():
+    """finish_drag() arms a one-shot release-click suppression token for the
+    mouse path; keyboard has no release Click to consume it, and a stale
+    token would eat the NEXT genuine row click's selection toggle."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        await pilot.press("s")
+        await pilot.press("l")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert transcript.selection_manager.consume_release_click() is False
+        assert transcript.selection_manager.just_finished is False
+
+
+@pytest.mark.asyncio
+async def test_menu_anchor_derives_from_row_region_and_stays_in_transcript():
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        row = transcript.query_one("#console-message-m1")
+        row_region = row.region
+        await pilot.press("s")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        menu = app.screen.query_one(ConsoleSelectionMenu)
+        anchor_x, anchor_y = menu._anchor
+        bounds = transcript.region
+        assert bounds.x <= anchor_x <= bounds.right
+        assert bounds.y <= anchor_y <= bounds.bottom
+        # The menu can hop entirely above the row because the keyboard path
+        # handed it the row's top, exactly like the mouse path does.
+        assert menu._selection_top == row_region.y
+
+
+@pytest.mark.asyncio
+async def test_enter_with_no_active_selection_row_opens_nothing():
+    """Enter outside the mode keeps its old meaning (message-selection
+    toggle) -- pinned so the mode branch's Enter never leaks out of mode."""
+    app = _KeyboardSelectionApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.selected_message_id = "m1"
+        await pilot.pause()
+        transcript.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not app.screen.query(ConsoleSelectionMenu)
