@@ -334,3 +334,13 @@ def test_count_tokens_messages_survives_list_content_message():
         },
     ]
     assert count_tokens_messages(messages) > 0
+
+
+def test_non_text_part_estimate_matches_the_budget_per_image_charge():
+    """Qodo PR #1783: the generic estimator and budget enforcement must
+    charge images identically — a lower estimator figure would let
+    image-heavy no-usage turns slip past max_total_tokens."""
+    from tldw_chatbook.Chat.console_history_budget import DEFAULT_PER_IMAGE_TOKENS
+    from tldw_chatbook.Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
+
+    assert DEFAULT_PER_IMAGE_TOKENS == NON_TEXT_PART_TOKEN_ESTIMATE

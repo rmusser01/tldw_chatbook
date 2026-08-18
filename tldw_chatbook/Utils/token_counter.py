@@ -90,11 +90,14 @@ CJK_TOKENS_PER_CHAR = 1.0  # each CJK code point is >= ~1 token
 ESTIMATE_HEADROOM = 1.2  # documented headroom so estimates lean high (safe)
 
 #: Fixed contribution for a non-text part of a multimodal message (an image /
-#: attachment block in the OpenAI part-list shape). 85 is the published
-#: low-detail image cost for GPT-4V-family models — a deliberate floor, not a
-#: per-provider truth; the estimator's contract everywhere else is likewise a
-#: conservative estimate, never an exact count (TASK-17610).
-NON_TEXT_PART_TOKEN_ESTIMATE = 85
+#: attachment block in the OpenAI part-list shape). 1024 matches the repo's
+#: existing per-image budget charge (``console_history_budget``'s
+#: ``DEFAULT_PER_IMAGE_TOKENS`` aliases THIS constant so the two can never
+#: drift) — using a lower figure here would let image-heavy no-usage turns
+#: slip past ``max_total_tokens`` enforcement (Qodo, PR #1783). Deliberately
+#: conservative, consistent with the estimator's floor-not-exact contract
+#: (TASK-17610).
+NON_TEXT_PART_TOKEN_ESTIMATE = 1024
 
 _CJK_RANGES = (
     (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
