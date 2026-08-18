@@ -191,14 +191,16 @@ git commit -m "feat(research): lease a run to exactly one executor (TASK-18060)"
 
 ```python
 # append to Tests/Research/test_research_run_lease.py
-import time
+# NOTE: a lease of 0 seconds expires the instant it is granted, so these tests
+# exercise takeover deterministically. Do NOT use time.sleep() to age a lease:
+# a wall-clock dependency makes the suite flaky on a loaded machine, and the
+# behaviour under test is the comparison against `leased_until`, not duration.
 
 
 def test_a_stale_lease_can_be_taken_over():
     service = _service()
     run = service.launch_run(query="q", autonomy_mode="autonomous")
-    service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0.01)
-    time.sleep(0.05)
+    service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
 
     assert service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
 
@@ -206,8 +208,7 @@ def test_a_stale_lease_can_be_taken_over():
 def test_a_displaced_worker_cannot_renew_or_release():
     service = _service()
     run = service.launch_run(query="q", autonomy_mode="autonomous")
-    stale = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0.01)
-    time.sleep(0.05)
+    stale = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
     service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
 
     assert service.renew_lease(run["id"], lease_id=stale, lease_seconds=60) is False
@@ -220,12 +221,11 @@ def test_reclaim_stops_at_the_retry_budget():
     run = service.launch_run(query="q", autonomy_mode="autonomous")
     for _ in range(3):
         assert service.claim_run(
-            run["id"], worker_id="w", lease_seconds=0.01, max_attempts=3
+            run["id"], worker_id="w", lease_seconds=0, max_attempts=3
         )
-        time.sleep(0.05)
 
     assert service.claim_run(
-        run["id"], worker_id="w", lease_seconds=0.01, max_attempts=3
+        run["id"], worker_id="w", lease_seconds=0, max_attempts=3
     ) is None
 
 
