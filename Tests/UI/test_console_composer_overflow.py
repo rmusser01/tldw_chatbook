@@ -74,6 +74,12 @@ _BODY = (
 _SENTINEL = "SENTINEL_TAIL_MARKER"
 _TAIL = f" and then the {_SENTINEL} row must survive on screen for sure"
 _BOUNDARY_TEXT = _LEAD + _BODY + _TAIL
+# task-17654: MAX_DRAFT_ROWS grew 4 -> 8, so the windowing tests need a
+# draft that overflows the LARGER cap. Hard-newline pad rows prepend
+# whole rows while keeping every wrap boundary of the original fixture
+# byte-identical (a newline restarts wrapping), so the exact-width
+# assertions on _BOUNDARY_TEXT itself are untouched.
+_WINDOWED_BOUNDARY_TEXT = ("overflow filler row\n" * 5) + _BOUNDARY_TEXT
 
 # --- Bug 2 fixture: 40 double-width CJK characters + a short ASCII tail ----
 # 40 * "個" + " ZEBRA4" is 47 *characters* (under width 57 by character
@@ -124,7 +130,10 @@ def test_boundary_row_is_exactly_width_before_any_prefix_is_applied():
     """Pin the fixture's premise: the row bug 1 prefixes is whitespace-flush
     at exactly the wrap width, and the source text needs windowing at all."""
     wrapped = ConsoleComposerBar._wrap_draft_line_slices(_BOUNDARY_TEXT, WIDTH)
-    assert len(wrapped) > ConsoleComposerBar.MAX_DRAFT_ROWS
+    windowed = ConsoleComposerBar._wrap_draft_line_slices(
+        _WINDOWED_BOUNDARY_TEXT, WIDTH
+    )
+    assert len(windowed) > ConsoleComposerBar.MAX_DRAFT_ROWS
     boundary_row = wrapped[1]
     assert cell_len(boundary_row.text) == WIDTH
     assert boundary_row.text.rstrip() != boundary_row.text  # whitespace-flush
@@ -132,7 +141,9 @@ def test_boundary_row_is_exactly_width_before_any_prefix_is_applied():
 
 def test_every_unfocused_visible_row_fits_the_wrap_width_and_the_tail_survives():
     """RED reproduction, `cursor_index=None` branch (unfocused/dictation)."""
-    visible = ConsoleComposerBar._visible_draft_line_slices(_BOUNDARY_TEXT, WIDTH)
+    visible = ConsoleComposerBar._visible_draft_line_slices(
+        _WINDOWED_BOUNDARY_TEXT, WIDTH
+    )
     assert len(visible) == ConsoleComposerBar.MAX_DRAFT_ROWS
 
     for row_index, line_slice in enumerate(visible):
@@ -152,9 +163,9 @@ def test_every_caret_following_visible_row_fits_the_wrap_width_and_the_tail_surv
     caret at the very end of the draft makes `first_visible` identical to the
     unfocused case, so this exercises the same overflow through the other path.
     """
-    caret_index = len(_BOUNDARY_TEXT)
+    caret_index = len(_WINDOWED_BOUNDARY_TEXT)
     visible = ConsoleComposerBar._visible_draft_line_slices(
-        _BOUNDARY_TEXT, WIDTH, cursor_index=caret_index
+        _WINDOWED_BOUNDARY_TEXT, WIDTH, cursor_index=caret_index
     )
     assert len(visible) == ConsoleComposerBar.MAX_DRAFT_ROWS
 
@@ -174,12 +185,16 @@ def test_prefixed_row_offsets_still_map_into_the_source_text():
     advances `start` by exactly that much, so the row's displayed text past
     the synthetic prefix is *exactly* the source slice `[start:end)`.
     """
-    visible = ConsoleComposerBar._visible_draft_line_slices(_BOUNDARY_TEXT, WIDTH)
+    visible = ConsoleComposerBar._visible_draft_line_slices(
+        _WINDOWED_BOUNDARY_TEXT, WIDTH
+    )
     prefixed = visible[0]
     assert prefixed.text.startswith("... ")
-    assert 0 <= prefixed.start <= prefixed.end <= len(_BOUNDARY_TEXT)
+    assert 0 <= prefixed.start <= prefixed.end <= len(_WINDOWED_BOUNDARY_TEXT)
     displayed_tail = prefixed.text[prefixed.synthetic_prefix_columns :]
-    assert _BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
+    assert (
+        _WINDOWED_BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +212,7 @@ def test_home_row_is_never_prefixed_or_trimmed_when_nothing_is_scrolled_above():
     does for a focused composer, then windows with `cursor_index=0` (the
     caret-following branch, caret on the draft's very first row).
     """
-    render_text = ConsoleComposerBar.CURSOR_GLYPH + _BOUNDARY_TEXT
+    render_text = ConsoleComposerBar.CURSOR_GLYPH + _WINDOWED_BOUNDARY_TEXT
     visible = ConsoleComposerBar._visible_draft_line_slices(
         render_text, WIDTH, cursor_index=0
     )
@@ -221,7 +236,8 @@ def test_prefix_trim_uses_the_zwj_fuzz_counterexample_and_stays_within_width():
     make the old per-character-decrement trim exit early and leave the
     prefixed row still over budget.
     """
-    lead = "aa bb cc dd ee ff gg hh "
+    # task-17654: tripled so the draft overflows the 8-row cap.
+    lead = "aa bb cc dd ee ff gg hh " * 3
     text = lead + _ZWJ_WORD + " ii jj kk ll mm SENTINEL"
     width = 8
 

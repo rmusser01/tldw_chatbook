@@ -383,7 +383,10 @@ class ConsoleComposerBar(Horizontal):
     PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
-    MAX_DRAFT_ROWS = 4
+    # TASK-17654: 4 -> 8 (owner call). Every consumer — growth clamps,
+    # caret windowing, tail bias — derives from this constant, and the
+    # stylesheet caps below move with it.
+    MAX_DRAFT_ROWS = 8
     # TASK-17651: the dense-form composer has no border box or vertical
     # padding — total height IS the draft row count (1-4).
     COMPOSER_CHROME_ROWS = 0
