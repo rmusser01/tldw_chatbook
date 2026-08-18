@@ -674,6 +674,50 @@ class LocalResearchEngine:
             queries.append(str(facet).strip())
         return queries, reserved_extras
 
+    #: Bytes of evidence persisted per round before bodies are dropped
+    #: (task-18060). Sized against the measured worst case: 66 admitted sources
+    #: of scraped text is roughly 0.7-3 MB, so a normal round fits whole and a
+    #: pathological one degrades to references rather than growing without
+    #: bound inside SQLite.
+    EVIDENCE_POOL_CAP_BYTES = 8 * 1024 * 1024
+
+    def _bounded_evidence(
+        self, results: list[dict[str, Any]], iteration: int
+    ) -> dict[str, Any]:
+        """Shape a round's evidence for persistence, under a byte cap.
+
+        Entries past the cap keep their references and lose their bodies, so a
+        resumed run can re-fetch them rather than the artifact growing with the
+        pool. The payload records that this happened; a reader cannot otherwise
+        tell a truncated pool from a small one.
+
+        Args:
+            results: The round's merged evidence records.
+            iteration: The round these belong to.
+
+        Returns:
+            ``{iteration, results, truncated, cap_bytes}``.
+        """
+        kept: list[dict[str, Any]] = []
+        used = 0
+        truncated = False
+        for record in results:
+            entry = dict(record)
+            size = len(json.dumps(entry, default=str))
+            if used + size > self.EVIDENCE_POOL_CAP_BYTES:
+                entry.pop("content", None)
+                entry.pop("original_content", None)
+                truncated = True
+                size = len(json.dumps(entry, default=str))
+            used += size
+            kept.append(entry)
+        return {
+            "iteration": iteration,
+            "results": kept,
+            "truncated": truncated,
+            "cap_bytes": self.EVIDENCE_POOL_CAP_BYTES,
+        }
+
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
         self._require_lease()
         self.service.save_artifact(
@@ -879,6 +923,18 @@ class LocalResearchEngine:
                     "sub_questions": all_sub_questions,
                     "warnings": merged_warnings,
                 },
+            )
+            # task-18060: the summary above records COUNTS; the pool itself is
+            # persisted here so a resumed run has the evidence it already paid
+            # for. Written after the doc-budget settle below would lose the
+            # entries that settle trims, so it is written before it and the
+            # trim is reflected in the summary's own count.
+            self._require_lease()
+            self.service.save_artifact(
+                run_id,
+                artifact_name="evidence_pool.json",
+                content_type="application/json",
+                content=self._bounded_evidence(merged_results, iteration),
             )
             # Settle the fetched-doc batch at the remaining doc budget
             # BEFORE synthesis processes it (allot raises on an exhausted

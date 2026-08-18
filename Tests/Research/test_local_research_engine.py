@@ -1592,3 +1592,63 @@ def test_the_engine_continues_a_pre_existing_ledger():
     ).get("content") or {}
 
     assert int(snapshot.get("searches_used") or 0) > 5, snapshot
+
+
+# --- the round's evidence is persisted (task-18060) ----------------------------
+# collection_summary.json persists counts, sub-questions and warnings -- not the
+# evidence -- so a resumed run re-searched everything it had already paid for.
+
+
+def test_the_rounds_evidence_pool_is_persisted():
+    service = _make_service()
+    search_fn, analyze_fn, calls = _make_pipeline("q")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    asyncio.run(engine.execute_run(run["id"]))
+
+    pool = (service.get_artifact(run["id"], "evidence_pool.json") or {}).get("content")
+
+    assert pool, "the round's evidence must be persisted"
+    assert pool["results"], pool
+    assert pool["iteration"] == 1
+    assert calls["search"] == 1
+
+
+def test_evidence_beyond_the_cap_persists_without_content():
+    """Bounded explicitly: 66 sources of scraped text is roughly 0.7-3 MB per
+    round, so beyond the cap entries keep their references and lose their bodies,
+    and the artifact records that it happened."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+    engine.EVIDENCE_POOL_CAP_BYTES = 200
+    bulky = [
+        {
+            "url": f"https://e.example/{n}",
+            "content": "x" * 500,
+            "original_content": "y" * 500,
+        }
+        for n in range(4)
+    ]
+
+    payload = engine._bounded_evidence(bulky, iteration=1)
+
+    assert payload["truncated"] is True
+    assert any("content" not in entry for entry in payload["results"])
+    assert payload["cap_bytes"] == 200
+    # References survive truncation -- a resumed run can re-fetch from them.
+    assert all(entry["url"] for entry in payload["results"])
+
+
+def test_a_pool_within_the_cap_keeps_every_body():
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+    small = [{"url": "https://e.example/1", "content": "short"}]
+
+    payload = engine._bounded_evidence(small, iteration=2)
+
+    assert payload["truncated"] is False
+    assert payload["results"][0]["content"] == "short"
+    assert payload["iteration"] == 2
