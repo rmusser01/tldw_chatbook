@@ -142,6 +142,13 @@ def summarize_with_local_llm(
         return f"Local LLM: Error occurred while processing summary: {str(e)}"
 
 
+#: Completion budget used when neither the modern api_settings entry nor the
+#: legacy section names one (Qodo, PR 1774: the literal was repeated at each
+#: fallback). Measured against a thinking model, this is TIGHT: a real 6000-char
+#: chunk spent 4028 of these on reasoning before emitting content (task-17384).
+DEFAULT_SUMMARY_MAX_TOKENS = 4096
+
+
 def summarize_with_llama(
     input_data,
     custom_prompt,
@@ -277,11 +284,15 @@ def summarize_with_llama(
         if raw_max_tokens is None:
             raw_max_tokens = llama_config.get("max_tokens")
         try:
-            max_tokens = int(raw_max_tokens) if raw_max_tokens is not None else 4096
+            max_tokens = (
+                int(raw_max_tokens)
+                if raw_max_tokens is not None
+                else DEFAULT_SUMMARY_MAX_TOKENS
+            )
         except (TypeError, ValueError):
-            max_tokens = 4096
+            max_tokens = DEFAULT_SUMMARY_MAX_TOKENS
         if max_tokens < 1:
-            max_tokens = 4096
+            max_tokens = DEFAULT_SUMMARY_MAX_TOKENS
         logging.debug(f"Llama: Using max tokens: {max_tokens}")
 
         # Check for streaming

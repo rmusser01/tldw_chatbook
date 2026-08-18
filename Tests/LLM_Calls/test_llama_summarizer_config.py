@@ -216,6 +216,8 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
 
 
 def test_summarize_with_llama_prefers_the_modern_max_tokens(monkeypatch, captured_post):
+    """A run priming a local endpoint sets the budget in the modern table; the
+    summarizer must spend it rather than the legacy default."""
     settings = _settings()
     settings["api_settings"]["llama_cpp"]["max_tokens"] = 16384
     monkeypatch.setattr(lib, "load_settings", lambda: settings)
@@ -228,6 +230,7 @@ def test_summarize_with_llama_prefers_the_modern_max_tokens(monkeypatch, capture
 def test_summarize_with_llama_falls_back_to_the_legacy_max_tokens(
     monkeypatch, captured_post
 ):
+    """With no modern entry the historical key still governs the budget."""
     monkeypatch.setattr(lib, "load_settings", lambda: _settings())
 
     lib.summarize_with_llama("text", "Summarize.", api_key=None)
@@ -268,3 +271,56 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
     assert _is_summary_failure(result), result
     lowered = result.lower()
     assert "length" in lowered and "reasoning" in lowered, result
+
+
+def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
+    """Qodo (PR 1774): the other tests call summarize_with_llama directly. This
+    one goes through `analyze`, which is the seam the deep-search pipeline
+    actually calls, so the budget resolution and the reasoning-only diagnostic
+    are verified where a caller meets them rather than one layer in."""
+    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
+    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
+
+    settings = _settings()
+    settings["api_settings"]["llama_cpp"]["max_tokens"] = 16384
+    monkeypatch.setattr(lib, "load_settings", lambda: settings)
+
+    seen = {}
+
+    class _Session:
+        def mount(self, *_a, **_k):
+            pass
+
+        def post(self, url, headers=None, json=None, stream=False):
+            seen["max_tokens"] = json["max_tokens"]
+            return _FakeResponse(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "reasoning_content": "thought " * 400,
+                            },
+                        }
+                    ],
+                    "usage": {"completion_tokens": 16384},
+                }
+            )
+
+    monkeypatch.setattr(lib.requests, "Session", lambda: _Session())
+
+    result = analyze(
+        input_data="a chunk of packed evidence",
+        custom_prompt_arg="Summarize.",
+        api_name="llama_cpp",
+        api_key=None,
+        temp=0.3,
+        system_message=None,
+        streaming=False,
+    )
+
+    assert seen["max_tokens"] == 16384, seen
+    assert _is_summary_failure(result), result
+    assert "reasoning" in result.lower() and "length" in result.lower(), result
