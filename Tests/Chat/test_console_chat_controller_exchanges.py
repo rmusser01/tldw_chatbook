@@ -23,6 +23,14 @@ inline, mirrored here):
   * per-call signals construction (``new_usage_call()`` then
     ``begin_exchange``/``close_exchange``): the real gateway call site in
     ``console_provider_gateway.py``'s ``stream_chat`` (llama.cpp branch).
+  * shipped-default pin against the REAL resolved settings layer, no extra
+    setup beyond the autouse config isolation: mirrors
+    Tests/test_config_console_defaults.py's own
+    ``test_console_sidechat_model_default_is_empty_string`` style.
+
+Review fix round: the kill-switch must coerce ``get_cli_setting``'s RAW
+string return through ``coerce_bool_setting`` (not bare ``bool()``), pinned
+in both directions by the two ``test_kill_switch_string_*`` tests below.
 """
 from __future__ import annotations
 
@@ -123,19 +131,91 @@ def test_kill_switch_disables_capture(monkeypatch):
     assert ("console", "exchange_capture") in calls
 
 
+def test_kill_switch_string_false_disables_capture(monkeypatch):
+    """``get_cli_setting`` returns the RAW TOML value, uncoerced -- a
+    hand-typed ``exchange_capture = "false"`` is a non-empty string and
+    therefore truthy under bare ``bool()``, which would silently defeat
+    the only escape hatch for this privacy-sensitive feature (the arc's
+    sixth occurrence of this exact trap; see ``local_tools_enabled``'s own
+    read in ``console_chat_controller.py`` for the first).
+    ``coerce_bool_setting`` must be applied to the read."""
+    controller = _new_controller()
+
+    def fake_get_cli_setting(section, key, default=None):
+        if (section, key) == ("console", "exchange_capture"):
+            return "false"
+        return default
+
+    monkeypatch.setattr(controller_module, "get_cli_setting", fake_get_cli_setting)
+
+    signals = controller._new_run_stream_signals()
+
+    assert signals.exchange_capture_enabled is False
+
+
+def test_kill_switch_string_true_enables_capture(monkeypatch):
+    """Pin the coercion in both directions -- a hand-typed string ``"true"``
+    must still resolve to enabled."""
+    controller = _new_controller()
+
+    def fake_get_cli_setting(section, key, default=None):
+        if (section, key) == ("console", "exchange_capture"):
+            return "true"
+        return default
+
+    monkeypatch.setattr(controller_module, "get_cli_setting", fake_get_cli_setting)
+
+    signals = controller._new_run_stream_signals()
+
+    assert signals.exchange_capture_enabled is True
+
+
+def test_shipped_config_default_resolves_exchange_capture_true():
+    """Make the shipped [console] default itself load-bearing: read the
+    REAL resolved settings layer with no controller-side default masking
+    whether the TOML key is actually present (``default=None``, not
+    ``True``) -- mirrors Tests/test_config_console_defaults.py's own
+    default-pin style (e.g. ``test_console_sidechat_model_default_is_
+    empty_string``), which calls ``get_cli_setting`` directly with no
+    extra setup beyond the autouse ``isolate_test_environment`` fixture
+    (Tests/conftest.py) that already redirects XDG_CONFIG_HOME/
+    TLDW_CONFIG_PATH to a per-test temp directory -- this never touches
+    the user's real config (a documented incident in this repo)."""
+    from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
+
+    assert real_get_cli_setting("console", "exchange_capture", None) is True
+
+
 def test_attach_site_forwards_captures_to_store():
-    """The usage-attach method (``_attach_stream_usage``) also attaches
-    ``signals.exchange_captures()`` -- driven the same way
+    """The usage-attach method (``_attach_stream_usage``) forwards BOTH the
+    usage payload AND ``signals.exchange_captures()`` to the store from the
+    SAME call -- a usage payload is recorded on the call-scoped view before
+    closing the exchange, mirroring the real gateway's
+    ``record_usage_payload`` + ``begin_exchange``/``close_exchange`` +
+    ``close_usage_call`` sequence on one ``new_usage_call()`` view
+    (``console_provider_gateway.py``'s ``stream_chat``, llama.cpp branch,
+    and its ``finally`` close-out order). Driven the same way
     ``test_re_attaching_the_same_signals_is_idempotent`` drives usage."""
     controller, store, message_id = _controller_with_placeholder()
-    signals = _captured_signals()
+    signals = ConsoleProviderStreamSignals()
+    call_signals = signals.new_usage_call()
+    call_signals.record_usage_payload(
+        {"prompt_tokens": 100, "completion_tokens": 20}
+    )
+    call_signals.begin_exchange(
+        provider="p", model="m", endpoint=None, request={}, omitted_keys=()
+    )
+    call_signals.close_exchange()
+    call_signals.close_usage_call()
     resolution = SimpleNamespace(provider="openai", model="gpt-4o")
 
     controller._attach_stream_usage(message_id, signals, resolution, partial=False)
 
-    exchanges = store.get_message(message_id).exchanges
-    assert exchanges, "the controller must forward exchange_captures() to the store"
-    assert exchanges[0].provider == "p"
+    message = store.get_message(message_id)
+    assert message.usage is not None
+    assert message.usage.total_tokens == 120, "the usage attach must still land"
+    assert message.exchanges, "the controller must forward exchange_captures() to the store"
+    assert message.exchanges[0].provider == "p"
 
 
 def test_attach_forwards_captures_even_without_usage():

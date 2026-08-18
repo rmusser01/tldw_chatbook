@@ -10572,10 +10572,18 @@ class ConsoleChatController:
         bug). Both signals-creation call sites (the dispatch site and the
         defensive belt inside the direct-provider stream method) route
         through this one helper so the kill-switch reaches every run.
+
+        ``get_cli_setting`` also returns the RAW TOML value, never coerced
+        -- a hand-typed ``exchange_capture = "false"`` is a non-empty
+        string and therefore truthy under bare ``bool()``, which would
+        silently defeat the only escape hatch for this privacy-sensitive
+        feature. ``coerce_bool_setting`` (already imported at module scope)
+        is the arc's sixth site with this exact trap -- see the
+        ``local_tools_enabled`` read a few hundred lines up for the first.
         """
         return ConsoleProviderStreamSignals(
-            exchange_capture_enabled=bool(
-                get_cli_setting("console", "exchange_capture", True)
+            exchange_capture_enabled=coerce_bool_setting(
+                get_cli_setting("console", "exchange_capture", True), True
             )
         )
 
