@@ -74,9 +74,13 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 WORKTREE = HERE.parents[3]
 QUESTIONS_PATH = HERE / "questions.toml"
-API_KEY_PATH = Path(
-    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/anthropic-api-key.txt"
-)
+# Qodo PR-1712: an absolute machine-specific path is both a poor
+# secret-handling pattern and non-portable -- anyone re-running this probe on
+# another checkout gets a confusing FileNotFoundError rather than a usable
+# message. Resolution order: an explicit env var, then the git-excluded
+# repo-root file located RELATIVE to this script.
+API_KEY_ENV = "ANTHROPIC_API_KEY"
+API_KEY_PATH = Path(__file__).resolve().parents[3] / "anthropic-api-key.txt"
 
 #: Cheapest capable model with native tool-calls. Pricing (Anthropic first-party,
 #: cached 2026-06-24): $1.00 / MTok input, $5.00 / MTok output; cache writes
@@ -604,7 +608,14 @@ def main() -> int:
 
     api_key = ""
     if args.live:
-        api_key = API_KEY_PATH.read_text(encoding="utf-8").strip()
+        api_key = os.environ.get(API_KEY_ENV, "").strip()
+        if not api_key:
+            if not API_KEY_PATH.exists():
+                raise SystemExit(
+                    f"no credential: set ${API_KEY_ENV} or place a key at "
+                    f"{API_KEY_PATH}"
+                )
+            api_key = API_KEY_PATH.read_text(encoding="utf-8").strip()
         if not api_key:
             raise SystemExit("the repo-root API key file is empty")
 

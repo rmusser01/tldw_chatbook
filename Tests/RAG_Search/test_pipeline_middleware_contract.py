@@ -34,14 +34,9 @@ a branch that exists but does nothing.
 """
 
 import ast
-import sys
+import tomllib
 from pathlib import Path
 from typing import Dict, Set
-
-if sys.version_info < (3, 11):  # pragma: no cover - repo requires >= 3.11
-    import tomli as tomllib
-else:
-    import tomllib
 
 import pytest
 
@@ -227,3 +222,51 @@ def test_the_guard_can_see_the_names_it_is_guarding():
     assert _handler_nodes(), "the _apply_*_middleware handlers were not found"
     assert any(_declared_by_phase().values()), "no pipeline declares middleware"
     assert any(_implemented_by_phase().values()), "no middleware branch was parsed"
+
+
+# ---------------------------------------------------------------------------
+# Qodo PR-1778: the deletion has to reach users who already have a config copy
+# ---------------------------------------------------------------------------
+
+
+def test_unimplemented_middleware_is_dropped_from_a_user_config(tmp_path):
+    """TASK-17600 deleted eight middleware promises from the BUNDLED toml, but
+    `PipelineLoader` copies that file to the user's config directory on first
+    run and prefers the copy forever after. Every existing installation
+    therefore keeps all eight stale declarations -- and now the branch that
+    at least recognised `result_reranking` is gone too.
+
+    The fix is a RUNTIME rule rather than a migration, for the reason
+    TASK-17365 chose a floor over rewriting saved profiles: a loader may
+    safely refuse to honour a name it cannot implement, but it should not
+    silently rewrite a file the user owns.
+    """
+    from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
+
+    stale = tmp_path / "rag_pipelines.toml"
+    stale.write_text(
+        """
+[pipelines.legacy]
+name = "Legacy"
+description = "a config copied before TASK-17600"
+type = "built-in"
+function = "search_plain"
+enabled = true
+
+[pipelines.legacy.middleware]
+before = ["query_expansion", "code_syntax_enhancer"]
+after = ["result_reranking", "citation_enhancement", "table_renderer"]
+""",
+        encoding="utf-8",
+    )
+
+    loader = PipelineLoader()
+    loader.load_pipeline_config(stale)
+
+    pipeline = loader.pipelines["legacy"]
+    # `PipelineConfig.middleware` is a dict of phase -> names, not an object.
+    before = list(pipeline.middleware.get("before") or [])
+    after = list(pipeline.middleware.get("after") or [])
+
+    assert before == ["query_expansion"], f"stale before-names survived: {before}"
+    assert after == ["citation_enhancement"], f"stale after-names survived: {after}"

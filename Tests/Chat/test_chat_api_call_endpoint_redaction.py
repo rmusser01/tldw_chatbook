@@ -97,3 +97,52 @@ def test_the_metrics_label_carries_no_unrecognised_endpoint(monkeypatch):
     for labels in seen:
         for label_value in labels.values():
             assert not _leaks(label_value), labels
+
+
+def test_the_metrics_label_is_bounded_not_merely_redacted(monkeypatch):
+    """Qodo PR-1759: redacting the VALUE did not bound the CARDINALITY.
+
+    The first fix reused one marker for logs and metrics, and that marker
+    embeds `{len(text)} chars` -- useful in a log line, but it means N
+    unrecognised endpoints of N different lengths still mint N distinct
+    metric series. That is the exact hazard the fix's own comment named,
+    reintroduced by the marker it introduced.
+
+    The label must therefore come from a BOUNDED set: a registered endpoint
+    name, or one constant. Logs keep the length.
+    """
+    seen: list[str] = []
+
+    import tldw_chatbook.Chat.Chat_Functions as cf
+
+    def _capture(name, value=1, labels=None, **kwargs):
+        if labels and "api_endpoint" in labels:
+            seen.append(str(labels["api_endpoint"]))
+
+    monkeypatch.setattr(cf, "log_counter", _capture)
+
+    # Twelve unrecognised endpoints, every one a different length.
+    for n in range(3, 15):
+        with pytest.raises(Exception):
+            chat_api_call("x" * n, [{"role": "user", "content": "q"}])
+
+    assert len(seen) == 12, f"expected one label per call, got {len(seen)}"
+    assert len(set(seen)) == 1, (
+        f"unbounded metrics cardinality: {len(set(seen))} distinct labels "
+        f"for 12 unknown endpoints -- {sorted(set(seen))[:4]}"
+    )
+    assert not any(ch.isdigit() for ch in seen[0]), (
+        f"the label still carries a caller-controlled number: {seen[0]!r}"
+    )
+
+
+def test_the_log_line_keeps_the_length_for_debugging(loguru_caplog):
+    """Bounding the LABEL must not blind the LOG: the length is the one
+    detail that tells an operator what shape of value arrived."""
+    with pytest.raises(Exception):
+        chat_api_call("abcdefghij", [{"role": "user", "content": "q"}])
+
+    routing = [r.getMessage() for r in loguru_caplog.records
+               if "Routing to endpoint" in r.getMessage()]
+    assert routing, "expected a routing log line"
+    assert any("10 chars" in line for line in routing), routing[:2]

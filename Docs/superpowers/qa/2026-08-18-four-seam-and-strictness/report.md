@@ -32,7 +32,7 @@ Three constructions, same corpus, same queries, MRR over the 53 scored:
 | **`and_then_prefix`** (the engine's shipped shape) | **0.423** | 25/53 | AND primary; prefix **only** where the primary found nothing |
 
 **The naive fix is measurably worse.** Replacing AND with OR/prefix rescues
-every zero-row query and *halves* ranking quality — 20–30 loosely-matching
+every zero-row query and cuts ranking quality by a third (-34%) — 20–30 loosely-matching
 rows per query on a 172-document corpus bury the answers that AND was getting
 right. Recall bought at that price is not recall worth having.
 

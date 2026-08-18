@@ -1,5 +1,5 @@
 ---
-id: task-16450
+id: TASK-16450
 title: Shielded-cancellation loop in _execute_library_rag_search never uncancels
 status: Done
 assignee: []
