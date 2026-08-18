@@ -356,7 +356,6 @@ from ...Workspaces import (
     build_library_workspace_depth_state,
     library_item_context_handoff,
 )
-from ...Workspaces.registry_service import next_local_workspace_identity
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -8797,18 +8796,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _invalidate_library_workspace_depth_state(self) -> None:
         self._library_workspace_depth_state_cache = None
-
-    def _next_local_workspace_identity(self) -> tuple[str, str]:
-        """Return a collision-free local workspace id and display name."""
-        registry_service = getattr(
-            self.app_instance, "workspace_registry_service", None
-        )
-        if registry_service is None:
-            # Preserve the original behavior when the registry is unavailable by
-            # falling back to a deterministic identity that mirrors the shared
-            # helper's first candidate.
-            return "workspace-local-1", "Workspace 1"
-        return next_local_workspace_identity(registry_service)
 
     def _library_workspace_depth_state(
         self,
