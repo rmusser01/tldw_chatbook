@@ -5249,3 +5249,20 @@ The general form: **any code path that converts a failure into a
 well-formed empty result destroys the distinction the caller needs.** Grep
 for `except` blocks that `return` an empty container whenever a measurement
 built on them surprises you.
+## A gate built in halves is no gate — and sound-looking test deviations can hide exactly that (TASK-17651, 2026-08-18)
+
+The `.SKILLS/` import feature had prompt-gating (kill-switch, permanent "Never",
+fingerprint re-offer) specified for BOTH its triggers. Task 2 built the gating
+functions; Task 4 wired them into the startup trigger; Task 5 wired the
+workspace-create trigger straight past them — every per-task review passed,
+because each task correctly built its own half. The final whole-branch review
+found the create trigger honored none of the gates, while a checked AC and
+three documents promised it did. Compounding it: the live-verification pass
+had deliberately used a FRESH fixture for the create-trigger scenario, with
+locally sound reasoning ("the 'Never' from the previous scenario would
+correctly suppress the offer") that ASSUMED the cross-trigger gate existed —
+the deviation dodged the exact broken case. Rules: (1) when a contract spans
+tasks, some review must check the CONNECTION, not the halves — that is what
+the whole-branch review is for; never skip it because per-task reviews were
+clean. (2) A test-plan deviation justified by assumed behavior of the thing
+under test is a red flag: the assumption is the test.

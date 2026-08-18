@@ -79,3 +79,4 @@ verification in both the Name/folder Input fields and, in a new sighting, the
 "Search Library…"/"Filter skills…" inputs — not re-filed here since
 TASK-17961 already tracks the underlying rendering characteristic across
 surfaces).
+- [ ] Decide (timeout vs. accepted trade-off) the in-flight-import dismissal posture: post final-fix, Escape/Not now/Never are inert while an import runs, so a permanently-hung importer leaves no in-modal exit (final-review named risk (c), noted by the fix-wave re-review as inherent to not discarding partial imports silently)

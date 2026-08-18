@@ -2,7 +2,7 @@
 id: TASK-17651
 title: >-
   Project skills (.SKILLS/) folder discovery and prompt-driven import
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-17 00:00'
 labels:
