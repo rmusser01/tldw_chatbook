@@ -2164,7 +2164,7 @@ class ConsoleTranscriptJumpPill(Static):
 class ConsoleReviewNotesRequested(Message):
     """Bubbled when the user asks to see a message's review notes.
 
-    task-17169 review-note management, task 1: posted by
+    task-18515 review-note management, task 1: posted by
     ``ConsoleAnnotationMarker.on_click`` and by
     ``ConsoleTranscript.action_open_review_notes`` (the ``n`` binding).
     Anchored by NATIVE message id -- the owning screen resolves the actual
@@ -4324,7 +4324,7 @@ class ConsoleTranscript(VerticalScroll):
     def action_open_review_notes(self) -> None:
         """`n` binding: request the notes modal for the selected message.
 
-        task-17169 review-note management, task 1: a plain BINDINGS entry
+        task-18515 review-note management, task 1: a plain BINDINGS entry
         (no ``on_key`` branch -- the phase-5 probe proved printable-key
         bindings already fire while the transcript holds focus, so a
         speculative interception branch was reverted as unnecessary).

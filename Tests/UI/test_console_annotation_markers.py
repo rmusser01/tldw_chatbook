@@ -184,7 +184,7 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 1: clickable marker + `n` action (task-17169 review-note management)
+# Task 1: clickable marker + `n` action (task-18515 review-note management)
 # ---------------------------------------------------------------------------
 
 
