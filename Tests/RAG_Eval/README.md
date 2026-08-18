@@ -45,7 +45,13 @@ every golden query through the real seam across all three profile modes.
 > `hybrid` (the shipped mode) **no query has a duplicate document slot at
 > all**. Rescuable: **1** against the same inherited bar of 5, and that one
 > is a similarity miss fusion already fixed. See "The sixth retired P2c
-> premise". Start at the **headroom table**
+> premise". A **seventh** died on 2026-08-18 (TASK-18514): **HyDE**, the last
+> of the five named candidates — and the FIRST to clear its census (11
+> reachable vs a bar of 5, registered in git before any measurement). The
+> probe returned **2 rescues, 0 losses**: it passes the harm gate PRF died on,
+> and fails the rescue bar. The reason is mechanistic, not a shortfall of the
+> generator — see "The seventh retired P2c premise". **That exhausts the named
+> candidate list.** Start at the **headroom table**
 > below: it names, per category, what is left to improve and what can only
 > be regressed.
 
@@ -821,6 +827,65 @@ audited in place rather than by re-authoring the candidates.
   measures corpus sparseness, not the pipeline.** Every class needed anchor
   company before its ranks meant anything; 24 documents were added purely
   for that.
+
+### The seventh retired P2c premise: HyDE, probed against a pre-registered bar (TASK-18514, 2026-08-18)
+
+**Verdict: NULL, and it exhausts the named candidate list.** Full record:
+`Docs/superpowers/qa/2026-08-18-hyde-census/report.md`; rerunnable
+`hyde_census.py` + `hyde_probe.py`; all 60 generated passages committed
+verbatim in `generations.json`.
+
+**The bar was registered BEFORE any measurement existed** (commit
+`724f28951`), correcting TASK-18155's recorded process deviation.
+
+**HyDE is the first candidate to clear its census.** Its population is
+queries that miss a *vector-indexed* target, since it acts only on the
+semantic leg (7 `negative` and 5 `prompt` excluded structurally, registered
+in advance):
+
+| | semantic | hybrid |
+|---|---|---|
+| hitting at k=10 | 37 | 46 |
+| miss but found by k=200 — HyDE's case | **11** | 3 |
+| miss and absent even at k=200 | 0 | 0 |
+
+**The probe: 2 rescues (`ng-mains-supply`, `sc-valve-pit-access`), 0 losses.**
+
+| pre-registered clause | measured | result |
+|---|---|---|
+| rescues ≥ 5 | 2 | **FAIL** (gating) |
+| zero hitters lose their target | 0 | **PASS** |
+
+**Clause 2 passing is the notable half** — PRF died on that clause, losing 10
+of 21 hitters. HyDE is safe and merely insufficient.
+
+**Why, and it is NOT the generator** (60 passages, 0 empty, mean 71 words):
+**all 11 targets contain every content word of their query**, but in a
+different sense, incidentally, inside a document about something else — a
+query for `pump chamber inspection` whose target is an *icehouse conservation
+note* that happens to mention a pump chamber under the flagstones;
+`plant maintenance record` whose target is a *bird hide* note with a
+**botanical** plant list. These are the corpus's deliberate lexical traps.
+
+HyDE's mechanism makes the query embedding **more topically specific**, which
+moves it FURTHER from an icehouse note. On this corpus the semantic misses
+are lexical coincidences, not semantic near-misses, so **a better generator
+makes these worse, not better**. The two rescues are the converse case, where
+the target really is a topical answer — `ng-mains-supply`'s target describes
+a solar-and-battery outstation and the generated passage described exactly
+that.
+
+**So HyDE's true reachable population here is the 3 `negation` queries** —
+below the bar before a token is generated. Two of those three went unrescued
+on generations that were close (*"alternative transport such as air or
+water"* vs a target *"reached only by boat"*), so a stronger generator might
+take them; **even granting all three, 3 < 5**, which is why this null does
+not depend on the generator.
+
+**What would reopen it**: HyDE is mismatched to *this corpus*, not shown
+useless in general. `negation` is the only category here with the shape HyDE
+is built for, and HyDE moved it. **If the negation category is ever expanded,
+re-run `hyde_probe.py` against it specifically.**
 
 ### The sixth retired P2c premise: the granularity router, killed by census (TASK-18155, 2026-08-18)
 

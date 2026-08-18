@@ -1,7 +1,7 @@
 ---
 id: TASK-18514
 title: 'P2c candidate 7: HyDE, bar registered before measurement'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-18'
 labels: [rag, p2c, fail-first]
@@ -56,19 +56,66 @@ tuned to this arc:
 
 ## Acceptance Criteria (the what)
 
-- [ ] This bar is committed before any measurement exists (verifiable in git
-      history, not asserted in prose)
-- [ ] The census counts, per query and from a live run, how many queries
-      currently miss a **vector-reachable** target — the only population HyDE
-      can act on
-- [ ] A below-bar census ends the arc with a recorded null, no probe and no
-      production code, recorded beside the other retired premises in
-      `Tests/RAG_Eval/README.md`
-- [ ] If the census clears the bar, the probe reports gains AND losses by
-      query id, and the harm gate is measured rather than assumed
-- [ ] Any result names the generator (model, endpoint, decoding settings) and
-      states whether the outcome is a property of HyDE or of this generator
-- [ ] The instrument proves it measured: row counts, error counts, and the
-      generator's own output are shown, not summarized — three arcs running,
-      this programme's dominant defect is a value meaning "could not measure"
-      rendering identically to "measured, found nothing"
+- [x] Bar committed in `724f28951` **before** the census script existed —
+      verifiable in git history, not asserted in prose.
+- [x] Census run live: **11 reachable in semantic** (37 hitting, 7 negative
+      and 5 prompt excluded structurally, 0 unreachable even at k=200), 3 in
+      hybrid. **The first P2c candidate to CLEAR its census.**
+- [x] Not applicable — the census cleared, so the probe ran. The NULL came
+      from the probe instead, and is recorded as the **seventh** retired
+      premise in `Tests/RAG_Eval/README.md`.
+- [x] Probe reports both by query id: **GAINS 2** (`ng-mains-supply`,
+      `sc-valve-pit-access`), **LOSSES 0**. The harm gate was measured, not
+      assumed, and **passed** — the clause PRF died on.
+- [x] Generator named in full (llama.cpp `localhost:9099`, Gemma-class GGUF,
+      temp 0 / 220 tok / `enable_thinking=False`) and the outcome is split:
+      **8 of 11 are HyDE-bound** (lexical traps a better generator makes
+      WORSE, since HyDE increases topical specificity away from an
+      incidentally-matching document); at most 3 are generator-bound. **3 < 5,
+      so the null does not depend on the generator.**
+- [x] Census: 15,820 rows retrieved, 0 errors. Probe: 60 generations, **0
+      empty**, mean 71 words, 0 retrieval errors; both scripts refuse a
+      verdict on any error. All 60 passages committed verbatim in
+      `generations.json` rather than summarized. The `enable_thinking=False`
+      discovery is itself an instance of the family: without it this
+      reasoning model returns `content=""` while spending every token in
+      `reasoning_content` — a full budget producing an empty string that
+      reads exactly like a refusal.
+
+
+## Implementation Notes
+
+**NULL — HyDE is not admitted. No production code was written.** This
+exhausts the five named P2c candidates.
+
+**First candidate to clear its census** (11 reachable vs bar 5), so unlike
+the clarification gate and the granularity router this one earned its probe.
+The probe then returned **2 rescues, 0 losses**: it FAILS the gating rescue
+clause and PASSES the harm clause that killed PRF.
+
+**The failure is mechanistic, not a generator shortfall, and that is the
+finding.** All 11 reachable targets contain every content word of their
+query — I first read them as semantically unrelated from a 190-character
+truncation and had it backwards. They miss because the words appear in a
+*different sense, incidentally*, inside a document about something else (a
+`pump chamber inspection` query whose target is an icehouse conservation
+note; `plant maintenance record` whose target is a bird hide with a
+**botanical** plant list). HyDE makes the query embedding MORE topically
+specific, which moves it further from such a document — so a better
+generator makes these strictly worse. Its true population here is the 3
+`negation` queries, below the bar before generation begins.
+
+**Process:** the bar was committed in `724f28951` before the census script
+existed, correcting TASK-18155's recorded deviation.
+
+**Wrong turn worth recording:** I hypothesised the 7 scoped misses were a
+scope-application gap and that semantic mode ignored the allowlist.
+Measured: scope IS applied in both modes (allowlist 100, all 10 returned
+rows in-scope) — hybrid hits those targets and semantic does not, because
+the keyword leg finds the incidental term match. The hypothesis was wrong
+and the measurement corrected it before it reached the report.
+
+**Files:** `Docs/superpowers/qa/2026-08-18-hyde-census/` (report,
+`hyde_census.py`, `hyde_probe.py`, `generations.json`);
+`Tests/RAG_Eval/README.md` (seventh retired premise). No production source
+changed, so the gate cannot move.
