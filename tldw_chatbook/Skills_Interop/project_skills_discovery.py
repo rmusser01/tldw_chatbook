@@ -79,37 +79,6 @@ def find_project_dir_with_skills(start: Path) -> Path | None:
         current = parent
 
 
-def _raw_description(head: str) -> str:
-    """Fallback description extraction for front matter that fails strict YAML.
-
-    ``LocalSkillsService._parse_front_matter`` parses the whole front-matter
-    block as YAML and silently returns no metadata on a ``YAMLError`` (e.g. a
-    description containing ``[bracketed]`` text, which YAML reads as a flow
-    sequence). That is the right behavior for real skill authoring, but a
-    discovery scan over an untrusted project must not let a merely-odd
-    description vanish into an empty string -- it should show up as plain
-    preview text (escaping is the UI's job, not this module's). This walks
-    the same front-matter block literally, line by line, with no YAML
-    parsing at all.
-    """
-    from tldw_chatbook.Skills_Interop.local_skills_service import (
-        _FRONT_MATTER_PATTERN,
-    )
-
-    match = _FRONT_MATTER_PATTERN.match(head)
-    if match is None:
-        return ""
-    for line in match.group(1).splitlines():
-        stripped = line.strip()
-        if not stripped.lower().startswith("description:"):
-            continue
-        value = stripped.split(":", 1)[1].strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        return value
-    return ""
-
-
 def _entry_for(name: str, kind: str, path: Path, body: Path) -> ProjectSkillEntry:
     # Same normalization gate the importer applies -- pre-checking here turns
     # a late import failure into a labeled row (spec §5.2).
@@ -141,10 +110,7 @@ def _entry_for(name: str, kind: str, path: Path, body: Path) -> ProjectSkillEntr
             reason="unreadable",
         )
     metadata, _ = LocalSkillsService._parse_front_matter(head)
-    description = str(metadata.get("description") or "")
-    if not description:
-        description = _raw_description(head)
-    description = description[:200]
+    description = str(metadata.get("description") or "")[:200]
     return ProjectSkillEntry(
         name=normalized, kind=kind, path=path, description=description, status="ok"
     )

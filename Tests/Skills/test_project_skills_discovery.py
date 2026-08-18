@@ -82,9 +82,21 @@ def test_fingerprint_changes_when_a_skill_is_added(tmp_path):
 
 
 def test_hostile_description_survives_as_plain_data(tmp_path):
-    _skill_dir(tmp_path, "alpha-skill", description="[red]evil[/red]")
+    _skill_dir(tmp_path, "alpha-skill", description='"[red]evil[/red]"')
     discovery = discover_project_skills(tmp_path)
     assert discovery.entries[0].description == "[red]evil[/red]"  # escaping is UI-side
+
+
+def test_unparseable_frontmatter_degrades_to_empty_description(tmp_path):
+    # Unquoted brackets break the front matter's YAML grammar; the importer's
+    # own _parse_front_matter degrades this to empty metadata (not an error),
+    # and discovery mirrors that -- still "ok", still importable, just no
+    # preview text.
+    _skill_dir(tmp_path, "alpha-skill", description="[red]evil[/red]")
+    discovery = discover_project_skills(tmp_path)
+    entry = discovery.entries[0]
+    assert entry.status == "ok"
+    assert entry.description == ""
 
 
 def test_ancestor_walk_finds_project_root(tmp_path):
