@@ -76,8 +76,42 @@ class LocalResearchService:
             self._memory_conn = None
 
     @staticmethod
+    def _format_timestamp(moment: datetime) -> str:
+        """Render a UTC ``datetime`` in the one format lease timestamps use.
+
+        ``claim_run``'s atomicity depends on a plain string comparison
+        between the persisted ``leased_until`` and "now" (task-18060), so
+        every timestamp that can appear on either side of that comparison
+        MUST be produced by this method. ``timespec="microseconds"`` pins
+        the fractional-seconds field so it is never dropped when the
+        microsecond value happens to be zero -- plain ``isoformat()``
+        omits it in that case, which otherwise makes a whole-second
+        timestamp sort *below* one with a non-zero fraction (``'.'`` sorts
+        below alphanumerics) and lets a live lease be claimed twice.
+
+        Args:
+            moment: A timezone-aware datetime. Converted to UTC before
+                formatting.
+
+        Returns:
+            An ISO-8601 string with microsecond precision and a trailing
+            ``Z``, e.g. ``"2026-08-18T08:31:01.000000Z"``.
+        """
+        return (
+            moment.astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z")
+        )
+
+    @staticmethod
     def _now() -> str:
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        """Current UTC time in the shared lease-comparable timestamp format.
+
+        Returns:
+            An ISO-8601 UTC timestamp string produced by
+            ``_format_timestamp``.
+        """
+        return LocalResearchService._format_timestamp(datetime.now(timezone.utc))
 
     @staticmethod
     def _new_id() -> str:
@@ -631,10 +665,23 @@ class LocalResearchService:
 
     def _timestamp_after(self, seconds: float) -> str:
         """An ISO timestamp ``seconds`` in the future, in the same format as
-        ``_now`` so string comparison orders correctly."""
-        return (
-            datetime.now(timezone.utc) + timedelta(seconds=max(0.0, float(seconds)))
-        ).isoformat()
+        ``_now`` so string comparison orders correctly.
+
+        Args:
+            seconds: Offset from the current time, in seconds. Negative
+                values clamp to 0 so a non-positive lease duration yields
+                an already-expired timestamp rather than one in the past
+                relative to itself.
+
+        Returns:
+            An ISO-8601 UTC timestamp string produced by
+            ``_format_timestamp``, guaranteed to compare correctly against
+            ``_now()``'s output.
+        """
+        moment = datetime.now(timezone.utc) + timedelta(
+            seconds=max(0.0, float(seconds))
+        )
+        return self._format_timestamp(moment)
 
     def claim_run(
         self, run_id: str, *, worker_id: str, lease_seconds: float
