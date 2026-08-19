@@ -1,0 +1,23 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "7e1bd11406c3ad4dc35c88d8b124616f",
+        "chunk_index": 1,
+        "chunk_method": "code",
+        "code_mode_used": "auto",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "{\"data\": [{\"item\": 0, \"text\": \"value 0\"}, {\"item\": 1, \"text\": \"value 1\"}, {\"item\": 2, \"text\": \"value 2\"}, {\"item\": 3, \"text\": \"value 3\"}, {\"item\": 4, \"text\": \"value 4\"}, {\"item\": 5, \"text\": \"value 5\"}, {\"item\": 6, \"text\": \"value 6\"}, {\"item\": 7, \"text\": \"value 7\"}, {\"item\": 8, \"text\": \"value 8\"}, {\"item\": 9, \"text\": \"value 9\"}, {\"item\": 10, \"text\": \"value 10\"}, {\"item\": 11, \"text\": \"value 11\"}, {\"item\": 12, \"text\": \"value 12\"}, {\"item\": 13, \"text\": \"value 13\"}, {\"item\": 14, \"text\": \"value 14\"}, {\"item\": 15, \"text\": \"value 15\"}, {\"item\": 16, \"text\": \"value 16\"}, {\"item\": 17, \"text\": \"value 17\"}, {\"item\": 18, \"text\": \"value 18\"}, {\"item\": 19, \"text\": \"value 19\"}]}"
+    }
+  ],
+  "outcome": "ok"
+}

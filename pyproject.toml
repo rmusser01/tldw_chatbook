@@ -556,6 +556,7 @@ markers = [
     "property: marks tests as property-based tests",
     "slow: marks tests that take a long time to run (skipped unless --run-slow)",
     "smoke: fast sanity checks of core imports and wiring",
+    "production_path: opts the test into the production sanitization path (Tests/Chunking/conftest.py disables PYTEST_CURRENT_TEST/TLDW_TEST_MODE so the engine's relaxed test-mode branch stays off, spec §10.2)",
     "benchmark: performance-measurement tests (labeling only; pytest-benchmark is not installed)",
     "snapshot: visual regression tests using snapshots",
     "notes: Notes feature tests",
