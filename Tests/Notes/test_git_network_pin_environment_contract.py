@@ -69,6 +69,11 @@ def _posix_only():
         ("git-usr-bin", "/usr/bin/git", os.defpath),
         ("ssh-from-defpath", shutil.which("ssh", path=os.defpath), os.defpath),
         ("ssh-usr-bin", "/usr/bin/ssh", os.defpath),
+        # TASK-18610: the factory pins sys.executable for SSH dispatch by
+        # default, and hosted runners install Python under /opt/hostedtoolcache
+        # -- a shared tool cache that fails the predicates. This row is what
+        # finally named the 16-test git-push CI cluster.
+        ("sys-executable", sys.executable, os.defpath),
     ],
 )
 def test_runner_pinnable_executables_pass_the_safety_predicates(
