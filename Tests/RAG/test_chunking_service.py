@@ -39,12 +39,33 @@ class TestEveryChunkingMethodReturnsUsableText:
     @pytest.mark.parametrize(("method", "content"), CASES)
     def test_method_yields_string_text(self, method, content, monkeypatch):
         if method == "tokens":
-            import tldw_chatbook.Chunking.token_chunker as token_chunker
+            # This used to patch the legacy token_chunker.TransformersTokenizer
+            # seam to force the word-approximation fallback. The Chunk_Lib shim
+            # now routes 'tokens' through the ENGINE's tokenizer resolution
+            # (Q2: refuse rather than silently word-approximate; engine-parity
+            # task 3, review I2), so the legacy seam no longer decides the
+            # path. Patch the ENGINE strategy's tokenizer property instead --
+            # to a network-free stub of a REAL tokenizer -- so this test still
+            # exercises the shape contract offline: the engine path produces
+            # decoded-string chunks exactly like a real tokenizer would.
+            from tldw_chatbook.Chunking.engine.strategies.tokens import (
+                TokenChunkingStrategy,
+            )
+
+            class _StubTokenizer:
+                def encode(self, text):
+                    return list(range(len(text.split())))
+
+                def decode(self, ids, **_kwargs):
+                    return " ".join(f"w{i}" for i in ids)
+
+                def count_tokens(self, text):
+                    return len(text.split())
 
             monkeypatch.setattr(
-                token_chunker,
-                "TransformersTokenizer",
-                token_chunker.FallbackTokenizer,
+                TokenChunkingStrategy,
+                "tokenizer",
+                property(lambda self: _StubTokenizer()),
             )
         elif method == "semantic":
             import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib

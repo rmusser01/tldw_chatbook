@@ -27,6 +27,7 @@
 #########################################
 import hashlib
 import importlib.util
+import json
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -52,9 +53,7 @@ from .engine.exceptions import (
     CacheError,
 )
 from .token_chunker import (
-    FallbackTokenizer as _LegacyFallbackTokenizer,
     TokenBasedChunker,
-    TransformersTokenizer as _LegacyTransformersTokenizer,
     create_token_chunker,
 )
 from .language_chunkers import LanguageChunkerFactory
@@ -500,201 +499,165 @@ _TOKENS_FALLBACK_MESSAGE = (
 )
 
 
-_TOKENS_ENGINE_VERDICT: Dict[str, Optional[bool]] = {"available": None}
-_TOKENS_ENGINE_VERDICT_LOCK = __import__("threading").Lock()
+def _probe_engine_token_resolution(tokenizer_name: str) -> Any:
+    """Resolve the tokenizer the ENGINE would use, on a fresh strategy.
 
+    Builds a fresh ``TokenChunkingStrategy`` for ``tokenizer_name`` and
+    resolves its tokenizer -- going through the ``_resolve_tokenizer`` seam
+    when present (so a monkeypatched resolution, as in the Q2 contract
+    test, is honored), else the engine's own ``tokenizer`` property. A
+    FRESH instance is essential: the engine's ``chunk_text`` builds a
+    per-call ephemeral strategy whenever a tokenizer override is set
+    (engine/chunker.py ``use_per_call_strategy``), so inspecting a cached
+    ``get_strategy`` instance would read a resolution the actual call never
+    used. The class-level ``_failed_tokenizers`` failure cache is shared by
+    every instance, so the fresh probe sees a poisoned resolution too.
 
-def _tokens_engine_path_available() -> bool:
-    """Whether the engine token strategy can resolve a REAL tokenizer now.
-
-    Probes the engine's own resolution (memoized per process to avoid
-    re-attempting HF-hub loads; the engine's TransformersTokenizer hits the
-    network on every attempt when tiktoken is absent). Only ever called on
-    the unpatched path (``_resolve_tokens_plan`` handles a patched
-    ``_resolve_tokenizer`` seam before consulting this).
-
-    Returns:
-        True when the engine strategy resolves a non-fallback tokenizer.
-    """
-    try:
-        from .engine.strategies.tokens import (
-            TokenChunkingStrategy as _EngineTokenStrategy,
-        )
-    except Exception:  # pragma: no cover - engine import failure
-        return False
-    if _TOKENS_ENGINE_VERDICT["available"] is not None:
-        return _TOKENS_ENGINE_VERDICT["available"]
-    with _TOKENS_ENGINE_VERDICT_LOCK:
-        if _TOKENS_ENGINE_VERDICT["available"] is not None:
-            return _TOKENS_ENGINE_VERDICT["available"]
-        probe = _EngineChunker(ChunkerConfig(default_method=ChunkingMethod.TOKENS))
-        try:
-            strategy = probe.get_strategy(ChunkingMethod.TOKENS.value)
-            resolved = strategy.tokenizer
-        except Exception:
-            resolved = None
-        verdict = resolved is not None and not _is_engine_fallback_tokenizer(resolved)
-        _TOKENS_ENGINE_VERDICT["available"] = verdict
-        return verdict
-
-
-def _resolve_tokens_plan(
-    engine_chunker: _EngineChunker, token_chunker: TokenBasedChunker
-) -> str:
-    """Decide how the legacy tokens method is executed (Q2 + legacy seams).
-
-    Two contracts must hold simultaneously:
-
-    * Q2 (spec): when the ENGINE's tokenizer resolution lands on the
-      word-approximation ``FallbackTokenizer``, the shim must raise rather
-      than silently approximate. The contract test simulates this by
-      monkeypatching ``TokenChunkingStrategy._resolve_tokenizer`` -- so a
-      PATCHED seam is always honored first (network-free) and a
-      patched-to-fallback resolution raises.
-    * Legacy compatibility (task-841 test seam): the legacy tokens path ran
-      through ``TokenBasedChunker``, whose ``TransformersTokenizer`` may be
-      monkeypatched to the legacy ``FallbackTokenizer`` and which itself
-      falls back to word approximation when transformers cannot load. Those
-      callers must keep getting word-approximation chunks, exactly like the
-      legacy module.
-
-    Resolution order:
-      1. If ``_resolve_tokenizer`` is patched (differs from the alias this
-         shim installs), honor it: fallback -> raise (Q2), real -> engine.
-      2. Otherwise resolve the legacy ``TokenBasedChunker.tokenizer`` (the
-         seam legacy callers/tests actually patch). When it is a REAL
-         tokenizer and the engine can resolve a real tokenizer too (memoized
-         probe), delegate to the engine strategy.
-      3. Otherwise run the legacy ``chunk_by_tokens`` path -- what the legacy
-         module did -- instead of forcing an engine HF-hub load that would
-         fail offline.
-
-    The engine is probed ONLY on step 2's real-tokenizer branch, so a
-    patched/missing legacy tokenizer never pays a network attempt (the
-    probe's HF-hub HEAD retries are what previously leaked network noise
-    into offline test environments).
+    tiktoken resolution is network-free; transformers resolution uses the
+    local HF cache when the hub is unreachable.
 
     Args:
-        engine_chunker: The engine Chunker instance to (maybe) delegate to.
-        token_chunker: The legacy TokenBasedChunker whose tokenizer seam
-            decides the path.
+        tokenizer_name: Tokenizer name/path the engine strategy should use.
 
     Returns:
-        ``"engine"`` or ``"legacy"``.
-
-    Raises:
-        ChunkingError: When a patched ``_resolve_tokenizer`` seam resolves
-            to the engine's fallback tokenizer (message tells the user to
-            install tiktoken).
+        The resolved tokenizer object (or the engine's FallbackTokenizer),
+        or ``None`` when resolution itself failed.
     """
     try:
-        from .engine.strategies.tokens import (
-            TokenChunkingStrategy as _EngineTokenStrategy,
-        )
+        from .engine.strategies.tokens import TokenChunkingStrategy
     except Exception:  # pragma: no cover - engine import failure
-        return "legacy"
-    seam = getattr(_EngineTokenStrategy, "_resolve_tokenizer", None)
-    patched = seam is not None and callable(seam) and (
-        getattr(seam, "__module__", "") != __name__
-    )
-    if patched:
-        try:
-            strategy = engine_chunker.get_strategy(ChunkingMethod.TOKENS.value)
-        except ChunkingError:
-            # Let the engine surface its own error on the actual call.
-            return "engine"
-        try:
-            resolved = seam(strategy)
-        except Exception:
-            # The patched resolution failed; the engine call below will
-            # surface whatever error it produces.
-            return "engine"
-        if _is_engine_fallback_tokenizer(resolved):
-            raise ChunkingError(_TOKENS_FALLBACK_MESSAGE)
-        return "engine"
-    # Unpatched: the legacy seam decides. Probing the engine only happens
-    # when the legacy tokenizer is real (see docstring).
+        return None
     try:
-        legacy_tokenizer = token_chunker.tokenizer
+        strategy = TokenChunkingStrategy(
+            language="en", tokenizer_name=str(tokenizer_name or "gpt2")
+        )
     except Exception:
-        legacy_tokenizer = None
-    if isinstance(legacy_tokenizer, _LegacyTransformersTokenizer) and (
-        _tokens_engine_path_available()
-    ):
-        return "engine"
-    return "legacy"
+        return None
+    resolve = getattr(type(strategy), "_resolve_tokenizer", None)
+    try:
+        if callable(resolve):
+            return resolve(strategy)
+        return strategy.tokenizer
+    except Exception:
+        return None
 
 
-def _enforce_no_word_approximation(method: str, engine_chunker: _EngineChunker) -> None:
-    """Post-chunk Q2 check: raise if the engine strategy fell back.
+def _enforce_real_tokenizer(tokenizer_name: str) -> None:
+    """Q2: raise when the engine would silently word-approximate tokens.
 
-    Called AFTER an engine tokens chunking call, this inspects the cached
-    strategy instance's already-resolved tokenizer (attribute read only --
-    never triggers a fresh resolution/network load). If the engine silently
-    degraded to its word-approximation ``FallbackTokenizer`` during the
-    call, refuse to return the chunks.
+    Probes the engine's own tokenizer resolution (NOT the legacy
+    TokenBasedChunker seam, which is transformers-only and would miss a
+    tiktoken-only install) and raises if it lands on the engine's
+    word-approximation ``FallbackTokenizer``. Called BEFORE the engine
+    chunks, so no approximate chunks are ever produced.
 
     Args:
-        method: Resolved method name.
-        engine_chunker: The engine Chunker instance that was used.
+        tokenizer_name: Tokenizer name/path the engine strategy should use.
 
     Raises:
-        ChunkingError: If the engine's resolved tokenizer is the fallback.
+        ChunkingError: If the engine's resolution is the fallback tokenizer
+            (message tells the user to install tiktoken).
     """
-    if method != ChunkingMethod.TOKENS.value:
-        return
-    try:
-        strategy = engine_chunker.get_strategy(ChunkingMethod.TOKENS.value)
-    except ChunkingError:
-        return
-    resolved = getattr(strategy, "_tokenizer", None)
+    resolved = _probe_engine_token_resolution(tokenizer_name)
     if _is_engine_fallback_tokenizer(resolved):
         raise ChunkingError(_TOKENS_FALLBACK_MESSAGE)
 
 
-def _chunk_tokens_via_legacy(
-    text: str, token_chunker: TokenBasedChunker, max_size: int, overlap: int
-) -> List[str]:
-    """Chunk with the legacy token chunker (word approximation path).
+def _guard_tokens_overlap(max_size: Any, overlap: Any) -> None:
+    """Legacy parity guard: reject overlap >= max_size for the tokens method.
+
+    The legacy ``TokenBasedChunker.chunk_by_tokens`` raised
+    ``ValueError("Token overlap X must be less than max_tokens Y")`` for
+    ``overlap >= max_tokens``, and ``improved_chunking_process`` wrapped it
+    into ``ChunkingError``. The engine instead clamps the overlap and chunks
+    anyway; this guard keeps the legacy contract so a mis-configured call
+    (e.g. stock default overlap 200 with a small max_size) fails loudly
+    instead of producing degenerate chunks.
 
     Args:
-        text: Text to chunk.
-        token_chunker: The legacy TokenBasedChunker to use.
-        max_size: Maximum tokens per chunk.
-        overlap: Token overlap.
+        max_size: Resolved max_size option (tokens per chunk).
+        overlap: Resolved overlap option (tokens).
+
+    Raises:
+        ChunkingError: If both values are ints, max_size > 0, and
+            overlap >= max_size.
+    """
+    if not isinstance(max_size, int) or not isinstance(overlap, int):
+        return
+    if max_size > 0 and overlap >= max_size:
+        raise ChunkingError(
+            f"Token overlap {overlap} must be less than max_tokens {max_size}"
+        )
+
+
+def _synthesize_flat_offsets(
+    text: str, chunk_texts: List[str]
+) -> List[Dict[str, int]]:
+    """Compute (start_char, end_char) spans for chunks lacking offsets.
+
+    Primary strategy: word-position mapping. Text-method chunks (words,
+    sentences, ...) re-join the source's whitespace-separated words, so each
+    chunk's ``split()`` words are a CONSECUTIVE run of the source's words
+    (matching the approach in RAG_Search/chunking_service.py). Mapping chunk
+    words onto source word spans yields correct spans even when chunks
+    overlap (the word cursor advances by one word, not past the chunk end).
+    Source whitespace is normalized inside the chunk, so a plain
+    ``text.find`` would miss -- the previous approach -- and with overlap
+    could even report ``end_char > len(text)``.
+
+    Fallbacks: monotonic ``find`` (for chunks that ARE substrings), then a
+    conservative estimate. All results are clamped to ``[0, len(text)]``.
+
+    Args:
+        text: The source text the chunks were produced from.
+        chunk_texts: The chunk strings, in order.
 
     Returns:
-        List of chunk strings (legacy post-processing included).
+        One ``{"start_char": int, "end_char": int}`` dict per chunk.
     """
-    try:
-        chunks = token_chunker.chunk_by_tokens(text, max_size, overlap)
-    except Exception as e:
-        logger.warning(
-            f"Legacy token chunker failed ({e}); falling back to words method."
-        )
-        return []
-    return [c for c in (chunk.strip() for chunk in chunks) if c]
+    n = len(text)
+    word_spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", text)]
+    words = [text[s:e] for s, e in word_spans]
+    spans: List[Dict[str, int]] = []
+    word_cursor = 0
+    find_cursor = 0
 
+    for chunk_text in chunk_texts:
+        start_char: Optional[int] = None
+        end_char: Optional[int] = None
 
-def _append_flat_offsets(
-    chunk: Dict[str, Any], metadata: Dict[str, Any], text: str
-) -> Dict[str, Any]:
-    """Lift metadata offsets to top level and derive the flat keys (§6.3.2).
+        chunk_words = chunk_text.split() if chunk_text else []
+        if chunk_words and words:
+            # Consecutive word-run match starting at/after word_cursor.
+            run_len = len(chunk_words)
+            for wi in range(word_cursor, len(words) - run_len + 1):
+                if words[wi : wi + run_len] == chunk_words:
+                    start_char = word_spans[wi][0]
+                    end_char = word_spans[wi + run_len - 1][1]
+                    word_cursor = wi + 1  # advance one word: tolerate overlap
+                    break
 
-    The engine keeps ``start_char``/``end_char`` inside ``metadata`` (or not
-    at all on the plain-process path); the DB seam reads them at the top
-    level of each chunk dict. ``word_count`` is derived from the text the
-    way the engine's metadata path does (``len(text.split())``).
-    """
-    start = chunk.get("start_char", metadata.get("start_char"))
-    end = chunk.get("end_char", metadata.get("end_char"))
-    if isinstance(start, int) and "start_char" not in chunk:
-        chunk["start_char"] = start
-    if isinstance(end, int) and "end_char" not in chunk:
-        chunk["end_char"] = end
-    if "word_count" not in chunk:
-        chunk["word_count"] = len(text.split()) if text else 0
-    return chunk
+        if start_char is None:
+            # Substring match (chunks that preserve original whitespace).
+            idx = text.find(chunk_text, find_cursor)
+            if idx == -1:
+                idx = text.find(chunk_text)
+            if idx != -1:
+                start_char = idx
+                end_char = min(idx + len(chunk_text), n)
+                find_cursor = max(find_cursor, idx + 1)
+                word_cursor = 0  # re-anchor the word cursor to keep it usable
+
+        if start_char is None or end_char is None:
+            # Conservative estimate: continue from the last known position.
+            start_char = min(find_cursor, n)
+            end_char = min(start_char + len(chunk_text), n)
+
+        start_char = max(0, min(start_char, n))
+        end_char = max(start_char, min(end_char, n))
+        spans.append({"start_char": start_char, "end_char": end_char})
+
+    return spans
 
 
 #######################################################################################################################
@@ -926,17 +889,18 @@ class Chunker:
             engine_options["method"] = resolved_method
 
         if resolved_method == ChunkingMethod.TOKENS.value:
-            # Legacy tokens path: the patched-seam Q2 check plus the legacy
-            # TokenBasedChunker seam decide between the engine strategy and
-            # the legacy word approximation (see _resolve_tokens_plan).
-            tokens_plan = _resolve_tokens_plan(self._engine, self.token_chunker)
-            if tokens_plan == "legacy":
-                return _chunk_tokens_via_legacy(
-                    text,
-                    self.token_chunker,
-                    int(engine_options.get("max_size", 400)),
-                    int(engine_options.get("overlap", 0)),
-                )
+            # Legacy parity guard FIRST (legacy validated params before any
+            # tokenizer work): overlap >= max_size raised in the legacy
+            # token path; the engine would clamp it instead.
+            _guard_tokens_overlap(
+                engine_options.get("max_size"), engine_options.get("overlap")
+            )
+            # Q2: refuse BEFORE chunking when the engine's own tokenizer
+            # resolution lands on the word-approximation fallback (probing
+            # the engine -- tiktoken counts, transformers cache -- not the
+            # legacy transformers-only seam, so a tiktoken-only install
+            # still delegates to the engine).
+            _enforce_real_tokenizer(self._tokenizer_path)
 
         if resolved_method == ChunkingMethod.ROLLING_SUMMARIZE.value:
             # Legacy rolling_summarize invoked the caller's LLM function with
@@ -1008,10 +972,6 @@ class Chunker:
                 }
             },
         )
-        if resolved_method == ChunkingMethod.TOKENS.value:
-            # Post-chunk Q2 check (network-free attribute read; see
-            # _enforce_no_word_approximation).
-            _enforce_no_word_approximation(resolved_method, self._engine)
         return [chunk for chunk in raw if isinstance(chunk, str)]
 
     # ------------------------------------------------------------------
@@ -1456,13 +1416,24 @@ def improved_chunking_process(
 ) -> List[Dict[str, Any]]:
     """Chunks text and returns chunks with legacy metadata plus flat keys.
 
-    Delegates to the engine's ``process_text`` (which produces the legacy
-    ``{"text", "metadata"}`` shape with chunk_index/total_chunks/
-    chunk_method/max_size_setting/overlap_setting/language/
-    relative_position/adaptive_chunking_used/chunk_content_hash metadata),
-    then lifts ``start_char``/``end_char``/``word_count`` to the top level of
-    each chunk (the flat §6.3.2 contract the DB seam reads), deriving offsets
-    from the source text when the engine did not provide them.
+    Mirrors the legacy flow exactly: builds a ``Chunker`` adapter (which
+    resolves the effective options -- defaults <- template <- explicit --
+    and, critically, routes ``rolling_summarize`` through the ported legacy
+    payload-dict implementation and ``template``/``template_manager``
+    through the template pipeline), calls its ``chunk_text``, then enriches
+    every chunk with the legacy metadata (chunk_index 1-based, total_chunks,
+    chunk_method, max_size_setting, overlap_setting, language,
+    relative_position, adaptive_chunking_used, chunk_content_hash) and the
+    flat §6.3.2 keys (top-level start_char/end_char/word_count the DB seam
+    reads), synthesizing offsets against the source text when the chunker
+    did not provide them.
+
+    On the delegated ``rolling_summarize`` path, LLM-call failures append
+    legacy ``"[Summarization failed for this part: ...]"`` markers to the
+    summary rather than raising -- the legacy caller-compat behavior
+    (deliberate §9 deviation; the engine's own fail-closed path is a
+    different, engine-level contract exercised by
+    Tests/Chunking/test_rolling_summarize_fail_closed.py in Task 4).
 
     Args:
         text (str): The text to chunk.
@@ -1479,8 +1450,8 @@ def improved_chunking_process(
         "start_char": int, "end_char": int, "word_count": int}``.
 
     Raises:
-        ChunkingError: On chunking failures or a missing real tokenizer for
-            the tokens method.
+        ChunkingError: On chunking failures, a missing real tokenizer for
+            the tokens method, or tokens overlap >= max_size.
         InvalidChunkingMethodError: If the requested method is unsupported.
     """
     logger.info("Improved chunking process started...")
@@ -1488,118 +1459,114 @@ def improved_chunking_process(
     logger.debug(
         f"Text length: {len(text)} characters, tokenizer: {tokenizer_name_or_path}"
     )
+    if template:
+        logger.debug(f"Using template: {template}")
 
+    chunker_instance = Chunker(
+        options=chunk_options_dict,
+        tokenizer_name_or_path=tokenizer_name_or_path,
+        template=template,
+        template_manager=template_manager,
+    )
+    effective_options = chunker_instance.options.copy()
     resolved_method = _normalize_legacy_method(
-        (chunk_options_dict or {}).get("method") or "words"
+        effective_options.get("method") or "words"
     )
 
-    engine_chunker = _EngineChunker(
-        _build_engine_config(chunk_options_dict or {}, tokenizer_name_or_path)
-    )
+    try:
+        raw_chunks = chunker_instance.chunk_text(
+            text,
+            method=effective_options["method"],
+            llm_call_function=llm_call_function_for_chunker,
+            llm_api_config=llm_api_config_for_chunker,
+        )
+        logger.debug(
+            f"Created {len(raw_chunks)} raw_chunks using method {effective_options['method']}"
+        )
+    except ChunkingError:
+        logger.error("ChunkingError in chunking process: re-raising")
+        raise
+    except Exception as e:
+        logger.opt(exception=True).error(f"Unexpected error in chunking process: {e}")
+        raise ChunkingError(f"Unexpected error in chunking process: {e}") from e
 
-    # Legacy special cases folded into the pass-through:
-    #   * leading-JSON metadata extraction and the transcribed-header strip
-    #     are handled by the engine's preparation stage;
-    #   * language auto-detection when unset is handled by the engine's
-    #     option resolution.
-    engine_options = _translate_legacy_options(
-        chunk_options_dict, tokenizer_name_or_path
-    )
+    total_chunks_count = len(raw_chunks)
+    logger.info(f"Processing {total_chunks_count} chunks for metadata enrichment")
 
-    legacy_tokens_chunks: Optional[List[str]] = None
-    if resolved_method == ChunkingMethod.TOKENS.value:
-        # Legacy tokens path: the patched-seam Q2 check plus the legacy
-        # TokenBasedChunker seam decide between the engine strategy and the
-        # legacy word approximation (see _resolve_tokens_plan).
-        legacy_token_chunker = create_token_chunker(tokenizer_name_or_path)
-        tokens_plan = _resolve_tokens_plan(engine_chunker, legacy_token_chunker)
-        if tokens_plan == "legacy":
-            legacy_tokens_chunks = _chunk_tokens_via_legacy(
-                text,
-                legacy_token_chunker,
-                int(engine_options.get("max_size", 400)),
-                int(engine_options.get("overlap", 0)),
+    # Normalize raw chunks to (text, method-specific metadata) pairs, exactly
+    # like the legacy loop (dicts carry their own metadata; strings get {}).
+    normalized: List[Dict[str, Any]] = []
+    for chunk_item in raw_chunks:
+        if (
+            isinstance(chunk_item, dict)
+            and "json" in chunk_item
+            and "metadata" in chunk_item
+        ):
+            normalized.append(
+                {"text": json.dumps(chunk_item["json"], ensure_ascii=False), "metadata": chunk_item["metadata"]}
             )
-
-    if legacy_tokens_chunks is not None:
-        results = [
-            {"text": chunk_text, "metadata": {}} for chunk_text in legacy_tokens_chunks
-        ]
-    else:
-        try:
-            results = engine_chunker.process_text(
-                text,
-                engine_options,
-                tokenizer_name_or_path=tokenizer_name_or_path,
-                llm_call_func=llm_call_function_for_chunker,
-                llm_config=llm_api_config_for_chunker,
+        elif isinstance(chunk_item, dict) and "text" in chunk_item and "metadata" in chunk_item:
+            normalized.append(
+                {"text": chunk_item["text"], "metadata": chunk_item["metadata"]}
             )
-        except ChunkingError:
-            logger.error("ChunkingError in chunking process: re-raising")
-            raise
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error in chunking process: {e}"
-            )
-            raise ChunkingError(
-                f"Unexpected error in chunking process: {e}"
-            ) from e
-        if resolved_method == ChunkingMethod.TOKENS.value:
-            # Post-chunk Q2 check (network-free attribute read; see
-            # _enforce_no_word_approximation).
-            _enforce_no_word_approximation(resolved_method, engine_chunker)
-
-    # Flat-contract conversion (§6.3.2): copy offsets to top level, derive
-    # word_count, and synthesize offsets against the source text when the
-    # engine's plain-process path did not attach any.
-    out: List[Dict[str, Any]] = []
-    cursor = 0
-    for item in results:
-        chunk_text_content = item["text"]
-        chunk_metadata = dict(item["metadata"])
-
-        # Offsets: prefer engine-provided metadata values, else locate the
-        # chunk in the source text (monotonic search, matching the engine's
-        # chunk_with_metadata approach) so downstream _persist_chunks always
-        # has usable start_char/end_char.
-        start_char = chunk_metadata.get("start_char")
-        end_char = chunk_metadata.get("end_char")
-        if not isinstance(start_char, int) or not isinstance(end_char, int):
-            start_char = chunk_metadata.get("start_offset")
-            end_char = chunk_metadata.get("end_offset")
-        if not isinstance(start_char, int) or not isinstance(end_char, int):
-            idx = text.find(chunk_text_content, cursor)
-            if idx == -1:
-                idx = cursor
-            start_char = idx
-            end_char = idx + len(chunk_text_content)
-            cursor = max(cursor, end_char)
+        elif isinstance(chunk_item, str):
+            normalized.append({"text": chunk_item, "metadata": {}})
         else:
-            cursor = max(cursor, end_char)
+            logger.warning(
+                f"Unexpected chunk item type: {type(chunk_item)}. Skipping."
+            )
 
-        chunk: Dict[str, Any] = {
-            "text": chunk_text_content,
-            "metadata": chunk_metadata,
-            "start_char": start_char,
-            "end_char": end_char,
-            "word_count": (
-                len(chunk_text_content.split()) if chunk_text_content else 0
-            ),
+    # Flat-contract conversion (§6.3.2): legacy metadata enrichment plus
+    # top-level start_char/end_char/word_count, synthesizing offsets when
+    # the chunker did not attach any.
+    span_overrides = _synthesize_flat_offsets(
+        text, [item["text"] for item in normalized]
+    )
+
+    out: List[Dict[str, Any]] = []
+    for i, item in enumerate(normalized):
+        chunk_text_content = item["text"]
+        chunk_specific_metadata = dict(item["metadata"])
+
+        current_chunk_metadata = {
+            "chunk_index": i + 1,
+            "total_chunks": len(normalized),
+            "chunk_method": effective_options["method"],
+            "max_size_setting": effective_options["max_size"],
+            "overlap_setting": effective_options["overlap"],
+            "language": effective_options.get("language", "unknown"),
+            "relative_position": float((i + 1) / len(normalized)) if normalized else 0.0,
+            "adaptive_chunking_used": effective_options.get("adaptive", False),
         }
-        out.append(chunk)
+        current_chunk_metadata.update(chunk_specific_metadata)
+        current_chunk_metadata["chunk_content_hash"] = hashlib.md5(
+            chunk_text_content.encode("utf-8")
+        ).hexdigest()
 
-    # Keep metadata's hash consistent with the emitted text (engine already
-    # set it from the same text; recompute defensively for synthesized
-    # offsets only when text was not altered -- it never is here).
-    for chunk in out:
-        chunk["metadata"].setdefault(
-            "chunk_content_hash",
-            hashlib.md5(chunk["text"].encode("utf-8")).hexdigest(),
+        start_char = current_chunk_metadata.get("start_char")
+        end_char = current_chunk_metadata.get("end_char")
+        if not isinstance(start_char, int) or not isinstance(end_char, int):
+            start_char = current_chunk_metadata.get("start_offset")
+            end_char = current_chunk_metadata.get("end_offset")
+        if not isinstance(start_char, int) or not isinstance(end_char, int):
+            start_char = span_overrides[i]["start_char"]
+            end_char = span_overrides[i]["end_char"]
+
+        out.append(
+            {
+                "text": chunk_text_content,
+                "metadata": current_chunk_metadata,
+                "start_char": start_char,
+                "end_char": end_char,
+                "word_count": (
+                    len(chunk_text_content.split()) if chunk_text_content else 0
+                ),
+            }
         )
 
     logger.info(
         f"Improved chunking process completed: {len(out)} chunks created using "
-        f"method '{resolved_method}'"
+        f"method '{resolved_method}', language: {effective_options.get('language', 'unknown')}"
     )
     return out
 
