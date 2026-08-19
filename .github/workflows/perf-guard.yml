@@ -1,0 +1,53 @@
+name: Perf Guard
+
+# TASK-18908: born of the 2026-08 Windows 3 s-lag incident. The lag shipped
+# through 100+ green PRs because nothing measured UI latency. This workflow
+# runs the latency guardrails (screen-switch budgets + Textual CSS parse-
+# cache cliff) and nothing else, so it stays a usable merge signal even
+# while the big Tests workflow is red on all branches (TASK-18608).
+#
+# Standalone by design, like css-bundle-guard/backlog-guard: a PR that
+# makes a destination slower than the incident class, or that crosses the
+# LRU-64 stylesheet cliff, fails HERE first -- in minutes, not at the next
+# user report.
+
+on:
+  pull_request:
+    paths:
+      - 'tldw_chatbook/**.py'
+      - 'tldw_chatbook/css/**'
+      - 'Tests/Performance/**'
+      - '.github/workflows/perf-guard.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'tldw_chatbook/**.py'
+      - 'tldw_chatbook/css/**'
+      - 'Tests/Performance/**'
+      - '.github/workflows/perf-guard.yml'
+
+# One run per workflow per ref (same rationale as css-bundle-guard: obsolete
+# runs must not queue up competing for scarce runners).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  ui-latency-guardrails:
+    name: UI latency guardrails
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install package (test deps only path)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run latency guardrails
+        run: |
+          pytest Tests/Performance/test_ui_latency_guardrails.py \
+            Tests/Utils/test_ui_responsiveness_stall_persist.py \
+            -v --timeout=300

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 import time
 
@@ -49,6 +50,30 @@ class UIResponsivenessMonitor:
         self._removes = 0
         self._max_heartbeat_lag_ms = 0
         self._last_heartbeat = time.perf_counter()
+        self._stall_persisted = False
+
+    def _persist_stall(self, lag_ms: int) -> None:
+        """Write one diagnostics record for an observed event-loop stall.
+
+        Best-effort by design: diagnostics must never be able to crash or
+        further delay the loop it is measuring, so any failure is swallowed
+        after being noted on stderr.
+        """
+        try:
+            from .persistent_diagnostics import persist_event
+
+            persist_event(
+                "ui",
+                "event_loop_stall",
+                lag_ms=lag_ms,
+                threshold_ms=self.stall_threshold_ms,
+                active_timers=",".join(sorted(self._active_timers)),
+                active_workers=",".join(sorted(self._active_workers)),
+                mounts=self._mounts,
+                removes=self._removes,
+            )
+        except Exception as exc:  # noqa: BLE001 -- never raise from diagnostics
+            print(f"ui_responsiveness: stall persist failed: {exc}", file=sys.stderr)
 
     def record_timer_created(self, name: str) -> None:
         """Record a timer as active by stable diagnostic name."""
@@ -76,13 +101,23 @@ class UIResponsivenessMonitor:
         self._removes += max(0, removed)
 
     def record_heartbeat_delta(self, delta_seconds: float) -> None:
-        """Record event-loop drift beyond the configured heartbeat cadence."""
+        """Record event-loop drift beyond the configured heartbeat cadence.
+
+        A drift past the stall threshold is persisted to the diagnostics
+        sink (TASK-18908): the 2026-08 lag reports arrived with no evidence,
+        so the first question every future report must answer -- "did the
+        loop actually stall, and how badly" -- is answered by the log line
+        this writes. Persisted once per breach (edge-triggered, not
+        level-triggered) so a session that stays wedged writes one record,
+        not one per heartbeat.
+        """
         if not self.enabled:
             return
-        self._max_heartbeat_lag_ms = max(
-            self._max_heartbeat_lag_ms,
-            int(round(delta_seconds * 1000)),
-        )
+        lag_ms = int(round(delta_seconds * 1000))
+        self._max_heartbeat_lag_ms = max(self._max_heartbeat_lag_ms, lag_ms)
+        if lag_ms >= self.stall_threshold_ms and not self._stall_persisted:
+            self._stall_persisted = True
+            self._persist_stall(lag_ms)
 
     def heartbeat(self) -> None:
         """Record drift since the previous heartbeat tick."""
@@ -95,6 +130,9 @@ class UIResponsivenessMonitor:
     def reset_heartbeat_baseline(self) -> None:
         """Reset heartbeat timing without clearing accumulated diagnostics."""
         self._last_heartbeat = time.perf_counter()
+        # Re-arm stall persistence: a RECOVERED loop that stalls again is a
+        # new incident and must write its own record.
+        self._stall_persisted = False
 
     def snapshot(self) -> UIResponsivenessSnapshot:
         """Return the current diagnostic counters as an immutable snapshot."""
