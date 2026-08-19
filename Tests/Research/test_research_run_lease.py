@@ -194,3 +194,51 @@ def test_a_clean_release_resets_the_retry_budget():
         run["id"], worker_id="rescuer", lease_seconds=60, max_attempts=3
     )
     assert rescue is not None
+
+
+def test_a_live_lease_at_the_retry_budget_declines_instead_of_raising():
+    """task-3 report finding 1: ``claim_run`` treated ANY previous lease --
+    live or expired -- as a "reclaim" for budget-check purposes, keyed only
+    on ``previous is not None``. So once ``lease_attempts`` reached
+    ``max_attempts``, a second executor merely racing a perfectly healthy,
+    still-live lease got ``LeaseBudgetExhausted`` instead of a routine
+    decline. The engine's caller responds to that exception by calling
+    ``fail_run`` (see ``local_research_engine.py`` around the
+    ``LeaseBudgetExhausted`` handler), so a run whose executor was actively
+    working got failed out from under it with a false "claimed and
+    abandoned N time(s)" message.
+
+    Reproduces the reviewer's repro: two abandonments (expired leases, never
+    released) spend two of the three attempts, then a THIRD, healthy claim
+    takes the run and its lease is still live. A concurrent claim against
+    that live lease must be declined (return None, raise nothing) -- the
+    budget check only applies to RECLAIMING an EXPIRED lease.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    # Two abandonments: claimed with an already-expired lease, never released.
+    for _ in range(2):
+        assert service.claim_run(
+            run["id"], worker_id="dead-executor", lease_seconds=0, max_attempts=3
+        )
+
+    # A healthy third claim: attempt 3 of 3, but its lease is LIVE, not
+    # abandoned.
+    holder_lease = service.claim_run(
+        run["id"], worker_id="healthy-executor", lease_seconds=60, max_attempts=3
+    )
+    assert holder_lease is not None
+
+    # A racing second executor must be declined, not told the budget is
+    # exhausted.
+    racer_result = service.claim_run(
+        run["id"], worker_id="racer", lease_seconds=60, max_attempts=3
+    )
+    assert racer_result is None
+
+    # The run itself must be untouched: not failed, and still held by its
+    # legitimate, healthy holder.
+    run_row = service.get_run(run["id"])
+    assert run_row["status"] != "failed"
+    assert service.holds_lease(run["id"], lease_id=holder_lease) is True

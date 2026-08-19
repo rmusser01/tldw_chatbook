@@ -1608,6 +1608,17 @@ def test_a_lease_stolen_during_synthesis_blocks_packaging_writes_and_completion(
     run = service.launch_run(
         query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
     )
+    # task-3 report finding 2: `stolen` used to live only inside the seam's
+    # local scope, so an in-seam `assert stolen is not None` failing (e.g. if
+    # the theft silently did nothing) raised an AssertionError that propagated
+    # into execute_run's `except Exception` handler -- which still reaches a
+    # non-"completed" terminal status either way (see the outer assertion
+    # below), so every "shipped" assertion kept passing even with a no-op
+    # theft. Stashing the rescuer's lease id in this outer box lets the test
+    # verify, from OUTSIDE execute_run's exception handling, that a real
+    # third party actually holds the run's lease afterward -- an assertion
+    # that cannot be swallowed by any path through execute_run.
+    theft_box: dict[str, str | None] = {}
 
     async def stealing_analyze_fn(wsr, sqd, params, cancel_event=None):
         # A live (unexpired) lease cannot be reclaimed by another claim_run
@@ -1619,6 +1630,7 @@ def test_a_lease_stolen_during_synthesis_blocks_packaging_writes_and_completion(
         released = service.release_lease(run["id"], lease_id=engine._lease_id)
         assert released is True, "the engine must still hold its own lease at this point"
         stolen = service.claim_run(run["id"], worker_id="rescuer", lease_seconds=60)
+        theft_box["lease_id"] = stolen
         assert stolen is not None, "the steal itself must succeed for this test to mean anything"
         return {
             "final_answer": {"text": "Answer[1].", "evidence": [], "confidence": 0.5, "chunks": []},
@@ -1639,6 +1651,20 @@ def test_a_lease_stolen_during_synthesis_blocks_packaging_writes_and_completion(
 
     final = asyncio.run(engine.execute_run(run["id"]))
 
+    # The positive outcome: a real rescuer must actually hold the run's
+    # lease now. This is checked here, in the test's own top-level code --
+    # not inside the seam -- so it cannot be short-circuited by execute_run
+    # swallowing the in-seam assertion into some other non-"completed"
+    # terminal status (fail_run's "failed", or a quiet _LeaseLost return
+    # that leaves status at its launch-time "running"). Both of those satisfy
+    # a bare `!= "completed"`, which is why that check alone masked a no-op
+    # theft; this one cannot be satisfied unless the rescuer's claim really
+    # landed.
+    assert theft_box.get("lease_id"), "the rescuer's claim_run must have returned a lease id"
+    assert service.holds_lease(run["id"], lease_id=theft_box["lease_id"]) is True, (
+        "the rescuer must still hold the run's lease after the displaced "
+        "executor's execute_run returns"
+    )
     assert final["status"] != "completed"
     assert complete_calls["n"] == 0, "the displaced executor must never call complete_run"
     names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
@@ -1671,6 +1697,13 @@ def test_the_last_lease_fence_blocks_completion_after_the_final_write():
         query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
     )
 
+    # task-3 report finding 2: see the sibling theft test above for why this
+    # must be checked from OUTSIDE the seam -- an in-seam `assert stolen is
+    # not None` failing still lands execute_run at a non-"completed" terminal
+    # status either way (fail_run's "failed", or a quiet _LeaseLost return),
+    # so a bare `!= "completed"` check kept passing even for a no-op theft.
+    theft_box: dict[str, str | None] = {}
+
     original_save_artifact = service.save_artifact
 
     def stealing_save_artifact(run_id, *, artifact_name, content_type, content):
@@ -1687,6 +1720,7 @@ def test_the_last_lease_fence_blocks_completion_after_the_final_write():
             released = service.release_lease(run_id, lease_id=engine._lease_id)
             assert released is True
             stolen = service.claim_run(run_id, worker_id="rescuer", lease_seconds=60)
+            theft_box["lease_id"] = stolen
             assert stolen is not None
         return result
 
@@ -1694,6 +1728,14 @@ def test_the_last_lease_fence_blocks_completion_after_the_final_write():
 
     final = asyncio.run(engine.execute_run(run["id"]))
 
+    # The positive outcome, asserted from the test's own top-level code so it
+    # cannot be short-circuited by execute_run swallowing the in-seam
+    # assertion: a real rescuer must actually hold the run's lease now.
+    assert theft_box.get("lease_id"), "the rescuer's claim_run must have returned a lease id"
+    assert service.holds_lease(run["id"], lease_id=theft_box["lease_id"]) is True, (
+        "the rescuer must still hold the run's lease after the displaced "
+        "executor's execute_run returns"
+    )
     assert final["status"] != "completed"
     names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
     assert "bundle.json" in names  # the write that triggered the steal did land

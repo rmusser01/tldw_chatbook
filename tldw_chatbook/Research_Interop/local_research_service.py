@@ -743,6 +743,15 @@ class LocalResearchService:
         CONSECUTIVE abandonments (crashes that leave the lease to expire),
         not the run's lifetime claim count.
 
+        Whether a claim is a "reclaim" for budget purposes depends on the
+        previous lease being EXPIRED, not merely present: a healthy
+        executor's still-live lease must never trip the budget check for a
+        second, merely-racing claimant -- that claimant is simply declined
+        below by the atomic UPDATE's WHERE clause. Reusing the same ``now``
+        snapshot for both the reclaim check and the UPDATE's own
+        ``leased_until <= ?`` comparison guarantees the two judgments of
+        "is this lease live" cannot disagree with each other.
+
         Args:
             run_id: The run to claim.
             worker_id: Identifies the claiming executor.
@@ -763,13 +772,13 @@ class LocalResearchService:
         row = self._require_one("research_runs", run_id, "research run")
         previous = row["leased_until"] if "leased_until" in row.keys() else None
         attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
-        reclaiming = previous is not None
+        now = self._now()
+        reclaiming = previous is not None and str(previous) <= now
         if reclaiming and attempts >= int(max_attempts):
             raise LeaseBudgetExhausted(
                 run_id, attempts=attempts, max_attempts=int(max_attempts)
             )
         lease_id = uuid.uuid4().hex
-        now = self._now()
         expires = self._timestamp_after(lease_seconds)
         next_attempts = attempts + 1
         with self._connect() as conn:
