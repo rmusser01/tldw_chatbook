@@ -65,11 +65,29 @@ _INTEGER_FIELDS = frozenset(
         "item_count",
         "batch_size",
         "chunk_count",
+        # TASK-18908: UIResponsivenessMonitor stall telemetry -- observed
+        # event-loop lag, the threshold it breached, and mount/remove churn
+        # counts at the time of the stall.
+        "lag_ms",
+        "threshold_ms",
+        "mounts",
+        "removes",
     }
 )
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled"})
-_LIST_FIELDS = frozenset({"argument_names"})
+_LIST_FIELDS = frozenset(
+    {
+        "argument_names",
+        # TASK-18908: active timer/worker diagnostic names at stall time.
+        # Values are the same code-side token names record_timer_created /
+        # record_worker_started already hold, so the existing token list
+        # serialization applies unchanged.
+        "active_timers",
+        "active_workers",
+    }
+)
 _ALLOWED_FIELDS = _TOKEN_FIELDS | _INTEGER_FIELDS | _BOOLEAN_FIELDS | _LIST_FIELDS
+
 
 def _is_chatbook_record(record: logging.LogRecord) -> bool:
     """Return whether a record originated in installed Chatbook code."""

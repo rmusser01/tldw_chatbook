@@ -17,6 +17,12 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      # The stall-persistence tests run in this workflow too, and the job
+      # installs from pyproject.toml -- a dependency bump (e.g. the pinned
+      # Textual version) or a change to those tests must not merge without
+      # this guard's verdict (Qodo finding on PR #1827).
+      - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
     branches: [dev, main]
@@ -24,6 +30,12 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      # The stall-persistence tests run in this workflow too, and the job
+      # installs from pyproject.toml -- a dependency bump (e.g. the pinned
+      # Textual version) or a change to those tests must not merge without
+      # this guard's verdict (Qodo finding on PR #1827).
+      - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
 
 # One run per workflow per ref (same rationale as css-bundle-guard: obsolete
