@@ -963,6 +963,79 @@ may send the approved evidence to its client or model.
   warning for that tab, and quitting the app reports the whole fleet. Details in
   [Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
 
+### Agent run budget — how long and how expensive one reply may get
+
+Every agent run is bounded by five limits, all in **Settings ▸ Console
+Behavior ▸ Agent run budget**. A "run" is one message you send, from your
+prompt to the agent's final reply — however many tool rounds that takes.
+
+| Limit | Default | What it bounds |
+|---|---|---|
+| Token budget (per run) | 25,000,000 | Prompt + completion tokens spent by one run |
+| Wall-clock limit | 86,400 s (24 h) | How long one run may take end to end |
+| Per-tool-call limit | 3,600 s (1 h) | How long a *single* tool call may take |
+| Model turns | 2,000 | Tool-calling rounds per message |
+| Steps | 25,000 | Individual loop steps (a tool round costs 3) |
+
+Changes apply to your next message — no restart.
+
+**The token budget is the one that actually stops a long run.** This is the
+least obvious thing on this page, so it is worth stating plainly: the whole
+conversation is re-sent to the provider on *every* turn, so cost does not
+grow with the number of turns, it grows with the *square* of it. A run
+whose rounds add roughly 800 tokens each will exhaust a 25M budget somewhere
+around turn 250 — nowhere near the 2,000-turn cap. That is expected. The
+turn and step limits are backstops sized so they never become the surprise
+limiter; spend is the real governor.
+
+That same arithmetic is why raising the token budget alone rarely buys many
+more turns: at ~800 tokens a round, the prompt at turn 250 is already about
+200k tokens, which is where a 200k-context model stops accepting it anyway.
+If you want genuinely long runs, the knob that changes the shape of the
+problem is `[agents] run_log_evict_enabled` (below), not a bigger number
+here.
+
+**Sub-agents inherit these limits rather than sharing them.** Each
+sub-agent gets its own full token budget, so one message that spawns two
+helpers can spend about three times the number you set. Their wall-clock is
+the exception — that comes from `[agents] child_max_wall_seconds`, so
+raising the run's wall limit does not extend theirs.
+
+**The token budget counts what a turn cost, not what it sent.** When your
+provider serves part of the prompt from its cache — which Anthropic does by
+default, and a long agent run is almost entirely cache reads by
+construction — those tokens are billed at roughly a tenth of the uncached
+rate, and the budget now counts them at roughly a tenth too. Cache *writes*
+cost more than uncached input and are counted at their own higher rate. A
+model with no published rates gets no discount. Output tokens are counted
+one-for-one regardless, so the budget's strictness on output is unchanged.
+
+In practice this means a cached run goes considerably further on the same
+number than the raw token count would suggest — which is the point, since
+the raw count was never what you were being charged.
+
+**Raise the per-tool-call limit if you are running long tools.** A 24-hour
+run budget will not save a crawl, ingest, or build that takes longer than
+the per-tool-call ceiling; that is the limit that kills it. Lowering this
+one below about 186 seconds is the risky direction — a call reported as
+timed out may still be running, and an MCP tool can end up executing twice.
+Setting it to 0 removes the ceiling but not Stop: cancellation is still
+polled every 0.5 s while a tool runs, so pressing Stop interrupts the wait
+(even though the tool's own thread may finish in the background).
+
+**Setting the token budget to 0 means unlimited, and costs you your only
+safety net.** The loop detector only catches a tool called repeatedly with
+*identical* arguments; a loop that varies anything — an incrementing offset,
+a slightly reworded query — walks straight past it. At a 2,000-turn cap the
+token budget is the last thing standing between a stuck agent and an
+unbounded bill.
+
+**If you lower the step budget, lower it deliberately.** A tool round costs
+3 steps (think, call, result) and the closing reply costs 1, so N turns need
+`3*(N-1)+1` steps. Set steps below that and runs stop on "step budget
+exhausted" well before your turn limit — Settings warns you when the two
+disagree.
+
 ## Common tasks
 
 1. **Run two agents in parallel.** Send a prompt, press **Ctrl+T** for a new
@@ -1004,6 +1077,21 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   preview shows). This caps parallel **tabs**, a different knob from
   `[agents] max_live_subagents` below, which caps parallel **sub-agents
   within one reply**.
+- **Settings > Console Behavior > Agent run budget** — the five limits on
+  one run: token budget, wall-clock, per-tool-call, model turns, and steps
+  (saved as `console.agent_max_total_tokens`,
+  `console.agent_max_wall_seconds`, `console.agent_max_tool_call_seconds`,
+  `console.agent_max_model_turns`, `console.agent_max_steps`). No upper
+  bounds. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
+  above for why the token budget, not the turn cap, is what stops a long run.
+- **`[agents] run_log_evict_enabled`** in `config.toml` — whether older
+  rounds are trimmed out of what gets re-sent to the provider each turn
+  (default `false`). This is the companion knob to the token budget: with
+  it off, every turn re-sends the whole conversation and spend grows
+  quadratically. It is off by default deliberately — a weaker model whose
+  recent turns are trimmed tends to redo work it already did and end
+  `stuck`, which is worse than overflowing the window. Turn it on for a
+  model you trust to search its own run log. No Settings UI switch.
 - **`[agents] max_live_subagents`** in `config.toml` — how many sub-agents
   of one conversation may run at once, counting any still working from an
   earlier message (default 3; `1` disables the fleet). No

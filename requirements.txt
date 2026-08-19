@@ -23,7 +23,11 @@ textual==8.2.8
 textual-diff-view==0.1.5
 psutil
 requests
-pillow==11.2.1
+# TASK-18606: was ==11.2.1 for ADR-054 renderer identity. The renderer now
+# owns its determinism (fixed-cell font pinned and metric-verified, identity
+# hashed from pixels not PNG bytes), so it no longer rides on this version.
+# Floor is 10.4, which introduced ImageFont.load_default_imagefont().
+pillow>=10.4
 loguru
 pydantic
 portalocker==3.2.0

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlsplit
 
 from textual import on
@@ -20,7 +20,10 @@ from tldw_chatbook.Chat.console_auto_speak import (
     decide_auto_speak,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+        ConsoleTTSDestination,
+    )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 _FALLBACK_DESTINATION_COPY = "Configured TTS destination"
@@ -427,6 +430,19 @@ class ConsoleAutoSpeakCoordinator:
             return None
         if not self._operation_is_current(generation, session.id, active_epoch):
             return None
+        # TASK-18605: imported HERE, not at module scope. This is the only
+        # runtime use of the symbol in this file -- every other reference is
+        # an annotation, and `from __future__ import annotations` keeps
+        # those as strings. The module-scope import cost 224 ms on the
+        # Console screen's import path, because
+        # `Event_Handlers/TTS_Events/tts_events.py` pulls in
+        # `Audio/streaming_sink.py` at ITS module scope. By the time this
+        # runs the user has asked to speak a reply, so the TTS stack is
+        # about to load anyway.
+        from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+            ConsoleTTSDestination,
+        )
+
         if type(destination) is not ConsoleTTSDestination:
             return None
         return destination

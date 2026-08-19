@@ -121,12 +121,17 @@ _LOOP_THREAD_JOIN_SECONDS = 5.0
 
 #: Ceiling on ONE submitted provider turn (`_StreamingModelAdapter.
 #: chat_call`). Deliberately generous -- this is not a request timeout (the
-#: gateway and the run's own `max_wall_seconds` own that) but a deadlock
-#: backstop for an abandoned fleet child still waiting on a loop that
-#: `run_reply` has already stopped. Set to TWICE
-#: `CONSOLE_RUN_BUDGET.max_wall_seconds` (1800) so it can never pre-empt a
-#: legitimately slow turn -- by the time it could fire, the run's own wall
-#: budget has long since ended the run.
+#: gateway's own read timeout and the run's `max_wall_seconds` own that) but
+#: a deadlock backstop for an abandoned fleet child still waiting on a loop
+#: that `run_reply` has already stopped. NOT derived from the run budget:
+#: it was once sized at 2x the old 1800s wall default, but TASK-18600 made
+#: the wall user-configurable (default 86400), so a budget-derived multiple
+#: would follow the user's wall to absurd values while buying nothing -- by
+#: the time this fires, the run's own wall budget has long since ended the
+#: run. A submitted turn is bounded far below this by the gateway's read
+#: timeout (GENERATION_READ_TIMEOUT_SECONDS, 300s) plus streaming wrap-up,
+#: so 3600s remains a pure "wedged loop" tripwire that can never pre-empt a
+#: legitimately slow turn.
 _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
@@ -149,147 +154,235 @@ _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 # cost 2 more turns / 6 more steps (6 turns / 16 steps total), so even the
 # old 8-turn cap cleared the floor with room to spare.
 #
-# The four numbers below are sized TOGETHER so that max_model_turns stays
-# the primary limiter -- raising it alone would just move the wall to
-# whichever of the other constants binds first:
-#   * max_model_turns=30 gives ~30 tool-calling rounds per user message
-#     (raised from 20).
-#   * max_steps=96: a fence tool round costs 3 steps (STEP_MODEL +
-#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so 29 rounds + 1 wrap-up
-#     STEP_MODEL = 3*29 + 1 = 88 steps. 96 clears that while staying a real
-#     backstop: a NATIVE multi-call batch (task-243) costs 1 + 2N steps per
-#     turn, so a run of heavy parallel batches can still legitimately hit the
-#     step backstop before the turn cap -- that is the backstop doing its job.
-#   * max_wall_seconds=1800: derived as 25-50s/turn x 30 model turns at the
-#     slow local-model pace this gate exercises = 750-1500s at N=30. 1800s
-#     covers the 30-turn worst case. This is a backstop, not a target -- fast
-#     cloud models finish 30 turns in a fraction of it, and the user can Stop
-#     at any point (the tool-call wrapper polls cancellation every 0.5s, task-327).
-#   * max_total_tokens=1_000_000: Sub-agents inherit the turn and step budget.
-#     Which function bounds a child's OWN wall clock now depends on the
-#     path (PR3a-1 Task 5, spec Sec 5 "Containment"; corrected after a
-#     Task 5 review caught an over-broad first draft, Defect 1):
-#     `AgentService.spawn` branches on `fleet is None or inline`. A
-#     turn-scoped or skill-invoked (`inline=True`) child still gets
-#     `agent_models.clamp_child_budget`'s parent-remainder clamp,
-#     byte-identical to every release before Task 5 -- its worst case is
-#     UNCHANGED by any of this. Only a THREADED, non-inline child (a
-#     native `spawn_subagent` call with the fleet on, the common case
-#     here) goes through `agent_models.contain_child_budget` instead,
-#     which gives it an INDEPENDENT ceiling
-#     (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`, 1800s by default)
-#     unrelated to the parent's own remaining budget -- because PR3a-1
-#     Task 2 lets that kind of child survive past the turn that spawned
-#     it. So: one message can reach 30 * (1 + max_subagents) = 90
-#     provider turns, and for a THREADED survivor the wall clock no
-#     longer bounds that 90-turn worst case in TIME the way it used to --
-#     a child spawned near the end of the parent's own 1800s window can
-#     go on running for up to its own independent 1800s afterward, so the
-#     worst-case wall-clock span from "user sends the message" to "every
-#     threaded child has settled" is now up to roughly double
-#     CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at today's defaults), not
-#     CONSOLE_MAX_WALL_SECONDS alone. Also true and easy to miss: a child
-#     blocked INSIDE one provider call is not stopped by its own wall
-#     clock AT ALL -- `run_agent_loop`'s check only runs BETWEEN loop
-#     iterations (before each `deps.call_model`), so a hung provider call
-#     can hold a child open past its ceiling until that call itself
-#     returns, independent of every number in this comment.
+# TASK-18600 re-sized these for long-running, expensive sessions, and in
+# doing so CHANGED WHICH ONE IS THE PRIMARY LIMITER. They are no longer
+# "sized together so max_model_turns stays the wall"; that framing held
+# while the numbers were small. Read this before adjusting any of them.
 #
-#     SPEND is unaffected by any of this: this ceiling is a PER-RUN
-#     bound, not a shared one -- `agent_runtime.run_agent_loop`'s
-#     `total_tokens` is a local to each run, and BOTH containment
-#     functions pass `max_total_tokens` through to a child UNCHANGED
-#     rather than dividing it -- so the parent and each of up to
-#     max_subagents=2 children can independently spend up to this
-#     ceiling, for a real worst-case aggregate of roughly 3x this value
-#     (~3M tokens), not a value bounded BY it directly. It still sits far
-#     above any normal 30-turn run.
+# WHAT ACTUALLY STOPS A RUN NOW: max_total_tokens, not max_model_turns.
+# `agent_service._make_call_model` re-sends the ENTIRE conversation to the
+# provider every turn -- `bound_history_for_send` is a no-op unless
+# `[agents] run_log_evict_enabled` is on, and that is off by default for a
+# documented reason (see `run_log_eviction.py`: a weaker model whose recent
+# turns are trimmed re-attempts work it already did and ends `stuck`, which
+# is worse than overflowing the window). `ModelTurn.tokens` counts that
+# whole re-sent prompt, so cumulative spend over N turns is QUADRATIC:
+# roughly `delta * N^2 / 2` for `delta` tokens added per round. At a typical
+# 800-token tool round the 25M ceiling is reached around turn 250; reaching
+# turn 2000 would take a ~12-token round, which no real workload produces.
+# The turn and step caps below are therefore deliberate BACKSTOPS sized so
+# they never become the surprise limiter -- not targets, and not reachable.
+# Owner decision, 2026-08-18: keep spend as the real governor and say so,
+# rather than quietly lowering the turn cap to something reachable.
 #
-#     COUNT is bounded across turns as of PR3a-1 Task 6a, and was NOT
-#     before it (Task 5's review disproved that by execution: two
-#     consecutive `run_turn` calls each spawning 2 blocking children ran
-#     4 at once against a cap of 2). `[agents] max_live_subagents` used
-#     to cap children WITHIN one `run_turn` call only -- a brand-new
-#     `FleetCoordinator` per `run_turn`, and a brand-new `AgentService`
-#     per `run_reply` with no coordinator injected -- so aggregate live
-#     children scaled with MESSAGES SENT. Task 6a moved the coordinator's
-#     ownership to this bridge, one per CONVERSATION
-#     (`_conversation_fleet_coordinator`), and injects it into every
-#     service it builds, so a later turn's spawn is refused while an
-#     earlier turn's survivors hold the slots. Read the bound precisely:
-#     it is PER CONVERSATION and per PROCESS -- N concurrent
-#     conversations can hold N * max_live_subagents live children between
-#     them, and nothing caps the aggregate across conversations. What it
-#     does guarantee is that one conversation cannot accumulate an
-#     unbounded fleet by the user pressing Send repeatedly, which is what
-#     it could do before.
-# The engine's own RunBudget defaults (agent_models.RunBudget) keep the
-# bare max_steps=8, so this override applies only at the Console bridge's
-# own config-assembly site (run_reply below); other callers of
-# RunBudget()/AgentConfig keep the conservative engine default.
-#: Tool-calling rounds the Console agent gets per user message. THE primary
-#: limiter -- the constants below exist to keep it reachable and to bound
-#: what it costs.
-CONSOLE_MAX_MODEL_TURNS = 30
+# Corollary worth keeping in view: at that same 800-token round, the prompt
+# at turn ~250 is ~200k tokens, i.e. the token ceiling and a 200k context
+# window run out at about the same place. Raising max_total_tokens alone,
+# without turning on history eviction, mostly buys context-length errors.
+#
+# The user can change all five from Settings > Console Behavior > Agent run
+# budget; `console_run_budget()` below resolves them per run. The constants
+# named DEFAULT_* in `config.py` are the shipped values, and the engine's
+# own RunBudget defaults (agent_models.RunBudget: 8 steps / 240s / 30 turns
+# / 0 tokens / 300s per tool call) are UNCHANGED and stay the conservative
+# floor for any non-Console caller.
+#
+#   * agent_max_model_turns=2000 -- backstop, see above.
+#   * agent_max_steps=25000: a fence tool round costs 3 steps (STEP_MODEL +
+#     STEP_TOOL_CALL + STEP_TOOL_RESULT), so N turns need 3*(N-1)+1 steps --
+#     5998 at N=2000. 25000 clears that with room for NATIVE multi-call
+#     batches (task-243), which cost 1 + 2N steps per turn.
+#     `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if
+#     this ever drops below the derived minimum.
+#   * agent_max_wall_seconds=86400 (24h): a long crawl, ingest, or build is
+#     the point of this task, so the wall must not be the thing that kills
+#     it. Stop still works throughout (checked at every step boundary, and
+#     every 0.5s inside the tool-call wrapper, task-327), and a hung
+#     provider connection is bounded separately by the generation client's
+#     own read timeout (`console_provider_gateway`), so 24h of nothing
+#     happening is not a state a healthy run can reach.
+#   * agent_max_tool_call_seconds=3600 (raised from the engine's 300): a
+#     24h run budget is useless if ONE long-running tool call still dies at
+#     five minutes. Raising it widens (but does not create) the
+#     double-execution window `RunBudget.max_tool_call_seconds` documents:
+#     a call the wrapper reports as timed out may still really execute on
+#     its abandoned thread, now for longer. Lowering it below ~186s is the
+#     genuinely dangerous direction, for the MCP reasons documented there.
+#   * agent_max_total_tokens=25_000_000 -- THE limiter; everything above is
+#     scaffolding around it. Two properties that make it load-bearing:
+#     it is PER RUN, not per conversation (`run_agent_loop`'s `total_tokens`
+#     is a per-run local) and both containment functions pass it to a child
+#     UNCHANGED rather than dividing it, so one message's worst-case
+#     aggregate is ~(1 + max_subagents)x = 3x it, ~75M tokens. And it is the
+#     ONLY runaway backstop left: `agent_runtime._detect_cycle` keys on
+#     exact `(name, json.dumps(args))` repetition, so any loop with a
+#     varying argument -- an incrementing offset, a reworded query -- walks
+#     straight past the cycle detector. Setting this to 0 (unlimited) at a
+#     2000-turn cap removes the last thing standing between a stuck agent
+#     and an unbounded bill.
+#
+# Everything below about CHILDREN (time, spend, count) is unchanged by this
+# task and still accurate, with one number updated: a threaded survivor's
+# own wall comes from `agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS` (1800s)
+# and is INDEPENDENT of this run's, so raising the parent's wall to 24h does
+# NOT extend a child's -- the "roughly double the parent's wall" worst-case
+# span in the notes below no longer holds. The bound is now
+# `agent_max_wall_seconds + child_max_wall_seconds`, not 2x either.
+# The five literals below MIRROR `config.DEFAULT_CONSOLE_AGENT_MAX_*` and are
+# written out rather than imported, for the same reason
+# `_STEP_MARKER_RESULT_LIMIT` is: this module has NO top-level dependency on
+# `tldw_chatbook.config` (every config read in it is a function-local import),
+# and a module-level `from tldw_chatbook.config import ...` would create one.
+# `test_bridge_default_budget_matches_config_defaults` fails if the two ever
+# drift, so the duplication is pinned rather than trusted.
+#: Tool-calling round backstop per user message. Not the primary limiter
+#: (see above) -- `agent_max_total_tokens` is.
+DEFAULT_CONSOLE_MAX_MODEL_TURNS = 2000
 
-#: Step backstop. A fence round costs 3 steps (STEP_MODEL + STEP_TOOL_CALL +
-#: STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N turns need
-#: 3*(N-1)+1 steps -- 88 at N=30. 96 clears that while staying a real
-#: backstop for native multi-call batches (1 + 2N steps per turn).
-#: `test_console_budget_step_cap_admits_a_full_model_turn_run` fails if this
-#: ever drops below the derived minimum.
-CONSOLE_MAX_STEPS = 96
+#: Step backstop. A fence round costs 3 steps and the wrap-up reply costs 1,
+#: so N turns need 3*(N-1)+1 steps -- 5998 at N=2000.
+DEFAULT_CONSOLE_MAX_STEPS = 25000
 
-#: Wall-clock backstop, at the slow local-model pace this gate exercises
-#: (25-50s per turn x CONSOLE_MAX_MODEL_TURNS = 750-1500s at N=30).
-CONSOLE_MAX_WALL_SECONDS = 1800.0
+#: Wall-clock backstop for one run: 24h, so a genuinely long-running
+#: operation is never cut off by the clock alone.
+DEFAULT_CONSOLE_MAX_WALL_SECONDS = 86400.0
 
-#: Cumulative prompt+completion spend ceiling -- but a PER-RUN one:
-#: `agent_runtime.run_agent_loop`'s `total_tokens` is a per-run local, and
-#: BOTH of `AgentService.spawn`'s containment functions -- `agent_models.
-#: clamp_child_budget` (turn-scoped/inline children) and `agent_models.
-#: contain_child_budget` (threaded survivor candidates, PR3a-1 Task 5) --
-#: pass this value through to each sub-agent UNCHANGED rather than
-#: dividing it among children. Sub-agents also inherit the turn and step
-#: budget, so one message can reach 30 * (1 + max_subagents) = 90
-#: provider turns across the parent and up to max_subagents=2 children --
-#: each independently able to spend up to this ceiling, for a real
-#: worst-case aggregate SPEND of roughly 3x this value (~3M tokens), not
-#: a value THIS constant bounds directly. It still sits far above any
-#: normal 30-turn run.
-#:
-#: Unlike SPEND, the aggregate is no longer bounded in TIME by this run's
-#: own wall clock for every child: a THREADED survivor (PR3a-1 Task 2
-#: default) can keep running for up to its own independent wall-clock
-#: ceiling (`agent_service.DEFAULT_CHILD_MAX_WALL_SECONDS`) AFTER this
-#: run's own 1800s window ends, so the worst-case wall-clock span from
-#: "user sends the message" to "every threaded child has settled" is now
-#: up to roughly double CONSOLE_MAX_WALL_SECONDS (~3600s / 1 hour at
-#: today's defaults). A turn-scoped or skill-invoked (`inline=True`)
-#: child is UNAFFECTED -- it still clamps to the parent's own remaining
-#: budget exactly as before PR3a-1 Task 5, so its worst case stays
-#: CONSOLE_MAX_WALL_SECONDS alone. Separately, ANY child blocked INSIDE
-#: one provider call is not stopped by its own wall clock at all -- the
-#: ceiling only bites BETWEEN loop iterations, not during one, so a hung
-#: provider call holds its child open past every figure above until that
-#: call itself returns.
-#:
-#: COUNT (`[agents] max_live_subagents`, referenced by max_subagents=2
-#: above) became a real cross-turn bound in PR3a-1 Task 6a and was not
-#: one before it (see Task 5's review, Defect 2): `ConsoleAgentBridge`
-#: now keeps ONE `FleetCoordinator` per conversation and injects it into
-#: the fresh `AgentService` it builds for every `run_reply`, so live
-#: children are capped per CONVERSATION rather than per message. The
-#: cap is not global: N conversations can hold N * max_live_subagents
-#: live children between them in one process.
-CONSOLE_MAX_TOTAL_TOKENS = 1_000_000
+#: Per-run cumulative prompt+completion spend ceiling -- THE limiter.
+DEFAULT_CONSOLE_MAX_TOTAL_TOKENS = 25_000_000
 
-CONSOLE_RUN_BUDGET = RunBudget(
-    max_steps=CONSOLE_MAX_STEPS,
-    max_wall_seconds=CONSOLE_MAX_WALL_SECONDS,
-    max_model_turns=CONSOLE_MAX_MODEL_TURNS,
-    max_total_tokens=CONSOLE_MAX_TOTAL_TOKENS,
+#: Per-tool-call wall-clock ceiling, raised from the engine's 300s so one
+#: long-running tool cannot defeat the 24h run budget.
+DEFAULT_CONSOLE_MAX_TOOL_CALL_SECONDS = 3600.0
+
+#: What a configured `agent_max_tool_call_seconds = 0` ("unlimited")
+#: resolves to. The engine's own 0 means "bypass the timeout wrapper
+#: entirely" (pinned by `test_make_invoke_tool_bypasses_wrapper_when_unlimited`),
+#: but the wrapper is ALSO the run's cancellation poller -- it checks
+#: Stop every `_CANCEL_POLL_SECONDS` (0.5s) while a tool runs, and inside a
+#: hung tool call that is the ONLY place a Stop can be observed. Passing the
+#: engine's literal 0 through would therefore make "unlimited" silently mean
+#: "Stop does not work until the tool returns by itself," contradicting the
+#: documented "Stop works throughout". A century-long deadline keeps the
+#: wrapper -- and Stop-polling -- alive while staying unfireable for any
+#: real run (the run's own `max_wall_seconds` ends it long before).
+UNLIMITED_TOOL_CALL_DEADLINE_SECONDS = 100 * 365 * 24 * 3600.0
+
+#: The shipped budget with NO config applied: what a fresh install runs at,
+#: and the value tests assert against so a settings-layer bug can never make
+#: a defaults assertion pass by accident. Production does NOT use this --
+#: `console_run_budget()` does, and it re-reads config on every run.
+DEFAULT_CONSOLE_RUN_BUDGET = RunBudget(
+    max_steps=DEFAULT_CONSOLE_MAX_STEPS,
+    max_wall_seconds=DEFAULT_CONSOLE_MAX_WALL_SECONDS,
+    max_model_turns=DEFAULT_CONSOLE_MAX_MODEL_TURNS,
+    max_total_tokens=DEFAULT_CONSOLE_MAX_TOTAL_TOKENS,
+    max_tool_call_seconds=DEFAULT_CONSOLE_MAX_TOOL_CALL_SECONDS,
 )
+
+#: Back-compat alias. Several tests import this name to assert the shipped
+#: defaults; it is the defaults-only budget, NOT what a configured install
+#: runs at. New code should call `console_run_budget()`.
+CONSOLE_RUN_BUDGET = DEFAULT_CONSOLE_RUN_BUDGET
+
+
+def console_run_budget() -> RunBudget:
+    """Resolve this run's budget from `[console]`, falling back to defaults.
+
+    The production path for every Console agent run. Read FRESH on each
+    call -- nothing here caches -- so a Settings save (which reloads the
+    config cache `get_cli_setting` reads from) takes effect on the very
+    next run with no app restart, matching how
+    `_console_tool_result_display_cap` already behaves.
+
+    Only the five user-facing limits are configurable. Every other
+    `RunBudget` field (`max_subagents`, `max_active_tools`,
+    `max_subagent_result_chars`, `max_tool_result_chars`) keeps its engine
+    default deliberately: those bound the shape of a run rather than its
+    length or cost, and none of them is what a user asking for a longer
+    session is actually asking to change.
+
+    Returns:
+        A `RunBudget` built from `[console] agent_max_*`, each value
+        coerced and floored by `config.load_settings`. Any failure to read
+        config at all falls back to `DEFAULT_CONSOLE_RUN_BUDGET` rather
+        than raising -- a malformed config must not make the Console
+        unable to run an agent.
+    """
+    try:
+        from tldw_chatbook.config import (
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+            DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+            DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+            DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+            DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+            MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
+            MIN_CONSOLE_AGENT_MAX_STEPS,
+            MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+            MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+            MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
+            coerce_float_setting,
+            coerce_int_setting,
+            get_cli_setting,
+        )
+    except Exception:  # noqa: BLE001 -- config import must never break a run
+        return DEFAULT_CONSOLE_RUN_BUDGET
+
+    def _int(key: str, default: int, minimum: int) -> int:
+        try:
+            raw = get_cli_setting("console", key, default)
+        except Exception:  # noqa: BLE001
+            return default
+        return coerce_int_setting(raw, default, minimum=minimum)
+
+    def _float(key: str, default: float, minimum: float) -> float:
+        try:
+            raw = get_cli_setting("console", key, default)
+        except Exception:  # noqa: BLE001
+            return default
+        return coerce_float_setting(raw, default, minimum=minimum)
+
+    def _tool_call_seconds(key: str, default: float, minimum: float) -> float:
+        """`_float`, plus the 0-means-unlimited translation.
+
+        A configured 0 is documented as "unlimited", and is translated to
+        `UNLIMITED_TOOL_CALL_DEADLINE_SECONDS` rather than passed through
+        as the engine's literal 0: the engine's 0 bypasses the timeout
+        wrapper entirely, and the wrapper is the only thing polling Stop
+        while a tool call is hung, so a literal pass-through would disable
+        Stop for the duration of every unlimited-length tool call.
+        """
+        resolved = _float(key, default, minimum)
+        if resolved == 0:
+            return UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
+        return resolved
+
+    return RunBudget(
+        max_steps=_int(
+            "agent_max_steps",
+            DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+            MIN_CONSOLE_AGENT_MAX_STEPS,
+        ),
+        max_wall_seconds=_float(
+            "agent_max_wall_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+            MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        ),
+        max_model_turns=_int(
+            "agent_max_model_turns",
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+            MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        ),
+        max_total_tokens=_int(
+            "agent_max_total_tokens",
+            DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+            MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        ),
+        max_tool_call_seconds=_tool_call_seconds(
+            "agent_max_tool_call_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+            MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        ),
+    )
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
@@ -1068,6 +1161,43 @@ def _subagent_summaries_from_fleet(
             for h in handles
         )
     return tuple(fallback)
+
+
+class _LiveStepFeed:
+    """One run's live step feed: a total count plus a bounded recent tail.
+
+    TASK-18604. This was a plain list appended once per step and read in
+    exactly two ways -- `len(...)` for the rail's step counter and
+    `[-5:]` for the rail's recent-steps rows. Nothing ever read the middle,
+    yet the list grew one `AgentLiveStep` per step for the life of the run.
+    At the run budget's raised step ceiling that is 25,000 retained objects
+    per run to serve a 5-row display.
+
+    Keeping the count and the tail in one object rather than a deque plus a
+    parallel counter is deliberate: they are two views of one fact, and a
+    `deque(maxlen=...)` silently makes `len()` mean "how many we kept",
+    which is exactly the wrong number for a step counter.
+    """
+
+    __slots__ = ("count", "_tail")
+
+    #: Rows the rail actually renders. Kept a little above the 5 the
+    #: snapshot slices so a future widening does not silently truncate.
+    TAIL = 8
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._tail: "deque[AgentLiveStep]" = deque(maxlen=self.TAIL)
+
+    def append(self, step: "AgentLiveStep") -> None:
+        self.count += 1
+        self._tail.append(step)
+
+    def tail(self, n: int) -> "tuple[AgentLiveStep, ...]":
+        """The most recent ``n`` steps, oldest first."""
+        if n >= len(self._tail):
+            return tuple(self._tail)
+        return tuple(self._tail)[-n:]
 
 
 @dataclass(frozen=True)
@@ -3059,7 +3189,10 @@ class ConsoleAgentBridge:
                 ),
             ),
             allowed_tools=allowed_tools,
-            budget=CONSOLE_RUN_BUDGET,
+            # Resolved per run, not module-level: a Settings change to any
+            # of the five [console] agent_max_* keys must apply to the very
+            # next message without an app restart (TASK-18600).
+            budget=console_run_budget(),
             native_tools=native_tools,
             # Non-default workspace: tell the agent (and, via config
             # propagation, its sub-agents) which workspace it is in and that
@@ -3124,12 +3257,12 @@ class ConsoleAgentBridge:
         # one key, so an earlier turn's surviving child -- which writes
         # under its OWN run id -- can never land in it.
         primary_live_key = uuid4().hex
-        live_steps: list[AgentLiveStep] = []
+        live_steps = _LiveStepFeed()
         subagents: list[SubAgentSummary] = []
         #: run key -> that run's own live step feed. The primary's entry is
         #: `live_steps` itself, so every existing reader of that local is
         #: unchanged.
-        run_live_steps: dict[str, list[AgentLiveStep]] = {primary_live_key: live_steps}
+        run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
         self._publish_live(
             conversation_id,
             primary_live_key,
@@ -3167,7 +3300,7 @@ class ConsoleAgentBridge:
                 # regresses for a step that cannot be attributed.
                 else (run_id or primary_live_key)
             )
-            key_steps = run_live_steps.setdefault(live_key, [])
+            key_steps = run_live_steps.setdefault(live_key, _LiveStepFeed())
             key_steps.append(
                 # `time.monotonic()` HERE is the step's real start: this hook
                 # runs synchronously inside the runtime loop, before the work
@@ -3253,8 +3386,8 @@ class ConsoleAgentBridge:
                 live_key,
                 AgentLiveSnapshot(
                     status="running",
-                    step=len(key_steps),
-                    steps=tuple(key_steps[-5:]),
+                    step=key_steps.count,
+                    steps=key_steps.tail(5),
                     # PR2b Task 2: rebuilt from the fleet's REAL live state
                     # on every publish, not appended once and left stuck at
                     # the "running" default -- see
@@ -3726,8 +3859,8 @@ class ConsoleAgentBridge:
             primary_live_key,
             AgentLiveSnapshot(
                 status=outcome.status,
-                step=len(live_steps),
-                steps=tuple(live_steps[-5:]),
+                step=live_steps.count,
+                steps=live_steps.tail(5),
                 # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
                 # conversation_id)` -- deliberately: the `finally` block
                 # just above already ran `self._teardown_fleet_service`,

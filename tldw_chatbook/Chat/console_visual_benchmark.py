@@ -147,7 +147,7 @@ def run_visual_compaction_benchmark(
         model=str(model),
         renderer_version=artifact.renderer_version,
         page_count=artifact.page_count,
-        page_hashes=tuple(page.png_sha256 for page in artifact.pages),
+        page_hashes=tuple(page.pixel_sha256 for page in artifact.pages),
         text_input_tokens=text_tokens,
         text_tokens_estimated=(text_token_counter is None),
         visual_input_tokens=visual_tokens,

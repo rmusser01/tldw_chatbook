@@ -753,6 +753,74 @@ DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 160
 MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 20
 MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS = 2000
 
+# TASK-18600: the Console agent's run budget, exposed in Settings ▸ Console
+# Behavior and resolved per run by `console_agent_bridge.console_run_budget()`.
+# These override `Agents.agent_models.RunBudget`'s own dataclass defaults
+# (8 steps / 240s / 30 turns / 0 tokens / 300s per tool call), which stay
+# deliberately conservative for any non-Console caller.
+#
+# WHICH LIMIT ACTUALLY STOPS A RUN: the token ceiling, not the turn cap.
+# `agent_service._make_call_model` re-sends the whole conversation every
+# turn (`bound_history_for_send` is a no-op unless `[agents]
+# run_log_evict_enabled` is on -- off by default, deliberately: see
+# `run_log_eviction.py`), and `ModelTurn.tokens` counts that whole re-sent
+# prompt. Spend is therefore QUADRATIC in turn count -- roughly
+# `delta * N^2 / 2` for `delta` tokens added per round -- so at a typical
+# 800-token round the 25M ceiling is reached around turn 250, and reaching
+# turn 2000 would require a ~12-token round. The turn and step caps below
+# are backstops that will essentially never bind; they are sized generously
+# so they never become the surprise limiter, and the token ceiling is the
+# real, intentional governor. Owner decision, 2026-08-18.
+#: Provider turns (STEP_MODEL steps) per user message.
+DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS = 2000
+MIN_CONSOLE_AGENT_MAX_MODEL_TURNS = 1
+#: Step backstop. A fence tool round costs 3 steps (STEP_MODEL +
+#: STEP_TOOL_CALL + STEP_TOOL_RESULT) and the wrap-up reply costs 1, so N
+#: turns need `3*(N-1)+1` steps -- 5998 at N=2000. 25000 clears that with
+#: room for native multi-call batches, which cost `1 + 2N` steps per turn.
+DEFAULT_CONSOLE_AGENT_MAX_STEPS = 25000
+MIN_CONSOLE_AGENT_MAX_STEPS = 1
+#: Wall-clock ceiling for ONE agent run (one user message), in seconds.
+#: 86400 = 24h, so a genuinely long-running operation is not cut off. This
+#: is a backstop, not a target: Stop cancels at every step boundary and
+#: every 0.5s inside the tool-call wrapper, and a hung provider connection
+#: is bounded separately by the generation client's own 300s read timeout
+#: (`console_provider_gateway.GENERATION_READ_TIMEOUT_SECONDS`).
+DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS = 86400.0
+MIN_CONSOLE_AGENT_MAX_WALL_SECONDS = 1.0
+#: Cumulative prompt+completion spend ceiling for ONE run -- see the
+#: quadratic-spend note above for why this is the limit that actually
+#: fires. PER RUN, not per conversation: `run_agent_loop`'s `total_tokens`
+#: is a per-run local, and BOTH child-budget paths (`clamp_child_budget`
+#: for turn-scoped/inline children, `contain_child_budget` for threaded
+#: survivor candidates) pass this value to a sub-agent UNCHANGED rather
+#: than dividing it, so one message's real worst-case aggregate is
+#: ~(1 + max_subagents)x this number -- 3x at the shipped
+#: `RunBudget.max_subagents = 2`. Note the wall-clock ceiling below does
+#: NOT compose the same way: a threaded child's wall comes from
+#: `[agents] child_max_wall_seconds` (default 1800), independent of this
+#: run's own, so raising the wall here does not extend a child's.
+#: 0 = unlimited, which is genuinely dangerous here: the cycle detector
+#: keys on exact `(name, args)` repetition (`agent_runtime._detect_cycle`),
+#: so a loop with any varying argument escapes it entirely and this ceiling
+#: is the ONLY remaining runaway-spend backstop.
+DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 25_000_000
+MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 0
+#: Wall-clock ceiling for ONE tool call, in seconds. Raised from the engine
+#: default (300) because a 24h run budget is useless if a single long
+#: crawl, ingest, or build dies at five minutes. 0 = no ceiling: the Console
+#: resolver translates it to a finite-but-unfireable deadline
+#: (`console_agent_bridge.UNLIMITED_TOOL_CALL_DEADLINE_SECONDS`) rather than
+#: passing the engine's literal 0, which would bypass the timeout wrapper --
+#: the wrapper is also the only thing polling Stop (every 0.5s) while a
+#: tool runs, so a literal 0 would silently disable Stop for the duration
+#: of every unlimited tool call. Lowering the configured value below ~186s
+#: risks the wrapper reporting "timed out" for an MCP call that later
+#: really executes on its abandoned thread -- see
+#: `RunBudget.max_tool_call_seconds`.
+DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
+MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
+
 # Ephemeral side chat (Console selection menu): the default prompt template
 # for the "More Details" action. ``{selection}`` is the only placeholder the
 # side-chat service substitutes (Task-3 renders it via replace, not format).
@@ -792,8 +860,69 @@ def coerce_int_setting(
     """
     if isinstance(value, bool):
         return default
-    coerced = _get_typed_value({"value": value}, "value", default, int)
-    if isinstance(coerced, bool):
+    # TASK-18600: two inputs used to escape this function as exceptions
+    # rather than as the default, and both are reachable from a hand-edited
+    # config.toml -- which means both could abort `load_settings` (app
+    # startup), not merely mis-set one key.
+    #   * `None`: `_get_typed_value` returns None unchanged for a None
+    #     value, and the bounds comparison below then raised
+    #     `TypeError: '<' not supported between 'NoneType' and 'int'`.
+    #   * a non-finite float (`nan`/`inf`, both writable in TOML): `int()`
+    #     raises `OverflowError`, which `_get_typed_value` does not catch
+    #     (it catches ValueError/TypeError only).
+    # Neither is a value any caller can act on, so both resolve to the
+    # default like every other unusable input.
+    if value is None:
+        return default
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return default
+    try:
+        coerced = _get_typed_value({"value": value}, "value", default, int)
+    except OverflowError:
+        return default
+    if coerced is None or isinstance(coerced, bool):
+        return default
+    if minimum is not None and coerced < minimum:
+        return default
+    if maximum is not None and coerced > maximum:
+        return default
+    return coerced
+
+
+def coerce_float_setting(
+    value: Any,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Coerce float config/app setting values with optional bounds.
+
+    The float twin of ``coerce_int_setting``, added for the Console agent
+    run budget's two duration settings (wall-clock and per-tool-call
+    seconds), which are floats in ``RunBudget`` and must survive a TOML
+    value written as either ``86400`` or ``86400.0``.
+
+    Args:
+        value: Raw setting value to coerce.
+        default: Fallback value when coercion fails or bounds reject the value.
+        minimum: Optional inclusive lower bound.
+        maximum: Optional inclusive upper bound.
+
+    Returns:
+        Coerced float value, or the default when the value is invalid.
+        ``bool`` is rejected outright (``True`` is not a duration), and a
+        non-finite value (``nan``/``inf``) falls back to the default -- an
+        ``inf`` wall budget would make the run's wall-clock check
+        unfireable rather than merely generous.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        return default
+    if coerced != coerced or coerced in (float("inf"), float("-inf")):
         return default
     if minimum is not None and coerced < minimum:
         return default
@@ -1352,6 +1481,52 @@ def load_settings(force_reload: bool = False) -> Dict:
         DEFAULT_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         minimum=MIN_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
         maximum=MAX_CONSOLE_TOOL_RESULT_DISPLAY_CHARS,
+    )
+    # TASK-18600: the Console agent run budget. Same coercion shape as the
+    # two settings above; the two duration keys go through the float twin.
+    # Floors only, no ceilings -- these are deliberately user-owned
+    # trade-offs (same call as `max_parallel_runs`), and an out-of-range or
+    # unparsable value falls back to the shipped default rather than
+    # silently clamping to a number the user never chose.
+    final_console_settings_cli["agent_max_model_turns"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_model_turns",
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
+        minimum=MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
+    )
+    final_console_settings_cli["agent_max_steps"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_steps",
+            DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+        minimum=MIN_CONSOLE_AGENT_MAX_STEPS,
+    )
+    final_console_settings_cli["agent_max_wall_seconds"] = coerce_float_setting(
+        final_console_settings_cli.get(
+            "agent_max_wall_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
+    )
+    final_console_settings_cli["agent_max_total_tokens"] = coerce_int_setting(
+        final_console_settings_cli.get(
+            "agent_max_total_tokens",
+            DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
+    )
+    final_console_settings_cli["agent_max_tool_call_seconds"] = coerce_float_setting(
+        final_console_settings_cli.get(
+            "agent_max_tool_call_seconds",
+            DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        ),
+        DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        minimum=MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
     )
     final_console_settings_cli["local_tools_enabled"] = coerce_bool_setting(
         final_console_settings_cli.get("local_tools_enabled", True),
@@ -2755,6 +2930,18 @@ compaction_summary_max_tokens = 1024
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # workspace_root = ""           # confinement root for fs_* tools; empty = app cwd at startup
+
+# Agent run budget (Settings > Console Behavior > Agent run budget).
+# Applies to ONE run = one user message; sub-agents inherit turns/steps/tokens
+# unchanged (their wall comes from [agents] child_max_wall_seconds instead).
+# agent_max_total_tokens is the limit that actually stops a long run: the whole
+# conversation is re-sent every turn, so spend grows quadratically and 25M is
+# typically reached around turn 250. The turn and step caps are backstops.
+agent_max_model_turns = 2000        # Provider turns (tool-calling rounds) per message
+agent_max_steps = 25000             # Step backstop; a fence tool round costs 3 steps
+agent_max_wall_seconds = 86400.0    # 24h ceiling on one run; Stop always works
+agent_max_total_tokens = 25000000   # Per-run prompt+completion spend ceiling; 0 = unlimited
+agent_max_tool_call_seconds = 3600.0  # Ceiling on ONE tool call; 0 = unlimited
 # Ephemeral side chat (selection menu) — empty model = session model
 sidechat_model = ""  # e.g. "openai/gpt-5-mini"; empty = follow the current session's model
 sidechat_prompt_template = "Give me more details about: {selection}"  # {selection} = the quoted text

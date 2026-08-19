@@ -233,7 +233,7 @@ def test_shutdown_denies_every_armed_round(controller):
     t2 = _arm(controller, "skill-two", results, "two")
     assert _wait_until(lambda: len(controller.pending_skill_script_ids()) == 2)
 
-    controller._shutdown_requested.set()
+    controller.begin_shutdown()
     t1.join(timeout=5)
     t2.join(timeout=5)
     assert results["one"]["allow"] is False

@@ -45,7 +45,17 @@ dependencies = [
     "rich",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
-    "pillow==11.2.1",  # ADR-054 renderer identity; matches reviewed context-use evidence
+    # TASK-18606: was pinned to ==11.2.1 for ADR-054 renderer identity. The
+    # renderer now owns its own determinism (fixed-cell font pinned and metric-
+    # verified, identity hashed from pixels not PNG bytes), so the identity no
+    # longer rides on this version. Freezing an image PARSER that this app
+    # points at untrusted input was too high a price for reproducibility that
+    # belongs in the renderer. Floor is 10.4, which introduced
+    # `ImageFont.load_default_imagefont()` (10.1 is what changed
+    # `load_default()` to the proportional TrueType face -- the very break
+    # this renderer pins its way out of -- but the explicit legacy-font
+    # accessor the renderer needs did not exist until 10.4).
+    "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
     "portalocker==3.2.0",

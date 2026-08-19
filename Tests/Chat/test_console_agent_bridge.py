@@ -1287,9 +1287,27 @@ def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
     assert signals.usage_payloads() == [usage]
 
 
+# TASK-18603: `expected_total` is now CACHE-WEIGHTED, not the flat sum.
+# 6,656 of these input tokens are cache reads, billed at 0.3 vs 3.0 per
+# mtok for claude-sonnet-4-6 -- a tenth -- so they consume a tenth of the
+# run budget instead of full price. 3,571 uncached + 6,656*0.1 + 727 output
+# = 4,963.6, rounded up. The flat totals this used to assert (10,954 /
+# 11,065) are still what `_usage_total_tokens` reports and still what the
+# provider billed in RAW tokens; they were just never what the run cost.
+#
+# Note what the gateway's normalization does to the third bucket: it folds
+# `cache_creation_input_tokens` into `prompt_tokens` and reports only
+# `cached_tokens` separately, so a cache WRITE arrives indistinguishable
+# from uncached input and is weighted at 1.0x instead of its real 1.25x
+# rate. For a budget that is UNDER-counting (the permissive direction): a
+# write-heavy run consumes less budget than it truly costs and can overshoot
+# the user's spend ceiling by ~25% of its write portion. Accepted here as a
+# known gap in the gateway's normalization, filed as TASK-18607; this test
+# asserts the accounting the normalization currently makes possible, which
+# is why the 111-token case simply adds 111.
 @pytest.mark.parametrize(
     ("cache_creation_input_tokens", "expected_total"),
-    [(0, 10_954), (111, 11_065)],
+    [(0, 4_964), (111, 5_075)],
     ids=("cache-read", "cache-read-and-creation"),
 )
 def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
@@ -1366,7 +1384,10 @@ def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
             "prompt_tokens": 3_571 + 6_656 + cache_creation_input_tokens,
             "prompt_tokens_details": {"cached_tokens": 6_656},
             "completion_tokens": 727,
-            "total_tokens": expected_total,
+            # Still the RAW total the provider billed in tokens -- this
+            # asserts the gateway's normalization, which TASK-18603 did not
+            # change. Only what the BUDGET counts it as changed.
+            "total_tokens": 3_571 + 6_656 + cache_creation_input_tokens + 727,
         }
     ]
     assert signals.synthetic_fallback_emitted is False

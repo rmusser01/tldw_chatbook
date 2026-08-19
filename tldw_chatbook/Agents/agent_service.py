@@ -537,6 +537,121 @@ def _response_message(resp) -> dict:
     return message if isinstance(message, dict) else {}
 
 
+def _budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
+    """Tokens for the run budget, with cache-read/write priced honestly.
+
+    TASK-18603. `_usage_total_tokens` below sums `prompt_tokens +
+    completion_tokens` flat, which mis-states this budget badly once prompt
+    caching is on -- and it IS on by default for Console sends, which is
+    what an agent run is (`console_provider_gateway` stamps
+    `prompt_caching` for anthropic). The agent loop re-sends the whole
+    conversation every turn, so on a long run nearly every input token is a
+    CACHE READ billed at roughly a tenth of the uncached rate; counting it
+    at 1.0 made `max_total_tokens` terminate runs that had spent a fraction
+    of what the number implies.
+
+    The weighting is deliberately confined to the INPUT buckets:
+
+    * `uncached_input` stays 1.0 by definition -- it is the unit.
+    * `cache_read` and `cache_write` are weighted by their real published
+      rate relative to this model's uncached input rate (0.1x and 1.25x on
+      Anthropic today, per `pricing_catalog`).
+    * `output` also stays 1.0, even though it really costs several times
+      input. Pricing it proportionally would make the budget markedly
+      STRICTER for output-heavy runs -- a change to how much work a given
+      number buys, unrelated to the cache mis-pricing this fixes, and
+      applied to a number the user already chose under the old meaning.
+
+    So the unit is "uncached-input-token equivalents": a 25M budget means
+    "as much input as 25M uncached tokens would have cost on this model",
+    with output still counted one-for-one.
+
+    Falls back to `_usage_total_tokens` whenever the usage cannot be
+    bucketed or this provider/model has no published rates, so an unpriced
+    or unknown model keeps exactly the previous accounting rather than
+    silently getting a free ride.
+
+    Known gap (TASK-18607): the Console gateway's streaming normalization
+    folds Anthropic `cache_creation_input_tokens` into `prompt_tokens`
+    without preserving the write bucket, so through that path a cache WRITE
+    is weighted at 1.0x instead of its real 1.25x rate -- an UNDER-count,
+    i.e. the permissive direction for a budget: a write-heavy run can
+    overshoot the user's spend ceiling by ~25% of its write portion. The
+    Anthropic-native path below weights writes correctly; the two agree
+    again once the normalization preserves the bucket.
+
+    Args:
+        resp: The provider response.
+        provider: Provider key for the pricing lookup.
+        model: Model id for the pricing lookup.
+
+    Returns:
+        Weighted token count, or None to signal "estimate instead".
+    """
+    flat = _usage_total_tokens(resp)
+    try:
+        from tldw_chatbook.Chat.provider_usage import ProviderUsage
+        from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
+    except Exception:  # noqa: BLE001 -- accounting must never break a run
+        return flat
+    try:
+        usage = ProviderUsage.from_provider_payload(
+            resp.get("usage") if isinstance(resp, dict) else None,
+            provider=provider,
+            model=model,
+        )
+    except Exception:  # noqa: BLE001 -- accounting must never break a run
+        return flat
+    if usage is None:
+        return flat
+    # `_usage_total_tokens` only understands the OpenAI shape
+    # (`total_tokens`, or `prompt_tokens`+`completion_tokens`), and returns
+    # None for Anthropic's native block (`input_tokens`/
+    # `cache_read_input_tokens`/`output_tokens`), which
+    # `chat_with_anthropic` passes through verbatim inside an OpenAI-shaped
+    # envelope. The Console's streaming path does NOT hit that gap --
+    # `ConsoleProviderGateway` normalizes split Anthropic usage into the
+    # OpenAI shape first (pinned by
+    # `test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets`)
+    # -- but a caller that reaches the service with un-normalized usage
+    # would otherwise fall back to re-estimating the whole payload with
+    # `count_tokens_messages`. `ProviderUsage` parses both shapes, so
+    # prefer its real numbers over an estimate whenever the flat sum came
+    # up empty.
+    raw = usage.total_tokens
+    baseline = flat if flat is not None else (raw or None)
+    if not usage.cache_read and not usage.cache_write:
+        # Nothing to reweight; a run without caching keeps the previous
+        # accounting exactly.
+        return baseline
+    try:
+        pricing = get_pricing_catalog().get_pricing(provider, model)
+    except Exception:  # noqa: BLE001
+        return baseline
+    if pricing is None or not pricing.input_per_mtok:
+        # No published rates (or a zero-rate local model): there is no
+        # honest discount to apply, so do not invent one.
+        return baseline
+
+    def _weight(rate: float | None) -> float:
+        # An unpublished cache rate is NOT free -- treat it as full input
+        # price, the conservative reading, rather than discounting a bucket
+        # whose real cost is unknown.
+        if rate is None:
+            return 1.0
+        return rate / pricing.input_per_mtok
+
+    weighted = (
+        usage.uncached_input
+        + usage.cache_read * _weight(pricing.cache_read_per_mtok)
+        + usage.cache_write * _weight(pricing.cache_write_per_mtok)
+        + usage.output
+    )
+    # Round up: a turn that genuinely spent something must never count as 0,
+    # or a pathological loop of tiny cached turns could run forever.
+    return max(1, math.ceil(weighted))
+
+
 def _usage_total_tokens(resp) -> int | None:
     """Prompt+completion tokens from a provider's OpenAI-shaped usage block,
     or None when the provider didn't report usage.
@@ -1031,7 +1146,11 @@ class AgentService:
                 **call_kwargs,
             )
             text = _response_text(resp)
-            tokens = _usage_total_tokens(resp)
+            # TASK-18603: cache-aware. Identical to the flat sum whenever
+            # this turn read nothing from a prompt cache.
+            tokens = _budget_weighted_tokens(
+                resp, provider=api_endpoint, model=config.model
+            )
             provider_continuation = getattr(resp, "provider_continuation", None)
             if provider_continuation is not None and not isinstance(
                 provider_continuation, ProviderContinuationCheckpoint

@@ -1,6 +1,7 @@
 # Tests/Agents/test_agent_runtime.py
 """Pure loop tests with deterministic fake callables."""
 
+import itertools
 import json
 from collections import deque
 
@@ -280,7 +281,10 @@ def test_console_budget_reaches_its_model_turn_cap_before_step_cap():
         ModelTurn(text=fence("calculator", {"expression": f"{i}+{i}"}))
         for i in range(turns + 5)
     ]
-    tick = iter(float(i) for i in range(1000))
+    # Unbounded clock: TASK-18600 raised the Console turn cap to 2000, and a
+    # fixed-size tick iterator sized for the old 30-turn cap ran out
+    # mid-run and surfaced as StopIteration instead of a budget verdict.
+    tick = itertools.count(0.0)
     out = run(
         scripted,
         config=AgentConfig(
@@ -887,7 +891,12 @@ def test_console_budget_bounds_spend_not_only_time():
     """
     from tldw_chatbook.Chat.console_agent_bridge import CONSOLE_RUN_BUDGET
 
-    assert CONSOLE_RUN_BUDGET.max_model_turns == 30
+    # TASK-18600 raised this 30 -> 2000. It is now a BACKSTOP, not the
+    # primary limiter: max_total_tokens is what actually stops a long
+    # run (the whole history is re-sent every turn, so spend is
+    # quadratic in turn count). Asserted as a floor rather than an
+    # equality so a future raise does not need a test edit.
+    assert CONSOLE_RUN_BUDGET.max_model_turns >= 2000
     assert CONSOLE_RUN_BUDGET.max_total_tokens > 0
 
 

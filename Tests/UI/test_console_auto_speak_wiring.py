@@ -15,10 +15,10 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSMessageSpeechRequestEvent,
 )
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
     ConsoleAutoSpeakCoordinator,
-    ConsoleTTSDestination,
     sanitize_auto_speak_destination,
 )
 
