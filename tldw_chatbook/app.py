@@ -8209,6 +8209,14 @@ class TldwCli(
                 return TAB_HOME
         except Exception:
             logger.debug("Wizard startup route check failed (category=runtime)")
+        # task-16320: focus mode is Console-only by definition, so a focus
+        # request forces the route — but the first-run/wizard branches ABOVE
+        # keep onboarding unbeatable (spec: first-run wins).
+        if getattr(self, "_cli_focus_override", False) or getattr(
+            self, "_focus_mode_config", False
+        ):
+            self.focus_mode = True
+            return TAB_CHAT
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
     def _current_runtime_identity(self) -> RuntimeIdentity:
