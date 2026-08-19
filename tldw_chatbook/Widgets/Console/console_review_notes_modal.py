@@ -329,7 +329,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
             return
         dialog = ConfirmationDialog(
             title="Delete review note?",
-            message="This review note will be permanently deleted.",
+            message="This review note will be removed from the transcript.",
             confirm_label="Delete",
             cancel_label="Keep",
         )

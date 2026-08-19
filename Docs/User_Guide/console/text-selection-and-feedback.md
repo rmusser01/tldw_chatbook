@@ -210,5 +210,5 @@ Inside the menu itself:
   anything you want to keep before dismissing it.
 
 —
-*Verified against feat/console-note-management @ c5ccb88df — 2026-08-18
+*Verified against feat/console-note-management @ ea76a0807 — 2026-08-18
 (shipped tests + live tmux verification of the create/edit/delete loop)*
