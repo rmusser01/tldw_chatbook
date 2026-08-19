@@ -1,10 +1,10 @@
 ---
 id: TASK-16320
 title: 'Focus mode: chrome-free Console presentation'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-16 13:34'
-updated_date: '2026-08-16 14:05'
+updated_date: '2026-08-19 19:07'
 labels:
   - ui
   - console
