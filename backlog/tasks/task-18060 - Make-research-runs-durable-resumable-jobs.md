@@ -1,7 +1,7 @@
 ---
 id: TASK-18060
 title: Make research runs durable, resumable jobs
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-18 05:10'
 updated_date: '2026-08-18 05:40'
@@ -26,14 +26,14 @@ This supersedes the earlier framing of the same criterion, which set out to deri
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded
-- [ ] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost
-- [ ] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever
-- [ ] #1c A phase that reports no progress for longer than the lease is not taken over
-- [ ] #1d An executor that lost its lease cannot write artifacts or settle budget, not merely cannot finish the run
-- [ ] #2 A resumed run restores the budget it already spent instead of being granted it again
+- [x] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded
+- [x] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost
+- [x] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever
+- [x] #1c A phase that reports no progress for longer than the lease is not taken over
+- [x] #1d An executor that lost its lease cannot write artifacts or settle budget, not merely cannot finish the run
+- [x] #2 A resumed run restores the budget it already spent instead of being granted it again
 - [ ] #3 A resumed run continues from its last completed phase without repeating searches it already paid for
-- [ ] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did
+- [x] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did
 - [ ] #5 A run interrupted by an application exit continues on the next launch without user intervention
 - [ ] #6 A run parked for checkpoint review is not re-entered by the scheduler on every tick
 - [ ] #7 A completed run announces itself EXACTLY ONCE in the conversation that requested it, however it was launched and however many times it was taken over
@@ -63,3 +63,44 @@ The design, the measurements behind it, and the alternatives rejected are in
    metadata the artifacts screen filters on, with its user-guide page updated.
 6. Set the generous bounds and document what "resumes at next launch" means.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes (durability core landed; the rest is named, not done)
+
+<!-- SECTION:NOTES:BEGIN -->
+The durability core is implemented: a lease with a fencing token and a reclaim
+budget, a keep-alive that survives blocking pipeline calls, a fence before every
+persisting write, budget restored across all four axes on resume, and each
+round's evidence persisted under a stated cap.
+
+**Met:** #1, #1a, #1b, #1c, #1d, #2, #4.
+**Not met and deliberately so:** #3 (reading the evidence pool back to skip a
+completed round -- the artifact that makes it possible is written, the read-back
+is not), #5-#11 (scheduler auto-resume and completion surfacing, which the plan
+scoped to follow-on work).
+
+What the review gates caught, recorded because the pattern generalises:
+
+- A timestamp format divergence made a LIVE lease compare as expired -- the
+  double-claim the lease exists to prevent.
+- A retry budget that counted healthy claim/release cycles stranded runs that
+  had never crashed.
+- The keep-alive was an asyncio task behind a blocking call, so it never ran
+  during collection; the design was right and the execution model defeated it.
+- Six persisting writes were unfenced, including the one that marks a run
+  completed.
+- An exhausted budget left a run permanently unclaimable rather than failed --
+  a regression against pre-branch behaviour -- and the fix for THAT then failed
+  runs whose executors were healthy.
+- Three times a test passed for the wrong reason, twice by asserting the absence
+  of a bad outcome rather than the presence of the good one.
+
+**Named follow-ups, not fixed here:** fence coverage is 2 of 11 when each fence
+is removed individually; the `except ResearchLimitExceeded` half of the
+lease-lost guard is untested; `evidence_pool.json` is written before the
+doc-budget trim, so it holds entries the run excluded (harmless until AC #3
+reads it back); `_lease_id`/`_run_id` are engine-instance state, which is safe
+only because every caller builds a fresh engine per run -- a scheduler reusing
+one engine would silently disable the fence; and a run killed by SIGKILL is
+declined for up to `lease_seconds` before takeover, with a message that blames
+another executor.
+<!-- SECTION:NOTES:END -->
