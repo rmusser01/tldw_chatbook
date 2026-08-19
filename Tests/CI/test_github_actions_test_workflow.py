@@ -69,6 +69,13 @@ def _artifact_lease_gate_job_block() -> str:
     return workflow[start:end]
 
 
+def _ui_tests_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  ui-tests:")
+    end = workflow.index("  textual-minimum:", start)
+    return workflow[start:end]
+
+
 def _test_summary_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  test-summary:")
@@ -240,6 +247,7 @@ def test_artifact_lease_gate_exposes_stable_required_context() -> None:
 def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
     """task-1465: core+ui shards replace the 27-file `-m unit` selection."""
     workflow = _workflow_text()
+    ui_job = _ui_tests_job_block()
 
     assert "  core-tests:" in workflow
     assert "pytest Tests --ignore=Tests/UI" in workflow
@@ -248,6 +256,61 @@ def test_pr_gate_shards_cover_the_whole_tree_in_parallel() -> None:
     assert "pytest -m unit" not in workflow
     assert "pytest -m integration" not in workflow
     assert not (PROJECT_ROOT / ".github" / "workflows" / "python-app.yml").exists()
+
+
+def test_ui_job_is_sharded_to_fit_its_time_budget() -> None:
+    """TASK-18608: one job could never finish the UI suite.
+
+    The full Tests/UI directory needs ~5.8 serial-equivalent hours on a
+    standard runner; the job budget is 45 minutes, so the unsharded job was
+    cancelled at ~11% on every run, on every branch (100+ consecutive red
+    runs). The fix is a matrix of pytest-shard slices -- the contract here
+    is that the split stays deterministic (pytest-shard, not xdist-only,
+    which is per-job randomness), covers every test exactly once across the
+    matrix, and each slice still parallelizes internally with xdist.
+    """
+    workflow = _workflow_text()
+    ui_job = _ui_tests_job_block()
+
+    assert "pytest-shard" in (
+        PROJECT_ROOT / "requirements-test.txt"
+    ).read_text()
+    assert "--shard-id=${{ matrix.shard }}" in ui_job
+    # The ids and the divisor must describe the same complete partition:
+    # 12 shards numbered 0..11. A mismatch (e.g. ids 1..12 against
+    # num-shards 12, or a stale id list after resizing) would silently
+    # duplicate or drop a slice of the suite.
+    ids = workflow[workflow.index("shard: [") :].splitlines()[0]
+    id_values = [int(part.strip()) for part in ids[ids.index("[") + 1 : ids.rindex("]")].split(",")]
+    divisor = int(ui_job.split("--num-shards=")[1].split()[0].rstrip("'\""))
+    assert id_values == list(range(divisor)), "shard ids must be 0..N-1"
+    assert divisor >= 10, (
+        "the UI suite needs ~5.8h serial; a 45-minute job budget needs at "
+        "least ~10 deterministic shards (~35 min each) to finish"
+    )
+    # xdist still parallelizes WITHIN each shard.
+    assert "-n auto --dist loadscope" in ui_job
+    # Every shard uploads its report, and the names must be per-shard so
+    # matrix siblings cannot overwrite each other's artifacts.
+    assert "ui-test-results-${{ matrix.shard }}.json" in ui_job
+    assert "name: ui-test-results-${{ matrix.shard }}" in ui_job
+
+
+def test_core_tests_job_budget_covers_the_suite() -> None:
+    """TASK-18608: 60 minutes stopped being enough for the core suite.
+
+    The ubuntu leg was killed by its own timeout mid-run while the macOS
+    leg finished at ~58m, so the budget must sit clearly above the
+    observed worst leg, not at it.
+    """
+    core = _core_tests_job_block()
+
+    line = next(
+        l.strip()
+        for l in core.splitlines()
+        if l.strip().startswith("timeout-minutes:")
+    )
+    assert int(line.split(":")[1]) >= 120
 
 
 def test_nightly_deep_runs_the_tiers_the_pr_gate_does_not() -> None:

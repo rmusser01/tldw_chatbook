@@ -44,7 +44,10 @@ jobs:
     # shard is its own job below; OS/Python breadth lives in nightly-deep.
     name: Core Tests (all but UI) - Python ${{ matrix.python-version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # 120, not 60: the suite grew past the old budget -- the ubuntu leg was
+    # killed by the 60-minute cap mid-run (TASK-18608) while the macOS leg
+    # finished at ~58m. 2x headroom over the observed ~60m worst leg.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -164,19 +167,29 @@ jobs:
         fi
 
   ui-tests:
-    name: UI Tests
+    # TASK-18608: the UI suite (~13.5k tests) needs ~5.8 hours on one
+    # 4-worker job -- it was cancelled by the 45-minute job cap at ~11%
+    # on every run, on every branch, so this job had not been green in
+    # 100+ runs. Sharded 12 ways via pytest-shard (deterministic split of
+    # the collected list): each shard runs ~30 min inside the same 45-min
+    # budget, with xdist parallelism retained WITHIN each shard.
+    name: UI Tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
         cache: 'pip'
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
@@ -185,25 +198,29 @@ jobs:
         pip install pytest-json-report
         # Install textual dev tools for better debugging
         pip install textual-dev
-    
+
     - name: Run UI tests in parallel
       # The full Tests/UI directory (not just ui-marked tests), sharded with
-      # xdist (task-1465). ui-marked tests OUTSIDE Tests/UI are covered by
-      # core-tests, which runs everything but this directory.
+      # xdist (task-1465) and across this matrix (TASK-18608). ui-marked
+      # tests OUTSIDE Tests/UI are covered by core-tests, which runs
+      # everything but this directory. pytest-shard slices the collected
+      # test list deterministically, so the union of the shards is exactly
+      # the suite and re-runs are stable.
       run: |
         pytest Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
+          --shard-id=${{ matrix.shard }} --num-shards=12 \
           --timeout=180 \
           --json-report \
-          --json-report-file=ui-test-results.json
+          --json-report-file=ui-test-results-${{ matrix.shard }}.json
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ui-test-results
+        name: ui-test-results-${{ matrix.shard }}
         path: |
-          ui-test-results.json
+          ui-test-results-${{ matrix.shard }}.json
 
   textual-minimum:
     name: MCP - Minimum Textual 8.2.8
