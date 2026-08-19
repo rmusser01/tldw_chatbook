@@ -5257,6 +5257,12 @@ class TldwCli(
             Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
             Binding("f1", "show_workbench_help", "Help", show=True),
             Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+            Binding(
+                "ctrl+shift+f",
+                "toggle_focus_mode",
+                "Focus Mode",
+                show=False,
+            ),
         ]
         + [
             Binding(
@@ -8219,6 +8225,34 @@ class TldwCli(
             return TAB_CHAT
         return getattr(self, "_initial_tab_value", TAB_CHAT)
 
+    def _set_focus_mode(self, enabled: bool) -> None:
+        """Set focus mode and apply it to the Console if it is on screen.
+
+        task-16320 / ADR-067. Duck-types the content screen (it may or may
+        not be the Console — do NOT import ChatScreen here; the screen
+        registry keeps app.py free of screen imports for circular-import
+        reasons). Enabling while elsewhere navigates to the Console first;
+        the screen's mount-time ``_apply_focus_chrome`` read then applies
+        the chrome. Disabling only clears the flag.
+        """
+        self.focus_mode = enabled
+        content_screen = self._navigation_outgoing_screen()
+        apply_chrome = getattr(content_screen, "_apply_focus_chrome", None)
+        if callable(apply_chrome):
+            apply_chrome()
+        elif enabled:
+            self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def action_toggle_focus_mode(self) -> None:
+        """Ctrl+Shift+F: toggle the chrome-free Console focus mode."""
+        self._set_focus_mode(not self.focus_mode)
+
+    def _clear_focus_if_leaving_console(self, screen_name: str) -> None:
+        """Single exit rule (ADR-067): focus mode is Console-only — any
+        navigation to another route restores normal chrome on arrival."""
+        if screen_name != TAB_CHAT:
+            self.focus_mode = False
+
     def _current_runtime_identity(self) -> RuntimeIdentity:
         """Return the screen-snapshot scope from authoritative runtime state."""
         return RuntimeIdentity.from_state(self.runtime_policy.state)
@@ -8480,6 +8514,7 @@ class TldwCli(
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)
         )
+        self._clear_focus_if_leaving_console(screen_name)
         logger.info(f"Navigating to screen: {requested_screen}")
 
         # NOT ``self.screen`` (TASK-16300): with a pushed screen on top --

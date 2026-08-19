@@ -181,3 +181,78 @@ class TestFocusFooterHint:
             _, shortcuts = screen._footer_shortcut_registration
             assert ("Ctrl+Shift+F", "focus") in shortcuts
             assert ("Ctrl+Shift+F", "exit focus") not in shortcuts
+
+
+class TestAppToggleAndNavigationExit:
+    def test_ctrl_shift_f_binding_registered(self):
+        from tldw_chatbook.app import TldwCli
+
+        assert any(
+            binding.key == "ctrl+shift+f" for binding in TldwCli.BINDINGS
+        )
+
+    def test_set_focus_mode_applies_to_console_screen(self):
+        from tldw_chatbook.app import TldwCli
+
+        calls = []
+
+        class FakeConsoleScreen:
+            def _apply_focus_chrome(self):
+                calls.append("applied")
+
+        stub = SimpleNamespace(
+            focus_mode=False,
+            _navigation_outgoing_screen=lambda: FakeConsoleScreen(),
+            post_message=lambda msg: calls.append(msg),
+        )
+        TldwCli._set_focus_mode(stub, True)
+        assert stub.focus_mode is True
+        assert calls == ["applied"]
+
+    def test_set_focus_mode_navigates_when_elsewhere(self):
+        from tldw_chatbook.app import TldwCli
+
+        posted = []
+        stub = SimpleNamespace(
+            focus_mode=False,
+            _navigation_outgoing_screen=lambda: object(),
+            post_message=posted.append,
+        )
+        TldwCli._set_focus_mode(stub, True)
+        assert stub.focus_mode is True
+        assert len(posted) == 1
+        assert posted[0].screen_name == TAB_CHAT
+
+    def test_set_focus_mode_disable_clears_flag(self):
+        from tldw_chatbook.app import TldwCli
+
+        posted = []
+        stub = SimpleNamespace(
+            focus_mode=True,
+            _navigation_outgoing_screen=lambda: object(),
+            post_message=posted.append,
+        )
+        TldwCli._set_focus_mode(stub, False)
+        assert stub.focus_mode is False
+        assert posted == []  # disabling never navigates
+
+    def test_clear_focus_when_leaving_console(self):
+        from tldw_chatbook.app import TldwCli
+
+        leaving = SimpleNamespace(focus_mode=True)
+        TldwCli._clear_focus_if_leaving_console(leaving, "settings")
+        assert leaving.focus_mode is False
+
+        staying = SimpleNamespace(focus_mode=True)
+        TldwCli._clear_focus_if_leaving_console(staying, TAB_CHAT)
+        assert staying.focus_mode is True
+
+    def test_action_toggle_flips_state(self):
+        from tldw_chatbook.app import TldwCli
+
+        stub = SimpleNamespace(
+            focus_mode=True,
+            _set_focus_mode=lambda enabled: setattr(stub, "focus_mode", enabled),
+        )
+        TldwCli.action_toggle_focus_mode(stub)
+        assert stub.focus_mode is False
