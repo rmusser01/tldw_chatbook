@@ -127,6 +127,132 @@ DEFAULT_MODEL_CAPABILITIES = {
 #
 #######################################################################################################################
 #
+# Anthropic per-model request capabilities
+#
+# These answer two questions about what the *provider API* accepts, not what the
+# user prefers:
+#
+#   1. Does this model reject the sampling parameters (temperature/top_p/top_k)?
+#   2. Does this model reject a fixed thinking budget (thinking.budget_tokens)?
+#
+# Both were previously encoded as ad-hoc name checks inside the Anthropic request
+# builder, which knew only about Claude Sonnet 5 -- so every newer model release
+# silently broke the provider with an HTTP 400 (TASK-18414).
+#
+# Deliberately NOT part of the config-driven tables above. Those are wholly
+# replaceable from `config.toml` (`config.get("models", ...)` /
+# `config.get("patterns", ...)`), and a direct mapping shadows every pattern --
+# `claude-sonnet-5` already has one. A user edit to a request-*validity* fact
+# could therefore only reintroduce the 400 it exists to prevent.
+#
+# Families are matched by (tier, major, minor) so that bare ids, dotted variants,
+# dated/suffixed snapshots and provider-prefixed forms all resolve, without
+# over-matching the older families that still accept both parameters.
+_ANTHROPIC_FAMILY_RE = re.compile(
+    r"claude[-_.]?(?P<tier>opus|sonnet|haiku|fable|mythos)[-_.]?(?P<major>\d+)"
+    r"(?:[-_.](?P<minor>\d+))?",
+    re.IGNORECASE,
+)
+
+# A ``None`` minor means "every minor version in this major line".
+# Verified live against api.anthropic.com on 2026-08-18: each family below
+# returns 400 for `temperature`/`top_p`/`top_k` and for
+# `thinking={"type": "enabled", "budget_tokens": N}`, while Opus 4.6, Sonnet 4.5
+# and Haiku 4.5 return 200 for the same payloads.
+_ANTHROPIC_MODERN_REQUEST_FAMILIES = frozenset(
+    {
+        ("fable", 5, None),
+        ("mythos", 5, None),
+        ("opus", 5, None),
+        ("opus", 4, 8),
+        ("opus", 4, 7),
+        ("sonnet", 5, None),
+    }
+)
+
+
+def _anthropic_model_family(model: object) -> Optional[Tuple[str, int, Optional[int]]]:
+    """Parse an Anthropic model id into ``(tier, major, minor)``.
+
+    Args:
+        model: A model identifier in any form the codebase passes through --
+            bare (``claude-opus-5``), dotted (``claude-opus-4.8``), dated
+            (``claude-opus-4-5-20251101``), suffixed (``claude-opus-4-8-fast``)
+            or provider-prefixed (``anthropic/claude-opus-5``,
+            ``us.anthropic.claude-opus-4-8``).
+
+    Returns:
+        The parsed family tuple, or ``None`` when the id is not a recognisable
+        modern Anthropic model name (including the ``claude-3-5-sonnet-*``
+        generation, whose tier follows the version rather than preceding it).
+    """
+    if not isinstance(model, str):
+        return None
+    match = _ANTHROPIC_FAMILY_RE.search(model.strip())
+    if match is None:
+        return None
+    minor = match.group("minor")
+    return (
+        match.group("tier").lower(),
+        int(match.group("major")),
+        int(minor) if minor is not None else None,
+    )
+
+
+def _anthropic_is_modern_request_family(model: object) -> bool:
+    """Return whether ``model`` is in the modern Anthropic request family."""
+    family = _anthropic_model_family(model)
+    if family is None:
+        return False
+    tier, major, minor = family
+    return (tier, major, None) in _ANTHROPIC_MODERN_REQUEST_FAMILIES or (
+        tier,
+        major,
+        minor,
+    ) in _ANTHROPIC_MODERN_REQUEST_FAMILIES
+
+
+def anthropic_model_rejects_sampling_params(model: object) -> bool:
+    """Return whether ``model`` rejects ``temperature``/``top_p``/``top_k``.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending any sampling parameter would be answered with
+        ``400 invalid_request_error: `temperature` is deprecated for this
+        model.`` -- the Fable 5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7 and
+        Sonnet 5 families. False for Opus 4.6 and earlier, Sonnet 4.6/4.5 and
+        Haiku, which still accept them.
+    """
+    return _anthropic_is_modern_request_family(model)
+
+
+def anthropic_model_rejects_fixed_thinking_budget(model: object) -> bool:
+    """Return whether ``model`` rejects ``thinking.budget_tokens``.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when ``thinking={"type": "enabled", "budget_tokens": N}`` would be
+        answered with ``400 invalid_request_error: "thinking.type.enabled" is
+        not supported for this model``; such a model must use adaptive thinking
+        plus ``output_config.effort`` instead.
+
+    Note:
+        This currently covers exactly the same families as
+        :func:`anthropic_model_rejects_sampling_params` -- Anthropic removed both
+        parameters in the same generation -- but they are separate questions
+        about the request surface and are kept as separate predicates so a future
+        model can answer them differently.
+    """
+    return _anthropic_is_modern_request_family(model)
+
+
+#
+#######################################################################################################################
+#
 # ModelCapabilities Class
 #
 class ModelCapabilities:

@@ -59,6 +59,10 @@ from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
 )
 from tldw_chatbook.LLM_Calls.zai import chat_with_zai as _strict_chat_with_zai
+from tldw_chatbook.model_capabilities import (
+    anthropic_model_rejects_fixed_thinking_budget,
+    anthropic_model_rejects_sampling_params,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -195,11 +199,12 @@ _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT = {
     "xhigh": 16384,
     "max": 32768,
 }
+# Models that merely *prefer* adaptive thinking. Models that outright REJECT a
+# fixed thinking budget are not listed here -- that is a provider request
+# capability and comes from
+# `model_capabilities.anthropic_model_rejects_fixed_thinking_budget`, so a new
+# release in those families never needs a marker added by hand (TASK-18414).
 _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
-    "opus-4-8",
-    "opus-4.8",
-    "opus-4-7",
-    "opus-4.7",
     "sonnet-4-6",
     "sonnet-4.6",
 )
@@ -365,6 +370,14 @@ def _responses_stream_to_chat_sse(response, *, model: str):
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
+    """Return whether ``model`` must be driven with adaptive thinking.
+
+    True either because the provider rejects a fixed thinking budget outright
+    (the capability predicate) or because the model merely prefers adaptive
+    thinking (the marker list).
+    """
+    if anthropic_model_rejects_fixed_thinking_budget(model):
+        return True
     model_name = str(model or "").lower()
     return any(
         marker in model_name for marker in _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS
@@ -372,7 +385,14 @@ def _anthropic_uses_adaptive_thinking(model: object) -> bool:
 
 
 def _anthropic_is_sonnet_5(model: object) -> bool:
-    """Return whether model is the documented unprefixed Claude Sonnet 5 family."""
+    """Return whether model is the documented unprefixed Claude Sonnet 5 family.
+
+    This selects Sonnet 5's *thinking shape* (an explicit ``disabled`` config to
+    turn thinking off; bare ``output_config.effort`` with no ``thinking`` key
+    otherwise). It is deliberately not the answer to "does this model reject
+    sampling parameters / a fixed thinking budget" -- those are capability
+    predicates in ``model_capabilities`` (TASK-18414).
+    """
     model_name = str(model or "").lower()
     return model_name == "claude-sonnet-5" or model_name.startswith("claude-sonnet-5-")
 
@@ -1416,7 +1436,14 @@ def chat_with_anthropic(
             ]
         else:
             data["system"] = system_prompt  # unchanged for non-caching models
-    if thinking_config is None and not _anthropic_is_sonnet_5(current_model):
+    # Sampling parameters are suppressed for two independent reasons: the model
+    # rejects them outright (a provider capability -- 400 on Fable 5, Mythos 5,
+    # Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5), or thinking is enabled for this
+    # request. The capability check must not be conditioned on the thinking
+    # config: Opus 4.8/4.7 produce no thinking config when no effort is
+    # configured, which used to reopen this branch (TASK-18414 AC #5).
+    model_rejects_sampling = anthropic_model_rejects_sampling_params(current_model)
+    if not model_rejects_sampling and thinking_config is None:
         if temp is not None:
             data["temperature"] = current_temp
             if current_top_p is not None:
@@ -1430,10 +1457,11 @@ def chat_with_anthropic(
         if current_top_k is not None:
             data["top_k"] = current_top_k
     elif any(value is not None for value in (temp, current_top_p, current_top_k)):
-        if _anthropic_is_sonnet_5(current_model):
+        if model_rejects_sampling:
             logger.warning(
-                "Anthropic: omitting temperature/top_p/top_k because Claude Sonnet 5 "
-                "requires default sampling."
+                "Anthropic: omitting temperature/top_p/top_k because model %s "
+                "rejects sampling parameters.",
+                current_model,
             )
         else:
             logger.warning(
