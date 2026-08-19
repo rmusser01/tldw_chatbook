@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 from dataclasses import dataclass, replace
@@ -123,9 +124,7 @@ _REASONING_EFFORT_MODEL_HINTS: tuple[tuple[str, frozenset[str]], ...] = (
 # "none" and "high" are live-verified on dotted Qwens: "none" is consumed
 # via our enable_thinking=false mapping, and the template aliases "high" to
 # "xhigh" — neither must warn as unconsumed.
-_QWEN_DOTTED_EFFORT_VALUES = frozenset(
-    {"low", "medium", "high", "xhigh", "none"}
-)
+_QWEN_DOTTED_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh", "none"})
 # local-llm sends compose llama.cpp-family wire fields (chat_template_kwargs
 # reasoning/enable_thinking + reasoning_budget_tokens), so its users need the
 # --jinja/b9982 requirements note too.
@@ -808,6 +807,24 @@ def build_console_settings_readiness(
     )
 
 
+def _default_supported_readiness_keys() -> frozenset[str]:
+    """Return the no-injection supported set, computed once.
+
+    TASK-18909: ``build_console_settings_readiness`` runs ~400 times during
+    one warm Console screen switch, and this set is a pure function of a
+    module constant -- recomputing it resolved provider identity for all
+    29 handler keys on every call (24k resolutions, the largest app-side
+    cost of the switch). Cached at first use; ``_supported_readiness_keys``
+    retains the test-injection seam uncached.
+    """
+    return supported_console_provider_readiness_keys(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    )
+
+
+_default_supported_readiness_keys = functools.cache(_default_supported_readiness_keys)
+
+
 def _supported_readiness_keys(
     native_provider_keys: set[str] | None = None,
 ) -> frozenset[str]:
@@ -816,38 +833,36 @@ def _supported_readiness_keys(
     ``native_provider_keys`` is retained for older tests/callers that injected a
     support set before generic Console provider support existed.
     """
-    supported_keys = supported_console_provider_readiness_keys(
-        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    if native_provider_keys is None:
+        return _default_supported_readiness_keys()
+    supported_keys = _default_supported_readiness_keys()
+    injected_keys = frozenset(
+        resolve_console_provider_identity(
+            provider,
+            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        ).readiness_key
+        for provider in native_provider_keys
     )
-    if native_provider_keys is not None:
-        injected_keys = frozenset(
-            resolve_console_provider_identity(
-                provider,
-                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-            ).readiness_key
-            for provider in native_provider_keys
-        )
-        return supported_keys | injected_keys
-    return supported_keys
+    return supported_keys | injected_keys
 
 
 def _send_capable_readiness_keys(
     native_provider_keys: set[str] | None = None,
 ) -> frozenset[str]:
     """Return readiness keys that currently have a wired Console send path."""
-    send_capable_keys = supported_console_provider_readiness_keys(
-        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    if native_provider_keys is None:
+        # Same constant inputs as the supported set (see
+        # `_default_supported_readiness_keys`); one shared cache serves both.
+        return _default_supported_readiness_keys()
+    send_capable_keys = _default_supported_readiness_keys()
+    injected_keys = frozenset(
+        resolve_console_provider_identity(
+            provider,
+            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        ).readiness_key
+        for provider in native_provider_keys
     )
-    if native_provider_keys is not None:
-        injected_keys = frozenset(
-            resolve_console_provider_identity(
-                provider,
-                handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-            ).readiness_key
-            for provider in native_provider_keys
-        )
-        return send_capable_keys | injected_keys
-    return send_capable_keys
+    return send_capable_keys | injected_keys
 
 
 def build_console_settings_summary_state(
@@ -910,9 +925,7 @@ def build_console_settings_summary_state(
                     f"reasoning_budget_tokens={wire_fields['reasoning_budget_tokens']}"
                 )
             if "reasoning_effort" in wire_fields:
-                wire_parts.append(
-                    f"reasoning_effort={wire_fields['reasoning_effort']}"
-                )
+                wire_parts.append(f"reasoning_effort={wire_fields['reasoning_effort']}")
             sampling_parts.append("wire: " + "; ".join(wire_parts))
 
     character_label = sanitize_character_display_label(
