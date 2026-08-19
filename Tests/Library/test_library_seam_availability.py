@@ -236,3 +236,75 @@ class TestUserVisibleNotice:
         )
         notes = diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or []
         assert not any("failed" in str(n) for n in notes)
+
+
+class TestItActuallyPaints:
+    """The diagnostics slot and the route note are only worth having if they
+    reach the screen. These assert the rendered WIDGET TEXT, not the state --
+    a diagnostics key nothing paints is the 'declared but inert' trap.
+
+    Verified against the built widgets on 2026-08-18; both failure shapes put
+    the failure in front of the user.
+    """
+
+    @staticmethod
+    def _children(status: str, *, with_recovery: bool = True):
+        """Build the panel's children for one failure shape.
+
+        `with_recovery` mirrors the service: a TOTAL failure carries a
+        recovery state, a PARTIAL one does not (results came back normally,
+        one seam merely contributed nothing). Passing the total-failure
+        recovery copy into the partial case would render a service-error
+        widget that the real partial path never produces.
+        """
+        from tldw_chatbook.Library.library_local_rag_search_service import (
+            ROUTE_NOTE_SEAMS_FAILED_TEMPLATE,
+            _seams_failed_recovery_state,
+        )
+        from tldw_chatbook.Library.library_rag_state import (
+            LIBRARY_RAG_ROUTE_NOTES_KEY,
+            LibraryRagPanelState,
+        )
+        from tldw_chatbook.Widgets.Library import library_rag_results_body_children
+
+        recovery = _seams_failed_recovery_state(["notes", "prompts"])
+        state = LibraryRagPanelState.from_values(
+            source_counts={"notes": 1, "prompts": 1},
+            query="q",
+            retrieval_status=status,
+            provider_name="openai",
+            diagnostics={
+                LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                    ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(seams="notes, prompts")
+                ]
+            },
+            recovery_copy=recovery.disabled_tooltip if with_recovery else "",
+            recovery_selector=recovery.stable_selector if with_recovery else "",
+        )
+        return library_rag_results_body_children(state)
+
+    def test_total_failure_names_the_failed_seams_on_screen(self):
+        children = self._children("failed")
+        note = next(c for c in children if c.id == "library-rag-coverage-note")
+        assert str(note.renderable) == "Notes, prompts failed — results exclude them."
+
+    def test_total_failure_also_shows_the_retry_recovery_copy(self):
+        """`failed` must not render ONLY the quiet note -- the user needs the
+        actionable half too."""
+        children = self._children("failed")
+        error = next(c for c in children if c.id == "library-rag-service-error")
+        text = str(error.renderable)
+        assert "every configured seam" in text
+        assert "notes, prompts" in text
+        assert "Retry" in text
+
+    def test_partial_failure_names_the_seams_above_the_no_match_copy(self):
+        """Zero rows is exactly when this matters most: without the note, "No
+        evidence matched" reads as a verdict on sources that were never
+        successfully searched."""
+        children = self._children("empty", with_recovery=False)
+        assert children[0].id == "library-rag-coverage-note"
+        assert str(children[0].renderable) == (
+            "Notes, prompts failed — results exclude them."
+        )
+        assert children[1].id == "library-rag-empty-state"
