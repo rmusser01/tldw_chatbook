@@ -8,6 +8,7 @@ artifact/event storage run real.
 """
 
 import asyncio
+import concurrent.futures
 
 import pytest
 
@@ -18,6 +19,30 @@ from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
 
 def _make_service() -> LocalResearchService:
     return LocalResearchService(":memory:")
+
+
+def _run_on_loop(loop: "asyncio.AbstractEventLoop", fn):
+    """Run a sync callable on ``loop``'s own thread and block the CALLING
+    thread until it completes.
+
+    The engine now offloads a synchronous search_fn to a worker thread
+    (finding 1: this stops it from starving the lease keep-alive). A fake
+    search_fn that pokes the real, thread-affine ``:memory:`` SQLite
+    connection to simulate a concurrent user action (pause/cancel) can no
+    longer do so directly from that worker thread -- it must hand the call
+    back to the loop's own thread, which is where the connection was
+    created.
+    """
+    future: "concurrent.futures.Future" = concurrent.futures.Future()
+
+    def _call() -> None:
+        try:
+            future.set_result(fn())
+        except BaseException as exc:  # noqa: BLE001 - propagated via the future
+            future.set_exception(exc)
+
+    loop.call_soon_threadsafe(_call)
+    return future.result(timeout=5)
 
 
 def _make_pipeline(question: str):
@@ -169,9 +194,12 @@ def test_engine_fails_run_and_keeps_partial_artifacts_on_pipeline_error():
 def test_engine_pause_between_phases_leaves_run_resumable():
     service = _make_service()
     run = service.launch_run(query="Pause me mid-run", autonomy_mode="autonomous")
+    loop_box: dict[str, asyncio.AbstractEventLoop] = {}
 
     def search_fn(q, params):
-        service.pause_run(run["id"])  # user pauses while collecting runs
+        # user pauses while collecting runs -- run_on_loop hands the DB
+        # write back to the loop's own thread (see _run_on_loop docstring).
+        _run_on_loop(loop_box["loop"], lambda: service.pause_run(run["id"]))
         return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
                 {"sub_questions": [], "main_goal": q})
 
@@ -183,7 +211,12 @@ def test_engine_pause_between_phases_leaves_run_resumable():
                 "relevant_results": {}, "web_search_results_dict": wsr}
 
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
-    final = asyncio.run(engine.execute_run(run["id"]))
+
+    async def _run():
+        loop_box["loop"] = asyncio.get_running_loop()
+        return await engine.execute_run(run["id"])
+
+    final = asyncio.run(_run())
 
     assert final["control_state"] == "paused"
     assert final["status"] == "running"  # non-terminal: resumable
@@ -194,9 +227,11 @@ def test_engine_pause_between_phases_leaves_run_resumable():
 def test_engine_cancel_between_phases_resolves_cancelled_once():
     service = _make_service()
     run = service.launch_run(query="Cancel me mid-run", autonomy_mode="autonomous")
+    loop_box: dict[str, asyncio.AbstractEventLoop] = {}
 
     def search_fn(q, params):
-        service.cancel_run(run["id"])  # user cancels while collecting runs
+        # user cancels while collecting runs -- see _run_on_loop docstring.
+        _run_on_loop(loop_box["loop"], lambda: service.cancel_run(run["id"]))
         return ({"results": [{"title": "T", "url": "https://t.example/"}], "warnings": []},
                 {"sub_questions": [], "main_goal": q})
 
@@ -204,7 +239,12 @@ def test_engine_cancel_between_phases_resolves_cancelled_once():
         raise AssertionError("analyze must not run after cancellation")
 
     engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
-    final = asyncio.run(engine.execute_run(run["id"]))
+
+    async def _run():
+        loop_box["loop"] = asyncio.get_running_loop()
+        return await engine.execute_run(run["id"])
+
+    final = asyncio.run(_run())
 
     assert final["status"] == "cancelled"
     assert _events(service, run["id"]).count("cancelled") == 1
@@ -1531,6 +1571,68 @@ def test_a_long_silent_phase_keeps_its_lease():
 
     final = asyncio.run(engine.execute_run(run["id"]))
 
+    assert final["status"] == "completed", final.get("progress_message")
+
+
+def test_a_blocking_sync_search_fn_does_not_starve_the_keepalive():
+    """task-18060 review finding 1: in production search_fn resolves to a
+    plain `def` running a sequential loop of blocking HTTP calls
+    (generate_and_search). _collect_round used to await it inline, so the
+    call monopolized the single-threaded event loop for its whole duration
+    -- the _keepalive task (an asyncio.sleep-based timer) never got a
+    chance to run a single tick until the blocking call returned, by which
+    point (with a lease shorter than the block) the lease had already
+    expired unrenewed. That reopens the double-execution race the lease
+    exists to prevent.
+
+    A synchronous, BLOCKING fake search_fn (time.sleep, not asyncio.sleep)
+    is the one legitimate use of a real sleep in this suite, since blocking
+    the interpreter is exactly the behaviour under test -- an async fake
+    would not reproduce the bug at all (awaiting a real coroutine always
+    yields control back to the loop, which is why
+    test_a_long_silent_phase_keeps_its_lease above can use asyncio.sleep
+    for the analyze_fn side and still pass unmodified).
+    """
+    import time as time_module
+
+    service = _make_service()
+    _search_fn, analyze_fn, _calls = _make_pipeline("q")
+
+    def blocking_search_fn(q, params):
+        time_module.sleep(0.3)
+        return (
+            {
+                "results": [{"title": "One", "url": "https://one.example/"}],
+                "warnings": [],
+            },
+            {"sub_questions": [], "main_goal": q},
+        )
+
+    engine = LocalResearchEngine(
+        service, search_fn=blocking_search_fn, analyze_fn=analyze_fn
+    )
+    # Short enough that the lease WILL lapse across the 0.3s blocking call
+    # unless the keep-alive actually gets to run concurrently with it.
+    engine.lease_seconds = 0.1
+    engine.keepalive_seconds = 0.02
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    renewals = {"count": 0}
+    original_renew_lease = service.renew_lease
+
+    def spy_renew_lease(*args, **kwargs):
+        renewals["count"] += 1
+        return original_renew_lease(*args, **kwargs)
+
+    service.renew_lease = spy_renew_lease
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert renewals["count"] > 0, (
+        "the keep-alive never ran while the blocking search was in flight"
+    )
     assert final["status"] == "completed", final.get("progress_message")
 
 

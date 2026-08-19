@@ -241,6 +241,35 @@ class LocalResearchEngine:
             return await value
         return value
 
+    def _offload_pipeline_call(
+        self, fn: "Callable[..., Any]", *args: Any, **kwargs: Any
+    ) -> Any:
+        """Invoke a pipeline seam without blocking the event loop.
+
+        The production ``search_fn``/``paper_search_fn`` default to a plain
+        ``def`` performing a sequential loop of blocking HTTP calls
+        (``generate_and_search``, and any non-async academic provider). If
+        that were called inline on the event loop, the call would monopolize
+        it for its whole duration, starving the ``_keepalive`` timer -- a
+        lease that expires mid-call re-opens the double-execution race the
+        lease exists to prevent (task-18060 review finding 1). A coroutine
+        function carries no such risk and is invoked exactly as before.
+
+        Args:
+            fn: The pipeline callable to invoke (``search_fn`` or
+                ``paper_search_fn``).
+            *args: Positional arguments for ``fn``.
+            **kwargs: Keyword arguments for ``fn``.
+
+        Returns:
+            An awaitable: ``fn``'s own coroutine when ``fn`` is a coroutine
+            function, otherwise an ``asyncio.to_thread`` coroutine that runs
+            it on a worker thread.
+        """
+        if inspect.iscoroutinefunction(fn):
+            return fn(*args, **kwargs)
+        return asyncio.to_thread(fn, *args, **kwargs)
+
     async def _llm_bounded_call(self, make_call: "Callable[[], Any]") -> Any:
         """Run one LLM-bearing call inside a usage scope and settle the
         recorded tokens into the ledger (task-16329). The token budget is
@@ -575,7 +604,9 @@ class LocalResearchEngine:
                 params["search_default_max_queries"] = cap
                 ledger.reserve_searches(cap)
                 reserved_for_call = cap
-            outcome = await self._llm_bounded_call(lambda: self.search_fn(query, params))
+            outcome = await self._llm_bounded_call(
+                lambda: self._offload_pipeline_call(self.search_fn, query, params)
+            )
             if isinstance(outcome, tuple) and len(outcome) == 2:
                 wsr, sqd = outcome
             else:
@@ -703,12 +734,19 @@ class LocalResearchEngine:
         truncated = False
         for record in results:
             entry = dict(record)
-            size = len(json.dumps(entry, default=str))
+            # Sized with the SAME json.dumps() arguments save_artifact uses
+            # to actually persist this payload (sort_keys=True, no
+            # default=str). A mismatch here previously let a non-JSON-native
+            # value pass this check under-sized (default=str silently
+            # stringified it) only to raise inside save_artifact's own dump,
+            # failing the whole run instead of this method's own graceful
+            # truncation.
+            size = len(json.dumps(entry, sort_keys=True))
             if used + size > self.EVIDENCE_POOL_CAP_BYTES:
                 entry.pop("content", None)
                 entry.pop("original_content", None)
                 truncated = True
-                size = len(json.dumps(entry, default=str))
+                size = len(json.dumps(entry, sort_keys=True))
             used += size
             kept.append(entry)
         return {
@@ -767,6 +805,7 @@ class LocalResearchEngine:
                 progress_percent=_PROGRESS_PLANNING,
                 progress_message="Planning research",
             )
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="plan.json",
@@ -864,11 +903,13 @@ class LocalResearchEngine:
                         attempted_extras += 1
                     try:
                         if providers_filter is not None and accepts_providers:
-                            papers = await self._maybe_await(
-                                self.paper_search_fn(query, providers=providers_filter)
+                            papers = await self._offload_pipeline_call(
+                                self.paper_search_fn, query, providers=providers_filter
                             )
                         else:
-                            papers = await self._maybe_await(self.paper_search_fn(query))
+                            papers = await self._offload_pipeline_call(
+                                self.paper_search_fn, query
+                            )
                     except Exception as exc:  # noqa: BLE001 - lane degrades
                         merged_warnings.append(f"academic search failed: {exc}")
                         continue
@@ -1074,12 +1115,14 @@ class LocalResearchEngine:
             report_lines.append("## Remaining gaps")
             report_lines.extend(f"- {gap}" for gap in remaining_gaps)
         report_markdown = "\n".join(report_lines)
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="report_v1.md",
             content_type="text/markdown",
             content=report_markdown,
         )
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="sources.json",
@@ -1104,6 +1147,7 @@ class LocalResearchEngine:
             verification_summary["citation_verification"] = final_answer[
                 "citation_verification"
             ]
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="verification_summary.json",
@@ -1139,6 +1183,7 @@ class LocalResearchEngine:
             "iterations": iteration,
             "remaining_gaps": remaining_gaps,
         }
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="bundle.json",
@@ -1146,6 +1191,11 @@ class LocalResearchEngine:
             content=bundle_content,
         )
 
+        # A displaced executor reaching this point would otherwise stomp the
+        # new owner's terminal state by marking the run "completed" out from
+        # under it -- fenced immediately before, not just before the
+        # artifact writes that precede it.
+        self._require_lease()
         completed = self.service.complete_run(
             run_id,
             progress_message=f"Completed with {len(evidence)} source(s)",

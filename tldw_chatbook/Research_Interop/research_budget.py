@@ -97,13 +97,21 @@ class BudgetLedger:
         Args:
             snapshot: A prior ``snapshot()`` payload, or None for a run that
                 has never executed.
-            limits: The run's limits, used when the snapshot carries none.
+            limits: The run's CURRENT effective limits (any approved
+                plan-review patch already merged over the run's stored
+                limits); these win over the snapshot's own ``limits`` when
+                provided, since a snapshot written before a plan-review
+                patch would otherwise resurrect the stale, pre-patch values
+                (same bug class as the Qodo PR 1766 fix a few lines above
+                this one in ``local_research_engine.py``, for
+                ``max_iterations``). Falls back to the snapshot's limits
+                only when this argument is empty/None.
 
         Returns:
             A ledger whose used counters continue from the snapshot.
         """
         snapshot = snapshot or {}
-        ledger = cls(dict(snapshot.get("limits") or limits or {}))
+        ledger = cls(dict(limits or snapshot.get("limits") or {}))
         ledger.searches_used = int(snapshot.get("searches_used") or 0)
         ledger.searches_overshoot = int(snapshot.get("searches_overshoot") or 0)
         ledger.docs_used = int(snapshot.get("docs_used") or 0)

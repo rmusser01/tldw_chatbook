@@ -216,6 +216,23 @@ def test_from_snapshot_without_a_snapshot_is_a_fresh_ledger():
     assert restored.remaining_searches() == 10
 
 
+def test_from_snapshot_prefers_current_limits_over_stale_snapshot_limits():
+    """A plan-review checkpoint can patch a run's limits AFTER it has
+    already executed once and written a snapshot under the OLD limits. The
+    current value must win -- a snapshot's stale limits overriding a fresh
+    patch is the same bug class the Qodo PR 1766 fix addressed for
+    max_iterations in local_research_engine.py."""
+    from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
+
+    original = BudgetLedger.from_limits({"max_searches": 3})
+    snapshot = original.snapshot()  # snapshot carries the STALE limit (3)
+
+    restored = BudgetLedger.from_snapshot(snapshot, {"max_searches": 20})
+
+    assert restored.max_searches == 20
+    assert restored.remaining_searches() == 20
+
+
 def test_from_snapshot_restores_docs_and_tokens_too():
     """Searches are not the only spendable budget; a partial restore would
     silently re-grant whichever counter it forgot."""
