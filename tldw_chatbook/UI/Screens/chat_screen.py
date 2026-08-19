@@ -3119,13 +3119,17 @@ class ChatScreen(BaseAppScreen):
         # task-16320 / ADR-031: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness
-        # rule.
+        # rule. PREPENDED, not appended: AppFooterStatus's degradation drops
+        # hints from the END of the context when width runs out, and the
+        # Console context is already at that budget at common widths — an
+        # appended focus hint never rendered (caught in live verification
+        # at 160 cols: 153-cell context vs 152 available).
         focus_label = (
             "exit focus"
             if bool(getattr(self.app_instance, "focus_mode", False))
             else "focus"
         )
-        shortcuts = (*shortcuts, ("Ctrl+Shift+F", focus_label))
+        shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
     def _apply_focus_chrome(self) -> None:

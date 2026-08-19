@@ -1551,11 +1551,12 @@ async def test_console_registers_footer_workbench_shortcuts():
             # queue); the shortcut genuinely does both now.
             # task-5 (trajectory view): "Y trajectory" launches the ledger.
             # task-16320 (focus mode): the registration always carries the
-            # Ctrl+Shift+F toggle pair; unfocused, it advertises entering
-            # focus ("focus"). The fixture matches the real registration.
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | "
-            "Y trajectory | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette | "
-            "Ctrl+Shift+F focus | Ctrl+Q quit"
+            # Ctrl+Shift+F toggle pair PREPENDED — AppFooterStatus drops
+            # trailing hints first when width runs out, and the focus
+            # toggle is the only exit affordance visible in focus mode.
+            "Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | "
+            "Enter send / queue | Y trajectory | Ctrl+K switch session | Ctrl+T new "
+            "tab | Ctrl+P palette | Ctrl+Q quit"
         )
 
         await console.remove()
