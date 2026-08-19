@@ -775,3 +775,55 @@ def test_marker_caps_the_notes_it_lists() -> None:
     assert "note 0" in rendered and "note 2" in rendered
     assert "note 3" not in rendered
     assert "+6 more" in rendered
+
+
+@pytest.mark.asyncio
+async def test_oversized_note_edit_is_refused(tmp_path):
+    """Qodo PR #1820: the edited comment passes the shared validation
+    boundary (like the create-note path) before it can reach storage."""
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "review_notes_validate")
+    try:
+        async with make_console_pilot() as pilot:
+            screen = pilot.app.screen
+            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            screen._console_chat_store = store
+            screen._ensure_console_chat_controller().store = store
+
+            session = store.ensure_session(title="Review notes validate")
+            conversation_id = store.persist_session_if_needed(session.id)
+            assistant = store.append_message(
+                session.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="ok",
+                persist=True,
+            )
+            db.upsert_transcript_annotation(
+                conversation_id=conversation_id,
+                row_key=f"message:{assistant.persisted_message_id}",
+                message_id=assistant.persisted_message_id,
+                quote_text="ok",
+                comment="short note",
+            )
+
+            captured: dict = {}
+
+            async def _resolver(modal) -> bool:
+                annotation_id = modal._order[0]
+                captured["ok"] = await modal._on_edit(annotation_id, "x" * 40_000)
+                return False
+
+            pushed = _stub_review_notes_modal(screen, _resolver)
+            screen.post_message(
+                ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
+            )
+            await _wait_until(pilot, lambda: bool(pushed))
+
+            assert captured["ok"] is False
+            rows = db.get_transcript_annotations(conversation_id)
+            assert [row["comment"] for row in rows] == ["short note"]
+    finally:
+        db.close()

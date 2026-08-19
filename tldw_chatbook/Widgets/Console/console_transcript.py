@@ -25,6 +25,7 @@ from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
+from textual.visual import VisualType
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
@@ -2196,7 +2197,13 @@ class ConsoleAnnotationMarker(Static):
     the papercut this widget closes.
     """
 
-    def __init__(self, renderable, *, anchor_message_id: str, **kwargs) -> None:
+    def __init__(
+        self,
+        renderable: VisualType,
+        *,
+        anchor_message_id: str,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(renderable, **kwargs)
         self.anchor_message_id = anchor_message_id
 

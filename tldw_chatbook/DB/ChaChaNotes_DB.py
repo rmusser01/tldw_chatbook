@@ -10240,7 +10240,6 @@ UPDATE db_schema_version
         Returns:
             Annotation rows as dicts, oldest first.
         """
-        conn = self.get_connection()
         sql = """
             SELECT annotation_id, conversation_id, row_key, message_id,
                    quote_text, comment, created_at, updated_at
@@ -10252,7 +10251,16 @@ UPDATE db_schema_version
             sql += " AND message_id = ?"
             params = (conversation_id, message_id)
         sql += " ORDER BY created_at, annotation_id"
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            # The transaction context manager, matching this table's closest
+            # sibling accessor (`get_trajectory_rows`): consistent connection
+            # handling and error wrapping for the sidecar-family reads.
+            with self.transaction() as conn:
+                rows = conn.execute(sql, params).fetchall()
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                f"Failed to read transcript annotations for {conversation_id}: {exc}"
+            ) from exc
         return [dict(row) for row in rows]
 
     def soft_delete_transcript_annotation(self, annotation_id: str) -> bool:

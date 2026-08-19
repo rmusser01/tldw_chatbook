@@ -165,6 +165,13 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
         self._editing_id: str | None = None
 
     def compose(self) -> ComposeResult:
+        """Build the header, the scrolling note list, and the close bar.
+
+        Returns:
+            The modal's widgets: one row per note (comment, hidden editor,
+            metadata, actions) inside a scroll container, so a heavily
+            annotated message cannot outgrow the modal.
+        """
         with Vertical(id="console-review-notes-modal"):
             yield Static("Review notes", id="console-review-notes-header")
             with VerticalScroll(id="console-review-notes-list"):

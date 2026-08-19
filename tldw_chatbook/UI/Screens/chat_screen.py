@@ -19964,6 +19964,22 @@ class ChatScreen(BaseAppScreen):
                 return True
 
             async def _on_edit(annotation_id: str, new_comment: str) -> bool:
+                from tldw_chatbook.Utils.input_validation import validate_text_input
+                from tldw_chatbook.Widgets.Console.console_selection import (
+                    SELECTION_QUOTE_CAP,
+                )
+
+                # Boundary check through the shared module, matching the
+                # create-note path. allow_html because a review note about
+                # code legitimately contains markup-looking text and notes
+                # render as plain text; size is the enforceable bound.
+                if not validate_text_input(
+                    new_comment, max_length=SELECTION_QUOTE_CAP, allow_html=True
+                ):
+                    self.notify(
+                        "That note is too long to save.", severity="warning"
+                    )
+                    return False
                 if not _conversation_still_current():
                     self.notify(
                         "The conversation changed; that note was not edited.",
@@ -20028,11 +20044,16 @@ class ChatScreen(BaseAppScreen):
                 # reload left a deleted note's marker on screen until the
                 # user's next send. We are already in a worker here, so the
                 # loader can simply be awaited.
-                self._console_annotation_loaded_conversation = conversation_id
-                await self._load_console_annotation_previews(
-                    database, store, conversation_id
-                )
-                await self._sync_native_console_transcript()
+                # Only if the user is still IN this conversation: a switch
+                # while the modal was open would otherwise re-latch the old
+                # id and paint its previews onto the new transcript for a
+                # frame. The discovery tick reloads the live conversation.
+                if _conversation_still_current():
+                    self._console_annotation_loaded_conversation = conversation_id
+                    await self._load_console_annotation_previews(
+                        database, store, conversation_id
+                    )
+                    await self._sync_native_console_transcript()
         finally:
             # Every exit path -- empty-notes toast, modal cancel/dismiss, or
             # an error above -- releases the in-flight guard; a latched flag
