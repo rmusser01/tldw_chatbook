@@ -1,7 +1,7 @@
 ---
 id: TASK-18515
 title: Console review-note management modal
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-08-18'
@@ -22,13 +22,13 @@ Console's inline review-note marker (the small annotation row under a message wi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Clicking the review-note marker opens the notes modal instead of toggling the transcript's message selection
-- [ ] #2 Pressing `n` on a selected message that has notes opens the notes modal; pressing it on a selected message with no notes shows a toast instead
-- [ ] #3 Editing a note in the modal persists only the comment text, leaving the note's other fields untouched
-- [ ] #4 Deleting a note asks for confirmation first, then soft-deletes it
-- [ ] #5 Deleting a message's last remaining note removes its marker from the transcript
-- [ ] #6 The existing citation-sources and selection-feedback sidecar events are unaffected (covered by their pinned tests)
-- [ ] #7 Docs/User_Guide/console.md (or its dedicated console/*.md page) documents the marker click and `n` action
+- [x] #1 Clicking the review-note marker opens the notes modal instead of toggling the transcript's message selection
+- [x] #2 Pressing `n` on a selected message that has notes opens the notes modal; pressing it on a selected message with no notes shows a toast instead
+- [x] #3 Editing a note in the modal persists only the comment text, leaving the note's other fields untouched
+- [x] #4 Deleting a note asks for confirmation first, then soft-deletes it
+- [x] #5 Deleting a message's last remaining note removes its marker from the transcript
+- [x] #6 The existing citation-sources and selection-feedback sidecar events are unaffected (covered by their pinned tests)
+- [x] #7 Docs/User_Guide/console.md (or its dedicated console/*.md page) documents the marker click and `n` action
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -67,3 +67,35 @@ marker click leaves selection alone and requests notes, `n` on a noted
 selection requests notes, `n` on a note-less selection toasts and requests
 nothing).
 <!-- SECTION:NOTES:END -->
+
+## Implementation Notes
+
+Per-note Edit and soft-Delete for Console review notes, reached from the ✎
+marker (click) or `n`. `ConsoleAnnotationMarker` replaces the anonymous
+Static and joins `PROTECTED_CLICK_CLASSES` — closing the phase-4 papercut
+where clicking the marker toggled message selection.
+`ConsoleReviewNotesModal` takes injected `on_edit`/`on_delete` callables and
+imports no DB code; the screen owns the off-thread fetch, never-raises
+wrappers, and the preview reload. Two invariants are test-pinned: the
+sidecar `user_feedback` row is byte-identical after edit AND delete, and
+`quote_text` is never written.
+
+Review findings fixed en route: comments citing the wrong (closed) task id;
+a missing inflight latch against rapid double-trigger — the THIRD instance
+of that class in this program (the non-exclusive-worker rationale keeps
+getting copied from `_console_selection_feedback_flow` while its `_inflight`
+guard does not; both halves are load-bearing).
+
+**Live verification earned its keep**: it caught a marker surviving the
+delete of its last note. The DB and sidecar were correct; the transcript
+never re-rendered, because (1) the flow left the reload to a sync tick that
+only runs during active runs — phase 4 only looked correct because writing
+a note also dispatches a message — and (2) the refresh key omitted
+annotation previews entirely (latent phase-4 gap). Both fixed and re-run
+end to end on a clean profile.
+
+Files: `Widgets/Console/console_transcript.py`,
+`Widgets/Console/console_review_notes_modal.py` (new),
+`UI/Screens/chat_screen.py`, `Tests/UI/test_console_annotation_markers.py`,
+`Tests/UI/test_console_review_notes_modal.py` (new),
+`Tests/UI/test_console_modal_dismissal.py`, user guide, ADR-068 amendment 6.
