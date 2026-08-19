@@ -977,3 +977,160 @@ class TestRuntimePolicyPathIsolation:
 
         with _pytest.raises(RuntimeError):
             bootstrap.default_runtime_policy_path()
+
+
+def test_load_default_runtime_source_state_reads_the_default_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """The sanctioned non-owner read path loads the default profile's state.
+
+    TASK-18609 / Qodo #1 (PR #1828): `load_default_runtime_source_state()` is
+    what the Console controller and MCP local-server wiring call instead of
+    constructing `RuntimeSourceStateStore` themselves (an ownership-boundary
+    violation this loader replaced). It must construct the store exactly as
+    the app boot path does: default-profile path plus the
+    application-owned-config-directory decision derived from the ACTIVE
+    config path.
+    """
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    default_config_dir = tmp_path / "default"
+    default_config_dir.mkdir()
+    default_policy = default_config_dir / "runtime_policy.json"
+    saved = RuntimeSourceState(active_source="server", active_server_id="srv-1")
+    RuntimeSourceStateStore(default_policy).save(saved)
+
+    real_store_type = RuntimeSourceStateStore
+    constructed: list[RuntimeSourceStateStore] = []
+
+    def capture_store(*args, **kwargs):
+        store = real_store_type(*args, **kwargs)
+        constructed.append(store)
+        return store
+
+    monkeypatch.setattr(bootstrap, "RuntimeSourceStateStore", capture_store)
+    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+    monkeypatch.setattr(
+        bootstrap,
+        "default_runtime_policy_path",
+        lambda: default_policy,
+        raising=True,
+    )
+    # Pin the config-path seam so the owned-directory decision is
+    # deterministic: no override -> the default config dir is app-owned.
+    monkeypatch.setattr(
+        bootstrap,
+        "get_cli_config_path",
+        lambda: default_config_dir / "config.toml",
+        raising=True,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "application_owned_config_directory",
+        lambda config_path: config_path.parent,
+        raising=True,
+    )
+
+    loaded = bootstrap.load_default_runtime_source_state()
+
+    assert loaded == saved
+    assert len(constructed) == 1
+    assert constructed[0].path == default_policy
+    assert constructed[0].application_owned_directory == default_config_dir
+
+
+def test_load_default_runtime_source_state_survives_a_malformed_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """A rejected TLDW_CONFIG_PATH degrades to the default profile, not a crash.
+
+    Qodo #2 (PR #1828): the loader runs before any database work in both
+    Watchlists integrations, and the direct constructions it replaced never
+    raised on a bad override. `get_cli_config_path()` propagates
+    `lexical_path`'s ValueError for a NUL-bearing override; the loader must
+    fall back to loading with the default-profile path and no
+    application-owned directory -- the same degradation
+    `default_runtime_policy_path` applies to the path half.
+    """
+    import tldw_chatbook.runtime_policy.bootstrap as bootstrap
+    from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+
+    default_config_dir = tmp_path / "default"
+    default_config_dir.mkdir()
+    default_policy = default_config_dir / "runtime_policy.json"
+    saved = RuntimeSourceState(active_source="local")
+    RuntimeSourceStateStore(default_policy).save(saved)
+
+    real_store_type = RuntimeSourceStateStore
+    constructed: list[RuntimeSourceStateStore] = []
+
+    def capture_store(*args, **kwargs):
+        store = real_store_type(*args, **kwargs)
+        constructed.append(store)
+        return store
+
+    monkeypatch.setattr(bootstrap, "RuntimeSourceStateStore", capture_store)
+    monkeypatch.setattr(
+        bootstrap,
+        "default_runtime_policy_path",
+        lambda: default_policy,
+        raising=True,
+    )
+
+    def rejecting_config_path():
+        raise ValueError("Path must not contain NUL")
+
+    monkeypatch.setattr(
+        bootstrap,
+        "get_cli_config_path",
+        rejecting_config_path,
+        raising=True,
+    )
+
+    loaded = bootstrap.load_default_runtime_source_state()
+
+    assert loaded == saved
+    assert len(constructed) == 1
+    assert constructed[0].path == default_policy
+    assert constructed[0].application_owned_directory is None
+
+
+def test_watchlists_wiring_uses_the_owner_loader_not_the_store(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The retargeted call sites must stay on the sanctioned read path.
+
+    The ownership boundary
+    (`test_runtime_source_state_store_references_are_confined_to_owner_modules`)
+    is one half of the guarantee; this is the other half -- the Watchlists
+    wiring in both non-owner modules passes the owner-module loader itself,
+    so a future edit back to an inline `RuntimeSourceStateStore(...)`
+    construction trips the boundary test rather than shipping.
+    """
+    import inspect
+
+    import tldw_chatbook.Chat.console_chat_controller as controller
+    import tldw_chatbook.MCP.local_server_tools as local_tools
+    from tldw_chatbook.runtime_policy.bootstrap import (
+        load_default_runtime_source_state,
+    )
+
+    for module in (controller, local_tools):
+        source = inspect.getsource(module)
+        assert "RuntimeSourceStateStore" not in source, (
+            f"{module.__name__} constructs the store directly; use "
+            "load_default_runtime_source_state from the owner module"
+        )
+        assert "load_default_runtime_source_state" in source, (
+            f"{module.__name__} lost the owner-module loader wiring"
+        )
+    # And the loader itself is the owner module's, not a local copy.
+    assert controller.load_default_runtime_source_state is (
+        load_default_runtime_source_state
+    )
+    assert local_tools.load_default_runtime_source_state is (
+        load_default_runtime_source_state
+    )

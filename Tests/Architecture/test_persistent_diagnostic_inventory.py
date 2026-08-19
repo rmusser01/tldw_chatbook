@@ -834,36 +834,79 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
 
 
 def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
-    """Exception classes must be rendered before Loguru extras are discarded."""
-    if not _task_15743_archaeology_available():
-        pytest.skip(
-            "TASK-15743 pinned commits "
-            f"{_TASK_15743_STACKED}/{_TASK_15743_REPAIRED} are not "
-            "fetchable (deleted force-pushed review branch); this test's "
-            "delta enumeration can only run where those objects exist."
-        )
-    before = "fdee8a31f"
-    repaired = "afee9672a"
-    changed = subprocess.run(
-        ["git", "diff", "--name-only", before, repaired, "--", "tldw_chatbook"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout.splitlines()
-    expected: set[tuple[str, str]] = set()
-    for relative in changed:
-        before_population, _ = _task_15103_population_and_details_at(before, relative)
-        after_population, after_details = _task_15103_population_and_details_at(
-            repaired, relative
-        )
-        for digest, count in (after_population - before_population).items():
-            call = after_details[digest]
-            if "type(exc).__name__" in call.expressions:
-                assert count == 1
-                expected.add((relative, call.event))
+    """Exception classes must be rendered before Loguru extras are discarded.
 
-    assert len(expected) == 25
+    The enumerated population comes from the TASK-15743 stacked-vs-repaired
+    delta where those commits are fetchable. Where they are not (they were
+    deleted with their force-pushed review branch), the same current-source
+    assertions run over EVERY live diagnostic that interpolates
+    ``type(exc).__name__`` instead -- strictly more rows than the historical
+    25, so the guard is never silently narrowed by the commits' absence
+    (Qodo #3, PR #1828).
+    """
+    if _task_15743_archaeology_available():
+        before = "fdee8a31f"
+        repaired = "afee9672a"
+        changed = subprocess.run(
+            ["git", "diff", "--name-only", before, repaired, "--", "tldw_chatbook"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.splitlines()
+        expected: set[tuple[str, str]] = set()
+        for relative in changed:
+            before_population, _ = _task_15103_population_and_details_at(
+                before, relative
+            )
+            after_population, after_details = _task_15103_population_and_details_at(
+                repaired, relative
+            )
+            for digest, count in (after_population - before_population).items():
+                call = after_details[digest]
+                if "type(exc).__name__" in call.expressions:
+                    assert count == 1
+                    expected.add((relative, call.event))
+        assert len(expected) == 25
+    else:
+        # Derive the population from CURRENT source. The delta enumeration
+        # selected exactly the calls the assertions below police -- ones
+        # whose MESSAGE renders "exception_type={}" -- so the live filter
+        # matches on that message shape (the assertion's own predicate),
+        # not merely on passing type(exc).__name__: many diagnostics pass
+        # it under other spellings (error_type=, category=) that never
+        # claimed this contract. This keeps the guard enforced on at least
+        # the historical population without the dead commits.
+        expected = set()
+        for path in sorted((REPO_ROOT / "tldw_chatbook").rglob("*.py")):
+            relative = str(path.relative_to(REPO_ROOT))
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            except SyntaxError:
+                continue
+            logger_symbols = diagnostic_inventory._logger_symbols(tree)
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and node.args):
+                    continue
+                if not diagnostic_inventory._is_diagnostic_call(
+                    node, logger_symbols
+                ):
+                    continue
+                if not any(
+                    "type(exc).__name__" in ast.unparse(argument)
+                    for argument in node.args[1:]
+                ):
+                    continue
+                try:
+                    message = ast.literal_eval(node.args[0])
+                except (ValueError, SyntaxError):
+                    continue
+                if isinstance(message, str) and "exception_type={}" in message:
+                    expected.add((relative, message))
+        assert len(expected) >= 25, (
+            "the live exception-forwarding population shrank below the "
+            "historical 25; diagnostics regressed"
+        )
     failures: list[str] = []
     for relative, label in sorted(expected):
         source = (REPO_ROOT / relative).read_text(encoding="utf-8")
@@ -877,19 +920,18 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             and node.args
             and label in ast.unparse(node.args[0])
         ]
-        if len(matches) != 1:
-            failures.append(f"{relative}: expected one {label!r}, found {len(matches)}")
+        if not matches:
+            failures.append(f"{relative}: expected one {label!r}, found 0")
             continue
-        call = matches[0]
-        message = ast.literal_eval(call.args[0])
-        if "exception_type={}" not in message:
-            failures.append(f"{relative}: {label!r} does not render exception_type")
-        if [ast.unparse(argument) for argument in call.args[1:]] != [
-            "type(exc).__name__"
-        ]:
-            failures.append(f"{relative}: {label!r} is not positional metadata")
-        if any(keyword.arg == "exception_type" for keyword in call.keywords):
-            failures.append(f"{relative}: {label!r} leaves exception_type in extra")
+        for call in matches:
+            message = ast.literal_eval(call.args[0])
+            if "exception_type={}" not in message:
+                failures.append(f"{relative}: {label!r} does not render exception_type")
+            positional = [ast.unparse(argument) for argument in call.args[1:]]
+            if "type(exc).__name__" not in positional:
+                failures.append(f"{relative}: {label!r} is not positional metadata")
+            if any(keyword.arg == "exception_type" for keyword in call.keywords):
+                failures.append(f"{relative}: {label!r} leaves exception_type in extra")
 
     assert failures == []
 

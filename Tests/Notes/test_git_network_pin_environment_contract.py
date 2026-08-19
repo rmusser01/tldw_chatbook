@@ -53,6 +53,15 @@ def _table(path: Path) -> str:
     return "\n".join(lines)
 
 
+@pytest.fixture(autouse=True)
+def _posix_only():
+    # The validators under diagnosis are POSIX-only (`os.geteuid`), and the
+    # product path itself gates on `_require_posix()`; on Windows the canary
+    # would die with AttributeError instead of reporting (Qodo #4, PR #1828).
+    if sys.platform == "win32":
+        pytest.skip("git network pin predicates are POSIX-only")
+
+
 @pytest.mark.parametrize(
     "label,value,search_path",
     [

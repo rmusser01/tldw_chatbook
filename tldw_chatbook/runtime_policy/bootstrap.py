@@ -86,12 +86,31 @@ def load_default_runtime_source_state() -> RuntimeSourceState:
     application-owned directory), minus the config synchronization, which
     only the boot path may perform.
 
+    Never raises for a malformed ``TLDW_CONFIG_PATH``: a path the resolver
+    rejects means there is no application-owned directory to honor, so the
+    store is built with the default-profile path alone -- the same
+    degradation ``default_runtime_policy_path`` already performs for the
+    path itself, applied to the directory half. (Qodo #2, PR #1828: the
+    call sites this replaced never crashed on a bad override, and this
+    loader runs before any database work in both of them.)
+
     Returns:
         The loaded ``RuntimeSourceState`` for the active profile.
     """
+    try:
+        owned_directory: Path | None = application_owned_config_directory(
+            get_cli_config_path()
+        )
+    except (ValueError, OSError):
+        logger.opt(exception=True).warning(
+            "Could not resolve the active config path for the runtime-policy "
+            "application-owned directory; loading with the default profile "
+            "path alone."
+        )
+        owned_directory = None
     return RuntimeSourceStateStore(
         lexical_path(default_runtime_policy_path()),
-        application_owned_config_directory(get_cli_config_path()),
+        application_owned_directory=owned_directory,
     ).load()
 
 
