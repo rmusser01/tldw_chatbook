@@ -17,7 +17,15 @@ from .research_normalizers import (
     normalize_research_record,
 )
 
-__all__ = ["LocalResearchService", "LeaseBudgetExhausted"]
+__all__ = ["LocalResearchService", "LeaseBudgetExhausted", "TERMINAL_RUN_STATUSES"]
+
+#: Statuses from which a run cannot be claimed or further executed. The
+#: single source of truth: ``local_research_engine.py`` imports this rather
+#: than keeping its own copy, so the two modules cannot drift apart (task-3
+#: review finding 1). Defined here, not in the engine, so this service has
+#: no dependency on the engine module -- ``claim_run`` needs the set and the
+#: service must not import the engine to get it.
+TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
 
 class LeaseBudgetExhausted(Exception):
@@ -71,6 +79,19 @@ class LocalResearchService:
             notification_dispatcher or notification_dispatch_service
         )
         self.notification_app = notification_app
+        #: Degraded, per-instance lease bookkeeping used only in external-db
+        #: mode (task-3 review finding 6): ``self.db`` is an arbitrary
+        #: external object with no lease columns and no lease API of its
+        #: own (nothing in production constructs the service this way
+        #: today), so a real, persisted, cross-process lease cannot be
+        #: implemented against it. Rather than raise (breaking
+        #: ``execute_run``'s now-unconditional claim outright) this map
+        #: gives external-db mode a real, in-memory single-executor
+        #: exclusion for the lifetime of THIS service instance -- it stops
+        #: two engines sharing one instance from double-executing a run,
+        #: but confers no protection across process or instance boundaries.
+        #: ``run_id -> {"lease_id", "worker_id", "leased_until", "attempts"}``.
+        self._external_leases: dict[str, dict[str, Any]] = {}
         if self.db_path is not None:
             self._init_schema()
 
@@ -675,23 +696,61 @@ class LocalResearchService:
         )
 
     def _update_run_state(
-        self, run_id: str, event: str, **fields: Any
+        self,
+        run_id: str,
+        event: str,
+        *,
+        lease_id: str | None = None,
+        **fields: Any,
     ) -> dict[str, Any]:
+        """Apply a run-state transition, optionally lease-conditional.
+
+        When ``lease_id`` is given, the UPDATE's WHERE clause matches it
+        directly (single atomic statement -- not a separate check followed
+        by an unconditional write), so a displaced executor whose lease no
+        longer matches gets a no-op instead of a race with whoever holds
+        the run now (task-3 review finding 4: this closes the
+        check-then-act gap a standalone ``holds_lease()`` pre-check leaves
+        between the check and the write).
+
+        Args:
+            run_id: The run to transition.
+            event: Event name recorded when the write lands.
+            lease_id: When provided, the write only lands if this still
+                matches the run's current ``lease_id``. Omit (the default)
+                for callers that transition run state independent of lease
+                ownership (``pause_run``/``resume_run``/``cancel_run``, and
+                any ``complete_run``/``fail_run`` call made on a path that
+                never held a lease).
+            **fields: Columns to set.
+
+        Returns:
+            The run's record: updated when the write landed, or the
+            CURRENT unmodified record when a ``lease_id`` was given and did
+            not match (a losing write) -- mirroring
+            ``_quiet_lease_lost_return``'s "return the truth, not a lie"
+            contract elsewhere in the lease design.
+        """
         row = self._require_one("research_runs", run_id, "research run")
         updates = dict(fields)
         updates["updated_at"] = self._now()
         updates["version"] = int(row["version"]) + 1
         assignments = ", ".join(f"{key} = ?" for key in updates)
+        sql = f"UPDATE research_runs SET {assignments} WHERE id = ?"
+        params: list[Any] = [*updates.values(), run_id]
+        if lease_id is not None:
+            sql += " AND lease_id = ?"
+            params.append(lease_id)
         with self._connect() as conn:
-            conn.execute(
-                f"UPDATE research_runs SET {assignments} WHERE id = ?",
-                (*updates.values(), run_id),
-            )
-            self._record_event(conn, run_id, event)
+            cursor = conn.execute(sql, params)
+            landed = cursor.rowcount == 1
+            if landed:
+                self._record_event(conn, run_id, event)
         updated = self._normalize_run(
             self._require_one("research_runs", run_id, "research run")
         )
-        self._dispatch_terminal_run_notification(updated)
+        if landed:
+            self._dispatch_terminal_run_notification(updated)
         return updated
 
     def _timestamp_after(self, seconds: float) -> str:
@@ -752,6 +811,15 @@ class LocalResearchService:
         ``leased_until <= ?`` comparison guarantees the two judgments of
         "is this lease live" cannot disagree with each other.
 
+        A run in a ``TERMINAL_RUN_STATUSES`` status can never be claimed
+        (task-3 review finding 1): the caller's own terminal check (e.g.
+        ``execute_run``'s pre-flight ``ValueError``) runs BEFORE this call,
+        so a cancellation or completion landing in the gap between that
+        check and this one would otherwise let a finished run be claimed
+        and re-executed. The status condition lives in the SAME atomic
+        UPDATE as the lease-expiry check, so the win/lose decision and the
+        terminal check cannot themselves race apart.
+
         Args:
             run_id: The run to claim.
             worker_id: Identifies the claiming executor.
@@ -761,15 +829,31 @@ class LocalResearchService:
                 lease) before further reclaims are refused.
 
         Returns:
-            A new lease id when the claim succeeded, otherwise None (another
-            executor currently holds a live lease).
+            A new lease id when the claim succeeded, otherwise None (either
+            another executor currently holds a live lease, or the run is
+            already terminal).
 
         Raises:
             LeaseBudgetExhausted: When reclaiming an EXPIRED lease would
                 exceed ``max_attempts`` -- the caller must fail the run
                 rather than treat this like a routine claim refusal.
         """
+        if self._uses_external_db:
+            return self._claim_run_external(
+                run_id,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+                max_attempts=max_attempts,
+            )
         row = self._require_one("research_runs", run_id, "research run")
+        if str(row["status"] or "") in TERMINAL_RUN_STATUSES:
+            # Nothing to reclaim and nothing to budget-check -- a terminal
+            # run is simply unclaimable, full stop. The atomic UPDATE below
+            # enforces this for real; this is only the cheap early-out so a
+            # terminal run never even reaches the retry-budget check (which
+            # would otherwise misfire "exhausted" on a run that was never
+            # abandoned, just finished).
+            return None
         previous = row["leased_until"] if "leased_until" in row.keys() else None
         attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
         now = self._now()
@@ -781,19 +865,70 @@ class LocalResearchService:
         lease_id = uuid.uuid4().hex
         expires = self._timestamp_after(lease_seconds)
         next_attempts = attempts + 1
+        status_placeholders = ", ".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self._connect() as conn:
             cursor = conn.execute(
-                """
+                f"""
                 UPDATE research_runs
                    SET lease_owner = ?, lease_id = ?, leased_until = ?,
                        lease_attempts = ?, updated_at = ?
                  WHERE id = ?
                    AND (leased_until IS NULL OR leased_until <= ?)
+                   AND status NOT IN ({status_placeholders})
                 """,
-                (worker_id, lease_id, expires, next_attempts, now, run_id, now),
+                (
+                    worker_id,
+                    lease_id,
+                    expires,
+                    next_attempts,
+                    now,
+                    run_id,
+                    now,
+                    *sorted(TERMINAL_RUN_STATUSES),
+                ),
             )
             if cursor.rowcount != 1:
                 return None
+        return lease_id
+
+    def _claim_run_external(
+        self,
+        run_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: float,
+        max_attempts: int,
+    ) -> str | None:
+        """``claim_run``'s degraded, in-memory counterpart for external-db
+        mode (task-3 review finding 6). See ``self._external_leases``'s
+        docstring in ``__init__`` for why this cannot be a real, persisted
+        lease. Mirrors ``claim_run``'s semantics (terminal refusal, live-
+        lease decline, expired-lease reclaim budget) against the in-memory
+        map instead of a SQL UPDATE.
+        """
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("research run not found")
+        if str(run.get("status") or "") in TERMINAL_RUN_STATUSES:
+            return None
+        now = self._now()
+        state = self._external_leases.get(run_id)
+        attempts = int(state["attempts"]) if state is not None else 0
+        live = state is not None and str(state["leased_until"]) > now
+        if live:
+            return None
+        reclaiming = state is not None
+        if reclaiming and attempts >= int(max_attempts):
+            raise LeaseBudgetExhausted(
+                run_id, attempts=attempts, max_attempts=int(max_attempts)
+            )
+        lease_id = uuid.uuid4().hex
+        self._external_leases[run_id] = {
+            "lease_id": lease_id,
+            "worker_id": worker_id,
+            "leased_until": self._timestamp_after(lease_seconds),
+            "attempts": attempts + 1,
+        }
         return lease_id
 
     def renew_lease(
@@ -805,25 +940,52 @@ class LocalResearchService:
         and was taken over still matches on worker id, so matching on the id
         alone would let it act on a run it no longer owns (task-18060).
 
+        The lease must also still be LIVE (task-3 review finding 3): matching
+        on ``lease_id`` alone lets a worker whose lease already expired
+        extend it again as long as nobody has taken over YET, contradicting
+        takeover -- a stalled worker could resurrect a claim it had already
+        lost. ``now`` is computed once and reused for both the UPDATE's
+        expiry comparison and ``updated_at``, the same pattern ``claim_run``
+        uses for its own comparisons.
+
         Args:
             run_id: The leased run.
             lease_id: The token returned by ``claim_run``.
             lease_seconds: How much longer the lease should be valid.
 
         Returns:
-            True when the lease was extended, False when it was lost.
+            True when the lease was extended, False when it was lost (wrong
+            id, or the lease had already expired).
         """
+        if self._uses_external_db:
+            return self._renew_lease_external(
+                run_id, lease_id=lease_id, lease_seconds=lease_seconds
+            )
+        now = self._now()
         expires = self._timestamp_after(lease_seconds)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 UPDATE research_runs
                    SET leased_until = ?, updated_at = ?
-                 WHERE id = ? AND lease_id = ?
+                 WHERE id = ? AND lease_id = ? AND leased_until > ?
                 """,
-                (expires, self._now(), run_id, lease_id),
+                (expires, now, run_id, lease_id, now),
             )
             return cursor.rowcount == 1
+
+    def _renew_lease_external(
+        self, run_id: str, *, lease_id: str, lease_seconds: float
+    ) -> bool:
+        """``renew_lease``'s degraded, in-memory counterpart for
+        external-db mode (task-3 review finding 6)."""
+        state = self._external_leases.get(run_id)
+        if state is None or state["lease_id"] != lease_id:
+            return False
+        if str(state["leased_until"]) <= self._now():
+            return False
+        state["leased_until"] = self._timestamp_after(lease_seconds)
+        return True
 
     def release_lease(self, run_id: str, *, lease_id: str) -> bool:
         """Drop a lease the caller holds so another executor may claim it.
@@ -835,6 +997,8 @@ class LocalResearchService:
         Returns:
             True when the lease was released, False when it was already lost.
         """
+        if self._uses_external_db:
+            return self._release_lease_external(run_id, lease_id=lease_id)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -847,6 +1011,15 @@ class LocalResearchService:
             )
             return cursor.rowcount == 1
 
+    def _release_lease_external(self, run_id: str, *, lease_id: str) -> bool:
+        """``release_lease``'s degraded, in-memory counterpart for
+        external-db mode (task-3 review finding 6)."""
+        state = self._external_leases.get(run_id)
+        if state is None or state["lease_id"] != lease_id:
+            return False
+        del self._external_leases[run_id]
+        return True
+
     def holds_lease(self, run_id: str, *, lease_id: str) -> bool:
         """Whether ``lease_id`` is still the live lease on the run.
 
@@ -857,6 +1030,8 @@ class LocalResearchService:
         Returns:
             True when the token matches an unexpired lease.
         """
+        if self._uses_external_db:
+            return self._holds_lease_external(run_id, lease_id=lease_id)
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT lease_id, leased_until FROM research_runs WHERE id = ?",
@@ -865,6 +1040,14 @@ class LocalResearchService:
         if row is None or row["lease_id"] != lease_id:
             return False
         return str(row["leased_until"] or "") > self._now()
+
+    def _holds_lease_external(self, run_id: str, *, lease_id: str) -> bool:
+        """``holds_lease``'s degraded, in-memory counterpart for
+        external-db mode (task-3 review finding 6)."""
+        state = self._external_leases.get(run_id)
+        if state is None or state["lease_id"] != lease_id:
+            return False
+        return str(state["leased_until"]) > self._now()
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:
@@ -894,8 +1077,31 @@ class LocalResearchService:
         )
 
     def complete_run(
-        self, run_id: str, *, progress_message: str | None = None
+        self,
+        run_id: str,
+        *,
+        progress_message: str | None = None,
+        lease_id: str | None = None,
     ) -> dict[str, Any]:
+        """Resolve a run to its terminal "completed" state.
+
+        Args:
+            run_id: The run to complete.
+            progress_message: Optional final status message.
+            lease_id: When provided (SQLite-backed mode only -- external-db
+                mode has no lease concept and ignores this), the write only
+                lands if this still matches the run's current lease
+                (task-3 review finding 4). The engine passes its own lease
+                id on every call it makes while holding one; a caller on a
+                path that never held a lease omits it, so its write is
+                unconditional.
+
+        Returns:
+            The run's record: "completed" when the write landed, or the
+            CURRENT unmodified record when a ``lease_id`` was given and no
+            longer matched (a displaced executor's write is a no-op, never
+            an overwrite of whoever holds the run now).
+        """
         if self._uses_external_db:
             record = self._as_local_run(
                 self.db.update_run_state(
@@ -917,9 +1123,37 @@ class LocalResearchService:
         }
         if progress_message is not None:
             fields["progress_message"] = progress_message
-        return self._update_run_state(run_id, "completed", **fields)
+        return self._update_run_state(
+            run_id, "completed", lease_id=lease_id, **fields
+        )
 
-    def fail_run(self, run_id: str, *, error_msg: str | None = None) -> dict[str, Any]:
+    def fail_run(
+        self,
+        run_id: str,
+        *,
+        error_msg: str | None = None,
+        lease_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve a run to its terminal "failed" state.
+
+        Args:
+            run_id: The run to fail.
+            error_msg: Optional failure message.
+            lease_id: When provided (SQLite-backed mode only -- external-db
+                mode has no lease concept and ignores this), the write only
+                lands if this still matches the run's current lease
+                (task-3 review finding 4). The engine passes its own lease
+                id on every call it makes while holding one; a caller on a
+                path that never held a lease (e.g. a spent retry budget,
+                where ``claim_run`` raised before any lease was granted)
+                omits it, so its write is unconditional.
+
+        Returns:
+            The run's record: "failed" when the write landed, or the
+            CURRENT unmodified record when a ``lease_id`` was given and no
+            longer matched (a displaced executor's write is a no-op, never
+            an overwrite of whoever holds the run now).
+        """
         if self._uses_external_db:
             record = self._as_local_run(
                 self.db.update_run_state(
@@ -939,7 +1173,7 @@ class LocalResearchService:
         }
         if error_msg is not None:
             fields["progress_message"] = error_msg
-        return self._update_run_state(run_id, "failed", **fields)
+        return self._update_run_state(run_id, "failed", lease_id=lease_id, **fields)
 
     # Hardcoded assignment fragments for update_run_progress's external-DB
     # branch (task-16814): the ONLY source of SQL text for those columns.

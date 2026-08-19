@@ -242,3 +242,119 @@ def test_a_live_lease_at_the_retry_budget_declines_instead_of_raising():
     run_row = service.get_run(run["id"])
     assert run_row["status"] != "failed"
     assert service.holds_lease(run["id"], lease_id=holder_lease) is True
+
+
+# --- task-3 report (fourth fix-up): terminal-claim race, self-renewing
+# expired leases, and lease-conditional terminal writes -------------------
+
+
+def test_claim_run_refuses_a_cancelled_run():
+    """task-3 report finding 1: ``claim_run`` restricted acquisition by
+    lease expiry only, never by run status, while ``execute_run``'s own
+    terminal check happens BEFORE the claim. A cancellation landing between
+    that check and the claim let a terminal run be claimed and executed
+    (resurrected) anyway. The status condition now lives in the SAME atomic
+    UPDATE as the lease-expiry check, so a cancelled run can never be
+    claimed, first claim or not.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    service.cancel_run(run["id"])
+
+    assert service.claim_run(run["id"], worker_id="worker-a", lease_seconds=60) is None
+
+
+def test_claim_run_refuses_a_completed_run_even_with_an_expired_lease():
+    """A run that finished (and thus never released, but no longer needs
+    to be) must not be reclaimable just because its lease looks expired."""
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+
+    service.complete_run(run["id"])
+
+    assert service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60) is None
+
+
+def test_renew_lease_after_expiry_returns_false_even_without_takeover():
+    """task-3 report finding 3: ``renew_lease`` matched on ``run_id`` and
+    ``lease_id`` only, so a worker whose lease already expired could extend
+    it as long as nobody had taken over YET -- a stalled worker resurrecting
+    a claim it had already lost, contradicting takeover. The lease must
+    still be LIVE for a renewal to land, independent of whether a second
+    claimant has shown up.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    lease = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+    assert lease is not None
+
+    # No takeover has happened -- the lease is simply expired.
+    assert service.renew_lease(run["id"], lease_id=lease, lease_seconds=60) is False
+    # holds_lease agrees: an expired lease is not "held" either.
+    assert service.holds_lease(run["id"], lease_id=lease) is False
+
+
+def test_complete_run_with_a_stale_lease_id_is_a_noop():
+    """task-3 report finding 4: a standalone ``holds_lease()`` check
+    followed by an unconditional write is check-then-act -- a takeover
+    between the two still lets the stale write land. ``complete_run``'s own
+    UPDATE now matches ``lease_id`` at the SQL level, so a displaced
+    executor's completion is a no-op instead of a race.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    stale = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+    rescuer = service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
+    assert rescuer is not None
+
+    result = service.complete_run(run["id"], lease_id=stale)
+
+    assert result["status"] != "completed"
+    current = service.get_run(run["id"])
+    assert current["status"] != "completed"
+    assert service.holds_lease(run["id"], lease_id=rescuer) is True
+
+
+def test_fail_run_with_a_stale_lease_id_is_a_noop():
+    """Same contract as complete_run's sibling test, for fail_run."""
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    stale = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=0)
+    rescuer = service.claim_run(run["id"], worker_id="worker-b", lease_seconds=60)
+    assert rescuer is not None
+
+    result = service.fail_run(run["id"], error_msg="boom", lease_id=stale)
+
+    assert result["status"] != "failed"
+    current = service.get_run(run["id"])
+    assert current["status"] != "failed"
+    assert service.holds_lease(run["id"], lease_id=rescuer) is True
+
+
+def test_complete_run_with_a_matching_lease_id_still_lands():
+    """The lease-conditional UPDATE must not become a no-op for the
+    legitimate holder -- only a mismatched (or absent-but-expected) lease
+    id blocks the write."""
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    lease = service.claim_run(run["id"], worker_id="worker-a", lease_seconds=60)
+    assert lease is not None
+
+    result = service.complete_run(run["id"], lease_id=lease)
+
+    assert result["status"] == "completed"
+
+
+def test_complete_run_without_a_lease_id_is_unconditional_as_before():
+    """A caller that never held a lease (the LeaseBudgetExhausted path, or
+    any pre-existing caller outside the leased-execution flow) omits
+    ``lease_id`` -- the write must remain unconditional, matching behavior
+    before task-3's fourth fix-up."""
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    result = service.complete_run(run["id"])
+
+    assert result["status"] == "completed"

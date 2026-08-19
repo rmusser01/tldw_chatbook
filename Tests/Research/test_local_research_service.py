@@ -326,3 +326,42 @@ def test_update_run_progress_external_db_wraps_in_transaction():
     assert updated["progress_percent"] == 45.0
     assert updated["version"] == 2
     external.close()
+
+
+def test_lease_operations_in_external_db_mode_do_not_raise():
+    """task-3 report finding 6: every lease operation called ``_connect()``
+    unconditionally, which raises ``RuntimeError`` in external-db mode
+    (``self.db is not None``, ``self.db_path is None``) -- so since
+    ``execute_run`` now always claims a lease, external-db mode was broken
+    outright. ``self.db`` has no lease columns and no lease API of its own
+    (the ``FakeExternalResearchDB`` double above matches that: only
+    ``transaction``/``get_run``/``close``), so a real, persisted,
+    cross-process lease cannot be implemented against it -- the service
+    degrades to an in-memory, per-instance lease instead of raising.
+    """
+    external = FakeExternalResearchDB()
+    now = "2026-08-16T00:00:00Z"
+    external.conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('ext-run', 'External question', ?, ?)",
+        (now, now),
+    )
+    service = LocalResearchService(external)  # db object -> external mode
+
+    lease_id = service.claim_run("ext-run", worker_id="engine-a", lease_seconds=60)
+    assert lease_id is not None
+    assert service.holds_lease("ext-run", lease_id=lease_id) is True
+
+    # A second claim while the first is live must decline, not raise --
+    # "still functions single-executor" per the finding's fix direction.
+    declined = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert declined is None
+
+    assert service.renew_lease("ext-run", lease_id=lease_id, lease_seconds=60) is True
+    assert service.release_lease("ext-run", lease_id=lease_id) is True
+    assert service.holds_lease("ext-run", lease_id=lease_id) is False
+
+    # Released -- a new claim must now succeed.
+    second_lease = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert second_lease is not None
+    external.close()

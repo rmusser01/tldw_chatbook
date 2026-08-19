@@ -9,6 +9,7 @@ artifact/event storage run real.
 
 import asyncio
 import concurrent.futures
+import json
 from unittest.mock import patch
 
 import pytest
@@ -1588,6 +1589,45 @@ def test_a_run_whose_lease_retry_budget_is_exhausted_is_failed():
     assert "lease" in message.lower() or "executor" in message.lower(), message
 
 
+def test_a_run_cancelled_between_the_engines_terminal_check_and_its_claim_is_not_executed():
+    """task-3 report finding 1: ``claim_run`` restricted acquisition by
+    lease expiry only, never by run status, while ``execute_run``'s own
+    terminal check (the ``ValueError`` guard at the top of ``execute_run``)
+    runs BEFORE the claim. A cancellation landing in that exact gap --
+    after the check reads "running", before ``claim_run``'s atomic UPDATE
+    -- let a terminal run be claimed and executed (resurrected) anyway.
+
+    Reproduces the race directly at its source: ``service.claim_run`` is
+    monkeypatched to cancel the run (simulating a concurrent caller racing
+    in right where the finding describes) immediately before delegating to
+    the real ``claim_run`` -- so by the time the atomic UPDATE runs, the
+    run really is terminal, and the fix (the status condition living in
+    that same UPDATE) must refuse the claim.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, calls = _make_pipeline("q")
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    original_claim_run = service.claim_run
+
+    def racing_claim_run(run_id, **kwargs):
+        service.cancel_run(run_id)
+        return original_claim_run(run_id, **kwargs)
+
+    service.claim_run = racing_claim_run
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "cancelled", (
+        "the run must stay exactly as the racing cancellation left it, "
+        "never resurrected back to a running/completed pipeline execution"
+    )
+    assert calls == {"search": 0, "analyze": 0}, (
+        f"a terminal run must never reach the pipeline: {calls}"
+    )
+
+
 def test_a_lease_stolen_during_synthesis_blocks_packaging_writes_and_completion():
     """task-18060 review finding 2: regression guard for the nine
     `_require_lease()` fences threaded through `_execute_phases`. Steals the
@@ -1739,6 +1779,72 @@ def test_the_last_lease_fence_blocks_completion_after_the_final_write():
     assert final["status"] != "completed"
     names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
     assert "bundle.json" in names  # the write that triggered the steal did land
+
+
+def test_a_displaced_executor_cannot_advance_the_runs_phase_to_synthesizing():
+    """task-3 report finding 2: the engine fenced artifact writes but not
+    run-state writes -- progress and phase updates, checkpoint creation,
+    and pause/cancel resolution were not fenced at all, so a displaced
+    executor could still advance a run's ``phase`` field (and its
+    progress/control_state) on a run it no longer owns.
+
+    Isolates the ONE fence guarding the "synthesizing" phase-advance write
+    specifically: the lease is stolen as a side effect of
+    ``_check_control("synthesizing")`` itself (a synchronous call with no
+    ``await`` point before the phase-advance write that immediately
+    follows it in ``_execute_phases``), so no OTHER fence gets a chance to
+    catch the theft first -- the same isolation technique the sibling
+    lease-theft tests above use for artifact writes, applied here to a
+    run-state write instead.
+
+    Mutation-verified (task report): deleting the ``_require_lease()`` call
+    immediately before the "synthesizing" ``update_run_progress`` in
+    ``_execute_phases`` turns this test red (the phase advances to
+    "synthesizing" and synthesis runs); restoring it turns it green.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, calls = _make_pipeline("q")
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    theft_box: dict[str, str | None] = {}
+    original_check_control = engine._check_control
+
+    def stealing_check_control(run_id, next_phase):
+        if next_phase == "synthesizing":
+            # Same technique as the sibling theft tests: release the
+            # engine's own still-live lease, then have a third party claim
+            # it -- deterministic, no real elapsed time needed.
+            released = service.release_lease(run_id, lease_id=engine._lease_id)
+            assert released is True, "the engine must still hold its own lease at this point"
+            stolen = service.claim_run(run_id, worker_id="rescuer", lease_seconds=60)
+            theft_box["lease_id"] = stolen
+            assert stolen is not None, "the steal itself must succeed for this test to mean anything"
+        return original_check_control(run_id, next_phase)
+
+    engine._check_control = stealing_check_control
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    # Checked from the test's own top-level code, not inside the patched
+    # seam, for the same reason the sibling theft tests do this: it cannot
+    # be short-circuited by execute_run swallowing an in-seam assertion
+    # into some other non-"completed" terminal status.
+    assert theft_box.get("lease_id"), "the rescuer's claim_run must have returned a lease id"
+    assert service.holds_lease(run["id"], lease_id=theft_box["lease_id"]) is True, (
+        "the rescuer must still hold the run's lease after the displaced "
+        "executor's execute_run returns"
+    )
+    assert calls["search"] == 1, "round 1's collecting phase ran legitimately, under a valid lease"
+    assert calls["analyze"] == 0, "synthesis must never run once the phase-advance write is blocked"
+
+    current = service.get_run(run["id"])
+    assert current["phase"] == "collecting", (
+        "the displaced executor must not have advanced the phase past its "
+        f"last legitimately-written value; got {current['phase']!r}"
+    )
+    assert final["status"] != "completed"
 
 
 def test_lease_lost_while_handling_a_pipeline_error_returns_quietly():
@@ -2090,3 +2196,67 @@ def test_a_pool_within_the_cap_keeps_every_body():
     assert payload["truncated"] is False
     assert payload["results"][0]["content"] == "short"
     assert payload["iteration"] == 2
+
+
+def test_a_single_entry_larger_than_the_cap_is_dropped_not_persisted_oversized():
+    """task-3 report finding 7: ``_bounded_evidence`` stripped bodies once
+    the running total passed the cap, but still appended EVERY entry and
+    kept accumulating ``used`` past the cap -- so the persisted artifact
+    could exceed ``EVIDENCE_POOL_CAP_BYTES``, and a single entry whose
+    reference-only (stripped) size alone exceeds the cap could blow it by
+    itself with no way for a reader to tell.
+
+    An entry that still does not fit even stripped of its body is dropped
+    from the persisted pool entirely (documented decision: its reference is
+    lost for this round, and ``dropped_count`` records how many entries
+    this happened to) -- the sum of what IS kept must never exceed the cap.
+    """
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+    engine.EVIDENCE_POOL_CAP_BYTES = 50
+    # The URL alone (stripped of content/original_content) already exceeds
+    # a 50-byte cap.
+    huge_reference_entry = {
+        "url": "https://e.example/" + ("z" * 200),
+        "content": "x" * 10,
+    }
+
+    payload = engine._bounded_evidence([huge_reference_entry], iteration=1)
+
+    total_kept_bytes = sum(
+        len(json.dumps(entry, sort_keys=True)) for entry in payload["results"]
+    )
+    assert total_kept_bytes <= engine.EVIDENCE_POOL_CAP_BYTES
+    assert payload["results"] == []
+    assert payload["truncated"] is True
+    assert payload["dropped_count"] == 1
+
+
+def test_bounded_evidence_never_exceeds_the_cap_with_a_mix_of_sizes():
+    """A mix of entries that fit, entries that need stripping, and one
+    entry too big even stripped -- the cumulative kept size must stay
+    within the cap throughout, not just for the single-entry case above."""
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+    engine.EVIDENCE_POOL_CAP_BYTES = 150
+    entries = [
+        {"url": "https://e.example/1", "content": "short"},  # fits whole
+        {  # needs stripping to fit
+            "url": "https://e.example/2",
+            "content": "x" * 300,
+            "original_content": "y" * 300,
+        },
+        {  # too big even stripped -- must be dropped
+            "url": "https://e.example/3/" + ("z" * 300),
+            "content": "x" * 10,
+        },
+    ]
+
+    payload = engine._bounded_evidence(entries, iteration=1)
+
+    total_kept_bytes = sum(
+        len(json.dumps(entry, sort_keys=True)) for entry in payload["results"]
+    )
+    assert total_kept_bytes <= engine.EVIDENCE_POOL_CAP_BYTES
+    assert payload["dropped_count"] >= 1
+    assert payload["truncated"] is True
