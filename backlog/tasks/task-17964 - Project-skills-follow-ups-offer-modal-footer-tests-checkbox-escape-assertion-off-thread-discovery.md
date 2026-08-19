@@ -12,12 +12,12 @@ labels:
   - testing
 priority: low
 dependencies:
-  - TASK-17651
+  - TASK-18705
 ---
 
 ## Description (the why)
 
-TASK-17651's close-out review and live verification found a handful of
+TASK-18705's close-out review and live verification found a handful of
 small, non-blocking gaps left by the project-skills import feature (Tasks
 1-5 of `Docs/superpowers/plans/2026-08-17-project-skills-import.md`). None of
 these affect the shipped behavior's correctness for the common paths already
@@ -45,7 +45,7 @@ identified gaps worth closing.
       `tldw_chatbook/Widgets/workspace_create_modal.py` (`compose()`'s
       folder-row label and `_add_folder`'s discovery-count usage) so a
       single discovered skill reads "1 project skill" and multiple read "N
-      project skills" (live-verified as-is during TASK-17651's Step 4:
+      project skills" (live-verified as-is during TASK-18705's Step 4:
       `... — contains 1 project skill(s)`, grammatically wrong for the
       singular case)
 - [ ] Fix the stale `_folder_discoveries` entry: in
@@ -71,7 +71,7 @@ identified gaps worth closing.
 
 ## Notes
 
-Source: TASK-17651 close-out (ADR/docs/live-verification task). Related:
+Source: TASK-18705 close-out (ADR/docs/live-verification task). Related:
 TASK-17961 (pre-existing, separately-tracked focused-widget rendering defect
 in the same `WorkspaceCreateModal`, reproduced again during this task's live
 verification in both the Name/folder Input fields and, in a new sighting, the

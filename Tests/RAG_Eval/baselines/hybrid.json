@@ -1,6 +1,6 @@
 {
   "baseline_id": "hybrid",
-  "created_at": "2026-08-12T23:01:15.693189+00:00",
+  "created_at": "2026-08-18T23:33:29.981252+00:00",
   "pipeline_config": {
     "mode": "hybrid",
     "k": 10,
@@ -64,10 +64,10 @@
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 9.9,
-        "p95_ms": 16.0,
-        "max_ms": 17.1,
-        "total_s": 0.6
+        "mean_ms": 8.6,
+        "p95_ms": 12.9,
+        "max_ms": 13.5,
+        "total_s": 0.5
       },
       "mean_docs_at_k": 10.0,
       "num_queries": 46,

@@ -1,6 +1,6 @@
 {
   "baseline_id": "semantic",
-  "created_at": "2026-08-12T23:01:15.691443+00:00",
+  "created_at": "2026-08-18T23:33:29.979956+00:00",
   "pipeline_config": {
     "mode": "semantic",
     "k": 10,
@@ -64,10 +64,10 @@
     "report_only": {
       "latency": {
         "count": 60.0,
-        "mean_ms": 8.4,
-        "p95_ms": 13.9,
-        "max_ms": 15.9,
-        "total_s": 0.5
+        "mean_ms": 6.8,
+        "p95_ms": 10.9,
+        "max_ms": 11.4,
+        "total_s": 0.4
       },
       "mean_docs_at_k": 9.652,
       "num_queries": 46,

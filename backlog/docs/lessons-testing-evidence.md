@@ -5249,7 +5249,7 @@ The general form: **any code path that converts a failure into a
 well-formed empty result destroys the distinction the caller needs.** Grep
 for `except` blocks that `return` an empty container whenever a measurement
 built on them surprises you.
-## A gate built in halves is no gate — and sound-looking test deviations can hide exactly that (TASK-17651, 2026-08-18)
+## A gate built in halves is no gate — and sound-looking test deviations can hide exactly that (TASK-18705, 2026-08-18)
 
 The `.SKILLS/` import feature had prompt-gating (kill-switch, permanent "Never",
 fingerprint re-offer) specified for BOTH its triggers. Task 2 built the gating

@@ -680,7 +680,7 @@ unchanged from the prior stamp).*
 the live config; headless Console probes verified both placements render;
 the rest of this page's content unchanged from the prior stamp).*
 *Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
-(task-17650: Data & Privacy ▸ Workspaces' inline "type a name, press
+(task-18704: Data & Privacy ▸ Workspaces' inline "type a name, press
 Create" row is retired — **Create workspace…** now opens the same shared
 creation dialog Console and Library use, with a prefilled name, optional
 validated folder bindings, and a "Switch to this workspace" checkbox that
@@ -688,7 +688,7 @@ here defaults to activating the workspace on Create, unlike the old
 inline flow; the walkthrough's step 5 updated to match; the rest of this
 page's content unchanged from the prior stamp).*
 *Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-17651: a bound folder containing `.SKILLS/` now annotates its row
+(task-18705: a bound folder containing `.SKILLS/` now annotates its row
 "— contains N project skill(s)" in the creation dialog, followed by a
 chained import prompt after Create; the rest of this page's content
 unchanged from the prior stamp).*

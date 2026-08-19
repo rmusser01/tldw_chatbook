@@ -405,6 +405,15 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
    mailbox "queued" state. Wiring the run-log viewer with a live-follow mode
    is an **audit, not a dependency** — it lands only if genuinely
    incremental; the step buffer is the baseline.
+   **SHIPPED 2026-08-17 (PR 3b, #1793):** the steering input
+   (`ConsoleAgentSteeringBar`) mounts in a LIVE child's drill-in only —
+   hidden for the overview and for finished children (continuation is
+   supervisor-only, §1's owner pin) — posts `[Steering from user]` entries
+   into the coordinator mailbox, and both surfaces render the honest queued
+   state (`· steering queued (N)` on the row, `steering queued (N)` in the
+   bar), computed from the mailbox on every snapshot copy so they can never
+   disagree with what the drain would deliver. A resumed child's drill-in
+   header reads `· resumed from <old run id>` (#1797).
 
 ### Mechanics
 
@@ -531,6 +540,18 @@ now fights the target, and nothing long-term sneaks into this program's ACs.
 - Phase 3b audits the cost ticker's assumption that spend accrues only
   during a turn — background children accrue between turns, delivered
   through the coalescer.
+  **AUDIT EXECUTED 2026-08-18 (PR 3b Task 6).** Positive half pinned: a
+  RESUMED child's `total_tokens` reaches the fleet rollup at finish
+  through the same `fleet.finish` seam as any child
+  (`Tests/Agents/test_fleet_continuation.py::
+  test_a_resumed_childs_spend_reaches_the_fleet_rollup_at_finish`,
+  mutation-checked). The mid-turn survivor accrual is separately handled
+  by 3a-1's `unattributed_fleet_tokens` chip line + 3a-2's drain-fold
+  re-attach. Honest gaps recorded and FILED, not patched (task-18311): a
+  finished survivor's per-child figure leaves `fleet_snapshot` at the
+  next turn's `prune_terminal`, and a continued task's old+new aggregate
+  is derivable from no surface — `agent_runs` persists no token column,
+  so `resumed_from_run_id` joins lineage only.
 
 ## 9. Testing
 
@@ -559,7 +580,7 @@ verification per `backlog/docs/lessons-live-verification.md`.
 | **2a — Concurrency runtime** | FleetCoordinator, threaded children, `wait_agents`/`check_agents`, both gates per-run scoped, registry lock, `on_step` run_id, `set_status` guard, approval-round keying, MCP provider locked pending audit, card revocation |
 | **2b — Panel v1** | Section component + Agents section (summary/rows/drill-in read-only), coalescer, cost rollup |
 | **3a — Cross-turn runtime** | (corrected 2026-08-13, following §3 invariant 5's / §7's 2026-08-11 corrections; shipped as two PRs) **3a-1:** end-of-turn no longer waits, supersede boundary change (merged, PR #1557). **3a-2:** auto-wake on completion + cross-conversation notification — the completion **wakes the supervisor**; this row's original "completion delivery next turn" was the pre-correction ruling. Mailboxes + `send_to_agent` + finished-agent continuation (`resumed_from_run_id`) move to 3b with the steering UI |
-| **3b — Steering UI** | Steering input, mailboxes + `send_to_agent`, finished-agent continuation (`resumed_from_run_id`) (both moved from 3a, 2026-08-13), mailbox "queued" state, notification chip, Stop-semantics change + "Cancel all agents" |
+| **3b — Steering UI** | Steering input, mailboxes + `send_to_agent`, finished-agent continuation (`resumed_from_run_id`) (both moved from 3a, 2026-08-13), mailbox "queued" state, notification chip, Stop-semantics change + "Cancel all agents". **SHIPPED 2026-08-17/18 as six landings** — #1776 (mailbox + protocol-coherent drain), #1777 (`send_to_agent` for live children, both id vocabularies, never-cancels/never-satisfies-an-approval pinned), #1793 (panel steering input + queued state, painted-frame), #1797 (retention + continuation, `resumed_from_run_id`, v11 migration folding task-15669 per ruling #3), #1808 (Stop decouples under `subagents_outlive_turn`, "Cancel all agents", + Qodo round: session close kills its fleet), and the Task 6 close-out (cost audit + docs + live pass; the "notification chip" was already shipped in 3a-2 — 3b added only the queued surface, per the plan's scope pin). Qodo-round repairs #1799/#1811 rode along. |
 | **4 — Polish** | Starter library (plain CRUD: researcher, critic, ingest-runner), per-definition `max_wall_seconds`, config knobs, docs pass, file follow-ups (inspector sections) |
 
 Backlog: one parent task + one per PR, IDs assigned against origin/dev with
@@ -572,7 +593,9 @@ headroom (collision lesson). UI-changing PRs update the matching
 [agents]
 max_live_subagents = 3        # fleet thread cap (phase 2)
 autowake_enabled = true       # completion wakes the supervisor (3a-2 kill switch; default ON)
-# retained finished transcripts: count + byte caps (phase 3)
+subagents_outlive_turn = true # 3b: also the Stop-semantics switch (Stop spares survivors)
+retained_transcripts = 5      # 3b: resumable finished children per conversation (0 = off)
+retained_transcript_max_chars = 200000  # 3b: oversize transcripts are not retained
 ```
 
 Definitions themselves live in the DB, not config.
