@@ -12894,6 +12894,27 @@ if __name__ == "__main__":
     # SystemExit would print usage and then launch the TUI anyway.
     _main_args = _build_arg_parser().parse_args()
 
+    # task-18908: --serve historically only worked via the console-script
+    # entry; this __main__ path parsed the flags and then ignored them,
+    # silently binding the config default port. Route them exactly like
+    # main_cli_runner does.
+    if _main_args.serve:
+        from .Web_Server.serve import check_web_server_available, run_web_server
+
+        if not check_web_server_available():
+            loguru_logger.error("Web server feature is not available!")
+            loguru_logger.error("Install with: pip install tldw_chatbook[web]")
+            raise SystemExit(1)
+
+        loguru_logger.info("Starting tldw_chatbook in web server mode")
+        run_web_server(
+            host=_main_args.host,
+            port=_main_args.port,
+            title=_main_args.web_title,
+            debug=_main_args.debug,
+        )
+        raise SystemExit(0)
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(_main_args.focus)
