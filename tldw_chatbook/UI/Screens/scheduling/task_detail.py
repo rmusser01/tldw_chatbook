@@ -54,6 +54,7 @@ _STATUS_LABELS: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "Completed",
     TaskStatus.FOUND_RESULTS: "Found Results",
     TaskStatus.MISSED: "Missed",
+    TaskStatus.TIMED_OUT: "Timed out",
     TaskStatus.CONFLICT: "Conflict",
 }
 
@@ -68,6 +69,7 @@ _STATUS_BADGE_CLASSES: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "completed",
     TaskStatus.FOUND_RESULTS: "found-results",
     TaskStatus.MISSED: "missed",
+    TaskStatus.TIMED_OUT: "timed-out",
     TaskStatus.CONFLICT: "conflict",
 }
 
@@ -84,6 +86,7 @@ _STATUS_TABLE_STYLES: dict[TaskStatus, str] = {
     TaskStatus.COMPLETED: "bold white on green",
     TaskStatus.FOUND_RESULTS: "bold white on green",
     TaskStatus.MISSED: "bold black on yellow",
+    TaskStatus.TIMED_OUT: "bold black on yellow",
     TaskStatus.CONFLICT: "bold white on red",
 }
 
@@ -486,10 +489,11 @@ class TaskDetail(Vertical):
             self.query_one("#scheduling-enable-task", Button).disabled = enabled
             self.query_one("#scheduling-disable-task", Button).disabled = not enabled
             # The retry affordance for a failed dispatch (task-18938): a
-            # reminder whose last dispatch ran and raised offers Run now as
-            # its retry -- the never-wired "Retry run" concept, now real.
+            # reminder whose last dispatch ran and raised (or was cancelled
+            # at its execution deadline, task-18939) offers Run now as its
+            # retry -- the never-wired "Retry run" concept, now real.
             run_now_button = self.query_one("#scheduling-run-now", Button)
-            if _task_status(task) is TaskStatus.MISSED:
+            if _task_status(task) in {TaskStatus.MISSED, TaskStatus.TIMED_OUT}:
                 run_now_button.label = "Run now (retry)"
                 run_now_button.tooltip = (
                     "Retry this reminder now: its last dispatch ran and "

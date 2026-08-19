@@ -3135,6 +3135,13 @@ scheduler_poll_interval_seconds = 30
 # queue load -- mid-session creations reload the queue immediately, so they
 # do not false-positive here).
 missed_fire_grace_seconds = 60
+# Handler execution timeout (task-18939): a scheduled-task handler still
+# running after this many seconds is cancelled and its dispatch records
+# "timed_out" -- the schedule advances, so a wedged handler (e.g. a hung
+# watchlist URL check) can never wedge the whole scheduler. 0 or negative
+# disables the bound; a reminder's own timeout_seconds column overrides
+# this per task (same semantics: <=0 disables for that task).
+handler_timeout_seconds = 300
 reminder_catchup_hours = 24
 # Feature flags for the watchlist-to-unified-scheduler migration (ADR-019).
 # Both were staged for a shadow-mode dual-run against the legacy SubscriptionScheduler.

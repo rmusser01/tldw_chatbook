@@ -6884,6 +6884,9 @@ class TldwCli(
             missed_fire_grace_seconds=get_cli_setting(
                 "scheduling", "missed_fire_grace_seconds", 60
             ),
+            handler_timeout_seconds=get_cli_setting(
+                "scheduling", "handler_timeout_seconds", 300
+            ),
         )
         self.notifications_scope_service = NotificationsScopeService(
             local_service=self.client_notifications_service,

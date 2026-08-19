@@ -1,9 +1,8 @@
-"""Migration from schema version 1 to version 2.
+"""Migration from schema version 2 to version 3.
 
-Adds the ``missed_count`` column to ``reminder_tasks`` so a late dispatch can
-record how many recurring occurrences elapsed undispatched (task-18937).
-``missed_at`` already existed in v1 but was never written by any code path;
-v2 gives both columns meaning at the same dispatch seam.
+Adds the ``timeout_seconds`` column to ``reminder_tasks`` so a single
+reminder can override the global handler timeout (task-18939). NULL (the
+default) means "use ``[scheduling] handler_timeout_seconds``".
 """
 
 from contextlib import closing
@@ -12,7 +11,7 @@ from loguru import logger
 
 
 def migrate(db) -> None:
-    """Apply the v1 -> v2 schema migration to ``db``.
+    """Apply the v2 -> v3 schema migration to ``db``.
 
     Idempotent: running it on an already-migrated database leaves the schema
     version row unchanged.
@@ -24,41 +23,32 @@ def migrate(db) -> None:
     with closing(db._get_connection()) as conn:
         existing = conn.execute("PRAGMA table_info(reminder_tasks)").fetchall()
         column_names = {row[1] for row in existing}
-        if "missed_count" not in column_names:
+        if "timeout_seconds" not in column_names:
             conn.execute(
-                "ALTER TABLE reminder_tasks ADD COLUMN missed_count INTEGER "
-                "NOT NULL DEFAULT 0"
+                "ALTER TABLE reminder_tasks ADD COLUMN timeout_seconds REAL"
             )
-        # Forward-only versioning: re-applying an older migration must never
-        # move the schema version backward (a v3 database that somehow runs
-        # v1_to_v2 again -- a stale caller, a mixed checkout -- stays at v3).
-        # Fresh databases run v0_to_v1 immediately before this migration,
-        # and v0_to_v1 only INSERTs the version row (OR IGNORE), so the
-        # common case still lands on exactly 2; only a database ALREADY
-        # above 2 keeps its higher version.
+        # Forward-only versioning (same discipline as v1_to_v2): re-applying
+        # this migration to an already-newer database must not move the
+        # version backward; the common fresh case still lands on exactly 3.
         current = conn.execute(
             "SELECT MAX(version) FROM schema_version"
         ).fetchone()
         current_version = int(current[0]) if current and current[0] is not None else 0
-        if current_version < 2:
+        if current_version < 3:
             conn.execute("DELETE FROM schema_version")
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (2,))
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (3,))
         conn.commit()
-    logger.debug("Scheduling schema migrated to version 2 (missed_count column)")
+    logger.debug("Scheduling schema migrated to version 3 (timeout_seconds column)")
 
 
 def rollback(db) -> None:
-    """Revert the v2 schema, returning ``db`` to schema version 1.
+    """Revert the v3 schema, returning ``db`` to schema version 2.
 
-    SQLite cannot drop a column portably across the versions this project
-    supports, so rollback recreates ``reminder_tasks`` without
-    ``missed_count``. Data is preserved for every v1 column.
-
-    Args:
-        db: A ``ScheduledTasksDB`` instance (or any object exposing
-            ``_get_connection()`` returning a ``sqlite3.Connection``).
+    SQLite cannot drop a column portably, so rollback recreates
+    ``reminder_tasks`` without ``timeout_seconds`` (same approach as
+    v1_to_v2's rollback). Data is preserved for every v2 column.
     """
-    v1_columns = [
+    v2_columns = [
         "id",
         "server_id",
         "owner_id",
@@ -73,6 +63,7 @@ def rollback(db) -> None:
         "next_run_at",
         "last_run_at",
         "missed_at",
+        "missed_count",
         "link_type",
         "link_id",
         "link_url",
@@ -80,12 +71,12 @@ def rollback(db) -> None:
         "updated_at",
         "sync_version",
     ]
-    column_list = ", ".join(v1_columns)
+    column_list = ", ".join(v2_columns)
     with closing(db._get_connection()) as conn:
         conn.executescript(
             """
             BEGIN;
-            CREATE TABLE reminder_tasks_v1_rollback (
+            CREATE TABLE reminder_tasks_v2_rollback (
                 id TEXT PRIMARY KEY,
                 server_id TEXT,
                 owner_id TEXT NOT NULL,
@@ -100,6 +91,7 @@ def rollback(db) -> None:
                 next_run_at TEXT,
                 last_run_at TEXT,
                 missed_at TEXT,
+                missed_count INTEGER NOT NULL DEFAULT 0,
                 link_type TEXT,
                 link_id TEXT,
                 link_url TEXT,
@@ -108,17 +100,15 @@ def rollback(db) -> None:
                 sync_version INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (owner_id, server_id)
             );
-            INSERT INTO reminder_tasks_v1_rollback ({columns})
+            INSERT INTO reminder_tasks_v2_rollback ({columns})
                 SELECT {columns} FROM reminder_tasks;
             DROP TABLE reminder_tasks;
-            ALTER TABLE reminder_tasks_v1_rollback RENAME TO reminder_tasks;
+            ALTER TABLE reminder_tasks_v2_rollback RENAME TO reminder_tasks;
             COMMIT;
             """.format(
                 columns=column_list
             )
         )
-        conn.execute("DELETE FROM schema_version WHERE version = ?", (2,))
-        conn.execute(
-            "INSERT OR REPLACE INTO schema_version (version) VALUES (?)", (1,)
-        )
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (2,))
         conn.commit()

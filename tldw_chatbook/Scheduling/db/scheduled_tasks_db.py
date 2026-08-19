@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -44,6 +44,7 @@ class ScheduledTasksDB(BaseDB):
         "last_run_at",
         "missed_at",
         "missed_count",
+        "timeout_seconds",
         "link_type",
         "link_id",
         "link_url",
@@ -156,10 +157,15 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v1_to_v2 import (
             migrate as migrate_v1_to_v2,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v2_to_v3 import (
+            migrate as migrate_v2_to_v3,
+        )
 
         migrate_v0_to_v1(self)
         if self.get_schema_version() < 2:
             migrate_v1_to_v2(self)
+        if self.get_schema_version() < 3:
+            migrate_v2_to_v3(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -741,6 +747,7 @@ class ScheduledTasksDB(BaseDB):
         success: bool = True,
         *,
         grace_seconds: float = 0.0,
+        timed_out: bool = False,
     ) -> None:
         """Update a reminder after dispatch so it is not immediately redispatched.
 
@@ -758,14 +765,25 @@ class ScheduledTasksDB(BaseDB):
         occurrence; skipped ones are counted, never replayed --
         run-once-then-continue). An on-time dispatch clears both fields: the
         state describes the last dispatch and self-heals.
+
+        Timeout (task-18939): ``timed_out=True`` records the distinct
+        terminal status ``"timed_out"`` -- the dispatch ran but was
+        cancelled at its execution deadline. This stays separate from both
+        ``"completed"`` (finished) and ``"missed"`` (ran and raised):
+        ran-but-cancelled is its own honest outcome, and the schedule still
+        advances so a wedged handler can never wedge the loop.
         """
         row = self.get_reminder_task(task_id)
         if row is None:
             return
 
+        if timed_out:
+            last_status = "timed_out"
+        else:
+            last_status = "completed" if success else "missed"
         fields: dict[str, Any] = {
             "last_run_at": now,
-            "last_status": "completed" if success else "missed",
+            "last_status": last_status,
             "updated_at": now,
         }
 

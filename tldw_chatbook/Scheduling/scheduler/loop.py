@@ -31,6 +31,7 @@ class SchedulerLoop:
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = 60.0,
+        handler_timeout_seconds: float | None = 300.0,
     ) -> None:
         self.db = db
         self.handlers = handlers
@@ -45,6 +46,12 @@ class SchedulerLoop:
         #: "late" and records missed-fire state (task-18937). Default 2x the
         #: default poll interval: a running scheduler lands within one poll.
         self.missed_fire_grace_seconds = missed_fire_grace_seconds
+        #: Handler execution timeout (task-18939): a handler still running
+        #: after this many seconds is cancelled and its dispatch records
+        #: ``timed_out`` -- the schedule advances, so a wedged handler cannot
+        #: wedge the loop. Zero/negative disables the bound entirely; a task
+        #: row's ``timeout_seconds`` overrides per task.
+        self.handler_timeout_seconds = handler_timeout_seconds
         self.running = False
         self._tick_count = 0
         self._reload_requested = False
@@ -182,6 +189,13 @@ class SchedulerLoop:
         ``mark_reminder_dispatched`` with this loop's clock and missed-fire
         grace. Returns True when the handler succeeded.
 
+        The handler await is bounded by the execution timeout
+        (task-18939): the task row's ``timeout_seconds`` override when set,
+        else the loop's ``handler_timeout_seconds`` default; ``None``/zero/
+        negative disables the bound. A timeout cancels the handler and
+        records the distinct terminal status ``timed_out`` -- the schedule
+        still advances, so a wedged handler can never wedge the loop.
+
         Args:
             task: The queue/task row being dispatched.
             handler: The registered handler for ``task_type``.
@@ -190,8 +204,26 @@ class SchedulerLoop:
                 the caller's "now" for manual runs).
         """
         task_id = task.get("id")
+        timeout = self._effective_timeout_seconds(task)
+        timed_out = False
         try:
-            await handler(task)
+            if timeout is not None and timeout > 0:
+                await asyncio.wait_for(handler(task), timeout=timeout)
+            else:
+                await handler(task)
+        except asyncio.TimeoutError:
+            timed_out = True
+            log_counter(
+                "scheduler_tasks_timed_out",
+                labels={"task_type": task_type},
+            )
+            logger.warning(
+                "{task_type} handler timed out for task {task_id} after "
+                "{timeout}s; cancelling and advancing the schedule",
+                task_type=task_type,
+                task_id=task_id,
+                timeout=timeout,
+            )
         except Exception:
             logger.exception(
                 "{task_type} handler failed for task {task_id}",
@@ -213,10 +245,32 @@ class SchedulerLoop:
                 self.db.mark_reminder_dispatched,
                 task_id,
                 now,
-                True,
+                not timed_out,
                 grace_seconds=self.missed_fire_grace_seconds,
+                timed_out=timed_out,
             )
-        return True
+        return not timed_out
+
+    def _effective_timeout_seconds(self, task: dict[str, Any]) -> float | None:
+        """Resolve the execution timeout for one task (task-18939).
+
+        The task row's ``timeout_seconds`` wins when present and positive;
+        zero or negative on the ROW also disables the bound (an explicit
+        per-task opt-out), while a NULL row falls back to the loop's
+        ``handler_timeout_seconds`` default (itself disabled by
+        zero/negative config).
+        """
+        row_override = task.get("timeout_seconds")
+        if isinstance(row_override, (int, float)) and not isinstance(
+            row_override, bool
+        ):
+            if row_override <= 0:
+                return None
+            return float(row_override)
+        default = self.handler_timeout_seconds
+        if default is None or default <= 0:
+            return None
+        return float(default)
 
     async def run_reminder_now(self, task_id: str) -> bool:
         """Dispatch one reminder immediately, bypassing the poll wait.

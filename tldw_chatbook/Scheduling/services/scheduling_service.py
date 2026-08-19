@@ -468,4 +468,6 @@ class SchedulingService:
             data.pop("last_status", None)
         if data.get("missed_count") is None:
             data.pop("missed_count", None)
+        if data.get("timeout_seconds") is None:
+            data.pop("timeout_seconds", None)
         return ReminderTask(**data)

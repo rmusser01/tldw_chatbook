@@ -84,3 +84,19 @@ the schedule.
 A reminder that is both queued and run manually dispatches exactly once —
 the pending scheduled occurrence is claimed by the manual run rather than
 firing twice.
+
+## Execution timeouts
+
+A scheduled task's handler is bounded: if it is still running after its
+execution timeout, it is **cancelled** and the task records the status
+**Timed out** — the schedule advances to the next occurrence regardless, so
+one hung job (say, a watchlist check against an unresponsive URL) can never
+stall the rest of the scheduler. Timed out is its own outcome, distinct
+from *Missed* (the dispatch ran and raised an error) and from *Missed while
+away* (the scheduled time passed with the scheduler not running) — and a
+timed-out task offers **Run now (retry)** like a failed one.
+
+The default bound is `handler_timeout_seconds` under `[scheduling]` in
+`config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
+bound entirely — every handler may then run as long as it likes, and a
+wedged handler will wedge the scheduler, which is why the default is on.
