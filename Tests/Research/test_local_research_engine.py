@@ -1556,8 +1556,43 @@ def test_a_second_engine_declines_a_leased_run():
 
     assert final["status"] != "completed"
     assert final["status"] != "failed"  # declined =/= failed: the run is left alone
-    assert "lease" in str(final.get("progress_message") or "").lower()
+    assert "lease_declined" in _events(service, run["id"])
     assert calls == {"search": 0, "analyze": 0}, calls
+
+
+def test_a_declined_executor_does_not_write_run_state():
+    """PR-1822 review follow-up: the declined executor's lease_declined
+    handling used ``update_run_progress`` -- an unfenced run-state write by
+    a NON-lease-holder that bumped the run's version and stomped the live
+    executor's progress message mid-collection, contradicting the
+    single-writer principle every fenced write in the engine enforces.
+
+    The decline is still observable: as an append-only event
+    (``lease_declined``) in the run's event stream, which any observer may
+    append to, and which overwrites nothing.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    holder = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    declined = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    assert service.claim_run(
+        run["id"], worker_id=holder.worker_id, lease_seconds=60
+    )
+    # The live executor's in-flight progress message must survive.
+    service.update_run_progress(
+        run["id"], progress_message="Collecting sources (iteration 1)"
+    )
+    before = service.get_run(run["id"])
+    assert before["progress_message"] == "Collecting sources (iteration 1)"
+
+    asyncio.run(declined.execute_run(run["id"]))
+
+    after = service.get_run(run["id"])
+    assert after["progress_message"] == "Collecting sources (iteration 1)", after
+    assert after["version"] == before["version"], after
+    assert "lease_declined" in _events(service, run["id"])
 
 
 def test_a_run_whose_lease_retry_budget_is_exhausted_is_failed():
@@ -2078,6 +2113,111 @@ def test_a_blocking_sync_search_fn_does_not_starve_the_keepalive():
     assert final["status"] == "completed", final.get("progress_message")
 
 
+def test_a_failing_renewal_does_not_break_execute_run_or_strand_the_lease():
+    """task-3 review follow-up (keepalive containment): ``renew_lease`` can
+    raise for reasons that are NOT lease loss -- e.g. a transient
+    ``sqlite3.OperationalError: database is locked`` while another process
+    writes the same DB file. The keep-alive task had no exception handling,
+    so the exception surfaced at ``await keepalive`` inside ``execute_run``'s
+    ``finally`` block, which (a) escaped ``execute_run`` entirely (breaking
+    its documented ValueError-only contract) and (b) skipped
+    ``release_lease``, stranding the lease in the DB with the run left
+    status=running and no fail_run recorded -- nobody owned the failure.
+
+    A renewal ERROR must be treated like a lost lease from the keep-alive's
+    perspective (stop renewing, warn) -- the next fence the engine hits
+    decides what the run's real state is -- and it must never hijack the
+    ``finally`` block's release.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+
+    async def slow_analyze(wsr, sqd, params, cancel_event=None):
+        await asyncio.sleep(0.15)
+        return {
+            "final_answer": {"text": "Answer citing [1].", "evidence": [],
+                             "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+        }
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=slow_analyze
+    )
+    engine.lease_seconds = 5.0
+    engine.keepalive_seconds = 0.02
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    def exploding_renew(run_id, *, lease_id, lease_seconds):
+        raise RuntimeError("database is locked")
+
+    service.renew_lease = exploding_renew
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    # The run completed on its own merits; the renewal error neither failed
+    # it nor escaped execute_run.
+    assert final["status"] == "completed", final.get("progress_message")
+    # The finally block ran to completion: the lease was released and the
+    # engine's lease state cleaned up.
+    row = service.get_run(run["id"])
+    assert engine._lease_id is None
+    assert row["lease_id"] is None, row
+    assert row["lease_owner"] is None, row
+    assert engine._active_ledger is None
+
+
+def test_execute_run_releases_the_lease_even_when_a_phase_raises():
+    """task-3 review follow-up (finally hardening): with the keep-alive's
+    exception contained, the only remaining way to strand a lease is a
+    failure INSIDE the finally block itself. ``await keepalive`` must not
+    raise the keep-alive's stored exception back into cleanup: retrieval
+    via ``exception()`` (or a broad suppress) keeps release_lease
+    unconditional.
+
+    Reproduces by making the keep-alive DIE (so its exception is stored on
+    the task) while the run itself proceeds fine.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+
+    async def slow_analyze(wsr, sqd, params, cancel_event=None):
+        await asyncio.sleep(0.15)
+        return {
+            "final_answer": {"text": "Answer citing [1].", "evidence": [],
+                             "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+        }
+
+    engine = LocalResearchEngine(
+        service, search_fn=search_fn, analyze_fn=slow_analyze
+    )
+    engine.lease_seconds = 5.0
+    engine.keepalive_seconds = 0.02
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    # Kill the keep-alive with a non-CancelledError exception, mimicking
+    # any unhandled failure inside the task body.
+    import asyncio as asyncio_module
+
+    async def dying_keepalive(run_id):
+        await asyncio_module.sleep(0.05)
+        raise RuntimeError("keepalive exploded")
+
+    engine._keepalive = dying_keepalive  # type: ignore[method-assign]
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "completed", final.get("progress_message")
+    row = service.get_run(run["id"])
+    assert engine._lease_id is None
+    assert row["lease_id"] is None, row
+    assert row["lease_owner"] is None, row
+
+
 def test_a_resumed_run_does_not_get_its_search_budget_back():
     """task-18060: the engine rebuilt the ledger from limits on every entry, so
     a run resumed three times was granted its budget three times."""
@@ -2260,3 +2400,36 @@ def test_bounded_evidence_never_exceeds_the_cap_with_a_mix_of_sizes():
     assert total_kept_bytes <= engine.EVIDENCE_POOL_CAP_BYTES
     assert payload["dropped_count"] >= 1
     assert payload["truncated"] is True
+
+
+def test_a_non_serializable_entry_is_dropped_not_raised():
+    """PR-1822 review follow-up: an entry carrying a non-JSON-native value
+    (e.g. a datetime leaked from a provider adapter) raised TypeError
+    inside ``_bounded_evidence``'s measurement, failing the WHOLE run via
+    the generic exception handler instead of degrading the artifact. The
+    docstring's graceful-truncation contract requires the entry be dropped
+    and counted, like an oversized one -- the previous fix moved the crash
+    from save_artifact into the measurement, it did not remove it.
+    """
+    import datetime as datetime_module
+
+    service = _make_service()
+    engine = LocalResearchEngine(service)
+    entries = [
+        {"url": "https://e.example/1", "content": "fine"},
+        {  # datetime is not JSON-native
+            "url": "https://e.example/2",
+            "content": "fine too",
+            "published": datetime_module.datetime(2026, 8, 18),
+        },
+        {"url": "https://e.example/3", "content": "also fine"},
+    ]
+
+    payload = engine._bounded_evidence(entries, iteration=1)
+
+    assert [e["url"] for e in payload["results"]] == [
+        "https://e.example/1",
+        "https://e.example/3",
+    ]
+    assert payload["dropped_count"] == 1
+    assert payload["truncated"] is False

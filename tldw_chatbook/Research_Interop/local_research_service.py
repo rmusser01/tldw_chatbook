@@ -990,16 +990,42 @@ class LocalResearchService:
     def release_lease(self, run_id: str, *, lease_id: str) -> bool:
         """Drop a lease the caller holds so another executor may claim it.
 
+        Only a release while the lease is still LIVE is a clean hand-off:
+        it clears the lease columns and resets the crash-retry budget
+        (PR-1822 review follow-up). Releasing a lease that had already
+        EXPIRED is an abandonment being acknowledged after the fact, not a
+        clean hand-off -- matching ``lease_id`` alone let a systematically
+        stalling-but-alive executor loop claim -> expire -> release forever
+        without ever spending the budget, defeating the "fail a run whose
+        executor keeps dying" contract (AC #1b). An expired release
+        therefore leaves the lease record exactly as a crashed executor
+        would (expired, still on the books): the next claim is a RECLAIM,
+        the budget check applies, and the run stays free for the next
+        claimant either way -- an expired lease is already claimable.
+
         Args:
             run_id: The leased run.
             lease_id: The token returned by ``claim_run``.
 
         Returns:
-            True when the lease was released, False when it was already lost.
+            True when the lease was the caller's to release (live: cleared;
+            expired: left in place as an abandonment), False when it was
+            already lost to a takeover.
         """
         if self._uses_external_db:
             return self._release_lease_external(run_id, lease_id=lease_id)
+        now = self._now()
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT leased_until FROM research_runs WHERE id = ? AND lease_id = ?",
+                (run_id, lease_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if str(row["leased_until"] or "") <= now:
+                # Already expired: leave the record so the next claim counts
+                # this as the abandonment it was.
+                return True
             cursor = conn.execute(
                 """
                 UPDATE research_runs
@@ -1007,16 +1033,21 @@ class LocalResearchService:
                        lease_attempts = 0, updated_at = ?
                  WHERE id = ? AND lease_id = ?
                 """,
-                (self._now(), run_id, lease_id),
+                (now, run_id, lease_id),
             )
             return cursor.rowcount == 1
 
     def _release_lease_external(self, run_id: str, *, lease_id: str) -> bool:
         """``release_lease``'s degraded, in-memory counterpart for
-        external-db mode (task-3 review finding 6)."""
+        external-db mode (task-3 review finding 6). Mirrors the SQLite
+        path's live/expired split: a live release deletes the entry (the
+        next claim starts fresh); an expired release leaves it so the next
+        claim counts the abandonment against the retry budget."""
         state = self._external_leases.get(run_id)
         if state is None or state["lease_id"] != lease_id:
             return False
+        if str(state["leased_until"]) <= self._now():
+            return True
         del self._external_leases[run_id]
         return True
 
@@ -1551,6 +1582,30 @@ class LocalResearchService:
         if run is None:
             raise ValueError("research run not found")
         return {"run": run, "artifacts": self.list_artifacts(run_id)}
+
+    def record_run_event(
+        self, run_id: str, event: str, data: dict[str, Any] | None = None
+    ) -> None:
+        """Append an event to the run's stream WITHOUT touching run state.
+
+        PR-1822 review follow-up: ``update_run_progress`` writes both an
+        event and the run row, so it is reserved for the lease holder (a
+        non-holder's call stomps the live executor's progress message and
+        bumps the version mid-flight). The event log is append-only and
+        overwrites nothing, so an observer -- e.g. an executor that was
+        DECLINED a lease -- may record what it observed without violating
+        the single-writer principle.
+
+        Args:
+            run_id: The run the event concerns.
+            event: Event name.
+            data: Optional event payload.
+        """
+        if self._uses_external_db:
+            return
+        self._require_one("research_runs", run_id, "research run")
+        with self._connect() as conn:
+            self._record_event(conn, run_id, event, data)
 
     def list_run_events(
         self, run_id: str, *, after_id: int = 0

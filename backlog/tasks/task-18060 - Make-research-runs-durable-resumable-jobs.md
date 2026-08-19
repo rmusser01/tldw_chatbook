@@ -46,6 +46,14 @@ This supersedes the earlier framing of the same criterion, which set out to deri
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/070-research-run-lease-and-durability.md
+Reason: the lease adds DB schema columns (lease_owner/lease_id/leased_until/
+lease_attempts) and a cross-module execution-ownership contract (claim/renew/
+release/fence) -- storage and service-contract decisions per the ADR policy.
+Recorded retroactively with PR #1822's post-review fixes; the branch itself
+landed without one, which the review flagged.
+
 The design, the measurements behind it, and the alternatives rejected are in
 `Docs/superpowers/specs/2026-08-18-durable-research-jobs-design.md`.
 
@@ -103,4 +111,29 @@ only because every caller builds a fresh engine per run -- a scheduler reusing
 one engine would silently disable the fence; and a run killed by SIGKILL is
 declined for up to `lease_seconds` before takeover, with a message that blames
 another executor.
+
+**PR #1822 external review (post-branch, fixed in the review round):** four
+defects found by an independent review, each fixed test-first:
+
+- A `renew_lease` that RAISES (e.g. transient SQLITE_BUSY) surfaced at
+  `await keepalive` inside `execute_run`'s `finally`, escaping the engine AND
+  skipping `release_lease` (stranding the lease; the run left running with no
+  fail_run). Renewal errors are now contained in the keep-alive (treated as
+  lost) and the finally's await suppresses both CancelledError and any stored
+  exception, so release is unconditional.
+- `release_lease` matched `lease_id` only, resetting the crash budget for an
+  already-EXPIRED lease: a stalling-but-alive executor could loop
+  claim -> expire -> release forever without spending the budget (defeating
+  AC #1b). Only a LIVE release is a clean hand-off; an expired release leaves
+  the record so the next claim counts the abandonment.
+- The DECLINED executor wrote run state (`update_run_progress`) on a run it
+  did not own, stomping the live executor's progress message and version
+  mid-flight. Decline is now an append-only `lease_declined` event via the
+  new `record_run_event` (observers append events; only the lease holder
+  writes run state).
+- A non-JSON-native value in an evidence entry raised TypeError inside
+  `_bounded_evidence`'s measurement and failed the whole run; it is now
+  dropped and counted like an oversized entry (the artifact degrades, the
+  run does not fail).
+- ADR-070 records the lease/durability contract (linked above).
 <!-- SECTION:NOTES:END -->

@@ -196,6 +196,48 @@ def test_a_clean_release_resets_the_retry_budget():
     assert rescue is not None
 
 
+def test_releasing_an_expired_lease_does_not_reset_the_retry_budget():
+    """PR-1822 review follow-up: ``release_lease`` matched on ``lease_id``
+    only, with no liveness check, so it reset ``lease_attempts`` to 0 for an
+    EXPIRED lease too. An executor that stalls past expiry, notices, and
+    exits through its finally block therefore "cleanly released" a lease it
+    no longer held -- and a systematically stalling-but-alive executor could
+    loop claim -> expire -> release forever without ever spending the crash
+    budget, defeating the "fail a run whose executor keeps dying" contract
+    (AC #1b).
+
+    Only a release while the lease is still LIVE counts as clean. Releasing
+    an expired lease must still free the run for the next claimant but must
+    keep the abandonment on the books.
+    """
+    service = _service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+
+    # Two stalls: claimed, lease allowed to expire, executor wakes and
+    # releases what it no longer holds.
+    for _ in range(2):
+        lease = service.claim_run(
+            run["id"], worker_id="stalling", lease_seconds=0, max_attempts=3
+        )
+        assert lease is not None
+        # Zero-second lease: already expired at the moment of release.
+        assert service.release_lease(run["id"], lease_id=lease) is True
+
+    # The run is claimable again (the release DID clear the lease)...
+    third = service.claim_run(
+        run["id"], worker_id="stalling", lease_seconds=0, max_attempts=3
+    )
+    assert third is not None
+    assert service.release_lease(run["id"], lease_id=third) is True
+
+    # ...but the third stall must now exhaust the budget: three
+    # abandonments, none of them clean.
+    with pytest.raises(LeaseBudgetExhausted):
+        service.claim_run(
+            run["id"], worker_id="rescuer", lease_seconds=60, max_attempts=3
+        )
+
+
 def test_a_live_lease_at_the_retry_budget_declines_instead_of_raising():
     """task-3 report finding 1: ``claim_run`` treated ANY previous lease --
     live or expired -- as a "reclaim" for budget-check purposes, keyed only

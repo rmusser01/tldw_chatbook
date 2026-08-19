@@ -371,6 +371,15 @@ class LocalResearchEngine:
     async def _keepalive(self, run_id: str) -> None:
         """Renew the lease on a timer for as long as a phase is in flight.
 
+        A renewal that RAISES (e.g. a transient ``sqlite3.OperationalError``
+        while another process writes the DB) is not lease loss, but it is
+        also not survivable here: an unhandled exception in this task would
+        surface at ``await keepalive`` inside ``execute_run``'s ``finally``
+        block, skipping ``release_lease`` (stranding the lease) and escaping
+        the engine entirely. It is contained the same way a lost lease is:
+        stop renewing and warn; the next fence the engine hits decides what
+        the run's real state is.
+
         Args:
             run_id: The leased run.
         """
@@ -379,9 +388,17 @@ class LocalResearchEngine:
             lease_id = self._lease_id
             if lease_id is None:
                 return
-            if not self.service.renew_lease(
-                run_id, lease_id=lease_id, lease_seconds=self.lease_seconds
-            ):
+            try:
+                renewed = self.service.renew_lease(
+                    run_id, lease_id=lease_id, lease_seconds=self.lease_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - never hijack execute_run
+                logger.warning(
+                    f"Research run {run_id} lease renewal errored "
+                    f"(treated as lost): {exc}"
+                )
+                return
+            if not renewed:
                 return
 
     def _get_run(self, run_id: str) -> dict[str, Any]:
@@ -583,11 +600,13 @@ class LocalResearchEngine:
         if self._lease_id is None:
             self._run_id = None
             logger.info(f"Research run {run_id} is leased by another executor")
-            return self.service.update_run_progress(
-                run_id,
-                progress_message="another executor holds this run's lease",
-                event="lease_declined",
-            )
+            # An event, never a run-state write: this executor holds no
+            # lease, and update_run_progress would stomp the live
+            # executor's progress message and version mid-flight
+            # (PR-1822 review follow-up). The returned record is the
+            # holder's current truth.
+            self.service.record_run_event(run_id, "lease_declined")
+            return self._get_run(run_id)
         keepalive = asyncio.create_task(self._keepalive(run_id))
 
         try:
@@ -643,7 +662,11 @@ class LocalResearchEngine:
             )
         finally:
             keepalive.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # CancelledError (normal teardown) AND any stored exception from
+            # the keep-alive task must both be contained here: either raising
+            # into this finally block would skip release_lease below and
+            # strand the lease.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await keepalive
             if self._lease_id is not None:
                 # Releasing on every invocation is safe: a clean release resets
@@ -845,8 +868,17 @@ class LocalResearchEngine:
             # value pass this check under-sized (default=str silently
             # stringified it) only to raise inside save_artifact's own dump,
             # failing the whole run instead of this method's own graceful
-            # truncation.
-            size = len(json.dumps(entry, sort_keys=True))
+            # truncation. An entry that cannot be measured at all (a
+            # non-JSON-native value) is dropped and counted like an
+            # oversized one rather than raising here -- a run's evidence
+            # artifact must degrade, never fail the run (PR-1822 review
+            # follow-up: the earlier fix moved this crash from save_artifact
+            # into the measurement; it did not remove it).
+            try:
+                size = len(json.dumps(entry, sort_keys=True))
+            except (TypeError, ValueError):
+                dropped += 1
+                continue
             if used + size > self.EVIDENCE_POOL_CAP_BYTES:
                 entry.pop("content", None)
                 entry.pop("original_content", None)
