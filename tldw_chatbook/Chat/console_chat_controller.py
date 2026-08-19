@@ -187,8 +187,9 @@ from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
-from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
-from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+from tldw_chatbook.runtime_policy.bootstrap import (
+    load_default_runtime_source_state,
+)
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
@@ -4999,9 +5000,9 @@ class ConsoleChatController:
         subscriptions_db = getattr(self.app, "subscriptions_db", None)
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: subscriptions_db,
-            runtime_source_loader=lambda: RuntimeSourceStateStore(
-                default_runtime_policy_path()
-            ).load(),
+            # Owner-module loader (TASK-18609): constructing the store here
+            # violated the runtime-policy ownership boundary.
+            runtime_source_loader=load_default_runtime_source_state,
         )
         provider = LocalToolProvider(
             workspace_root=root,

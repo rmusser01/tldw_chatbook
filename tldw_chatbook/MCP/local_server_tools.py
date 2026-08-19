@@ -50,8 +50,9 @@ from tldw_chatbook.DB.Subscriptions_DB import (
     SubscriptionsDBUnavailableError,
 )
 from tldw_chatbook.MCP.permission_store import resolve_effective_state
-from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
-from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore
+from tldw_chatbook.runtime_policy.bootstrap import (
+    load_default_runtime_source_state,
+)
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 
 EXTERNAL_NO_CALLBACK_REFUSAL = (
@@ -159,9 +160,9 @@ def build_server_local_provider(
 
     watchlists_service = WatchlistsToolService(
         db_resolver=_LazyWatchlistsDBResolver(),
-        runtime_source_loader=lambda: RuntimeSourceStateStore(
-            default_runtime_policy_path()
-        ).load(),
+        # Owner-module loader (TASK-18609): constructing the store here
+        # violated the runtime-policy ownership boundary.
+        runtime_source_loader=load_default_runtime_source_state,
     )
     return LocalToolProvider(
         workspace_root=Path(workspace_root).resolve(),
