@@ -3118,6 +3118,18 @@ class ChatScreen(BaseAppScreen):
         )
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
+    def _apply_focus_chrome(self) -> None:
+        """Mirror the app-level focus_mode flag onto this screen (task-16320).
+
+        Idempotent: sets/removes the ``-focus`` class that suppresses the
+        nav bar and workbench header (CSS: _agentic_terminal.tcss), and
+        refreshes the footer hints so the focus toggle's label tracks the
+        target state.
+        """
+        focused = bool(getattr(self.app_instance, "focus_mode", False))
+        self.set_class(focused, "-focus")
+        self._register_console_footer_shortcuts()
+
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from this screen's own footer."""
         self.clear_footer_shortcuts(source="console")
@@ -14294,6 +14306,7 @@ class ChatScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
 
         self.app_instance._console_h3_image_edit_screen = self
+        self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
         # This handoff is session/config only and does not need mounted DOM.
