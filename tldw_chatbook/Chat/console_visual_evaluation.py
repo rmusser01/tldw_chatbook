@@ -616,7 +616,7 @@ def build_visual_renderer_geometry_evidence(
                 width=width,
                 height=height,
                 page_count=artifact.page_count,
-                page_hashes=tuple(page.png_sha256 for page in artifact.pages),
+                page_hashes=tuple(page.pixel_sha256 for page in artifact.pages),
                 raw_32px_patches_per_page=patches_per_page,
                 raw_32px_patches_total=patches_per_page * artifact.page_count,
             )
@@ -726,6 +726,8 @@ async def evaluate_visual_compaction_model(
             system,
             tagged_visual_memory_message(
                 [page.png_bytes for page in artifact.pages],
+                # Wire integrity (exact PNG bytes); evidence rows above and
+                # below use `pixel_sha256`, the renderer-identity digest.
                 page_hashes=[page.png_sha256 for page in artifact.pages],
             ),
             active_request,
@@ -782,7 +784,7 @@ async def evaluate_visual_compaction_model(
         renderer_version=artifact.renderer_version,
         render_latency_ms=render_latency_ms,
         page_count=artifact.page_count,
-        page_hashes=tuple(page.png_sha256 for page in artifact.pages),
+        page_hashes=tuple(page.pixel_sha256 for page in artifact.pages),
         text=text_result,
         visual=visual_result,
         token_reduction_ratio=reduction,

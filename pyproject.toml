@@ -45,7 +45,14 @@ dependencies = [
     "rich",
     "wcwidth>=0.2.14,<1",
     "rich-pixels>=3.0.0",
-    "pillow==11.2.1",  # ADR-054 renderer identity; matches reviewed context-use evidence
+    # TASK-18606: was pinned to ==11.2.1 for ADR-054 renderer identity. The
+    # renderer now owns its own determinism (fixed-cell font pinned and metric-
+    # verified, identity hashed from pixels not PNG bytes), so the identity no
+    # longer rides on this version. Freezing an image PARSER that this app
+    # points at untrusted input was too high a price for reproducibility that
+    # belongs in the renderer. Floor is 10.1, which introduced
+    # `ImageFont.load_default_imagefont()`.
+    "pillow>=10.1",
     "PyYAML",
     "pydantic>=2.4,<3",
     "portalocker==3.2.0",

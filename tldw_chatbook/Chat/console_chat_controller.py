@@ -9410,6 +9410,7 @@ class ConsoleChatController:
                         )
                         visual_row = tagged_visual_memory_message(
                             [page.png_bytes for page in artifact.pages],
+                            # Wire integrity (exact PNG bytes), not renderer identity.
                             page_hashes=[page.png_sha256 for page in artifact.pages],
                         )
                         hybrid_semantic = PreparedConsoleRequest(

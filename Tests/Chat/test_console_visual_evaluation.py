@@ -38,6 +38,8 @@ from tldw_chatbook.Chat.console_visual_evaluation import (
 )
 from tldw_chatbook.Chat.console_visual_transcript import (
     EVALUATION_RENDERER_PROFILES,
+    NATIVE_512_EVALUATION_PROFILE,
+    PRODUCTION_RENDERER_PROFILE,
     render_visual_transcript,
 )
 
@@ -53,10 +55,26 @@ CORPUS_PATH = (
 )
 SUPPORT_MATRIX_PATH = CORPUS_PATH.with_name("support-matrix.json")
 CLI_PATH = REPOSITORY_ROOT / "scripts" / "evaluate_visual_compaction.py"
-EVALUATED_PILLOW_VERSION = "11.2.1"
+#: TASK-18606: the renderer no longer pins an exact Pillow. This is the FLOOR
+#: it needs -- 10.1 introduced `ImageFont.load_default_imagefont()`, the frozen
+#: fixed-cell font the renderer resolves explicitly instead of trusting
+#: `load_default()`, which Pillow redefined mid-10.x to a proportional face.
+MINIMUM_PILLOW_VERSION = "10.1"
 
 
-def test_deterministic_visual_renderer_pins_evaluated_pillow_version() -> None:
+def test_pillow_requirement_is_consistent_and_not_frozen() -> None:
+    """The two dependency files must agree, and must not freeze Pillow.
+
+    TASK-18606 replaced the old assertion (both files pin
+    ``==11.2.1``). Pinning an exact Pillow was ADR-054's way of getting
+    renderer determinism, and it both cost too much -- Pillow is the image
+    parser this app points at untrusted input -- and did not work: the
+    renderer still broke on any host past the pin, clipping transcript text.
+    Determinism now lives in the renderer (see
+    ``test_visual_renderer_decoupling``), so what is left to protect here is
+    that the two files cannot drift apart, and that nobody silently re-freezes
+    the dependency.
+    """
     pyproject = tomllib.loads(
         (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
@@ -75,9 +93,21 @@ def test_deterministic_visual_renderer_pins_evaluated_pillow_version() -> None:
         and Requirement(value).name.lower() == "pillow"
     )
 
-    expected = f"=={EVALUATED_PILLOW_VERSION}"
-    assert str(project_pillow.specifier) == expected
-    assert str(requirements_pillow.specifier) == expected
+    assert str(project_pillow.specifier) == str(requirements_pillow.specifier), (
+        "pyproject.toml and requirements.txt disagree on the Pillow requirement"
+    )
+    assert not any(
+        spec.operator == "==" for spec in project_pillow.specifier
+    ), (
+        "Pillow must not be frozen to an exact version: renderer determinism is "
+        "owned by console_visual_transcript, and freezing an image parser this "
+        "app points at untrusted input is not an acceptable price for it "
+        "(ADR-054, amended by TASK-18606)"
+    )
+    assert project_pillow.specifier.contains(MINIMUM_PILLOW_VERSION), (
+        f"Pillow floor must admit {MINIMUM_PILLOW_VERSION}, which introduced "
+        "ImageFont.load_default_imagefont()"
+    )
 
 
 def _run_immediate(coroutine):
@@ -379,8 +409,18 @@ def test_evaluator_can_select_native_candidate_without_changing_default() -> Non
         )
     )
 
-    assert "visual-transcript-v1" in default_report.renderer_version
-    assert "v2-native-512" in native_report.renderer_version
+    # TASK-18606 re-versioned both profiles (v1/v2-native-512 -> v3/
+    # v3-native-512) when the renderer stopped embedding the Pillow version.
+    # Asserted against the profiles themselves rather than version literals:
+    # what this test is about is that selecting the candidate does not change
+    # the DEFAULT, not what generation the renderer happens to be on.
+    assert default_report.renderer_version == (
+        PRODUCTION_RENDERER_PROFILE.renderer_version
+    )
+    assert native_report.renderer_version == (
+        NATIVE_512_EVALUATION_PROFILE.renderer_version
+    )
+    assert default_report.renderer_version != native_report.renderer_version
     assert default_report.page_count == native_report.page_count
     assert len(default_gateway.requests) == len(native_gateway.requests) == 2
     assert set(_image_dimensions(default_gateway.requests[1])) == {(1024, 1024)}
@@ -737,7 +777,26 @@ def test_evaluator_v1_matrix_remains_strictly_loadable(tmp_path: Path) -> None:
     assert json.loads(matrix.to_json()) == original
 
 
-def test_checked_in_evaluator_v3_matrix_is_current_terra_context_evidence() -> None:
+def test_checked_in_evaluator_v3_matrix_never_enables_on_stale_evidence() -> None:
+    """The checked-in evidence may only enable a model for the renderer it was
+    actually measured against.
+
+    TASK-18606 rewrote this from "the matrix IS current" to the safety
+    property that assertion was standing in for. The old form pinned the
+    evidence to one renderer generation, which meant any renderer change --
+    including the one that FIXED a real clipping bug -- turned it red with a
+    bare hash mismatch that read like a rendering regression.
+
+    Two branches, and the strict one reactivates by itself the moment
+    evidence is re-captured:
+
+    * Evidence matches the current renderer -> the full geometry check
+      applies, exactly as before.
+    * Evidence describes a superseded renderer -> it is historical, and the
+      thing that must hold is that NOTHING can be enabled from it.
+      `eligible_models` must be empty and `default_enablement_ready` must be
+      False, so stale evidence can never authorize a default.
+    """
     original = json.loads(SUPPORT_MATRIX_PATH.read_text(encoding="utf-8"))
     corpus = load_visual_evaluation_corpus(CORPUS_PATH)
 
@@ -753,12 +812,22 @@ def test_checked_in_evaluator_v3_matrix_is_current_terra_context_evidence() -> N
     assert matrix.reports[0].visual.input_tokens == 2_909
     assert matrix.reports[0].visual.ocr_fidelity is None
     assert "ocr_fidelity" not in original["reports"][0]["visual"]
-    assert matrix.reports[0].default_enablement_ready is False
-    assert matrix.eligible_models == ()
-    production_geometry = build_visual_renderer_geometry_evidence(corpus)[0]
-    assert production_geometry.renderer_version == matrix.reports[0].renderer_version
-    assert production_geometry.page_hashes == matrix.reports[0].page_hashes
     assert json.loads(matrix.to_json()) == original
+
+    production_geometry = build_visual_renderer_geometry_evidence(corpus)[0]
+    evidence_is_current = (
+        production_geometry.renderer_version == matrix.reports[0].renderer_version
+    )
+    if evidence_is_current:
+        assert production_geometry.page_hashes == matrix.reports[0].page_hashes
+    else:
+        assert matrix.eligible_models == (), (
+            "evidence was captured under renderer "
+            f"{matrix.reports[0].renderer_version!r} but this build renders "
+            f"{production_geometry.renderer_version!r}; a superseded matrix "
+            "must not list eligible models"
+        )
+        assert matrix.reports[0].default_enablement_ready is False
 
 
 def test_new_matrix_preserves_legacy_reports_without_making_them_eligible(
