@@ -34,7 +34,8 @@ def test_get_scheduled_tasks_db_path_returns_path():
 
 
 def test_get_schema_version(db: ScheduledTasksDB) -> None:
-    assert db.get_schema_version() == 1
+    # v2 adds missed_count for missed-fire accounting (task-18937).
+    assert db.get_schema_version() == 2
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:

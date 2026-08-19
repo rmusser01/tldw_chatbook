@@ -93,6 +93,10 @@ class ReminderTask(BaseModel):
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
     missed_at: datetime | None = None
+    #: Occurrences that elapsed undispatched before the last (late) dispatch.
+    #: Client-local accounting only (task-18937): never pushed to the server
+    #: and not expected in server responses.
+    missed_count: int = 0
     link_type: str | None = None
     link_id: str | None = None
     link_url: str | None = None

@@ -6807,6 +6807,17 @@ class TldwCli(
             runtime_source="local",
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
+            # task-18937: reminder mutations must reach the live scheduler
+            # queue on the next tick. The loop itself is constructed further
+            # down, so the callback resolves it lazily -- wiring
+            # `self.scheduler_loop.request_reload` directly here would freeze
+            # `None`/AttributeError in before the loop exists (same getter
+            # discipline as `BriefingJobHandler`'s chachanotes_db_getter).
+            on_queue_changed=lambda: getattr(
+                self, "scheduler_loop", None
+            ).request_reload()
+            if getattr(self, "scheduler_loop", None) is not None
+            else None,
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -6869,6 +6880,9 @@ class TldwCli(
             ),
             briefing_projection=(
                 briefing_projection if briefing_handler is not None else None
+            ),
+            missed_fire_grace_seconds=get_cli_setting(
+                "scheduling", "missed_fire_grace_seconds", 60
             ),
         )
         self.notifications_scope_service = NotificationsScopeService(

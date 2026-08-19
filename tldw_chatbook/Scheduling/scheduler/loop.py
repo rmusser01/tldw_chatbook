@@ -30,6 +30,7 @@ class SchedulerLoop:
         briefing_projection: BriefingProjection | None = None,
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
+        missed_fire_grace_seconds: float = 60.0,
     ) -> None:
         self.db = db
         self.handlers = handlers
@@ -40,13 +41,33 @@ class SchedulerLoop:
         #: one suppresses the startup warning below, so that a retired feature
         #: does not look like a misconfiguration on every launch.
         self.expected_unhandled_types = expected_unhandled_types
+        #: A dispatch more than this many seconds after its scheduled time is
+        #: "late" and records missed-fire state (task-18937). Default 2x the
+        #: default poll interval: a running scheduler lands within one poll.
+        self.missed_fire_grace_seconds = missed_fire_grace_seconds
         self.running = False
         self._tick_count = 0
+        self._reload_requested = False
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
         )
+
+    def request_reload(self) -> None:
+        """Ask the loop to reload the queue before its next tick.
+
+        Without this, a reminder created mid-session sits in the database for
+        up to ``queue_reload_interval_ticks`` polls (~30 minutes at the
+        defaults) before the periodic reload picks it up -- and under
+        task-18937's missed-fire accounting, that delay would be reported as
+        a false "missed while away" the moment the task finally dispatched.
+        The service layer calls this from its mutation paths via
+        ``on_queue_changed``. Thread-safe enough for its caller: setting a
+        bool flag races benignly with the loop reading it (worst case the
+        reload happens one poll later).
+        """
+        self._reload_requested = True
 
     def report_configuration(self) -> None:
         """Log what this scheduler will and will not run, once, at startup.
@@ -115,6 +136,9 @@ class SchedulerLoop:
                 and self._tick_count % self.queue_reload_interval_ticks == 0
             ):
                 await asyncio.to_thread(self.queue.load)
+            if self._reload_requested:
+                self._reload_requested = False
+                await asyncio.to_thread(self.queue.load)
             self._tick_count += 1
             await self.tick()
             await asyncio.sleep(self.poll_interval)
@@ -156,6 +180,7 @@ class SchedulerLoop:
                         task_id,
                         now,
                         False,
+                        grace_seconds=self.missed_fire_grace_seconds,
                     )
                 continue
 
@@ -165,6 +190,7 @@ class SchedulerLoop:
                     task_id,
                     now,
                     True,
+                    grace_seconds=self.missed_fire_grace_seconds,
                 )
 
     def stop(self) -> None:

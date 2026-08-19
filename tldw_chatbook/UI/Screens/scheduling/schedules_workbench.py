@@ -39,6 +39,7 @@ from .task_detail import (
     _format_next_run,
     _task_status,
     _task_type_label,
+    _was_missed_while_away,
     status_badge_text,
 )
 
@@ -254,10 +255,19 @@ class SchedulesWorkbench(BaseAppScreen):
             or text in _task_type_label(task).lower()
             or text in _task_status(task).value.lower().replace("_", " ")
             or text in _task_status(task).value.lower()
+            # task-18937: filtering for "missed" finds late-dispatch rows too,
+            # not just handler-failure ones -- both are honest matches for a
+            # user asking "what went wrong while I wasn't looking".
+            or (
+                _was_missed_while_away(task)
+                and "missed" in text
+            )
         ]
         rows: list[tuple[str, str, Text, str]] = [
             (
-                ("● " if task.id in self._marked_ids else "") + task.title,
+                ("● " if task.id in self._marked_ids else "")
+                + ("◇ " if _was_missed_while_away(task) else "")
+                + task.title,
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 _format_next_run(task),

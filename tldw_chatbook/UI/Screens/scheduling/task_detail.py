@@ -186,6 +186,18 @@ def _task_status(task: ReminderTask | ScheduledTask) -> TaskStatus:
     return task.status
 
 
+def _was_missed_while_away(task: ReminderTask | ScheduledTask) -> bool:
+    """Return True when the task's last dispatch was late (task-18937).
+
+    This is deliberately NOT a ``TaskStatus``: 'missed' as a status means the
+    dispatch ran and the handler raised. A late dispatch is orthogonal to
+    that -- it can complete successfully yet still have been missed-while-
+    away -- so it derives from the recorded missed-fire state instead of
+    overloading the status enum.
+    """
+    return isinstance(task, ReminderTask) and task.missed_at is not None
+
+
 def _task_type_label(task: ReminderTask | ScheduledTask) -> str:
     """Return a readable type label for the task."""
     if isinstance(task, ReminderTask):
@@ -256,6 +268,12 @@ class TaskDetail(Vertical):
     .scheduling-detail-value {
         color: $text;
     }
+
+    .scheduling-detail-missed {
+        color: $warning;
+        margin: 0 0 0 11;
+        height: auto;
+    }
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -308,6 +326,14 @@ class TaskDetail(Vertical):
                     id="scheduling-task-detail-next-run",
                     classes="scheduling-detail-value",
                 ),
+            )
+            # task-18937: "missed while away" is its own state -- distinct from
+            # a failed dispatch (which ran and raised). Hidden unless the last
+            # dispatch was late; plain text, no markup (titles are untrusted).
+            yield Static(
+                "",
+                id="scheduling-task-detail-missed",
+                classes="scheduling-detail-missed",
             )
         yield Horizontal(
             Button(
@@ -418,6 +444,9 @@ class TaskDetail(Vertical):
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
+            missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
+            missed_notice.update("")
+            missed_notice.display = False
             self.query_one("#schedules-follow-in-console", Button).label = (
                 "Follow in Console"
             )
@@ -444,12 +473,50 @@ class TaskDetail(Vertical):
             "scheduling-task-detail-schedule", _task_schedule_label(task)
         )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
+        self._update_missed_notice(task)
 
         status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)
         badge.update(_humanize_status(status))
         badge.remove_class(*_STATUS_BADGE_CLASSES.values())
         badge.add_class(status_badge_class(status))
+
+    def _update_missed_notice(
+        self, task: ReminderTask | ScheduledTask | None
+    ) -> None:
+        """Render the "missed while away" notice for a late last dispatch.
+
+        Distinct from failed: failed means the dispatch ran and the handler
+        raised; missed-while-away means the scheduled time elapsed with the
+        scheduler not running (app closed, or the occurrence predates the
+        task reaching the queue). The notice describes the last dispatch and
+        self-heals: the next on-time dispatch clears it. Plain text, no
+        markup -- titles are untrusted and never interpolated into markup.
+        """
+        notice = self.query_one("#scheduling-task-detail-missed", Static)
+        if not isinstance(task, ReminderTask):
+            notice.update("")
+            notice.display = False
+            return
+        missed_at = getattr(task, "missed_at", None)
+        if missed_at is None:
+            notice.update("")
+            notice.display = False
+            return
+        scheduled = missed_at.strftime("%Y-%m-%d %H:%M")
+        missed_count = int(getattr(task, "missed_count", 0) or 0)
+        if missed_count > 0:
+            copy = (
+                f"Missed while away: ran late for the {scheduled} occurrence; "
+                f"{missed_count} earlier occurrence(s) were skipped, not replayed."
+            )
+        else:
+            copy = (
+                f"Missed while away: the {scheduled} occurrence ran late "
+                "(the scheduler was not running at the scheduled time)."
+            )
+        notice.update(copy)
+        notice.display = True
 
     def set_follow_available(self, available: bool) -> None:
         """Enable or disable the Console-follow button and set its tooltip."""

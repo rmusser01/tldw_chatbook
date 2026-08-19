@@ -9,7 +9,7 @@ server identity (``server:<user_id>``).
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -68,6 +68,7 @@ class SchedulingService:
         runtime_source: str = "local",
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
+        on_queue_changed: Callable[[], None] | None = None,
     ) -> None:
         self.db = db
         self.server_client = server_client or SchedulingServerClient()
@@ -76,6 +77,23 @@ class SchedulingService:
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
         self.sync_engine = SyncEngine(db, self.server_client, self.owner_id)
+        #: Called after any reminder mutation that can change what the
+        #: scheduler should dispatch (create/update/delete, local or
+        #: server-persisted). The app wires this to
+        #: ``SchedulerLoop.request_reload`` so a reminder created mid-session
+        #: reaches the live queue on the next tick instead of waiting for
+        #: the periodic ~30-minute reload (task-18937). Kept optional and
+        #: exception-guarded: a broken callback must never fail the mutation.
+        self.on_queue_changed = on_queue_changed
+
+    def _notify_queue_changed(self) -> None:
+        """Invoke the queue-changed callback, tolerating a broken one."""
+        if self.on_queue_changed is None:
+            return
+        try:
+            self.on_queue_changed()
+        except Exception:  # noqa: BLE001 - callback failure is not the caller's
+            logger.exception("Scheduling on_queue_changed callback failed")
 
     def set_owner(self, owner_id: str) -> None:
         """Switch the active owner and propagate it to the sync engine."""
@@ -126,6 +144,7 @@ class SchedulingService:
                 self.owner_id,
                 {"action": "create", "fields": server_payload},
             )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -218,6 +237,7 @@ class SchedulingService:
                 self.owner_id,
                 {"action": "update", "fields": dict(payload)},
             )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -245,6 +265,7 @@ class SchedulingService:
                 self.db.delete_pending_mutation_for_record(
                     task_id, _REMINDER_PRIMITIVE, self.owner_id
                 )
+                self._notify_queue_changed()
                 return True
             except ServerUnavailableError:
                 logger.warning(
@@ -267,9 +288,13 @@ class SchedulingService:
             self.db.delete_pending_mutation_for_record(
                 task_id, _REMINDER_PRIMITIVE, self.owner_id
             )
+            self._notify_queue_changed()
             return True
 
-        return self.db.delete_reminder_task(task_id)
+        deleted = self.db.delete_reminder_task(task_id)
+        if deleted:
+            self._notify_queue_changed()
+        return deleted
 
     async def sync_now(self, owner_id: str | None = None) -> None:
         """Trigger a full sync for the given owner (defaults to current owner)."""
@@ -364,6 +389,7 @@ class SchedulingService:
         self.db.delete_pending_mutation_for_record(
             task_id, _REMINDER_PRIMITIVE, self.owner_id
         )
+        self._notify_queue_changed()
 
         row = self.db.get_reminder_task(task_id)
         assert row is not None
@@ -399,4 +425,6 @@ class SchedulingService:
         data = dict(row)
         if data.get("last_status") is None:
             data.pop("last_status", None)
+        if data.get("missed_count") is None:
+            data.pop("missed_count", None)
         return ReminderTask(**data)
