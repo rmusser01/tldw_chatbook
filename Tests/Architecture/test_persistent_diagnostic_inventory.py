@@ -516,6 +516,38 @@ def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
     assert failures == []
 
 
+def _commit_available(revision: str) -> bool:
+    """True when a pinned historical commit is fetchable in this checkout.
+
+    TASK-18609: the TASK-15743 archaeology diffs against `fdee8a31f` /
+    `afee9672a`, which lived on a force-pushed review branch that was later
+    deleted -- GitHub no longer serves them (verified: the commits API
+    returns 422 and no ref contains them). Those assertions can therefore
+    only run on a machine that still holds the objects locally. The
+    current-source assertions in the same tests are NOT gated: they police
+    the code that ships.
+    """
+    return (
+        subprocess.run(
+            ["git", "cat-file", "-t", revision],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
+
+
+_TASK_15743_STACKED = "fdee8a31f"
+_TASK_15743_REPAIRED = "afee9672a"
+
+
+def _task_15743_archaeology_available() -> bool:
+    return _commit_available(_TASK_15743_STACKED) and _commit_available(
+        _TASK_15743_REPAIRED
+    )
+
+
 def test_task_15743_final_rebase_diagnostics_are_metadata_only() -> None:
     """TASK-15743: final-base imports keep exactly the reviewed safe shapes."""
     failures: list[str] = []
@@ -740,6 +772,15 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
     assert len(reviewed_safe_rows) == 9
     assert repair_rows.isdisjoint(reviewed_safe_rows)
 
+    if not _task_15743_archaeology_available():
+        pytest.skip(
+            "TASK-15743 pinned commits "
+            f"{_TASK_15743_STACKED}/{_TASK_15743_REPAIRED} are not "
+            "fetchable (the review branch they lived on was force-pushed "
+            "and deleted); the historical delta assertions above run only "
+            "where those objects still exist. The row tables and the "
+            "current-source assertions remain enforced."
+        )
     base = "ec8903c67c557334a5a7bdd9838a6dc137747928"
     stacked = "fdee8a31f"
     repaired = "afee9672a"
@@ -794,6 +835,13 @@ def test_task_15743_reviewed_delta_is_complete() -> None:
 
 def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
     """Exception classes must be rendered before Loguru extras are discarded."""
+    if not _task_15743_archaeology_available():
+        pytest.skip(
+            "TASK-15743 pinned commits "
+            f"{_TASK_15743_STACKED}/{_TASK_15743_REPAIRED} are not "
+            "fetchable (deleted force-pushed review branch); this test's "
+            "delta enumeration can only run where those objects exist."
+        )
     before = "fdee8a31f"
     repaired = "afee9672a"
     changed = subprocess.run(

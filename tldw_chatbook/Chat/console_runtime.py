@@ -1021,7 +1021,12 @@ def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
     try:
         setattr(app, CONSOLE_RUNTIME_ATTR, runtime)
     except Exception:  # noqa: BLE001 - a read-only app double is not an error
-        logger.opt(exception=True).warning(
+        # Metadata-only by design (TASK-15743 audit table): no
+        # opt(exception=True) here -- the except is an expected read-only
+        # app double, and the attribute name plus consequence is the whole
+        # diagnosis. `test_task_15743_final_rebase_diagnostics_are_metadata_
+        # only` pins this shape.
+        logger.warning(
             "Console runtime: could not write the app's %s attribute; the "
             "runtime stays detached and future Console visits will each "
             "build their own.",

@@ -1817,7 +1817,7 @@ def test_child_descriptor_errors_become_one_safe_nested_failure(
             raise OSError(private_error)
         real_close(descriptor)
 
-    def injected_scandir(descriptor: int) -> os.ScandirIterator[str]:
+    def injected_scandir(descriptor: int) -> "os.ScandirIterator[str]":
         if operation == "scandir" and descriptor in child_descriptors:
             raise OSError(private_error)
         return real_scandir(descriptor)
@@ -1938,7 +1938,7 @@ def test_unexpected_discovery_errors_close_every_owned_descriptor(
         real_close(descriptor)
         closed.append(descriptor)
 
-    def injected_scandir(descriptor: int) -> os.ScandirIterator[str]:
+    def injected_scandir(descriptor: int) -> "os.ScandirIterator[str]":
         if boundary == "root_scan" and descriptor in project_fds:
             raise error_type("unexpected discovery failure")
         return real_scandir(descriptor)

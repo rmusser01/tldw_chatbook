@@ -70,6 +70,31 @@ def default_runtime_policy_path() -> Path:
         return DEFAULT_RUNTIME_POLICY_PATH
 
 
+def load_default_runtime_source_state() -> RuntimeSourceState:
+    """Load the default profile's runtime source state, as the owner module.
+
+    TASK-18609: two non-owner call sites (console_chat_controller,
+    MCP/local_server_tools -- both added with the watchlists local-tool
+    exposure) had begun constructing ``RuntimeSourceStateStore`` directly,
+    which the runtime-policy ownership boundary
+    (``test_runtime_source_state_store_references_are_confined_to_owner_
+    modules``) forbids: outside this package the store is an implementation
+    detail, and each new direct construction is a second place that must
+    learn how application-owned directories are resolved. This loader is
+    the sanctioned read path -- same construction rules as the app boot
+    path in ``_prepare_runtime_policy_context`` (default path +
+    application-owned directory), minus the config synchronization, which
+    only the boot path may perform.
+
+    Returns:
+        The loaded ``RuntimeSourceState`` for the active profile.
+    """
+    return RuntimeSourceStateStore(
+        lexical_path(default_runtime_policy_path()),
+        application_owned_config_directory(get_cli_config_path()),
+    ).load()
+
+
 _VALID_RUNTIME_SOURCES = {"local", "server"}
 
 
