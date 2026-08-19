@@ -29,7 +29,7 @@ inventories.
 - [ ] #3 TTS 8 (ubuntu): 4 `test_tts_request_admission` (publication timing — saved model_id stays Old), 1 migration atomic-move message, 1 audio_cpp guided_text flag, 1 app-lifecycle drain, 1 profile repository (macOS-only concurrency).
 - [ ] #4 Wizards 1: `test_mounted_model_owner_timeout_fences_late_result` — retry button stays `hidden` after timeout.
 - [ ] #5 git-integration 2: unborn-HEAD discovery returns `repository=None` where a branch is expected.
-- [ ] #6 Local-only stragglers (not in CI's inventory; fail on dev worktree macOS): `test_console_wave6_inventory_matches_the_implementation_base`, `test_screen_size_ratchet` chat_screen leg.
+- [ ] #6 Local-only stragglers (not in CI's inventory; fail on a clean dev worktree macOS): `chat_screen.py` is 21,253 lines against TASK10's 20,943-line ratchet ceiling -- a real 310-line growth since the ceiling was last set (the ratchet did its job; the ceiling needs an owner decision: extract or re-baseline). Same file trips `test_console_wave6_inventory` (`assert 21253 <= 20943`). These two were failing before the sharding fix too -- they were among the failures the cancelled runs hid.
 <!-- AC:END -->
 
 ## Notes
