@@ -3116,7 +3116,7 @@ class ChatScreen(BaseAppScreen):
             if self._console_setup_modal_blocking()
             else CONSOLE_WORKBENCH_SHORTCUTS
         )
-        # task-16320 / ADR-031: advertise the focus toggle in the footer —
+        # task-18812 / ADR-031: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness
         # rule. PREPENDED, not appended: AppFooterStatus's degradation drops
@@ -3133,7 +3133,7 @@ class ChatScreen(BaseAppScreen):
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
     def _apply_focus_chrome(self) -> None:
-        """Mirror the app-level focus_mode flag onto this screen (task-16320).
+        """Mirror the app-level focus_mode flag onto this screen (task-18812).
 
         Idempotent: sets/removes the ``-focus`` class that suppresses the
         nav bar and workbench header (CSS: _agentic_terminal.tcss), and

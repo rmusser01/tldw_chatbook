@@ -2,8 +2,8 @@
 
 Date: 2026-08-16
 Status: Proposed (brainstorm-approved direction; revised after owner + self review)
-Related Task: [TASK-16320](../../../backlog/tasks/task-16320%20-%20Focus-mode-chrome-free-Console-presentation.md)
-Related ADR: [ADR-067](../../../backlog/decisions/067-focus-mode-chrome-free-console.md)
+Related Task: [TASK-18812](../../../backlog/tasks/task-18812%20-%20Focus-mode-chrome-free-Console-presentation.md)
+Related ADR: [ADR-071](../../../backlog/decisions/071-focus-mode-chrome-free-console.md)
 
 ## Problem
 
@@ -200,7 +200,7 @@ unit tests:
 ## ADR check
 
 ADR required: yes — long-lived UX/application structure decision.
-ADR path: `backlog/decisions/067-focus-mode-chrome-free-console.md`
+ADR path: `backlog/decisions/071-focus-mode-chrome-free-console.md`
 Reason: introduces a new presentation mode with policy (suppression vs
 non-composition, single-exit-rule semantics, retained status line) that
 amends how ADR-014's per-screen chrome is presented, and records why

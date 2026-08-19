@@ -1,5 +1,5 @@
 ---
-id: TASK-16320
+id: TASK-18812
 title: 'Focus mode: chrome-free Console presentation'
 status: Done
 assignee: []
@@ -31,9 +31,9 @@ Add a 'focus mode' that presents only the Console content — message stream, co
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Design approved + reviewed (2026-08-16). Spec: Docs/superpowers/specs/2026-08-16-focus-mode-design.md — ADR: backlog/decisions/067-focus-mode-chrome-free-console.md — Implementation plan: Docs/superpowers/plans/2026-08-16-focus-mode.md (7 TDD tasks). Ready to execute.
+Design approved + reviewed (2026-08-16). Spec: Docs/superpowers/specs/2026-08-16-focus-mode-design.md — ADR: backlog/decisions/071-focus-mode-chrome-free-console.md — Implementation plan: Docs/superpowers/plans/2026-08-16-focus-mode.md (7 TDD tasks). Ready to execute.
 
-Implemented 2026-08-19 via the 7-task TDD plan (commits 5e23bfd5e, d9f595b79, 902034514, 365e78346, 252665ebe, a7ebecb99, plus this closeout). ADR-067 governs; no new ADR needed.
+Implemented 2026-08-19 via the 7-task TDD plan (commits 5e23bfd5e, d9f595b79, 902034514, 365e78346, 252665ebe, a7ebecb99, plus this closeout). ADR-071 governs; no new ADR needed.
 
 **Approach:** App-level `focus_mode` flag on `TldwCli` set at startup from `[general] focus_mode` config and/or the `--focus` CLI flag (flag wins; first-run onboarding beats both); `_resolve_initial_shell_route` forces the Console route when focus is requested. The Console screen mirrors the flag onto a `-focus` CSS class (`ChatScreen.-focus MainNavigationBar` / `ChatScreen.-focus #console-workbench-header { display: none }` — display:none only, ADR-042) via idempotent `_apply_focus_chrome()`, called at mount and on toggle; the one-line `#screen-footer-status` is intentionally kept. `Ctrl+Shift+F` is an app-level binding (show=False) driving `action_toggle_focus_mode` → `_set_focus_mode`, which duck-types the content screen (no ChatScreen import in app.py — avoids the circular import the screen registry exists to prevent) and navigates to the Console when enabled elsewhere. Single exit rule: `_clear_focus_if_leaving_console` in `_handle_screen_navigation_locked` drops the flag on any non-chat navigation. The footer registration always carries a `("Ctrl+Shift+F", "focus"|"exit focus")` pair (label names the action the key performs — truthfulness, ADR-031), and the palette gains "Quick Actions: Toggle Focus Mode".
 

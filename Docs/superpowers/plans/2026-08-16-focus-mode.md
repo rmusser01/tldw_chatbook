@@ -8,7 +8,7 @@
 
 **Tech Stack:** Textual 8.x (Python ≥3.11); pytest with the `ConsolidatedCSSApp` UI harness.
 
-**Spec:** `Docs/superpowers/specs/2026-08-16-focus-mode-design.md` — the plan argues from the spec; read both. ADR: `backlog/decisions/067-focus-mode-chrome-free-console.md`. Backlog task: `task-16320`.
+**Spec:** `Docs/superpowers/specs/2026-08-16-focus-mode-design.md` — the plan argues from the spec; read both. ADR: `backlog/decisions/071-focus-mode-chrome-free-console.md`. Backlog task: `task-18812`.
 
 ## Global Constraints
 
@@ -40,7 +40,7 @@
 Create `Tests/UI/test_focus_mode.py`:
 
 ```python
-"""Focus mode (task-16320, ADR-067) — config, CLI, and behavior tests."""
+"""Focus mode (task-18812, ADR-071) — config, CLI, and behavior tests."""
 
 import io
 from types import SimpleNamespace
@@ -134,7 +134,7 @@ In `TldwCli.__init__`, extend the initial-tab block at `app.py:5605-5612`:
         self._initial_tab_value = self._normalize_initial_tab_from_config(
             initial_tab_from_config
         )
-        # --- Focus mode (task-16320) ---
+        # --- Focus mode (task-18812) ---
         self.focus_mode = False
         self._focus_mode_config = bool(
             get_cli_setting("general", "focus_mode", False)
@@ -257,7 +257,7 @@ Expected: FAIL — focus stubs resolve to `"notes"`, `focus_mode` stays `False`.
 In `_resolve_initial_shell_route` (`app.py:8206`), insert between the wizard `except` block and the final `return`:
 
 ```python
-        # task-16320: focus mode is Console-only by definition, so a focus
+        # task-18812: focus mode is Console-only by definition, so a focus
         # request forces the route — but the first-run/wizard branches ABOVE
         # keep onboarding unbeatable (spec: first-run wins).
         if getattr(self, "_cli_focus_override", False) or getattr(
@@ -333,7 +333,7 @@ class TestFocusChromeSuppression:
             assert screen.query_one(MainNavigationBar).display is False
             header = screen.query_one("#console-workbench-header")
             assert header.display is False
-            # One-line status bar is KEPT (owner decision, ADR-067).
+            # One-line status bar is KEPT (owner decision, ADR-071).
             footer = screen.query_one("#screen-footer-status", AppFooterStatus)
             assert footer.display is not False
 
@@ -377,7 +377,7 @@ Expected: FAIL — `has_class("-focus")` is False / no `_apply_focus_chrome`.
 a) In `tldw_chatbook/css/components/_agentic_terminal.tcss`, immediately after the `#console-shell.-console-compact #console-workbench-header` rule (line ~4895-4902), add:
 
 ```css
-/* task-16320 / ADR-067: focus mode. The -focus class lives on the
+/* task-18812 / ADR-071: focus mode. The -focus class lives on the
    ChatScreen itself (MainNavigationBar is composed by BaseAppScreen as a
    sibling of #console-shell, so #console-shell-rooted selectors cannot
    reach it). display:none only — no raw visual values (ADR-042). The
@@ -404,7 +404,7 @@ c) In `chat_screen.py`, add the method next to `_register_console_footer_shortcu
 
 ```python
     def _apply_focus_chrome(self) -> None:
-        """Mirror the app-level focus_mode flag onto this screen (task-16320).
+        """Mirror the app-level focus_mode flag onto this screen (task-18812).
 
         Idempotent: sets/removes the ``-focus`` class that suppresses the
         nav bar and workbench header (CSS: _agentic_terminal.tcss), and
@@ -483,7 +483,7 @@ In `_register_console_footer_shortcuts` (`chat_screen.py:3095-3100`), replace th
             if self._console_setup_modal_blocking()
             else CONSOLE_WORKBENCH_SHORTCUTS
         )
-        # task-16320 / ADR-031: advertise the focus toggle in the footer —
+        # task-18812 / ADR-031: advertise the focus toggle in the footer —
         # the only exit affordance visible in focus mode (no nav bar). The
         # label names the action the key will perform, per the truthfulness
         # rule.
@@ -624,7 +624,7 @@ b) After `_resolve_initial_shell_route` (ends `app.py:8205`), add:
     def _set_focus_mode(self, enabled: bool) -> None:
         """Set focus mode and apply it to the Console if it is on screen.
 
-        task-16320 / ADR-067. Duck-types the content screen (it may or may
+        task-18812 / ADR-071. Duck-types the content screen (it may or may
         not be the Console — do NOT import ChatScreen here; the screen
         registry keeps app.py free of screen imports for circular-import
         reasons). Enabling while elsewhere navigates to the Console first;
@@ -644,7 +644,7 @@ b) After `_resolve_initial_shell_route` (ends `app.py:8205`), add:
         self._set_focus_mode(not self.focus_mode)
 
     def _clear_focus_if_leaving_console(self, screen_name: str) -> None:
-        """Single exit rule (ADR-067): focus mode is Console-only — any
+        """Single exit rule (ADR-071): focus mode is Console-only — any
         navigation to another route restores normal chrome on arrival."""
         if screen_name != TAB_CHAT:
             self.focus_mode = False
@@ -746,7 +746,7 @@ git commit -m "feat(console): add Toggle Focus Mode quick action to command pale
 
 **Files:**
 - Modify: `Docs/User_Guide/console.md` (new "Focus mode" subsection)
-- Modify: `backlog/tasks/task-16320 - Focus-mode-chrome-free-Console-presentation.md` (ACs → checked, Implementation Notes)
+- Modify: `backlog/tasks/task-18812 - Focus-mode-chrome-free-Console-presentation.md` (ACs → checked, Implementation Notes)
 - Test: no new tests; verification runs.
 
 **Interfaces:**
@@ -788,7 +788,7 @@ Expected: all PASS. If contract tests reference the console footer registration 
 
 - [ ] **Step 3: Update the backlog task**
 
-In `task-16320`'s file: check all six ACs (`- [x]`), and append to Implementation Notes: approach summary, the files touched (`config.py`, `app.py`, `chat_screen.py`, `css/components/_agentic_terminal.tcss` + regenerated bundle, `Tests/UI/test_focus_mode.py`, `Docs/User_Guide/console.md`), and the deviations from plan (if any). Link ADR-067 (already linked in notes).
+In `task-18812`'s file: check all six ACs (`- [x]`), and append to Implementation Notes: approach summary, the files touched (`config.py`, `app.py`, `chat_screen.py`, `css/components/_agentic_terminal.tcss` + regenerated bundle, `Tests/UI/test_focus_mode.py`, `Docs/User_Guide/console.md`), and the deviations from plan (if any). Link ADR-071 (already linked in notes).
 
 ```bash
 backlog task edit 16320 --notes "..."   # append the closeout summary
@@ -798,8 +798,8 @@ backlog task edit 16320 -s Done          # only after review approval
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Docs/User_Guide/console.md "backlog/tasks/task-16320 - Focus-mode-chrome-free-Console-presentation.md"
-git commit -m "docs(console): document focus mode; close task-16320"
+git add Docs/User_Guide/console.md "backlog/tasks/task-18812 - Focus-mode-chrome-free-Console-presentation.md"
+git commit -m "docs(console): document focus mode; close task-18812"
 ```
 
 ---

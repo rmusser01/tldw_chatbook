@@ -1178,7 +1178,7 @@ class LLMProviderProvider(Provider):
         return "Unknown"
 
 
-#: task-16320 / ADR-067: the command-palette entry for the Console focus
+#: task-18812 / ADR-071: the command-palette entry for the Console focus
 #: toggle -- one tuple reused by both QuickActionsProvider lists so the
 #: command text, action id, and help string cannot drift apart.
 FOCUS_TOGGLE_PALETTE_ENTRY = (
@@ -5632,7 +5632,7 @@ class TldwCli(
         )
         # current_tab reactive will be set in on_mount after UI is composed
 
-        # --- Focus mode (task-16320) ---
+        # --- Focus mode (task-18812) ---
         self.focus_mode = False
         self._focus_mode_config = bool(
             get_cli_setting("general", "focus_mode", False)
@@ -8217,7 +8217,7 @@ class TldwCli(
         decision the wizard offer uses: if the wizard is about to be
         offered, land on Home beneath it.
         """
-        # task-16320: record the focus request BEFORE the onboarding branches
+        # task-18812: record the focus request BEFORE the onboarding branches
         # return Home — a first-run launch defers it (the wizard navigates to
         # the Console on completion, and _handle_first_run_wizard_result then
         # restores the request) instead of silently discarding it. Any
@@ -8243,7 +8243,7 @@ class TldwCli(
                 return TAB_HOME
         except Exception:
             logger.debug("Wizard startup route check failed (category=runtime)")
-        # task-16320: focus mode is Console-only by definition, so a focus
+        # task-18812: focus mode is Console-only by definition, so a focus
         # request forces the route — onboarding branches ABOVE still win
         # (spec: first-run wins).
         if _focus_requested:
@@ -8254,7 +8254,7 @@ class TldwCli(
     def _set_focus_mode(self, enabled: bool) -> None:
         """Set focus mode and apply it to the Console if it is on screen.
 
-        task-16320 / ADR-067. Duck-types the content screen (it may or may
+        task-18812 / ADR-071. Duck-types the content screen (it may or may
         not be the Console — do NOT import ChatScreen here; the screen
         registry keeps app.py free of screen imports for circular-import
         reasons). Enabling while elsewhere navigates to the Console first;
@@ -8274,7 +8274,7 @@ class TldwCli(
         self._set_focus_mode(not self.focus_mode)
 
     def _clear_focus_if_leaving_console(self, screen_name: str) -> None:
-        """Single exit rule (ADR-067): focus mode is Console-only — any
+        """Single exit rule (ADR-071): focus mode is Console-only — any
         navigation to another route restores normal chrome on arrival."""
         if screen_name != TAB_CHAT:
             self.focus_mode = False
@@ -8952,7 +8952,7 @@ class TldwCli(
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
 
-            # task-16320: the exit rule runs only once the switch has
+            # task-18812: the exit rule runs only once the switch has
             # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
             # failures above all `return` with the Console still resident, so
             # clearing earlier would desync the app flag from the mounted
@@ -10556,7 +10556,7 @@ class TldwCli(
         if type(exit_route) is not str:
             return
 
-        # task-16320: consume a deferred focus request from a first-run
+        # task-18812: consume a deferred focus request from a first-run
         # launch (--focus / focus_mode config) at the moment the wizard
         # finishes, BEFORE payload validation -- the request's fate must
         # not depend on how valid the wizard's result dict is. Focus is

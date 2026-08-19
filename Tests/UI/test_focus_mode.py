@@ -1,4 +1,4 @@
-"""Focus mode (task-16320, ADR-067) — config, CLI, and behavior tests."""
+"""Focus mode (task-18812, ADR-071) — config, CLI, and behavior tests."""
 
 import io
 from types import SimpleNamespace
@@ -162,7 +162,7 @@ class TestFocusChromeSuppression:
             assert screen.query_one(MainNavigationBar).display is False
             header = screen.query_one("#console-workbench-header")
             assert header.display is False
-            # One-line status bar is KEPT (owner decision, ADR-067).
+            # One-line status bar is KEPT (owner decision, ADR-071).
             footer = screen.query_one("#screen-footer-status", AppFooterStatus)
             assert footer.display is not False
 

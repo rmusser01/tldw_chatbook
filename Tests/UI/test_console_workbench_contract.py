@@ -1550,7 +1550,7 @@ async def test_console_registers_footer_workbench_shortcuts():
             # task-15512: "/ queue" was added by 14cc326e4 (visible prompt
             # queue); the shortcut genuinely does both now.
             # task-5 (trajectory view): "Y trajectory" launches the ledger.
-            # task-16320 (focus mode): the registration always carries the
+            # task-18812 (focus mode): the registration always carries the
             # Ctrl+Shift+F toggle pair PREPENDED — AppFooterStatus drops
             # trailing hints first when width runs out, and the focus
             # toggle is the only exit affordance visible in focus mode.
