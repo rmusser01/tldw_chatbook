@@ -12347,6 +12347,38 @@ def _is_source_tree(package_root: Path) -> bool:
 _BUNDLED_CSS_DECLARATION_RE = re.compile(r"^\s*BUNDLED_(?:SCREEN_)?CSS\s*[:=]", re.M)
 
 
+def _load_css_build_manifest(css_dir: Path) -> dict[str, list] | None:
+    """Load the builder's content manifest, or ``None`` when absent/invalid.
+
+    The manifest is written by ``build_css.write_build_manifest`` beside the
+    generated sheets; see TASK-18910. Each entry is ``[sha256, mtime_at_build]``.
+    Any read/parse/shape problem returns ``None`` so the caller falls back to
+    the legacy mtime rule -- a broken manifest costs one spurious rebuild,
+    never a missed one.
+    """
+    try:
+        import json
+
+        with open(css_dir / build_css.BUILD_MANIFEST_FILENAME, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    manifest: dict[str, list] = {}
+    for key, value in data.items():
+        if (
+            not isinstance(key, str)
+            or not isinstance(value, list)
+            or len(value) != 2
+            or not isinstance(value[0], str)
+            or not isinstance(value[1], (int, float))
+        ):
+            return None  # unknown shape: treat as absent
+        manifest[key] = value
+    return manifest
+
+
 def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     """Return whether the generated stylesheets need rebuilding, and why.
 
@@ -12400,6 +12432,83 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     # its sources is enough to require a rebuild.
     oldest = min(path.stat().st_mtime for path in generated)
 
+    # TASK-18910: when the builder's content manifest is present it is
+    # AUTHORITATIVE. Each recorded input is mtime-compared first and hashed
+    # only when its mtime moved past the recorded build time -- which both
+    # removes the false positives (branch switch / ``git checkout`` / stash
+    # pop rewrite mtimes without changing content; each cost a ~0.7 s
+    # synchronous rebuild) and closes a masking gap the pure-mtime rule had:
+    # a pull that brings regenerated sheets (new sheet mtimes) together with
+    # a source edit made without a local rebuild never fired, because the
+    # edited source was no longer "newer than the build". A content edit
+    # ALWAYS moves mtime, so mtime-first loses no correctness; the hash only
+    # arbitrates the moved-but-maybe-unchanged case. No manifest (first boot
+    # after the change, or a wheel install) keeps the legacy mtime rule; the
+    # manifest self-heals on the next rebuild.
+    manifest = _load_css_build_manifest(css_dir)
+    if manifest is not None:
+        import hashlib
+
+        def _sha256(path: Path) -> str | None:
+            digest = hashlib.sha256()
+            try:
+                with open(path, "rb") as handle:
+                    for chunk in iter(lambda: handle.read(65536), b""):
+                        digest.update(chunk)
+            except OSError:
+                return None
+            return digest.hexdigest()
+
+        # A "newer than the build" reference for the declaration scan below:
+        # the newest mtime recorded in the manifest (any input mtime past it
+        # is one the build never saw, whether or not it is in the manifest).
+        newest_recorded = max(entry[1] for entry in manifest.values())
+
+        seen = set()
+        for key, entry in sorted(manifest.items()):
+            recorded_hash, recorded_mtime = entry[0], entry[1]
+            source = package_root / key
+            try:
+                source_mtime = source.stat().st_mtime
+            except OSError:
+                # Deleted input: the sheets still carry its rules, so a
+                # rebuild is required (the pre-manifest code could not see
+                # deletions at all -- see its "Known gap" note).
+                return True, f"{key} (recorded in the build manifest) was deleted"
+            seen.add(key)
+            if source_mtime <= recorded_mtime:
+                continue  # unchanged since the build; skip hashing
+            if _sha256(source) != recorded_hash:
+                return True, f"{key} changed since the build"
+
+        # A module that has GAINED a BUNDLED_CSS declaration since the build
+        # is not in the manifest; catch it by scanning declarations in any
+        # .py newer than the newest recorded build input.
+        skip = {"__pycache__", *widget_css.EXCLUDED_DIRS}
+        for dirpath, dirnames, filenames in os.walk(package_root):
+            dirnames[:] = [name for name in dirnames if name not in skip]
+            for filename in filenames:
+                if not filename.endswith(".py"):
+                    continue
+                source = os.path.join(dirpath, filename)
+                key = Path(source).relative_to(package_root).as_posix()
+                if key in seen:
+                    continue  # already verified above
+                try:
+                    if os.stat(source).st_mtime <= newest_recorded:
+                        continue
+                    with open(source, "r", encoding="utf-8", errors="ignore") as handle:
+                        text = handle.read()
+                except OSError:
+                    continue
+                if _BUNDLED_CSS_DECLARATION_RE.search(text):
+                    return (
+                        True,
+                        f"{filename} gained a BUNDLED_CSS declaration since the build",
+                    )
+        return False, ""
+
+    # Legacy path (no manifest): the pre-TASK-18910 mtime rule, unchanged.
     for subdir in ("core", "layout", "components", "features", "utilities"):
         subdir_path = css_dir / subdir
         if not subdir_path.is_dir():

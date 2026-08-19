@@ -14,6 +14,8 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
   Textual used to add (with a full cold reparse) on a modal's first open.
 """
 
+import hashlib
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +51,58 @@ WIDGET_DEFAULTS_SCOPED_FILENAME = "widget_defaults_scoped.tcss"
 #: block's text at all.
 SCREEN_CSS_SCOPED_FILENAME = "screen_css_scoped.tcss"
 SCREEN_CSS_SELF_FILENAME = "screen_css_self.tcss"
+
+#: Content manifest for the generated sheets (TASK-18910). The boot-time
+#: staleness check used to treat ANY input whose mtime moved past the build
+#: as stale, so a branch switch / ``git checkout`` / stash pop -- which
+#: rewrite mtimes without changing content -- cost a full synchronous
+#: rebuild (~0.7 s: interpreter spawn + package AST scan) on the next boot.
+#: The builder now records the sha256 of every input; the check treats an
+#: mtime move as a hint to hash-check, and identical content is not stale.
+#: Untracked by git on purpose: it describes the local build, not the repo.
+BUILD_MANIFEST_FILENAME = ".css-build-manifest.json"
+
+
+def _file_sha256(path: Path) -> str:
+    """Return the hex sha256 of a file's bytes (streamed)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_build_manifest(css_dir: Path) -> None:
+    """Record the content hash of every build input beside the sheets.
+
+    Inputs are the ``CSS_MODULES`` plus every Python module carrying a
+    ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS`` declaration (the same set
+    ``iter_blocks`` walks). Keys are package-root-relative POSIX paths so the
+    manifest stays valid across absolute checkout paths.
+
+    Each entry records ``[sha256, mtime_at_build]``: the staleness check
+    compares mtimes first and hashes only entries whose mtime moved, so the
+    steady state (nothing edited) reads the manifest and stats the inputs
+    without hashing anything.
+    """
+    package_root = css_dir.parent
+    entries: dict[str, list] = {}
+    for module in CSS_MODULES:
+        source = css_dir / module
+        if source.is_file():
+            stat = source.stat()
+            entries[f"css/{module}"] = [_file_sha256(source), stat.st_mtime]
+    for attr in (widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR):
+        for block in widget_css.iter_blocks(package_root, attr):
+            key = block.module
+            if key not in entries:
+                source = package_root / key
+                entries[key] = [_file_sha256(source), source.stat().st_mtime]
+    manifest_path = css_dir / BUILD_MANIFEST_FILENAME
+    manifest_path.write_text(
+        json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
 
 #: Tie-breaker for the scoped widget-defaults source.  Textual's own default-CSS
 #: sources sit at ``-(MRO depth)``, so any value below that floor makes the
@@ -373,6 +427,7 @@ def main():
         css_dir / SCREEN_CSS_SELF_FILENAME,
         css_dir / SCREEN_CSS_SCOPED_FILENAME,
     )
+    write_build_manifest(css_dir)
 
     print("\nTo use the modular CSS:")
     print("1. Update app.py to use 'tldw_cli_modular.tcss'")
