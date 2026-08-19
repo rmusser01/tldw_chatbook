@@ -19790,8 +19790,16 @@ class ChatScreen(BaseAppScreen):
             # Audit BEFORE the dispatch: the queue may block behind an active
             # run, and the record is about what the user said, not about when
             # the send drained.
-            self._record_console_feedback_event(
-                action, quote, comment, anchor_message_id
+            # OFF-THREAD for the same reason the notes flow's writes are:
+            # `run_worker(coroutine)` runs on the event loop, so these two
+            # SQLite writes were blocking the UI, and a contended writer
+            # waits out the connection's 15s busy timeout.
+            await asyncio.to_thread(
+                self._record_console_feedback_event,
+                action,
+                quote,
+                comment,
+                anchor_message_id,
             )
             await self._prompt_queue.dispatch("\n".join(lines))
         finally:
@@ -19882,7 +19890,9 @@ class ChatScreen(BaseAppScreen):
                 return
             try:
                 rows = await asyncio.to_thread(
-                    database.get_transcript_annotations, conversation_id
+                    database.get_transcript_annotations,
+                    conversation_id,
+                    str(persisted_message_id),
                 )
             except Exception:
                 logger.warning(
@@ -19891,6 +19901,8 @@ class ChatScreen(BaseAppScreen):
                 )
                 self.notify("Could not load review notes.", severity="warning")
                 return
+            # The query already filtered by anchor; this keeps the flow
+            # correct if a caller ever passes unfiltered rows.
             matching = [
                 row
                 for row in rows
@@ -19901,37 +19913,103 @@ class ChatScreen(BaseAppScreen):
                 return
             rows_by_id = {str(row["annotation_id"]): row for row in matching}
 
-            def _on_edit(annotation_id: str, new_comment: str) -> bool:
+            def _conversation_still_current() -> bool:
+                """Guard the write against a conversation switch mid-modal.
+
+                The flow captured ``conversation_id`` when it opened; a
+                background switch while the modal is up would otherwise
+                write into a conversation the user has left.
+                """
+                live = getattr(store, "_sessions", {}).get(store.active_session_id)
+                return str(getattr(live, "persisted_conversation_id", "") or "") == (
+                    conversation_id
+                )
+
+            def _edit_blocking(annotation_id: str, new_comment: str) -> bool:
+                """Runs on a worker thread (see ``_on_edit``)."""
                 row = rows_by_id.get(annotation_id)
                 if row is None:
                     return False
-                try:
-                    database.upsert_transcript_annotation(
-                        conversation_id=conversation_id,
-                        row_key=row["row_key"],
-                        message_id=row["message_id"],
-                        quote_text=row["quote_text"],
-                        comment=new_comment,
-                        annotation_id=annotation_id,
+                # Lost-update guard without a schema change: the row's
+                # updated_at is the version we loaded. If someone else wrote
+                # in the meantime, refuse rather than clobber silently.
+                current = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
                     )
-                    return True
+                }.get(annotation_id)
+                if current is None or str(current.get("updated_at")) != str(
+                    row.get("updated_at")
+                ):
+                    return False
+                database.upsert_transcript_annotation(
+                    conversation_id=conversation_id,
+                    row_key=row["row_key"],
+                    message_id=row["message_id"],
+                    quote_text=row["quote_text"],
+                    comment=new_comment,
+                    annotation_id=annotation_id,
+                )
+                # Keep the snapshot's version current so a second edit in the
+                # same modal session is not mistaken for a conflict.
+                refreshed = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
+                    )
+                }.get(annotation_id)
+                if refreshed is not None:
+                    rows_by_id[annotation_id] = refreshed
+                return True
+
+            async def _on_edit(annotation_id: str, new_comment: str) -> bool:
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not edited.",
+                        severity="warning",
+                    )
+                    return False
+                try:
+                    # OFF-THREAD: a SQLite write on the UI event loop waits out
+                    # the connection's 15s busy timeout under contention, with
+                    # the interface frozen.
+                    ok = await asyncio.to_thread(
+                        _edit_blocking, annotation_id, new_comment
+                    )
                 except Exception:
                     logger.warning(
                         f"Console review notes: edit failed for {annotation_id!r}",
                         exc_info=True,
                     )
+                    self.notify("Could not save the note.", severity="warning")
                     return False
+                if not ok:
+                    self.notify(
+                        "That note changed elsewhere; reopen it to edit.",
+                        severity="warning",
+                    )
+                return ok
 
-            def _on_delete(annotation_id: str) -> bool:
+            async def _on_delete(annotation_id: str) -> bool:
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not deleted.",
+                        severity="warning",
+                    )
+                    return False
                 try:
                     return bool(
-                        database.soft_delete_transcript_annotation(annotation_id)
+                        await asyncio.to_thread(
+                            database.soft_delete_transcript_annotation, annotation_id
+                        )
                     )
                 except Exception:
                     logger.warning(
                         f"Console review notes: delete failed for {annotation_id!r}",
                         exc_info=True,
                     )
+                    self.notify("Could not delete the note.", severity="warning")
                     return False
 
             changed = await self.app.push_screen_wait(

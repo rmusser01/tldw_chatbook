@@ -53,7 +53,9 @@ class _RecordingEdit:
         self.calls: list[tuple[str, str]] = []
         self._result = result
 
-    def __call__(self, annotation_id: str, new_comment: str) -> bool:
+    async def __call__(self, annotation_id: str, new_comment: str) -> bool:
+        # Async because the real callables run their SQLite write off the UI
+        # event loop (the modal awaits them).
         self.calls.append((annotation_id, new_comment))
         return self._result
 
@@ -63,7 +65,7 @@ class _RecordingDelete:
         self.calls: list[str] = []
         self._result = result
 
-    def __call__(self, annotation_id: str) -> bool:
+    async def __call__(self, annotation_id: str) -> bool:
         self.calls.append(annotation_id)
         return self._result
 

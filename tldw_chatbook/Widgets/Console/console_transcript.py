@@ -800,6 +800,11 @@ def _message_body_render_text(
     return Content.assemble(*body_segments)
 
 
+#: How many notes the inline marker lists before collapsing to "+N more".
+#: The marker has no scroll of its own; the notes modal shows them all.
+_MARKER_NOTE_PREVIEW_LIMIT = 3
+
+
 def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     """One marker row's content: a dim header plus each note, first line only.
 
@@ -809,11 +814,17 @@ def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     """
     header = "Review note" if len(notes) == 1 else f"Review notes ({len(notes)})"
     segments: list = [(f"✎ {header}", "dim")]
-    for note in notes:
+    # Cap the listed notes: the marker is an inline transcript row with no
+    # scroll of its own (the modal has one), so an unbounded list would push
+    # the conversation off screen on a heavily-annotated message.
+    for note in notes[:_MARKER_NOTE_PREVIEW_LIMIT]:
         first_line = note.splitlines()[0] if note else ""
         if len(first_line) > 200:
             first_line = first_line[:199] + "…"
         segments.extend(("\n", first_line))
+    hidden = len(notes) - _MARKER_NOTE_PREVIEW_LIMIT
+    if hidden > 0:
+        segments.extend(("\n", (f"+{hidden} more", "dim")))
     return Content.assemble(*segments)
 
 

@@ -292,16 +292,17 @@ async def test_n_without_notes_toasts_and_requests_nothing():
 def _stub_review_notes_modal(screen, resolver):
     """Replace ``app.push_screen_wait`` and capture every pushed modal.
 
-    ``resolver(modal)`` runs synchronously with the REAL
-    ``ConsoleReviewNotesModal`` the flow built (its ``on_edit``/``on_delete``
-    are the flow's real closures, bound to the real DB) and returns the
-    dismiss result the flow should see.
+    ``resolver(modal)`` is AWAITED with the REAL ``ConsoleReviewNotesModal``
+    the flow built (its ``on_edit``/``on_delete`` are the flow's real
+    closures, bound to the real DB) and returns the dismiss result the flow
+    should see. The callables are async since the DB writes moved off the UI
+    event loop, so resolvers are coroutines.
     """
     pushed: list = []
 
     async def _resolve(modal, *args, **kwargs):
         pushed.append(modal)
-        return resolver(modal)
+        return await resolver(modal)
 
     screen.app.push_screen_wait = _resolve  # type: ignore[method-assign]
     return pushed
@@ -383,7 +384,7 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
 
             sidecar_before = _feedback_row(db.get_trajectory_rows(conversation_id))
 
-            # Edit and delete both run synchronously inside the resolver
+            # Edit and delete both run inside the resolver
             # (mirroring a real edit-then-delete session before the modal
             # closes), so the intermediate "after edit, before delete"
             # state has to be captured HERE -- by the time ``pushed`` is
@@ -391,15 +392,15 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
             # have already happened.
             snapshots: dict[str, object] = {}
 
-            def _resolver(modal) -> bool:
-                snapshots["edit_ok"] = modal._on_edit(annotation_id, "edited comment")
+            async def _resolver(modal) -> bool:
+                snapshots["edit_ok"] = await modal._on_edit(annotation_id, "edited comment")
                 snapshots["after_edit_annotations"] = db.get_transcript_annotations(
                     conversation_id
                 )
                 snapshots["after_edit_sidecar"] = _feedback_row(
                     db.get_trajectory_rows(conversation_id)
                 )
-                snapshots["delete_ok"] = modal._on_delete(annotation_id)
+                snapshots["delete_ok"] = await modal._on_delete(annotation_id)
                 snapshots["after_delete_annotations"] = db.get_transcript_annotations(
                     conversation_id
                 )
@@ -480,8 +481,8 @@ async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_pa
                 assistant.id: ("only note",)
             }
 
-            def _resolver(modal) -> bool:
-                assert modal._on_delete(annotation_id) is True
+            async def _resolver(modal) -> bool:
+                assert await modal._on_delete(annotation_id) is True
                 return True
 
             pushed = _stub_review_notes_modal(screen, _resolver)
@@ -592,9 +593,9 @@ async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
 
             results: list = []
 
-            def _resolver(modal) -> bool:
-                results.append(modal._on_edit(annotation_id, "new text"))
-                results.append(modal._on_delete(annotation_id))
+            async def _resolver(modal) -> bool:
+                results.append(await modal._on_edit(annotation_id, "new text"))
+                results.append(await modal._on_delete(annotation_id))
                 return False
 
             pushed = _stub_review_notes_modal(screen, _resolver)
@@ -648,13 +649,16 @@ async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
             fetch_calls: list = []
             real_get = db.get_transcript_annotations
 
-            def _counting_get(conv_id):
-                fetch_calls.append(conv_id)
-                return real_get(conv_id)
+            def _counting_get(conv_id, message_id=None):
+                fetch_calls.append((conv_id, message_id))
+                return real_get(conv_id, message_id)
 
             db.get_transcript_annotations = _counting_get  # type: ignore[method-assign]
 
-            pushed = _stub_review_notes_modal(screen, lambda _modal: False)
+            async def _dismiss_without_changes(_modal) -> bool:
+                return False
+
+            pushed = _stub_review_notes_modal(screen, _dismiss_without_changes)
 
             # Both posted before any pause: the second handler must observe
             # the latch the first one set, entirely synchronously -- no
@@ -753,3 +757,21 @@ async def test_annotation_previews_join_the_transcript_refresh_key():
         assert screen._last_native_transcript_refresh_key != before, (
             "an annotation-preview change must invalidate the refresh key"
         )
+
+
+def test_marker_caps_the_notes_it_lists() -> None:
+    """Review finding: the marker rendered one line per note with no cap, so
+    a heavily-annotated message grew an unbounded inline row. The modal
+    scrolls; the transcript row cannot."""
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        _annotation_marker_content,
+    )
+
+    notes = tuple(f"note {i}" for i in range(9))
+    rendered = str(_annotation_marker_content(notes))
+
+    assert "Review notes (9)" in rendered
+    assert rendered.count("\n") <= 4, rendered  # header + 3 notes + overflow
+    assert "note 0" in rendered and "note 2" in rendered
+    assert "note 3" not in rendered
+    assert "+6 more" in rendered

@@ -9,7 +9,7 @@ screen wires to its own off-thread execution against
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any
 
@@ -151,8 +151,8 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
     def __init__(
         self,
         notes: list[dict[str, Any]],
-        on_edit: Callable[[str, str], bool],
-        on_delete: Callable[[str], bool],
+        on_edit: Callable[[str, str], Awaitable[bool]],
+        on_delete: Callable[[str], Awaitable[bool]],
     ) -> None:
         super().__init__()
         self._order: list[str] = [str(note["annotation_id"]) for note in notes]
@@ -244,7 +244,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
             self._request_delete(button_id[len(_DELETE_BUTTON_PREFIX) :])
             return
         if button_id.startswith(_SAVE_BUTTON_PREFIX):
-            self._save_edit(button_id[len(_SAVE_BUTTON_PREFIX) :])
+            await self._save_edit(button_id[len(_SAVE_BUTTON_PREFIX) :])
             return
         if button_id.startswith(_CANCEL_BUTTON_PREFIX):
             self._cancel_edit(button_id[len(_CANCEL_BUTTON_PREFIX) :])
@@ -265,13 +265,17 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
         self._editing_id = annotation_id
         edit_area.focus()
 
-    def _save_edit(self, annotation_id: str) -> None:
+    async def _save_edit(self, annotation_id: str) -> None:
         note = self._notes.get(annotation_id)
         if note is None:
             return
         edit_area = self.query_one(_row_selector("edit", annotation_id), TextArea)
         new_text = edit_area.text
-        if not self._on_edit(annotation_id, new_text):
+        # Awaited, not called: the injected callable performs a SQLite write,
+        # and the screen runs it off-thread. A synchronous call here would put
+        # that write on the UI event loop, where a contended writer waits out
+        # the connection's 15s busy timeout with the interface frozen.
+        if not await self._on_edit(annotation_id, new_text):
             return
         note["comment"] = new_text
         self.query_one(_row_selector("comment", annotation_id), Static).update(
@@ -338,14 +342,15 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
             callback=partial(self._apply_delete_confirmation, annotation_id),
         )
 
-    def _apply_delete_confirmation(
+    async def _apply_delete_confirmation(
         self, annotation_id: str, confirmed: bool | None
     ) -> None:
         if confirmed is not True:
             return
         if annotation_id not in self._notes:
             return
-        if not self._on_delete(annotation_id):
+        # Awaited for the same reason as the edit write above.
+        if not await self._on_delete(annotation_id):
             return
         self._changed = True
         del self._notes[annotation_id]
