@@ -543,11 +543,12 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 4  # Popular actions defined in discover method
+        assert len(hits) == 5  # Popular actions defined in discover method
         action_names = [hit.text for hit in hits]
         assert any("New Chat" in name for name in action_names)
         assert any("New Note" in name for name in action_names)
         assert any("Search All" in name for name in action_names)
+        assert any("Toggle Focus Mode" in name for name in action_names)
 
     @pytest.mark.asyncio
     async def test_search_shows_all_actions(self, quick_actions_provider):
@@ -556,10 +557,11 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
 
-        assert len(hits) == 5  # All actions defined in search method
+        assert len(hits) == 6  # All actions defined in search method
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)
+        assert any("Toggle Focus Mode" in text for text in action_texts)
 
     @pytest.mark.asyncio
     async def test_search_excludes_unwired_actions(self, quick_actions_provider):

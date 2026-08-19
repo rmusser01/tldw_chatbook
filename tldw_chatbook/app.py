@@ -48,6 +48,7 @@ if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not N
         pass
 
 # Imports
+import argparse
 import concurrent.futures
 import contextlib
 import functools
@@ -1177,6 +1178,16 @@ class LLMProviderProvider(Provider):
         return "Unknown"
 
 
+#: task-18812 / ADR-071: the command-palette entry for the Console focus
+#: toggle -- one tuple reused by both QuickActionsProvider lists so the
+#: command text, action id, and help string cannot drift apart.
+FOCUS_TOGGLE_PALETTE_ENTRY = (
+    "Quick Actions: Toggle Focus Mode",
+    "toggle_focus_mode",
+    "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+)
+
+
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
 
@@ -1209,6 +1220,7 @@ class QuickActionsProvider(Provider):
                 "search_all",
                 "Search across all content",
             ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in quick_actions:
@@ -1239,6 +1251,7 @@ class QuickActionsProvider(Provider):
                 "import_media",
                 "Import a new media file for processing",
             ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in popular_actions:
@@ -1275,6 +1288,8 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
                 )
+            elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
+                self.app.action_toggle_focus_mode()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 
@@ -5256,6 +5271,12 @@ class TldwCli(
             Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
             Binding("f1", "show_workbench_help", "Help", show=True),
             Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+            Binding(
+                "ctrl+shift+f",
+                FOCUS_TOGGLE_PALETTE_ENTRY[1],
+                "Focus Mode",
+                show=False,
+            ),
         ]
         + [
             Binding(
@@ -5610,6 +5631,15 @@ class TldwCli(
             f"App __init__: Determined initial tab value: {self._initial_tab_value}"
         )
         # current_tab reactive will be set in on_mount after UI is composed
+
+        # --- Focus mode (task-18812) ---
+        self.focus_mode = False
+        self._focus_mode_config = bool(
+            get_cli_setting("general", "focus_mode", False)
+        )
+        # Set by _resolve_initial_shell_route when onboarding outranks a
+        # focus request at startup; restored when the wizard lands on Chat.
+        self._deferred_focus_request: bool = False
 
         self._rich_log_handler: Optional[RichLogHandler] = (
             None  # For the RichLog widget in Logs tab
@@ -8187,7 +8217,17 @@ class TldwCli(
         decision the wizard offer uses: if the wizard is about to be
         offered, land on Home beneath it.
         """
+        # task-18812: record the focus request BEFORE the onboarding branches
+        # return Home — a first-run launch defers it (the wizard navigates to
+        # the Console on completion, and _handle_first_run_wizard_result then
+        # restores the request) instead of silently discarding it. Any
+        # non-onboarding route below applies it immediately.
+        _focus_requested = bool(
+            getattr(self, "_cli_focus_override", False)
+            or getattr(self, "_focus_mode_config", False)
+        )
         if self.app_config.get("_first_run", False):
+            self._deferred_focus_request = _focus_requested
             return TAB_HOME
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -8199,10 +8239,45 @@ class TldwCli(
                 "prompt",
                 "home",
             }:
+                self._deferred_focus_request = _focus_requested
                 return TAB_HOME
         except Exception:
             logger.debug("Wizard startup route check failed (category=runtime)")
+        # task-18812: focus mode is Console-only by definition, so a focus
+        # request forces the route — onboarding branches ABOVE still win
+        # (spec: first-run wins).
+        if _focus_requested:
+            self.focus_mode = True
+            return TAB_CHAT
         return getattr(self, "_initial_tab_value", TAB_CHAT)
+
+    def _set_focus_mode(self, enabled: bool) -> None:
+        """Set focus mode and apply it to the Console if it is on screen.
+
+        task-18812 / ADR-071. Duck-types the content screen (it may or may
+        not be the Console — do NOT import ChatScreen here; the screen
+        registry keeps app.py free of screen imports for circular-import
+        reasons). Enabling while elsewhere navigates to the Console first;
+        the screen's mount-time ``_apply_focus_chrome`` read then applies
+        the chrome. Disabling only clears the flag.
+        """
+        self.focus_mode = enabled
+        content_screen = self._navigation_outgoing_screen()
+        apply_chrome = getattr(content_screen, "_apply_focus_chrome", None)
+        if callable(apply_chrome):
+            apply_chrome()
+        elif enabled:
+            self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def action_toggle_focus_mode(self) -> None:
+        """Ctrl+Shift+F: toggle the chrome-free Console focus mode."""
+        self._set_focus_mode(not self.focus_mode)
+
+    def _clear_focus_if_leaving_console(self, screen_name: str) -> None:
+        """Single exit rule (ADR-071): focus mode is Console-only — any
+        navigation to another route restores normal chrome on arrival."""
+        if screen_name != TAB_CHAT:
+            self.focus_mode = False
 
     def _current_runtime_identity(self) -> RuntimeIdentity:
         """Return the screen-snapshot scope from authoritative runtime state."""
@@ -8876,6 +8951,14 @@ class TldwCli(
 
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
+
+            # task-18812: the exit rule runs only once the switch has
+            # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
+            # failures above all `return` with the Console still resident, so
+            # clearing earlier would desync the app flag from the mounted
+            # screen's -focus class (the next toggle would do the wrong
+            # visible action).
+            self._clear_focus_if_leaving_console(screen_name)
 
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
@@ -10473,6 +10556,19 @@ class TldwCli(
         if type(exit_route) is not str:
             return
 
+        # task-18812: consume a deferred focus request from a first-run
+        # launch (--focus / focus_mode config) at the moment the wizard
+        # finishes, BEFORE payload validation -- the request's fate must
+        # not depend on how valid the wizard's result dict is. Focus is
+        # Console-only: it applies when the exit route is Chat, and is
+        # simply dropped for any other destination.
+        if getattr(self, "_deferred_focus_request", False):
+            self._deferred_focus_request = False
+            if exit_route == TAB_CHAT:
+                self.focus_mode = True
+            else:
+                self.focus_mode = False
+
         screen_context: dict[str, object] = {}
         if exit_route == TAB_SETTINGS:
             if completed is not False or type(exit_context) is not dict:
@@ -10510,6 +10606,14 @@ class TldwCli(
             and exit_route == TAB_CHAT
             and getattr(self, "current_tab", None) == TAB_CHAT
         ):
+            # The already-mounted Console kept chrome from its unfocused
+            # mount; apply the restored request in place.
+            if self.focus_mode:
+                apply_chrome = getattr(
+                    self._navigation_outgoing_screen(), "_apply_focus_chrome", None
+                )
+                if callable(apply_chrome):
+                    apply_chrome()
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -12588,6 +12692,31 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
+    parser = argparse.ArgumentParser(
+        description="tldw chatbook - A Textual TUI for chatting with LLMs",
+        prog="tldw-cli",
+    )
+    parser.add_argument(
+        "--serve", action="store_true", help="Run the application as a web server"
+    )
+    parser.add_argument(
+        "--host", type=str, help="Host address for web server (default: localhost)"
+    )
+    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
+    parser.add_argument("--web-title", type=str, help="Title for the web page")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode for web server"
+    )
+    parser.add_argument(
+        "--focus",
+        action="store_true",
+        help="Start chrome-free in the Console (hides nav bar and workbench header)",
+    )
+    return parser
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Record the launch directory first, before anything can chdir -- the
@@ -12760,8 +12889,14 @@ if __name__ == "__main__":
 
     warm_up_image_protocol()
 
+    # argparse terminates here on --help (exit 0) and invalid arguments
+    # (exit 2), same as the console-script path -- no guard: swallowing
+    # SystemExit would print usage and then launch the TUI anyway.
+    _main_args = _build_arg_parser().parse_args()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(_main_args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
@@ -12986,25 +13121,7 @@ def main_cli_runner():
             logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-
-    args = parser.parse_args()
+    args = _build_arg_parser().parse_args()
 
     # If --serve flag is provided, run as web server
     if args.serve:
@@ -13042,6 +13159,7 @@ def main_cli_runner():
 
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:

@@ -2908,6 +2908,7 @@ CONFIG_TOML_CONTENT = """
 # Located at: ~/.config/tldw_cli/config.toml
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
+focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
 default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "textual-light", or any theme name from themes.py)
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL

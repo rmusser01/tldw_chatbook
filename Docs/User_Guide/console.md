@@ -101,6 +101,25 @@ and below 84 columns the workspace switches to a single pane — both edge
 handles hide and the transcript takes the full width, so it stays usable
 even at 80x24 or 60x18.
 
+### Focus mode
+
+Focus mode (`Ctrl+Shift+F`, or the palette's "Quick Actions: Toggle Focus
+Mode") strips the Console down to the conversation: the navigation bar and
+the workbench header disappear; the one-line status bar — token count and
+key hints — stays. It is the claude-code-style surface for heads-down
+coding, and the comfortable shape on a phone over `--serve`, where fine
+pointers and function keys are scarce.
+
+- Start chrome-free every launch: set `[general] focus_mode = true`, or
+  launch with `--focus` (which also forces the Console as the startup
+  screen, overriding `default_tab`; first-run onboarding still comes
+  first).
+- Leaving is any navigation — a destination hotkey or a palette jump
+  lands you on the target screen with normal chrome, and one
+  `Ctrl+Shift+F` brings the focused Console back.
+- Context usage remains available in the status line (on wide terminals)
+  and via `Ctrl+Shift+P`.
+
 ### First run: the "Get started" card
 
 On a brand-new install, an app-level first-run wizard

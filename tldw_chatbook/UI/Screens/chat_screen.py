@@ -3116,7 +3116,33 @@ class ChatScreen(BaseAppScreen):
             if self._console_setup_modal_blocking()
             else CONSOLE_WORKBENCH_SHORTCUTS
         )
+        # task-18812 / ADR-031: advertise the focus toggle in the footer —
+        # the only exit affordance visible in focus mode (no nav bar). The
+        # label names the action the key will perform, per the truthfulness
+        # rule. PREPENDED, not appended: AppFooterStatus's degradation drops
+        # hints from the END of the context when width runs out, and the
+        # Console context is already at that budget at common widths — an
+        # appended focus hint never rendered (caught in live verification
+        # at 160 cols: 153-cell context vs 152 available).
+        focus_label = (
+            "exit focus"
+            if bool(getattr(self.app_instance, "focus_mode", False))
+            else "focus"
+        )
+        shortcuts = (("Ctrl+Shift+F", focus_label), *shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _apply_focus_chrome(self) -> None:
+        """Mirror the app-level focus_mode flag onto this screen (task-18812).
+
+        Idempotent: sets/removes the ``-focus`` class that suppresses the
+        nav bar and workbench header (CSS: _agentic_terminal.tcss), and
+        refreshes the footer hints so the focus toggle's label tracks the
+        target state.
+        """
+        focused = bool(getattr(self.app_instance, "focus_mode", False))
+        self.set_class(focused, "-focus")
+        self._register_console_footer_shortcuts()
 
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from this screen's own footer."""
@@ -14294,6 +14320,7 @@ class ChatScreen(BaseAppScreen):
         # BaseAppScreen.on_mount separately for this Mount event.
 
         self.app_instance._console_h3_image_edit_screen = self
+        self._apply_focus_chrome()
         if not hasattr(self, "_console_h3_terminal_generations"):
             self._console_h3_terminal_generations: set[str] = set()
         # This handoff is session/config only and does not need mounted DOM.
