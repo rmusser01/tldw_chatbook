@@ -1210,6 +1210,11 @@ class QuickActionsProvider(Provider):
                 "search_all",
                 "Search across all content",
             ),
+            (
+                "Quick Actions: Toggle Focus Mode",
+                "toggle_focus_mode",
+                "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+            ),
         ]
 
         for command_text, action_id, help_text in quick_actions:
@@ -1239,6 +1244,11 @@ class QuickActionsProvider(Provider):
                 "Quick Actions: Import Media File",
                 "import_media",
                 "Import a new media file for processing",
+            ),
+            (
+                "Quick Actions: Toggle Focus Mode",
+                "toggle_focus_mode",
+                "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
             ),
         ]
 
@@ -1276,6 +1286,8 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
                 )
+            elif action_id == "toggle_focus_mode":
+                self.app.action_toggle_focus_mode()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 

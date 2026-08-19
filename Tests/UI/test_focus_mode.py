@@ -256,3 +256,22 @@ class TestAppToggleAndNavigationExit:
         )
         TldwCli.action_toggle_focus_mode(stub)
         assert stub.focus_mode is False
+
+
+class TestPaletteQuickAction:
+    async def test_focus_toggle_is_searchable_and_executable(self):
+        from tldw_chatbook.app import QuickActionsProvider
+
+        app_instance = _make_app_instance(focus=False)
+        harness = FocusConsoleHarness(app_instance)
+        async with harness.run_test(size=_FOCUS_TERMINAL_SIZE) as pilot:
+            provider = QuickActionsProvider(pilot.app.screen)
+            # Textual 8's Hit has no `display`; `text` is the plain-text
+            # field the palette tests elsewhere in this suite assert on.
+            hits = [hit async for hit in provider.search("focus")]
+            assert any("Toggle Focus Mode" in hit.text for hit in hits)
+
+            called = []
+            pilot.app.action_toggle_focus_mode = lambda: called.append(True)
+            provider.execute_quick_action("toggle_focus_mode")
+            assert called == [True]
