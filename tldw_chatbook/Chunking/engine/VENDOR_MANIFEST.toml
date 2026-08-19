@@ -1,0 +1,33 @@
+# Vendored from tldw_server — NEVER hand-edit files listed here (spec §5.2).
+# Re-sync: python Helper_Scripts/sync_chunking_engine.py
+[upstream]
+repo = "https://github.com/rmusser01/tldw_server.git"
+branch = "dev"
+commit = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
+
+[files]
+vendored = [
+    "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
+    "option_utils.py", "regex_safety.py", "security_logger.py",
+    "multilingual.py", "llm_context.py",
+    "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
+    "process_text/preparation.py", "process_text/dispatch.py",
+    "process_text/pipeline.py", "process_text/metadata.py",
+    "splitters/__init__.py", "splitters/regex.py", "splitters/blingfire.py",
+    "strategies/__init__.py", "strategies/words.py", "strategies/sentences.py",
+    "strategies/paragraphs.py", "strategies/tokens.py", "strategies/json_xml.py",
+    "strategies/ebook_chapters.py", "strategies/ebook_chapters_patch.py",
+    "strategies/structure_aware.py", "strategies/code.py", "strategies/code_ast.py",
+    "strategies/fixed_size.py", "strategies/semantic.py",
+    "strategies/rolling_summarize.py",
+    "utils/metrics.py",
+]
+extra = ["LICENSE"]  # GPLv3 text shipped verbatim in the vendored subtree
+excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
+            "template_initialization.py", "template_library/", "auto_planner.py",
+            "async_chunker.py", "auto_boundary_assistant.py",
+            "strategies/propositions.py", "utils/proposition_eval.py"]
+
+[licence]
+spdx = "GPL-3.0-only"
+obligations = "preserve upstream headers; LICENSE shipped in-subtree; recorded here and in pyproject license-files"

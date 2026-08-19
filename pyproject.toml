@@ -72,6 +72,8 @@ dependencies = [
     "croniter>=1.4.0",
     "textual-image",
     "anytree",
+    "tiktoken",      # engine tokens strategy (Q2: hard-required, shim-enforced)
+    "defusedxml",    # engine xml security parsing (Q9: core)
 ]
 
 # --- Optional Dependencies ---
@@ -517,6 +519,7 @@ exclude = [
 # Preserve the licenses for vendored packages
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
+"tldw_chatbook.Chunking.engine" = ["LICENSE"]
 # Include CSS files in subdirectories
 "tldw_chatbook.css.core" = ["*.tcss"]
 "tldw_chatbook.css.features" = ["*.tcss"]
