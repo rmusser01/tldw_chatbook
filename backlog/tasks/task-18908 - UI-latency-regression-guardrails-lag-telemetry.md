@@ -1,11 +1,11 @@
 ---
 id: TASK-18908
 title: UI latency regression guardrails + lag telemetry
-status: In Progress
+status: Done
 assignee:
   - '@robert'
 created_date: '2026-08-19 15:55'
-updated_date: '2026-08-19 16:45'
+updated_date: '2026-08-19 16:50'
 labels: []
 dependencies: []
 priority: high
@@ -19,7 +19,7 @@ After the Aug-2026 Windows 3s-lag incident (fixed via PR #1824): add merge-block
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Deterministic guards: CSS source count stays under the Textual LRU-64 parse cliff after a destination tour (44 today, soft limit 56),Screen-switch latency budgets for hot destinations (Console/Library/Settings) with generous CI-safe margins,Perf guard workflow runs green independently of the broken Tests workflow,Stall events persisted to the diagnostics sink with lag/timer context,Efficiency spike findings filed as measured backlog tasks
+- [x] #1 Deterministic guards: CSS source count stays under the Textual LRU-64 parse cliff after a destination tour (44 today, soft limit 56),Screen-switch latency budgets for hot destinations (Console/Library/Settings) with generous CI-safe margins,Perf guard workflow runs green independently of the broken Tests workflow,Stall events persisted to the diagnostics sink with lag/timer context,Efficiency spike findings filed as measured backlog tasks
 <!-- AC:END -->
 
 ## Implementation Plan
