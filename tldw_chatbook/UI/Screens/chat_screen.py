@@ -469,6 +469,8 @@ from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
+from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
+from ...Widgets.Console.console_transcript import ConsoleReviewNotesRequested
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
     ConsoleSelectionNoteRequested,
@@ -3733,6 +3735,11 @@ class ChatScreen(BaseAppScreen):
         # docstring), so exclusion is this guard instead: re-triggers while
         # a flow is in flight are ignored, never queued and never cancelled.
         self._console_selection_feedback_inflight = False
+        # Same precedent, same reason (task-18515 review-note management
+        # task 3 fix round): a rapid double marker-click / double-`n` before
+        # the first worker's off-thread DB read resolves must not stack two
+        # ConsoleReviewNotesModals with independent DB-bound closures.
+        self._console_review_notes_inflight = False
         self._console_citation_resolved_signatures: dict[
             str, tuple[str, str, str, str]
         ] = {}
@@ -15896,6 +15903,13 @@ class ChatScreen(BaseAppScreen):
                 turn_activity,
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
+                # task-18515: an annotation added, edited, or deleted must
+                # force a refresh on its own. Without this the marker row
+                # only changed when something ELSE in the key did -- phase 4
+                # looked correct because writing a note also dispatches a
+                # message, while edit/delete leave the app idle and left a
+                # deleted note's marker on screen (caught live).
+                tuple(sorted(self._console_annotation_previews.items())),
                 tuple(sorted(self._console_speech_states.items())),
             )
             if refresh_key != self._last_native_transcript_refresh_key:
@@ -19776,8 +19790,16 @@ class ChatScreen(BaseAppScreen):
             # Audit BEFORE the dispatch: the queue may block behind an active
             # run, and the record is about what the user said, not about when
             # the send drained.
-            self._record_console_feedback_event(
-                action, quote, comment, anchor_message_id
+            # OFF-THREAD for the same reason the notes flow's writes are:
+            # `run_worker(coroutine)` runs on the event loop, so these two
+            # SQLite writes were blocking the UI, and a contended writer
+            # waits out the connection's 15s busy timeout.
+            await asyncio.to_thread(
+                self._record_console_feedback_event,
+                action,
+                quote,
+                comment,
+                anchor_message_id,
             )
             await self._prompt_queue.dispatch("\n".join(lines))
         finally:
@@ -19785,6 +19807,259 @@ class ChatScreen(BaseAppScreen):
             # the in-flight guard; a latched flag would silently kill the
             # feature after its first use.
             self._console_selection_feedback_inflight = False
+
+    @on(ConsoleReviewNotesRequested)
+    def on_console_review_notes_requested(
+        self, event: ConsoleReviewNotesRequested
+    ) -> None:
+        """Open the review-notes modal for one message's annotations.
+
+        task-18515 review-note management, task 3: posted by
+        ``ConsoleAnnotationMarker.on_click`` and by
+        ``ConsoleTranscript.action_open_review_notes`` (the ``n`` binding).
+        Dispatches a worker because ``push_screen_wait`` requires an active
+        worker context (see ``_console_selection_feedback_flow``'s identical
+        note); ``event.stop()`` because nothing above this screen subscribes.
+
+        ``_console_review_notes_inflight`` guards a rapid double-trigger the
+        same way ``_console_selection_feedback_inflight`` guards the
+        selection-feedback flow: the worker is deliberately NOT exclusive
+        (see the flow's own docstring), so a re-trigger while a flow is
+        still in flight is ignored here rather than stacking a second
+        modal with its own independent DB-bound closures.
+        """
+        event.stop()
+        if self._console_review_notes_inflight:
+            # Rapid double-trigger (double marker-click or double-`n` before
+            # the first worker's off-thread read resolves): one flow, one
+            # modal, one set of DB-bound closures.
+            return
+        self._console_review_notes_inflight = True
+        self.run_worker(
+            self._console_review_notes_flow(event.anchor_message_id),
+            group="console-review-notes",
+            exit_on_error=False,
+        )
+
+    async def _console_review_notes_flow(self, anchor_message_id: str) -> None:
+        """Resolve, browse, and (maybe) mutate one message's review notes.
+
+        Runs as a worker (see the handler above); NOT ``exclusive=True`` for
+        the same reason ``_console_selection_feedback_flow`` isn't --
+        ``push_screen_wait``'s internal ``asyncio.shield`` protects the wait,
+        not the already-mounted modal, from cancellation, so a superseding
+        exclusive cancel would strand a live modal with no owner for its
+        result. The handler's inflight flag is this flow's actual mutual
+        exclusion; the ``finally`` below releases it on every exit path.
+
+        The NATIVE anchor id is resolved to its persisted message id via the
+        store's own messages (the inverse of ``_load_console_annotation_
+        previews``'s ``native_by_persisted`` map), rows are read off-thread,
+        and -- when at least one row matches -- the modal is pushed with
+        ``on_edit``/``on_delete`` wrappers that write straight to SQLite
+        (single-row indexed writes, the same synchronous-on-the-UI-thread
+        precedent as ``_record_console_feedback_event``'s annotation write)
+        and never raise. A change forces the existing discovery machinery to
+        reload the preview map on its next sync tick.
+        """
+        try:
+            controller = self._ensure_console_chat_controller()
+            store = controller.store
+            database = (
+                getattr(store.persistence, "db", None) if store.persistence else None
+            )
+            if database is None:
+                self.notify(
+                    "Review notes are unavailable (no notes database).",
+                    severity="warning",
+                )
+                return
+            session = getattr(store, "_sessions", {}).get(store.active_session_id)
+            conversation_id = getattr(session, "persisted_conversation_id", None)
+            if not conversation_id:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            conversation_id = str(conversation_id)
+            persisted_by_native = {
+                message.id: message.persisted_message_id
+                for message in self._native_console_messages()
+            }
+            persisted_message_id = persisted_by_native.get(anchor_message_id)
+            if persisted_message_id is None:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            try:
+                rows = await asyncio.to_thread(
+                    database.get_transcript_annotations,
+                    conversation_id,
+                    str(persisted_message_id),
+                )
+            except Exception:
+                logger.warning(
+                    f"Console review notes: load failed for {conversation_id!r}",
+                    exc_info=True,
+                )
+                self.notify("Could not load review notes.", severity="warning")
+                return
+            # The query already filtered by anchor; this keeps the flow
+            # correct if a caller ever passes unfiltered rows.
+            matching = [
+                row
+                for row in rows
+                if str(row.get("message_id")) == str(persisted_message_id)
+            ]
+            if not matching:
+                self.notify("No review notes for this message.", severity="warning")
+                return
+            rows_by_id = {str(row["annotation_id"]): row for row in matching}
+
+            def _conversation_still_current() -> bool:
+                """Guard the write against a conversation switch mid-modal.
+
+                The flow captured ``conversation_id`` when it opened; a
+                background switch while the modal is up would otherwise
+                write into a conversation the user has left.
+                """
+                live = getattr(store, "_sessions", {}).get(store.active_session_id)
+                return str(getattr(live, "persisted_conversation_id", "") or "") == (
+                    conversation_id
+                )
+
+            def _edit_blocking(annotation_id: str, new_comment: str) -> bool:
+                """Runs on a worker thread (see ``_on_edit``)."""
+                row = rows_by_id.get(annotation_id)
+                if row is None:
+                    return False
+                # Lost-update guard without a schema change: the row's
+                # updated_at is the version we loaded. If someone else wrote
+                # in the meantime, refuse rather than clobber silently.
+                current = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
+                    )
+                }.get(annotation_id)
+                if current is None or str(current.get("updated_at")) != str(
+                    row.get("updated_at")
+                ):
+                    return False
+                database.upsert_transcript_annotation(
+                    conversation_id=conversation_id,
+                    row_key=row["row_key"],
+                    message_id=row["message_id"],
+                    quote_text=row["quote_text"],
+                    comment=new_comment,
+                    annotation_id=annotation_id,
+                )
+                # Keep the snapshot's version current so a second edit in the
+                # same modal session is not mistaken for a conflict.
+                refreshed = {
+                    str(fresh["annotation_id"]): fresh
+                    for fresh in database.get_transcript_annotations(
+                        conversation_id, str(row["message_id"])
+                    )
+                }.get(annotation_id)
+                if refreshed is not None:
+                    rows_by_id[annotation_id] = refreshed
+                return True
+
+            async def _on_edit(annotation_id: str, new_comment: str) -> bool:
+                from tldw_chatbook.Utils.input_validation import validate_text_input
+                from tldw_chatbook.Widgets.Console.console_selection import (
+                    SELECTION_QUOTE_CAP,
+                )
+
+                # Boundary check through the shared module, matching the
+                # create-note path. allow_html because a review note about
+                # code legitimately contains markup-looking text and notes
+                # render as plain text; size is the enforceable bound.
+                if not validate_text_input(
+                    new_comment, max_length=SELECTION_QUOTE_CAP, allow_html=True
+                ):
+                    self.notify(
+                        "That note is too long to save.", severity="warning"
+                    )
+                    return False
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not edited.",
+                        severity="warning",
+                    )
+                    return False
+                try:
+                    # OFF-THREAD: a SQLite write on the UI event loop waits out
+                    # the connection's 15s busy timeout under contention, with
+                    # the interface frozen.
+                    ok = await asyncio.to_thread(
+                        _edit_blocking, annotation_id, new_comment
+                    )
+                except Exception:
+                    logger.warning(
+                        f"Console review notes: edit failed for {annotation_id!r}",
+                        exc_info=True,
+                    )
+                    self.notify("Could not save the note.", severity="warning")
+                    return False
+                if not ok:
+                    self.notify(
+                        "That note changed elsewhere; reopen it to edit.",
+                        severity="warning",
+                    )
+                return ok
+
+            async def _on_delete(annotation_id: str) -> bool:
+                if not _conversation_still_current():
+                    self.notify(
+                        "The conversation changed; that note was not deleted.",
+                        severity="warning",
+                    )
+                    return False
+                try:
+                    return bool(
+                        await asyncio.to_thread(
+                            database.soft_delete_transcript_annotation, annotation_id
+                        )
+                    )
+                except Exception:
+                    logger.warning(
+                        f"Console review notes: delete failed for {annotation_id!r}",
+                        exc_info=True,
+                    )
+                    self.notify("Could not delete the note.", severity="warning")
+                    return False
+
+            changed = await self.app.push_screen_wait(
+                ConsoleReviewNotesModal(
+                    matching, on_edit=_on_edit, on_delete=_on_delete
+                )
+            )
+            if changed:
+                # Reload INLINE and push to the transcript, rather than
+                # marking the conversation stale and waiting for the next
+                # sync tick. Live verification caught the difference: the
+                # transcript sync timer only runs while a run is active, so
+                # the annotation-WRITE precedent appeared to refresh live
+                # only because it dispatches a message (starting a run).
+                # Edit/delete leave the app idle, so a tick-dependent
+                # reload left a deleted note's marker on screen until the
+                # user's next send. We are already in a worker here, so the
+                # loader can simply be awaited.
+                # Only if the user is still IN this conversation: a switch
+                # while the modal was open would otherwise re-latch the old
+                # id and paint its previews onto the new transcript for a
+                # frame. The discovery tick reloads the live conversation.
+                if _conversation_still_current():
+                    self._console_annotation_loaded_conversation = conversation_id
+                    await self._load_console_annotation_previews(
+                        database, store, conversation_id
+                    )
+                    await self._sync_native_console_transcript()
+        finally:
+            # Every exit path -- empty-notes toast, modal cancel/dismiss, or
+            # an error above -- releases the in-flight guard; a latched flag
+            # would silently kill the feature after its first use (same
+            # precedent as `_console_selection_feedback_flow`'s finally).
+            self._console_review_notes_inflight = False
 
     def _recover_stuck_console_send_stash(
         self, stash: "ConsoleDraftStash | None"

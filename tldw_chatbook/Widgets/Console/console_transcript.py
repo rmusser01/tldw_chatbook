@@ -25,6 +25,7 @@ from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.style import Style
 from textual.widget import Widget
+from textual.visual import VisualType
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
@@ -800,6 +801,11 @@ def _message_body_render_text(
     return Content.assemble(*body_segments)
 
 
+#: How many notes the inline marker lists before collapsing to "+N more".
+#: The marker has no scroll of its own; the notes modal shows them all.
+_MARKER_NOTE_PREVIEW_LIMIT = 3
+
+
 def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     """One marker row's content: a dim header plus each note, first line only.
 
@@ -809,11 +815,17 @@ def _annotation_marker_content(notes: tuple[str, ...]) -> Content:
     """
     header = "Review note" if len(notes) == 1 else f"Review notes ({len(notes)})"
     segments: list = [(f"✎ {header}", "dim")]
-    for note in notes:
+    # Cap the listed notes: the marker is an inline transcript row with no
+    # scroll of its own (the modal has one), so an unbounded list would push
+    # the conversation off screen on a heavily-annotated message.
+    for note in notes[:_MARKER_NOTE_PREVIEW_LIMIT]:
         first_line = note.splitlines()[0] if note else ""
         if len(first_line) > 200:
             first_line = first_line[:199] + "…"
         segments.extend(("\n", first_line))
+    hidden = len(notes) - _MARKER_NOTE_PREVIEW_LIMIT
+    if hidden > 0:
+        segments.extend(("\n", (f"+{hidden} more", "dim")))
     return Content.assemble(*segments)
 
 
@@ -2161,6 +2173,45 @@ class ConsoleTranscriptJumpPill(Static):
                 transcript.focus()
 
 
+class ConsoleReviewNotesRequested(Message):
+    """Bubbled when the user asks to see a message's review notes.
+
+    task-18515 review-note management, task 1: posted by
+    ``ConsoleAnnotationMarker.on_click`` and by
+    ``ConsoleTranscript.action_open_review_notes`` (the ``n`` binding).
+    Anchored by NATIVE message id -- the owning screen resolves the actual
+    note records from its own preview/store bookkeeping; this task only
+    produces the request (the notes modal is a later task in the plan).
+    """
+
+    def __init__(self, anchor_message_id: str) -> None:
+        super().__init__()
+        self.anchor_message_id = anchor_message_id
+
+
+class ConsoleAnnotationMarker(Static):
+    """Inline review-note marker; click opens the notes modal (Part 2).
+
+    Phase 4 shipped this as an anonymous Static NOT in
+    PROTECTED_CLICK_CLASSES, so clicking it toggled message selection --
+    the papercut this widget closes.
+    """
+
+    def __init__(
+        self,
+        renderable: VisualType,
+        *,
+        anchor_message_id: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(renderable, **kwargs)
+        self.anchor_message_id = anchor_message_id
+
+    def on_click(self, event: Click) -> None:
+        event.stop()
+        self.post_message(ConsoleReviewNotesRequested(self.anchor_message_id))
+
+
 def _body_cell_to_offset(text: str, width: int, cell_x: int, cell_y: int) -> int:
     """Map a body-local screen cell to a character offset in ``text``.
 
@@ -2396,6 +2447,7 @@ class ConsoleTranscript(VerticalScroll):
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
         ("v", "invoke_selected_action('review-changes')", "Review changes"),
+        ("n", "open_review_notes", "Notes"),
     ]
 
     PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset(
@@ -2410,6 +2462,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-rule",
             "console-transcript-summary-banner",
             "console-transcript-citation-sources",
+            "console-transcript-annotations",
             # Textual scrollbars carry the generic system-widget class; ignore them
             # defensively if a scrollbar click ever bubbles up to the transcript.
             "-textual-system",
@@ -4286,6 +4339,22 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._enter_keyboard_selection()
 
+    def action_open_review_notes(self) -> None:
+        """`n` binding: request the notes modal for the selected message.
+
+        task-18515 review-note management, task 1: a plain BINDINGS entry
+        (no ``on_key`` branch -- the phase-5 probe proved printable-key
+        bindings already fire while the transcript holds focus, so a
+        speculative interception branch was reverted as unnecessary).
+        A selection with no notes toasts instead of posting a request the
+        (not-yet-built) modal has nothing to show for.
+        """
+        message_id = self.selected_message_id
+        if message_id is not None and self._annotation_previews.get(message_id):
+            self.post_message(ConsoleReviewNotesRequested(message_id))
+            return
+        self.notify("No review notes on this message.", severity="warning")
+
     def _enter_keyboard_selection(self) -> bool:
         """Arm keyboard-driven text selection on the j/k-selected row.
 
@@ -5725,8 +5794,9 @@ class ConsoleTranscript(VerticalScroll):
         ):
             return ConsoleToolDiffRow(row.message.id, row.message.tool_diff)
         if row.kind == "annotations" and row.message is not None:
-            return Static(
+            return ConsoleAnnotationMarker(
                 row.renderable,
+                anchor_message_id=row.message.id,
                 id=f"console-annotations-{row.message.id}",
                 classes="console-transcript-annotations",
             )

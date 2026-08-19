@@ -10225,19 +10225,42 @@ UPDATE db_schema_version
             )
         return annotation_id
 
-    def get_transcript_annotations(self, conversation_id: str) -> List[dict]:
-        """Live (non-deleted) annotations for one conversation, oldest first."""
-        conn = self.get_connection()
-        rows = conn.execute(
-            """
+    def get_transcript_annotations(
+        self, conversation_id: str, message_id: Optional[str] = None
+    ) -> List[dict]:
+        """Live (non-deleted) annotations for one conversation, oldest first.
+
+        Args:
+            conversation_id: The conversation whose annotations to read.
+            message_id: Optional anchor filter. The notes modal wants ONE
+                message's annotations; filtering here keeps a heavily
+                annotated conversation from being read out in full and
+                discarded in Python on every open.
+
+        Returns:
+            Annotation rows as dicts, oldest first.
+        """
+        sql = """
             SELECT annotation_id, conversation_id, row_key, message_id,
                    quote_text, comment, created_at, updated_at
               FROM transcript_annotations
              WHERE conversation_id = ? AND deleted = 0
-             ORDER BY created_at, annotation_id
-            """,
-            (conversation_id,),
-        ).fetchall()
+        """
+        params: tuple = (conversation_id,)
+        if message_id is not None:
+            sql += " AND message_id = ?"
+            params = (conversation_id, message_id)
+        sql += " ORDER BY created_at, annotation_id"
+        try:
+            # The transaction context manager, matching this table's closest
+            # sibling accessor (`get_trajectory_rows`): consistent connection
+            # handling and error wrapping for the sidecar-family reads.
+            with self.transaction() as conn:
+                rows = conn.execute(sql, params).fetchall()
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                f"Failed to read transcript annotations for {conversation_id}: {exc}"
+            ) from exc
         return [dict(row) for row in rows]
 
     def soft_delete_transcript_annotation(self, annotation_id: str) -> bool:

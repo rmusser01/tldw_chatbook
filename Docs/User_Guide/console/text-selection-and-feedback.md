@@ -122,6 +122,21 @@ Both records survive restarting the app, and both are deliberately
 best-effort: if a write fails, your feedback is still sent. Losing an audit
 line or a marker should never cost you the actual message.
 
+### Managing review notes
+
+Click a **✎ Review note** marker (or press **`n`** on the selected message)
+to open its notes. Each note offers:
+
+- **Edit** — change your note's text. The quoted selection is fixed: it is a
+  record of what you were looking at, not part of the note.
+- **Delete** — asks for confirmation, then removes the note. Deleting the
+  last note on a message removes its marker.
+
+**The trajectory ledger is not edited.** Editing or deleting a note leaves
+the original `user_feedback` event untouched, so the run's history still
+shows what you said at the time — by design: the ledger is an append-only
+record of the run, while the note is a living annotation you own.
+
 ## Common tasks
 
 1. **Quote one paragraph back at the model.** Drag across it, click **Add to
@@ -195,5 +210,5 @@ Inside the menu itself:
   anything you want to keep before dismissing it.
 
 —
-*Verified against feat/console-keyboard-selection @ a4286a199 — 2026-08-18
-(shipped tests + live tmux verification: s→motions→Enter→menu→Create note→real DB row; two-stage Esc)*
+*Verified against feat/console-note-management @ ea76a0807 — 2026-08-18
+(shipped tests + live tmux verification of the create/edit/delete loop)*

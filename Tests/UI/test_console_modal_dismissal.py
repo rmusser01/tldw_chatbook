@@ -103,6 +103,9 @@ from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsMo
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
 )
+from tldw_chatbook.Widgets.Console.console_review_notes_modal import (
+    ConsoleReviewNotesModal,
+)
 from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
@@ -305,6 +308,25 @@ def _feedback_comment_factory() -> ConsoleFeedbackCommentModal:
     )
 
 
+def _review_notes_factory() -> ConsoleReviewNotesModal:
+    return ConsoleReviewNotesModal(
+        notes=[
+            {
+                "annotation_id": "contract-anno-1",
+                "conversation_id": "contract-conv-1",
+                "row_key": "message:contract-msg-1",
+                "message_id": "contract-msg-1",
+                "quote_text": "quoted transcript text",
+                "comment": "contract review note",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            }
+        ],
+        on_edit=lambda _annotation_id, _new_comment: True,
+        on_delete=lambda _annotation_id: True,
+    )
+
+
 def _prompt_variables_factory() -> PromptVariablesDialog:
     return PromptVariablesDialog(
         PromptVariablesDialogRequest(
@@ -472,6 +494,16 @@ TASK2_MODAL_CONTRACTS = (
         "Console selection More Details / Ask in Side Chat actions",
         "cancel side-chat worker",
         "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleReviewNotesModal,
+        _review_notes_factory,
+        "#console-review-notes-modal",
+        False,
+        "Console annotation marker click / `n` review-notes action",
+        None,
+        "mid-edit escape closes the open editor before the second cancel dismisses",
         _RESTORE_OPENER,
     ),
 )
@@ -1096,6 +1128,13 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         )
     }
     discovered_console_types = _discover_console_modal_types()
+    # task-18515 review-note management, task 3: ConsoleReviewNotesModal is
+    # now wired into the `n`/marker-click flow (see
+    # ChatScreen.on_console_review_notes_requested) and lives in
+    # TASK2_MODAL_CONTRACTS, so the inventory-only escape hatch is empty
+    # again -- kept in place (same escape hatch ConsoleReactionPickerModal
+    # used before it was wired) for the next modal that ships ahead of its
+    # launch site.
     inventory_only_types: set[type[ModalScreen[Any]]] = set()
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1108,7 +1147,7 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 41
+    assert len(reachable_modal_types) == 42
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1228,7 +1267,7 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 15
+    assert len(TASK2_MODAL_CONTRACTS) == 16
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
@@ -1240,6 +1279,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleModelPopover",
         "ConsolePromptPickerModal",
         "ConsolePromptQueueModal",
+        "ConsoleReviewNotesModal",
         "ConsoleRunLogModal",
         "ConsoleScopePickerModal",
         "ConsoleSideChatModal",
@@ -1252,6 +1292,13 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleCitationSourcesModal": "increment _request_generation",
         "ConsoleSideChatModal": "cancel side-chat worker",
         "ConsoleStylePickerModal": "_cancel_search_debounce",
+    }
+    expected_guards = {
+        "ConsoleImageViewerModal": "intentional click-anywhere cancel",
+        "ConsoleReviewNotesModal": (
+            "mid-edit escape closes the open editor before the second "
+            "cancel dismisses"
+        ),
     }
     for contract in TASK2_MODAL_CONTRACTS:
         assert issubclass(contract.modal_type, SafeModalDismissMixin)
@@ -1268,10 +1315,8 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         assert contract.pre_cancel_hook == expected_hooks.get(
             contract.modal_type.__name__
         )
-        assert contract.guard == (
-            "intentional click-anywhere cancel"
-            if contract.modal_type is ConsoleImageViewerModal
-            else "none"
+        assert contract.guard == expected_guards.get(
+            contract.modal_type.__name__, "none"
         )
         assert contract.focus_postcondition == _RESTORE_OPENER
 

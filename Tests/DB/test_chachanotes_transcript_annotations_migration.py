@@ -153,3 +153,29 @@ def test_editing_an_annotation_updates_in_place(tmp_path: Path) -> None:
         assert [row["comment"] for row in rows] == ["final"]
     finally:
         db.close()
+
+
+def test_annotations_can_be_filtered_to_one_anchor(tmp_path: Path) -> None:
+    """The notes modal reads ONE message's annotations; without the filter a
+    heavily annotated conversation is read in full and discarded in Python."""
+    db = CharactersRAGDB(tmp_path / "test.db", client_id="test")
+    try:
+        conv_id = _conversation(db)
+        for msg in ("m-1", "m-1", "m-2"):
+            db.upsert_transcript_annotation(
+                conversation_id=conv_id,
+                row_key=f"message:{msg}",
+                message_id=msg,
+                quote_text="q",
+                comment=f"note for {msg}",
+            )
+
+        assert len(db.get_transcript_annotations(conv_id)) == 3
+        only_m1 = db.get_transcript_annotations(conv_id, message_id="m-1")
+        assert len(only_m1) == 2
+        assert {row["message_id"] for row in only_m1} == {"m-1"}
+        # Soft-deleted rows stay excluded through the filtered path too.
+        db.soft_delete_transcript_annotation(only_m1[0]["annotation_id"])
+        assert len(db.get_transcript_annotations(conv_id, message_id="m-1")) == 1
+    finally:
+        db.close()
