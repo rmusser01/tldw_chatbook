@@ -1178,6 +1178,16 @@ class LLMProviderProvider(Provider):
         return "Unknown"
 
 
+#: task-16320 / ADR-067: the command-palette entry for the Console focus
+#: toggle -- one tuple reused by both QuickActionsProvider lists so the
+#: command text, action id, and help string cannot drift apart.
+FOCUS_TOGGLE_PALETTE_ENTRY = (
+    "Quick Actions: Toggle Focus Mode",
+    "toggle_focus_mode",
+    "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+)
+
+
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
 
@@ -1210,11 +1220,7 @@ class QuickActionsProvider(Provider):
                 "search_all",
                 "Search across all content",
             ),
-            (
-                "Quick Actions: Toggle Focus Mode",
-                "toggle_focus_mode",
-                "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
-            ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in quick_actions:
@@ -1245,11 +1251,7 @@ class QuickActionsProvider(Provider):
                 "import_media",
                 "Import a new media file for processing",
             ),
-            (
-                "Quick Actions: Toggle Focus Mode",
-                "toggle_focus_mode",
-                "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
-            ),
+            FOCUS_TOGGLE_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in popular_actions:
@@ -1286,7 +1288,7 @@ class QuickActionsProvider(Provider):
                 _navigate_via_screen(
                     self.app, TAB_INGEST, "Opened Import/Export for media import"
                 )
-            elif action_id == "toggle_focus_mode":
+            elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
                 self.app.action_toggle_focus_mode()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
@@ -5271,7 +5273,7 @@ class TldwCli(
             Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
             Binding(
                 "ctrl+shift+f",
-                "toggle_focus_mode",
+                FOCUS_TOGGLE_PALETTE_ENTRY[1],
                 "Focus Mode",
                 show=False,
             ),
@@ -5635,6 +5637,9 @@ class TldwCli(
         self._focus_mode_config = bool(
             get_cli_setting("general", "focus_mode", False)
         )
+        # Set by _resolve_initial_shell_route when onboarding outranks a
+        # focus request at startup; restored when the wizard lands on Chat.
+        self._deferred_focus_request: bool = False
 
         self._rich_log_handler: Optional[RichLogHandler] = (
             None  # For the RichLog widget in Logs tab
@@ -8212,7 +8217,17 @@ class TldwCli(
         decision the wizard offer uses: if the wizard is about to be
         offered, land on Home beneath it.
         """
+        # task-16320: record the focus request BEFORE the onboarding branches
+        # return Home — a first-run launch defers it (the wizard navigates to
+        # the Console on completion, and _handle_first_run_wizard_result then
+        # restores the request) instead of silently discarding it. Any
+        # non-onboarding route below applies it immediately.
+        _focus_requested = bool(
+            getattr(self, "_cli_focus_override", False)
+            or getattr(self, "_focus_mode_config", False)
+        )
         if self.app_config.get("_first_run", False):
+            self._deferred_focus_request = _focus_requested
             return TAB_HOME
         try:
             from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -8224,15 +8239,14 @@ class TldwCli(
                 "prompt",
                 "home",
             }:
+                self._deferred_focus_request = _focus_requested
                 return TAB_HOME
         except Exception:
             logger.debug("Wizard startup route check failed (category=runtime)")
         # task-16320: focus mode is Console-only by definition, so a focus
-        # request forces the route — but the first-run/wizard branches ABOVE
-        # keep onboarding unbeatable (spec: first-run wins).
-        if getattr(self, "_cli_focus_override", False) or getattr(
-            self, "_focus_mode_config", False
-        ):
+        # request forces the route — onboarding branches ABOVE still win
+        # (spec: first-run wins).
+        if _focus_requested:
             self.focus_mode = True
             return TAB_CHAT
         return getattr(self, "_initial_tab_value", TAB_CHAT)
@@ -8526,7 +8540,6 @@ class TldwCli(
         screen_name, current_tab_value, screen_class = (
             self._resolve_screen_navigation_target(requested_screen)
         )
-        self._clear_focus_if_leaving_console(screen_name)
         logger.info(f"Navigating to screen: {requested_screen}")
 
         # NOT ``self.screen`` (TASK-16300): with a pushed screen on top --
@@ -8938,6 +8951,14 @@ class TldwCli(
 
             # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
             self.current_tab = current_tab_value
+
+            # task-16320: the exit rule runs only once the switch has
+            # SUCCEEDED -- flush vetoes, confirmations, admission, and mount
+            # failures above all `return` with the Console still resident, so
+            # clearing earlier would desync the app flag from the mounted
+            # screen's -focus class (the next toggle would do the wrong
+            # visible action).
+            self._clear_focus_if_leaving_console(screen_name)
 
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
@@ -10535,6 +10556,19 @@ class TldwCli(
         if type(exit_route) is not str:
             return
 
+        # task-16320: consume a deferred focus request from a first-run
+        # launch (--focus / focus_mode config) at the moment the wizard
+        # finishes, BEFORE payload validation -- the request's fate must
+        # not depend on how valid the wizard's result dict is. Focus is
+        # Console-only: it applies when the exit route is Chat, and is
+        # simply dropped for any other destination.
+        if getattr(self, "_deferred_focus_request", False):
+            self._deferred_focus_request = False
+            if exit_route == TAB_CHAT:
+                self.focus_mode = True
+            else:
+                self.focus_mode = False
+
         screen_context: dict[str, object] = {}
         if exit_route == TAB_SETTINGS:
             if completed is not False or type(exit_context) is not dict:
@@ -10572,6 +10606,14 @@ class TldwCli(
             and exit_route == TAB_CHAT
             and getattr(self, "current_tab", None) == TAB_CHAT
         ):
+            # The already-mounted Console kept chrome from its unfocused
+            # mount; apply the restored request in place.
+            if self.focus_mode:
+                apply_chrome = getattr(
+                    self._navigation_outgoing_screen(), "_apply_focus_chrome", None
+                )
+                if callable(apply_chrome):
+                    apply_chrome()
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -12690,18 +12732,14 @@ if __name__ == "__main__":
 
     warm_up_image_protocol()
 
-    try:
-        _main_args = _build_arg_parser().parse_args()
-    except SystemExit:
-        # Bare `python3 -m tldw_chatbook.app` with an unknown flag must not
-        # hard-exit before logging is up; fall back to defaults.
-        _main_args = None
+    # argparse terminates here on --help (exit 0) and invalid arguments
+    # (exit 2), same as the console-script path -- no guard: swallowing
+    # SystemExit would print usage and then launch the TUI anyway.
+    _main_args = _build_arg_parser().parse_args()
 
     # Create instance with early logging flag
     app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(
-        getattr(_main_args, "focus", False) if _main_args is not None else False
-    )
+    app_instance._cli_focus_override = bool(_main_args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:

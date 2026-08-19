@@ -40,6 +40,7 @@ class TestInitialRouteResolution:
             _cli_focus_override=False,
             _focus_mode_config=False,
             focus_mode=False,
+            _deferred_focus_request=False,
         )
         for key, value in overrides.items():
             setattr(stub, key, value)
@@ -79,7 +80,9 @@ class TestInitialRouteResolution:
         assert TldwCli._resolve_initial_shell_route(stub) == "notes"
         assert stub.focus_mode is False
 
-    def test_first_run_onboarding_beats_focus(self):
+    def test_first_run_onboarding_beats_focus_but_defers_request(self):
+        """Qodo finding 3: first-run still routes to Home, but the focus
+        request is recorded for the wizard's completion, not discarded."""
         from tldw_chatbook.app import TldwCli
 
         stub = self._stub(
@@ -87,9 +90,34 @@ class TestInitialRouteResolution:
         )
         assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
         assert stub.focus_mode is False
+        assert stub._deferred_focus_request is True
+
+    def test_wizard_recovery_offer_also_defers_focus_request(self):
+        from tldw_chatbook.app import TldwCli
+
+        stub = self._stub(_cli_focus_override=True)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "tldw_chatbook.UI.Wizards.first_run_setup_state"
+                ".setup_recovery_action",
+                lambda cfg, env: "offer",
+            )
+            assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
+        assert stub.focus_mode is False
+        assert stub._deferred_focus_request is True
+
+    def test_no_focus_no_deferral(self):
+        from tldw_chatbook.app import TldwCli
+
+        stub = self._stub(app_config={"_first_run": True})
+        assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
+        assert stub._deferred_focus_request is False
 
 
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
@@ -275,3 +303,93 @@ class TestPaletteQuickAction:
             pilot.app.action_toggle_focus_mode = lambda: called.append(True)
             provider.execute_quick_action("toggle_focus_mode")
             assert called == [True]
+
+
+class TestDeferredFocusRestore:
+    """Qodo finding 3: a first-run launch with --focus must deliver the
+    chrome-free Console when the wizard completes and navigates to Chat."""
+
+    async def test_wizard_completion_restores_deferred_focus(self):
+        # Boot WITHOUT the focus request (the resolver would apply it
+        # immediately on a non-first-run launch); then model the state the
+        # first-run path leaves behind: request deferred, Console mounted
+        # unfocused beneath the wizard.
+        app_instance = _build_test_app(configured_default="chat")
+        app_instance._deferred_focus_request = True
+
+        async with app_instance.run_test(size=_FOCUS_TERMINAL_SIZE) as pilot:
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if type(app_instance.screen).__name__ == "ChatScreen":
+                    break
+            await pilot.pause(0.3)
+            assert app_instance.focus_mode is False  # not yet applied
+            assert not app_instance.screen.has_class("-focus")
+
+            # Wizard completes and routes the user to the Console.
+            app_instance._handle_first_run_wizard_result(
+                {"completed": True, "exit_route": TAB_CHAT}
+            )
+            await pilot.pause(0.3)
+            assert app_instance._deferred_focus_request is False
+            assert app_instance.focus_mode is True
+
+            # The restore must land on the mounted Console even when the
+            # remount shortcut skips navigation (Console already current).
+            assert app_instance.screen.has_class("-focus")
+
+    def test_wizard_exit_to_settings_does_not_restore_focus(self):
+        app_instance = _build_test_app()
+        app_instance._deferred_focus_request = True
+        app_instance._handle_first_run_wizard_result(
+            {"completed": False, "exit_route": "settings",
+             "exit_context": {"category": "providers-models"}}
+        )
+        # Focus is Console-only; leaving to Settings consumes the request
+        # without applying it.
+        assert app_instance._deferred_focus_request is False
+        assert app_instance.focus_mode is False
+
+
+class TestNavigationVetoKeepsFocus:
+    """Qodo finding 4: an aborted navigation must leave the flag, the
+    -focus class, and the footer untouched and synchronized."""
+
+    async def test_flush_veto_keeps_focus_state_synchronized(self):
+        app_instance = _build_test_app(configured_default="chat")
+
+        async with app_instance.run_test(size=_FOCUS_TERMINAL_SIZE) as pilot:
+            for _ in range(200):
+                await pilot.pause(0.02)
+                if type(app_instance.screen).__name__ == "ChatScreen":
+                    break
+            await pilot.pause(0.3)
+            screen = app_instance.screen
+
+            await pilot.press("ctrl+shift+f")
+            await pilot.pause(0.3)
+            assert app_instance.focus_mode is True
+            assert screen.has_class("-focus")
+
+            # A screen whose pending-work flush vetoes the navigation.
+            async def _veto_flush():
+                return False
+
+            screen.flush_pending_work = _veto_flush
+            app_instance._initial_screen_pushed = True
+            await app_instance.handle_screen_navigation(
+                NavigateToScreen("settings")
+            )
+            await pilot.pause(0.3)
+
+            # Navigation aborted: the Console is still resident and focus
+            # state must be exactly as before the attempt.
+            assert type(app_instance.screen).__name__ == "ChatScreen"
+            assert app_instance.focus_mode is True
+            assert screen.has_class("-focus")
+
+            # And the next toggle therefore does the right visible action.
+            await pilot.press("ctrl+shift+f")
+            await pilot.pause(0.3)
+            assert app_instance.focus_mode is False
+            assert not screen.has_class("-focus")
