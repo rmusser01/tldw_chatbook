@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Hashable, Optional
@@ -32,6 +33,40 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+
+#: Diagnostics slot for per-seam keyword outcomes (TASK-18903). Mirrors
+#: ``SCOPE_DIAGNOSTICS_KEY``/``SEMANTIC_DIAGNOSTICS_KEY``: a LIST of
+#: ``{"status", "seam", "message"}`` entries, APPENDED never assigned, so two
+#: failing seams in one call cannot overwrite each other (the task-9 review
+#: finding that shaped the scope slot applies identically here).
+KEYWORD_SEAM_DIAGNOSTICS_KEY = "keyword_seams"
+
+#: Status value used inside that slot.
+SEAM_STATUS_FAILED = "failed"
+
+
+class SeamState(Enum):
+    """Outcome of one keyword seam.
+
+    The boolean this replaces could not tell "not configured" from "ran and
+    threw": both flowed on as *some* value alongside an empty row list, and a
+    thrown seam reported itself AVAILABLE. That collapse let a total backend
+    outage present as a successful search with zero results (TASK-18903), and
+    it is the same shape that produced TASK-17855's wrong defect filing and
+    TASK-18255.
+
+    NOTE for anyone reading the gate: every ``Enum`` member is TRUTHY,
+    including ``UNAVAILABLE`` and ``FAILED``. A guard written as
+    ``if not state`` is always False and silently inert -- compare with ``is``.
+    """
+
+    #: Configured, ran, and its rows are its answer (possibly none).
+    AVAILABLE = "available"
+    #: Not configured in this runtime -- nothing was searched.
+    UNAVAILABLE = "unavailable"
+    #: Configured, ran, and RAISED. Its empty rows mean nothing.
+    FAILED = "failed"
+
 
 # Single source of truth for the pipeline diagnostics "scope" slot key
 # (task-4/Backend A); reused here so the Library service's own
@@ -103,6 +138,11 @@ ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
     "no keyword leg for the selected sources — semantic only"
 )
 ROUTE_NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
+# (TASK-18903) A seam that RAN AND THREW contributed nothing, and its silence
+# must not read as "that source has nothing". This is the same principle the
+# routing disclosures already encode -- and, as their own docstring says, zero
+# rows is exactly when it matters most.
+ROUTE_NOTE_SEAMS_FAILED_TEMPLATE = "{seams} failed — results exclude them"
 # Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
 # raw provenance `source_type` values -> the scope-toggle identifiers used
 # by `LibraryRagScopeState`/the Search canvas's per-source toggles.
@@ -448,7 +488,50 @@ class LibraryLocalRagSearchService:
         gathered = await asyncio.gather(*coroutines.values())
         outcomes = dict(zip(coroutines.keys(), gathered))
 
-        if not any(available for available, _rows in outcomes.values()):
+        # Record every seam that RAN AND THREW, so a partial failure cannot
+        # read as "the corpus has nothing" one layer up. Appended to a list
+        # for the same reason the scope slot is (task-9 review finding): two
+        # seams can fail in one call and neither may overwrite the other.
+        failed_seams = sorted(
+            name for name, (state, _rows) in outcomes.items()
+            if state is SeamState.FAILED
+        )
+        for name in failed_seams:
+            diagnostics.setdefault(KEYWORD_SEAM_DIAGNOSTICS_KEY, []).append(
+                {
+                    "status": SEAM_STATUS_FAILED,
+                    "seam": name,
+                    "message": f"The {name} seam failed and returned no rows.",
+                }
+            )
+        if failed_seams:
+            # The human-readable half, through the channel the panel already
+            # renders. The structured slot above is for machines (and for the
+            # eval harness, which until TASK-18255 could not tell an unwired
+            # seam from an empty one); this sentence is what the user reads.
+            diagnostics.setdefault(LIBRARY_RAG_ROUTE_NOTES_KEY, []).append(
+                ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(
+                    seams=", ".join(failed_seams)
+                )
+            )
+
+        if not any(state is SeamState.AVAILABLE for state, _rows in outcomes.values()):
+            # NOT the same condition, and the difference is the whole task.
+            # Nothing CONFIGURED is "blocked" -- a setup problem the user can
+            # act on. Everything configured having THROWN is a retrieval
+            # FAILURE, and it must never present as a zero-row success:
+            # `_outcome_from_service_result` maps empty rows to `status=
+            # "empty"`, which is in `LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES`,
+            # so the RAG answer path would run and answer from NO context at
+            # all. `failed` is deliberately reused rather than a new status --
+            # `run_library_rag_search` already returns it for a raised search,
+            # and it is already absent from every answerable allowlist.
+            if failed_seams:
+                return LibraryRagSearchOutcome(
+                    status="failed",
+                    recovery_state=_seams_failed_recovery_state(failed_seams),
+                    diagnostics=diagnostics,
+                )
             return LibraryRagSearchOutcome(
                 status="blocked",
                 recovery_state=_no_backend_recovery_state(),
@@ -573,11 +656,11 @@ class LibraryLocalRagSearchService:
         user_id: str,
         *,
         id_allowlist: Optional[Sequence[str]] = None,
-    ) -> tuple[bool, list[dict[str, Any]]]:
-        """Search the notes seam. Returns (seam_available, rows)."""
+    ) -> tuple[SeamState, list[dict[str, Any]]]:
+        """Search the notes seam. Returns (state, rows)."""
         service = getattr(self._app, "notes_scope_service", None)
         if service is None:
-            return False, []
+            return SeamState.UNAVAILABLE, []
         # Forward the allowlist only when provided so an unscoped call
         # keeps the exact legacy call shape (byte-identical, spec D2).
         allowlist_kwargs = (
@@ -605,12 +688,12 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return True, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: notes seam failed."
             )
-            return True, []
+            return SeamState.FAILED, []
 
     async def _search_media(
         self,
@@ -618,11 +701,11 @@ class LibraryLocalRagSearchService:
         top_k: int,
         *,
         id_allowlist: Optional[Sequence[str]] = None,
-    ) -> tuple[bool, list[dict[str, Any]]]:
-        """Search the media seam. Returns (seam_available, rows)."""
+    ) -> tuple[SeamState, list[dict[str, Any]]]:
+        """Search the media seam. Returns (state, rows)."""
         service = getattr(self._app, "media_reading_scope_service", None)
         if service is None:
-            return False, []
+            return SeamState.UNAVAILABLE, []
         # Forward the allowlist only when provided so an unscoped call
         # keeps the exact legacy call shape (byte-identical, spec D2).
         allowlist_kwargs = (
@@ -642,22 +725,22 @@ class LibraryLocalRagSearchService:
             return [_media_row(item) for item in items if isinstance(item, Mapping)]
 
         try:
-            return True, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: media seam failed."
             )
-            return True, []
+            return SeamState.FAILED, []
 
     async def _search_conversations(
         self,
         query: str,
         top_k: int,
-    ) -> tuple[bool, list[dict[str, Any]]]:
-        """Search the conversations seam. Returns (seam_available, rows)."""
+    ) -> tuple[SeamState, list[dict[str, Any]]]:
+        """Search the conversations seam. Returns (state, rows)."""
         db = getattr(self._app, "chachanotes_db", None)
         if db is None:
-            return False, []
+            return SeamState.UNAVAILABLE, []
 
         async def run_match(fts_query: str) -> list[dict[str, Any]]:
             if getattr(db, "is_memory_db", False):
@@ -676,22 +759,22 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return True, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: conversations seam failed."
             )
-            return True, []
+            return SeamState.FAILED, []
 
     async def _search_prompts(
         self,
         query: str,
         top_k: int,
-    ) -> tuple[bool, list[dict[str, Any]]]:
-        """Search the prompts seam. Returns (seam_available, rows)."""
+    ) -> tuple[SeamState, list[dict[str, Any]]]:
+        """Search the prompts seam. Returns (state, rows)."""
         service = getattr(self._app, "prompt_scope_service", None)
         if service is None:
-            return False, []
+            return SeamState.UNAVAILABLE, []
 
         async def run_match(fts_match_query: str) -> list[dict[str, Any]]:
             # Pre-built MATCH string, same as the notes/media/conversations
@@ -710,12 +793,12 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return True, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: prompts seam failed."
             )
-            return True, []
+            return SeamState.FAILED, []
 
     async def _search_semantic(
         self,
@@ -1548,7 +1631,7 @@ def _raw_semantic_score(item: Any) -> float:
     return _coerce_score(value) or float("-inf")
 
 
-async def _empty_scoped_seam() -> tuple[bool, list[dict[str, Any]]]:
+async def _empty_scoped_seam() -> tuple[SeamState, list[dict[str, Any]]]:
     """Stand-in for a keyword seam whose source type is scoped to zero ids.
 
     The seam itself is available (the app has it configured) -- scope just
@@ -1556,7 +1639,7 @@ async def _empty_scoped_seam() -> tuple[bool, list[dict[str, Any]]]:
     than ``(False, [])`` (unavailable), keeping ``_search_keyword``'s
     any-seam-available gate accurate when other seams still have results.
     """
-    return True, []
+    return SeamState.AVAILABLE, []
 
 
 #: This service's own keyword-source-type vocabulary ("media", "notes", ...)
@@ -1599,6 +1682,38 @@ def _scope_item_count(
             continue
         total += len(scope.allowlist.get(scope_key, ()))
     return total
+
+
+def _seams_failed_recovery_state(
+    failed_seams: Sequence[str],
+) -> DestinationRecoveryState:
+    """Recovery state for "every configured seam ran and threw".
+
+    Distinct from `_no_backend_recovery_state` on purpose: nothing configured
+    is a SETUP problem ("configure retrieval"), whereas everything configured
+    failing is an OPERATIONAL one ("retry, check indexing"). Naming the seams
+    matters because the useful next action differs per backend.
+
+    Args:
+        failed_seams: Seam names that ran and raised, already sorted.
+
+    Returns:
+        The recovery state for a total keyword-retrieval failure.
+    """
+    named = ", ".join(failed_seams) if failed_seams else "every"
+    return DestinationRecoveryState(
+        status_label="Retrieval failed",
+        unavailable_what="Library Search/RAG retrieval",
+        why=f"Every configured Library seam failed ({named})",
+        next_action="Retry the query or check Library indexing",
+        recovery_action="Retry",
+        authority_owner="Library retrieval service",
+        stable_selector=LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
+        disabled_tooltip=(
+            f"Library retrieval failed in every configured seam ({named}). "
+            "Retry the query or check Library indexing."
+        ),
+    )
 
 
 def _no_backend_recovery_state() -> DestinationRecoveryState:
