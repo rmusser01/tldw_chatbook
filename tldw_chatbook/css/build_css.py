@@ -14,6 +14,8 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
   Textual used to add (with a full cold reparse) on a modal's first open.
 """
 
+import hashlib
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +51,106 @@ WIDGET_DEFAULTS_SCOPED_FILENAME = "widget_defaults_scoped.tcss"
 #: block's text at all.
 SCREEN_CSS_SCOPED_FILENAME = "screen_css_scoped.tcss"
 SCREEN_CSS_SELF_FILENAME = "screen_css_self.tcss"
+
+#: Content manifest for the generated sheets (TASK-18910). The boot-time
+#: staleness check used to treat ANY input whose mtime moved past the build
+#: as stale, so a branch switch / ``git checkout`` / stash pop -- which
+#: rewrite mtimes without changing content -- cost a full synchronous
+#: rebuild (~0.7 s: interpreter spawn + package AST scan) on the next boot.
+#: The builder now records the sha256 of every input; the check treats an
+#: mtime move as a hint to hash-check, and identical content is not stale.
+#: Untracked by git on purpose: it describes the local build, not the repo.
+BUILD_MANIFEST_FILENAME = ".css-build-manifest.json"
+
+
+#: Streaming read size shared by the builder's hashing and the boot-time
+#: staleness check's hashing (Qodo finding on PR #1831: one named constant,
+#: not two hard-coded 65536s that can drift apart).
+HASH_CHUNK_SIZE_BYTES = 65536
+
+
+def _file_sha256(path: Path) -> str:
+    """Return the hex sha256 of a file's bytes (streamed)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(HASH_CHUNK_SIZE_BYTES), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_build_manifest(css_dir: Path) -> None:
+    """Record the content hash of every build input beside the sheets.
+
+    Inputs are the ``CSS_MODULES`` plus every Python module carrying a
+    ``BUNDLED_CSS``/``BUNDLED_SCREEN_CSS`` declaration (the same set
+    ``iter_blocks`` walks). Keys are package-root-relative POSIX paths so the
+    manifest stays valid across absolute checkout paths.
+
+    Each entry records ``[sha256, mtime_at_build]``: the staleness check
+    compares mtimes first and hashes only entries whose mtime moved, so the
+    steady state (nothing edited) reads the manifest and stats the inputs
+    without hashing anything.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets; the
+            manifest is written beside the generated sheets it describes.
+
+    Raises:
+        OSError: If any input cannot be read or the manifest cannot be
+            written.
+    """
+    package_root = css_dir.parent
+    entries: dict[str, list] = {}
+    for module in CSS_MODULES:
+        source = css_dir / module
+        if source.is_file():
+            stat = source.stat()
+            entries[f"css/{module}"] = [_file_sha256(source), stat.st_mtime]
+    for attr in (widget_css.WIDGET_ATTR, widget_css.SCREEN_ATTR):
+        for block in widget_css.iter_blocks(package_root, attr):
+            key = block.module
+            if key not in entries:
+                source = package_root / key
+                entries[key] = [_file_sha256(source), source.stat().st_mtime]
+    manifest_path = css_dir / BUILD_MANIFEST_FILENAME
+    manifest_path.write_text(
+        json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _manifest_inputs_changed_since(css_dir: Path) -> bool:
+    """Return whether any manifest input's hash no longer matches the file.
+
+    The just-written manifest records each input's hash as observed by
+    ``write_build_manifest``; re-hashing immediately after the build and
+    comparing detects an edit that landed between the build's reads of the
+    sources and the manifest's reads. See ``main()`` for the publish-or-
+    refuse contract.
+    """
+    manifest_path = css_dir / BUILD_MANIFEST_FILENAME
+    try:
+        entries = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True  # cannot verify: do not publish
+    if not isinstance(entries, dict):
+        return True
+    if not entries:
+        # Nothing was recorded (e.g. a test tree with no CSS inputs): an
+        # empty manifest is vacuously consistent with the sheets, not a
+        # race. Production manifests always carry the CSS_MODULES set.
+        return False
+    package_root = css_dir.parent
+    for key, value in entries.items():
+        if not isinstance(key, str) or not isinstance(value, list) or len(value) != 2:
+            return True
+        source = package_root / key
+        try:
+            if not source.is_file() or _file_sha256(source) != value[0]:
+                return True
+        except OSError:
+            return True
+    return False
+
 
 #: Tie-breaker for the scoped widget-defaults source.  Textual's own default-CSS
 #: sources sit at ``-(MRO depth)``, so any value below that floor makes the
@@ -373,6 +475,26 @@ def main():
         css_dir / SCREEN_CSS_SELF_FILENAME,
         css_dir / SCREEN_CSS_SCOPED_FILENAME,
     )
+    # Qodo finding on PR #1831 (build race): the sheets above were built
+    # from one read of the sources and write_build_manifest re-reads them;
+    # an edit between those reads would record NEW content in the manifest
+    # while the sheets carry the OLD content -- and every later boot would
+    # accept the stale sheets as current. Write the manifest, then re-hash
+    # every input and refuse to keep it if any changed while the build ran:
+    # the manifest then never describes content absent from the sheets.
+    # (Deleting the just-written manifest on refusal keeps the NEXT boot on
+    # the safe legacy mtime rule instead of a stale blessing.)
+    write_build_manifest(css_dir)
+    if _manifest_inputs_changed_since(css_dir):
+        manifest_path = css_dir / BUILD_MANIFEST_FILENAME
+        try:
+            manifest_path.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(
+            "CSS inputs changed while building (build raced an edit); "
+            "the manifest was not published. Re-run build_css."
+        )
 
     print("\nTo use the modular CSS:")
     print("1. Update app.py to use 'tldw_cli_modular.tcss'")

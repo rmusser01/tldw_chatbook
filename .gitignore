@@ -212,3 +212,8 @@ List.txt
 /moonshot-api-key.txt
 *-api-key.txt
 yandex-folder-id.txt
+
+# CSS build content manifest (TASK-18910): machine-local staleness state
+# written by build_css.py beside the generated sheets; describes the local
+# build, never the repo.
+tldw_chatbook/css/.css-build-manifest.json
