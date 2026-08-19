@@ -236,24 +236,93 @@ PR #863 bot wave: Qodo 5 findings — #4 (:8405 BLANK compose crash) + #5 (:1099
 MERGED: PR #863 → dev, merge 7d8820bf1, 2026-07-25 (user approved screens + merge: "aapproved"). Qodo wave: 4 fixed (2 RED-first sentinel bugs) + 1 declined w/ precedent, all threads answered. Post-merge dup-check: 541/565-567 clean; pre-existing pileup grew (505-532, ~28 exact-basename collisions) → task-544 scope note. Memory updated. ===== 541 SDD RUN COMPLETE =====
 FOLLOW-UP STREAM COMPLETE 2026-07-25: 495 → PR #874 (imported-profile query keys, fingerprint-invariant, 541 RAG green); 482 → PR #876 (validate_chroma_persist_directory shared by 2 client sites + 2 producers, fault-injection verified); 544 → PR #877 (28 dup groups resolved, movers → 585-619, zero dups; #846 body prose stale re TASK-507→594); 565/566/567 → PR #882 (5 commits incl. 2 review catches: provider blank-select test + stray RAG-check toast). ALL FOUR PRs OPEN, HELD FOR USER APPROVAL. Reviews: every task Approved; RED evidence independently reproduced by reviewers on all 4 cycles.
 
-===== 2026-08-18 SDD RUN: phase-5 keyboard selection (task-18156) =====
-Plan: Docs/superpowers/plans/2026-08-18-console-keyboard-selection.md
-Branch: feat/console-keyboard-selection off origin/dev (spec d0cf92a0f, plan 9617f6c62)
-INCIDENT task 1: haiku implementer split work across checkouts despite cwd guard — module+task committed HERE (47dfe2937, a15054f09) but tests committed to MAIN checkout's feat/model-catalog-consent-gate (stray 4511614b2, removed via mixed reset + untracked-file delete; main restored to 34831c776). Tests salvaged and re-applied here by controller. GREEN evidence was real but ran in the wrong tree.
-Task 1: complete (commits 47dfe2937+3b97a1e43+3439c9a72, review clean after task-file fix; Minor noted: offset_for_cell doesn't reuse _clamp — deliberate restraint)
-Task 2: complete (commits 39cdbbdf3+3acb7696e, review clean after 1 Important fix: nav-key fall-through desync — consumed as no-ops; plan Task-3 rule corrected 67dbfb658; Minor noted: dead ConsoleToolDiffRow eligibility arm)
-Task 3: complete (commit 3ad8f8957, review clean; Minor for final review: h's candidate lacks len(text) upper clamp — one-liner, non-crashing, all other motions self-heal)
-INCIDENT task 4: NEVER git stash push/pop bare in this repo — the stash stack is SHARED across worktrees and holds other sessions' entries; a defensive pop applied a foreign 'WIP on dev' stash into this worktree (16 files, conflict in css bundle). Restored surgically; foreign entry left in list. Use patch files for baseline comparison instead.
-Task 4: complete (commit 11f920acc, review clean; Minors for final review: _RecordingPromptQueue hardcodes idle presentation ignoring kwargs; enter-outside-mode test proves only menu absence)
-Task 6: complete (commit a4286a199, controller-inline, gates green)
-Task 6: review clean (Minors for final review: stale _GeometryOwnerApp docstring '5 rows'; ANSI-disabled-border CSS list lacks create-note id (unreachable today); import order; no pilot test drives keyboard->CreateNote — covered live instead)
-FINAL REVIEW: READY FOR PR; 1 Important + 4 record fixes applied (b05c89a2b); follow-ups filed task-18315
-===== 18156 SDD RUN COMPLETE: PR #1813 MERGED to dev 908a3fbb3 (2026-08-18); Qodo round: 2 bugs fixed RED-first + 2 hardening + 2 docstrings, 4 stale re-anchors answered with line evidence; follow-ups task-18315 (3 open ACs)
+---
 
-===== 2026-08-18 SDD RUN 2: note-management riders =====
-Plan: Docs/superpowers/plans/2026-08-18-console-note-management.md
-Branch: feat/console-note-management off origin/dev 908a3fbb3 (plan 1aa7908e3)
-RUN2 Task 1: complete (commits 228637c2b+31c0eb9c6+d63167607, review clean after task-id fix; Minor: worktree venv lacks ruff module — used sibling binary)
-RUN2 Task 2: complete (commit 3706dcbc4, review clean, no findings; escape-hatch equality assertion FORCES Task 3 to move the modal into a TASK*_MODAL_CONTRACTS tuple)
-RUN2 Task 3: complete (screen wiring + unmocked round trips; modal moved into TASK2_MODAL_CONTRACTS not TASK3 -- its cancel dismisses False, which only Task2's blanket assertion accepts; guard field extended honestly for its real 2-stage mid-edit-escape behavior rather than defaulted to "none"; 1 pre-existing baseline failure confirmed unaffected via HEAD-content swap-back, not stash)
-RUN2 Task 3 review fix: complete -- Important (no inflight latch, could stack two modals w/ independent DB closures on rapid double-trigger; ported _console_selection_feedback_inflight precedent verbatim, RED-verified via HEAD-content swap-back) + Minor (_on_edit row indexing consistency) fixed; 146 passed, same 1 pre-existing baseline failure
+# TASK-18060 durable research jobs (core) — ledger
+Plan: Docs/superpowers/plans/2026-08-18-durable-research-jobs-core.md
+Spec: Docs/superpowers/specs/2026-08-18-durable-research-jobs-design.md
+Branch: feat/durable-research-jobs off docs/synthesis-budget-spec
+Worktree: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/research-shipped-decomp
+Pre-flight: plan's Task 2 tests used time.sleep() to age a lease; replaced with
+zero-second leases (deterministic) before dispatch.
+Task 1: complete (commits a845d99..eb600e0, review clean after 1 fix round)
+  - Critical found+fixed: _now()/_timestamp_after() format divergence (Z vs +00:00,
+    dropped fractional field) made a live lease compare as expired -> double-claim.
+    Fixed via shared _format_timestamp(timespec="microseconds"); regression test
+    verified to fail if reverted.
+  - Minor (for final review triage): task-1-report narrative overstates its test
+    command's scope (pytest dedupes file+parent-dir to the file); mixed
+    LocalResearchService._format_timestamp vs self._format_timestamp call style.
+Task 2: complete (commits 362b7af..53d9f45, review clean after 1 fix round)
+  - Plan defect found by implementer: brief's claim_run incremented lease_attempts
+    only when reclaiming, so the brief's OWN budget test could never pass.
+  - Critical found by reviewer: the implementer's fix (count every claim) let
+    healthy claim->release cycles burn the crash budget and strand a run that
+    never crashed -- and Task 3's engine releases on EVERY invocation, so a
+    paused/resumed run would strand at max_attempts=3. Fixed by resetting
+    lease_attempts on clean release; budget now means consecutive abandonments.
+    Reviewer reverted the fix line and confirmed the new test fails without it.
+Task 3: implemented inline (subagent hit an API session limit after the red
+  tests). Commit below; awaiting review.
+  - Keep-alive mutation-checked: disabling it fails the long-silent-phase test,
+    which passed trivially pre-implementation (no lease means none to lose).
+  - _LeaseLost returns the run rather than fail_run: the taking-over executor
+    owns the terminal state.
+  commit 194077034
+Task 4: complete inline (commit 17c49cc4d). Mutation-checked; first version of
+  the engine test passed either way and was replaced with a pre-seeded-ledger
+  test that fails under from_limits.
+Task 5: complete inline (commit below). Persistence + cap only.
+  GAP: reading the pool back to skip a completed round is NOT implemented, so
+  TASK-18060 AC #3 remains open. Plan's Task 5 steps stop at persistence.
+  commit 0b563724c
+Tasks 3-5: reviewed together (first outside eye; they were authored inline during
+  a subagent capacity limit). Two Criticals found, both real:
+  - keep-alive starved: production search_fn is a blocking `def`, so the asyncio
+    renewal task never ran during collection and the lease could lapse. Fixed by
+    offloading sync pipeline seams via asyncio.to_thread; test verified RED->GREEN.
+  - 6 persisting writes unfenced including complete_run (a displaced executor
+    could mark a run completed). All fenced.
+  Plus: from_snapshot preferred stale limits (same bug class as Qodo PR 1766);
+  cap measured with a different serializer than the one that persists.
+  Re-review approved; threading workaround verified NOT to hide a production
+  hazard (production is file-backed, per-call connections; real pipeline
+  callables never touch the service; to_thread copies contextvars).
+  Commits: 194077034, 17c49cc4d, 0b563724c, 2fcfc3522
+OPEN: AC #3 (read the evidence pool back to skip a completed round) unimplemented.
+Final whole-branch review + 2 fix rounds: complete. Commits 2fcfc35, ecb65f4, 281f96c.
+  - Critical (regression I introduced): exhausted retry budget left a run
+    permanently unclaimable instead of failed. Fixed: LeaseBudgetExhausted ->
+    fail_run with a truthful message.
+  - Critical (introduced by THAT fix): the budget check fired on a LIVE lease,
+    so a newcomer failed a run a healthy executor was running. Fixed: a claim
+    counts as a reclaim only when the stored lease has expired, using one `now`
+    for both the guard and the UPDATE.
+  - 3x "test passed for the wrong reason" this run: my engine ledger test called
+    the function under test; the theft test stole a live lease and had its
+    AssertionError swallowed by a broad except; the repair fixed the steal but
+    not the masking. Final form asserts from top-level code on an independent
+    DB read.
+FOLLOW-UPS (named, not fixed): AC #3 read-back unimplemented; fence coverage is
+  2 of 11 individually; the except-ResearchLimitExceeded half untested; evidence
+  written before the doc-budget trim; engine-instance lease state unsafe if a
+  scheduler reuses one engine; ~120s decline window after SIGKILL.
+External review (Qodo, PR #1822) after 5 internal rounds found 6 MORE real bugs:
+  terminal runs resurrectable (claim checked lease expiry, not run status);
+  run-state writes (progress/phase/checkpoint/pause/cancel) unfenced; an expired
+  lease could renew itself; the fence is check-then-act (fixed by making
+  complete_run/fail_run lease-conditional in SQL, so a displaced executor's last
+  word is a no-op); external-db mode raised on every claim; the evidence cap was
+  checked but not enforced. Fixed in eaac7c8da (212 tests).
+  Finding 5 (unversioned ALTER) adjudicated and DECLINED: this service has no
+  migration framework at all, so adding one is a subsystem, not a fix.
+INCIDENTS during that fix round, both disclosed by the fixer:
+  - a mutation script's `git checkout -- <file>` reverted the whole uncommitted
+    source; recovered by re-applying edits. Independently re-verified after:
+    212 + 208 tests pass, ruff clean, all six fixes present in committed code.
+  - a stale stash conflict on THIS ledger was resolved with `git checkout --ours`,
+    which discarded the run's ledger appends. Recovered from stash@{0}.
+STATE: PR #1822 open, NOT merged, holding at the user's instruction.
+FOLLOW-UP found, not fixed: get_run's external-db branch raises TypeError instead
+  of returning None when db.get_run returns None; _claim_run_external now depends
+  on it.

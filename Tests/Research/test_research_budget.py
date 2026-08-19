@@ -186,3 +186,67 @@ def test_release_searches_returns_unused_reservations():
     ledger.settle_searches(1)
 
     assert ledger.remaining_searches() == 2
+
+
+# --- resume restores spend rather than re-granting it (task-18060) -------------
+
+
+def test_from_snapshot_restores_spend_rather_than_regranting_it():
+    """execute_run rebuilt the ledger from limits on every entry and never read
+    budget_ledger.json back, so a resumed run was granted its full budget
+    again. With resume routine rather than exceptional, that is a budget leak."""
+    from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
+
+    original = BudgetLedger.from_limits({"max_searches": 10})
+    original.reserve_searches(4)
+    original.settle_searches(4)
+    snapshot = original.snapshot()
+
+    restored = BudgetLedger.from_snapshot(snapshot, {"max_searches": 10})
+
+    assert restored.remaining_searches() == 6
+
+
+def test_from_snapshot_without_a_snapshot_is_a_fresh_ledger():
+    """A run that has never executed has no snapshot; it must start whole."""
+    from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
+
+    restored = BudgetLedger.from_snapshot(None, {"max_searches": 10})
+
+    assert restored.remaining_searches() == 10
+
+
+def test_from_snapshot_prefers_current_limits_over_stale_snapshot_limits():
+    """A plan-review checkpoint can patch a run's limits AFTER it has
+    already executed once and written a snapshot under the OLD limits. The
+    current value must win -- a snapshot's stale limits overriding a fresh
+    patch is the same bug class the Qodo PR 1766 fix addressed for
+    max_iterations in local_research_engine.py."""
+    from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
+
+    original = BudgetLedger.from_limits({"max_searches": 3})
+    snapshot = original.snapshot()  # snapshot carries the STALE limit (3)
+
+    restored = BudgetLedger.from_snapshot(snapshot, {"max_searches": 20})
+
+    assert restored.max_searches == 20
+    assert restored.remaining_searches() == 20
+
+
+def test_from_snapshot_restores_docs_and_tokens_too():
+    """Searches are not the only spendable budget; a partial restore would
+    silently re-grant whichever counter it forgot."""
+    from tldw_chatbook.Research_Interop.research_budget import BudgetLedger
+
+    original = BudgetLedger.from_limits(
+        {"max_searches": 10, "max_fetched_docs": 8, "max_tokens": 1000}
+    )
+    original.settle_docs(3)
+    original.settle_tokens(250, exact=True)
+    snapshot = original.snapshot()
+
+    restored = BudgetLedger.from_snapshot(snapshot, None)
+
+    assert restored.docs_used == 3
+    assert restored.tokens_settled == 250
+    assert restored.max_fetched_docs == 8

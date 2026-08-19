@@ -77,6 +77,68 @@ class BudgetLedger:
     def from_limits(cls, limits: Mapping[str, Any] | None) -> "BudgetLedger":
         return cls(limits)
 
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: Mapping[str, Any] | None,
+        limits: Mapping[str, Any] | None,
+    ) -> "BudgetLedger":
+        """Rebuild a ledger that has already spent part of its budget.
+
+        task-18060: ``execute_run`` used to rebuild from limits on every entry
+        while writing ``budget_ledger.json`` and never reading it back, so a
+        resumed run was granted its whole budget again. Resume is routine once
+        runs survive an app exit, which turns that into a leak.
+
+        Reservations are deliberately NOT restored. A reservation belongs to an
+        in-flight call that died with its executor; carrying it forward would
+        hold budget nothing is going to spend.
+
+        Args:
+            snapshot: A prior ``snapshot()`` payload, or None for a run that
+                has never executed.
+            limits: The run's CURRENT effective limits (any approved
+                plan-review patch already merged over the run's stored
+                limits); these win over the snapshot's own ``limits`` when
+                provided, since a snapshot written before a plan-review
+                patch would otherwise resurrect the stale, pre-patch values
+                (same bug class as the Qodo PR 1766 fix a few lines above
+                this one in ``local_research_engine.py``, for
+                ``max_iterations``). Falls back to the snapshot's limits
+                only when this argument is empty/None.
+
+        Returns:
+            A ledger whose used counters -- and elapsed runtime -- continue
+            from the snapshot.
+        """
+        snapshot = snapshot or {}
+        ledger = cls(dict(limits or snapshot.get("limits") or {}))
+        ledger.searches_used = int(snapshot.get("searches_used") or 0)
+        ledger.searches_overshoot = int(snapshot.get("searches_overshoot") or 0)
+        ledger.docs_used = int(snapshot.get("docs_used") or 0)
+        ledger.tokens_settled = int(snapshot.get("tokens_settled") or 0)
+        # A snapshot records whether any settled usage was estimated rather than
+        # provider-reported, not the exact-token count itself; restoring the
+        # settled total as fully exact would erase that distinction, so an
+        # estimated snapshot restores as estimated.
+        if snapshot.get("tokens_estimated"):
+            ledger.tokens_settled_exact = 0
+        else:
+            ledger.tokens_settled_exact = ledger.tokens_settled
+        # task-18060 review finding 4: the same leak already fixed above for
+        # searches/docs/tokens also applied to runtime -- elapsed_seconds()
+        # is derived from _start_monotonic, which the constructor stamps at
+        # "now", so a resumed run was silently re-granted its whole
+        # max_runtime_seconds. Back-dating _start_monotonic by the
+        # snapshot's own elapsed time makes elapsed_seconds() continue
+        # rather than restart.
+        try:
+            previous_elapsed = float(snapshot.get("runtime_elapsed_s") or 0.0)
+        except (TypeError, ValueError):
+            previous_elapsed = 0.0
+        ledger._start_monotonic = time.monotonic() - max(0.0, previous_elapsed)
+        return ledger
+
     # -- searches ---------------------------------------------------------
 
     def remaining_searches(self) -> int | None:

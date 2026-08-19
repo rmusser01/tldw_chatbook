@@ -326,3 +326,170 @@ def test_update_run_progress_external_db_wraps_in_transaction():
     assert updated["progress_percent"] == 45.0
     assert updated["version"] == 2
     external.close()
+
+
+def test_lease_operations_in_external_db_mode_do_not_raise():
+    """task-3 report finding 6: every lease operation called ``_connect()``
+    unconditionally, which raises ``RuntimeError`` in external-db mode
+    (``self.db is not None``, ``self.db_path is None``) -- so since
+    ``execute_run`` now always claims a lease, external-db mode was broken
+    outright. ``self.db`` has no lease columns and no lease API of its own
+    (the ``FakeExternalResearchDB`` double above matches that: only
+    ``transaction``/``get_run``/``close``), so a real, persisted,
+    cross-process lease cannot be implemented against it -- the service
+    degrades to an in-memory, per-instance lease instead of raising.
+    """
+    external = FakeExternalResearchDB()
+    now = "2026-08-16T00:00:00Z"
+    external.conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('ext-run', 'External question', ?, ?)",
+        (now, now),
+    )
+    service = LocalResearchService(external)  # db object -> external mode
+
+    lease_id = service.claim_run("ext-run", worker_id="engine-a", lease_seconds=60)
+    assert lease_id is not None
+    assert service.holds_lease("ext-run", lease_id=lease_id) is True
+
+    # A second claim while the first is live must decline, not raise --
+    # "still functions single-executor" per the finding's fix direction.
+    declined = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert declined is None
+
+    assert service.renew_lease("ext-run", lease_id=lease_id, lease_seconds=60) is True
+    assert service.release_lease("ext-run", lease_id=lease_id) is True
+    assert service.holds_lease("ext-run", lease_id=lease_id) is False
+
+    # Released -- a new claim must now succeed.
+    second_lease = service.claim_run("ext-run", worker_id="engine-b", lease_seconds=60)
+    assert second_lease is not None
+    external.close()
+
+
+# --- versioned schema migration (Qodo PR-1822 finding 7) -------------------
+
+#: The research_runs shape as it shipped BEFORE the lease columns existed:
+#: what a genuinely pre-existing on-disk database carries.
+_PRE_LEASE_RUNS_DDL = """
+CREATE TABLE research_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    query TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    phase TEXT NOT NULL DEFAULT 'local_planning',
+    control_state TEXT NOT NULL DEFAULT 'running',
+    progress_percent REAL,
+    progress_message TEXT,
+    source_policy TEXT NOT NULL DEFAULT 'balanced',
+    autonomy_mode TEXT NOT NULL DEFAULT 'checkpointed',
+    limits_json TEXT NOT NULL DEFAULT '{}',
+    provider_overrides_json TEXT NOT NULL DEFAULT '{}',
+    chat_handoff_json TEXT NOT NULL DEFAULT '{}',
+    follow_up_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    client_id TEXT NOT NULL DEFAULT 'local',
+    version INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY(session_id) REFERENCES research_sessions(id)
+);
+"""
+
+
+def _make_pre_lease_database(tmp_path) -> "object":
+    """A database in the pre-lease v0 shape: research_runs without the
+    lease columns, one surviving run row, ``user_version`` 0."""
+    db_path = tmp_path / "research.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(_PRE_LEASE_RUNS_DDL)
+    conn.execute(
+        "INSERT INTO research_runs (id, query, created_at, updated_at) "
+        "VALUES ('legacy-run', 'A question paid for before leases', "
+        "'2026-08-01T00:00:00.000000Z', '2026-08-01T00:00:00.000000Z')"
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def _columns(conn, table):
+    return {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+
+
+def test_a_pre_lease_database_upgrades_through_a_versioned_migration(tmp_path):
+    """Qodo PR-1822 finding 7: the lease columns were added by bare,
+    unversioned ALTERs at startup. The upgrade path must instead go
+    through a versioned migration that stamps ``PRAGMA user_version`` --
+    auditable, ordered, and refusing to run backwards -- like TTS's
+    ``migrations/`` and the repo's numbered SQL migrations. A pre-lease
+    database's data must survive the upgrade.
+    """
+    db_path = _make_pre_lease_database(tmp_path)
+    service = LocalResearchService(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        columns = _columns(conn, "research_runs")
+        assert {"lease_owner", "lease_id", "leased_until", "lease_attempts"} <= columns
+        row = conn.execute(
+            "SELECT query, status FROM research_runs WHERE id = 'legacy-run'"
+        ).fetchone()
+        assert row["query"] == "A question paid for before leases"
+        assert row["status"] == "running"
+    finally:
+        conn.close()
+
+    # The upgraded database is fully operational, not just column-complete.
+    lease = service.claim_run("legacy-run", worker_id="engine-a", lease_seconds=60)
+    assert lease is not None
+    assert service.release_lease("legacy-run", lease_id=lease) is True
+
+
+def test_a_fresh_database_is_stamped_with_the_schema_version(tmp_path):
+    """Fresh databases must carry the same versioned stamp -- not a
+    versionless shape that the next migration then cannot find."""
+    LocalResearchService(tmp_path / "research.db")
+
+    conn = sqlite3.connect(tmp_path / "research.db")
+    conn.row_factory = sqlite3.Row
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert {"lease_owner", "lease_id", "leased_until", "lease_attempts"} <= _columns(
+            conn, "research_runs"
+        )
+    finally:
+        conn.close()
+
+
+def test_reopening_an_upgraded_database_is_an_idempotent_noop(tmp_path):
+    """Re-constructing the service (next app launch) must neither re-ALTER
+    nor drift the version -- the migration runs once per database."""
+    db_path = _make_pre_lease_database(tmp_path)
+    LocalResearchService(db_path)
+    LocalResearchService(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_a_database_from_a_future_schema_version_is_refused(tmp_path):
+    """A database stamped by a NEWER service must not be silently
+    downgraded or half-used by older code: refuse loudly so the user
+    knows they need to update rather than risk corrupting data."""
+    db_path = _make_pre_lease_database(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA user_version = 99")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="newer"):
+        LocalResearchService(db_path)

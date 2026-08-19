@@ -19,21 +19,30 @@ lazy-import pattern so the module import stays cheap.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import inspect
 import json
 import re
+import uuid
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from .local_research_service import LocalResearchService
+from .local_research_service import (
+    LeaseBudgetExhausted,
+    LocalResearchService,
+    TERMINAL_RUN_STATUSES,
+)
 from ..Chat.usage_recorder import usage_scope
 from .academic_providers import papers_to_evidence
 from .research_budget import BudgetLedger, ResearchLimitExceeded
 
 __all__ = ["LocalResearchEngine", "TERMINAL_RUN_STATUSES"]
 
-TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
+# Re-exported for backward compatibility -- local_research_service.py is now
+# the single source of truth (task-3 review finding 1), since claim_run
+# needs this set and the service must not import the engine to get it.
 
 # Progress anchors mirror the server's phase progress map
 # (tldw_server app/core/Research/jobs.py :33-38).
@@ -86,6 +95,16 @@ AnalyzeFn = Callable[..., Awaitable[Any]]
 GapFn = Callable[[dict[str, Any]], Awaitable[list[str]]]
 
 
+class _LeaseLost(Exception):
+    """Internal control-flow signal: this executor no longer owns the run.
+
+    Raised by the fence before a persisting write. A displaced executor that
+    is still inside a long provider call returns normally, so without the
+    fence it would write artifacts and settle budget for a run another
+    executor now owns (task-18060).
+    """
+
+
 class _RunPaused(Exception):
     """Internal control-flow signal: the run was paused between phases."""
 
@@ -120,6 +139,18 @@ class LocalResearchEngine:
         completion_handoff: "Callable[[dict[str, Any]], Any] | None" = None,
     ) -> None:
         self.service = local_service
+        #: Identity of this executor, and its lease state for the duration of
+        #: execute_run (task-18060).
+        self.worker_id = f"engine-{uuid.uuid4().hex[:12]}"
+        #: How long a lease is granted for, and how often it is renewed. The
+        #: keep-alive is a TIMER rather than a progress hook: the synthesis
+        #: phase emits no progress for its whole duration (measured ~970s), so
+        #: a lease renewed only by progress events would expire inside the most
+        #: expensive phase and invite a second executor into it.
+        self.lease_seconds = 120.0
+        self.keepalive_seconds = 30.0
+        self._lease_id: str | None = None
+        self._run_id: str | None = None
         self.search_fn = search_fn or self._default_search_fn
         # task-17371: the pipeline's own required params are pre-flighted
         # before a run spends anything -- but ONLY when the real pipeline is
@@ -168,11 +199,21 @@ class LocalResearchEngine:
         Uses the synthesis LLM when one is configured; returns no gaps
         otherwise. Failure here must never break the run -- an unparseable
         gap analysis reads as "no gaps" with a warning, not a failed report.
+
+        The LLM call itself is a plain, blocking ``chat_api_call`` (review
+        finding 5): being ``async def`` makes ``_offload_pipeline_call``
+        route THIS function inline (a coroutine function carries no
+        blocking-call risk by itself), but the call it makes on the loop
+        thread is exactly the risk that offload exists to avoid -- a gap
+        analysis longer than ``lease_seconds`` would starve the keep-alive
+        and lapse the lease, same as an un-offloaded ``search_fn`` would.
+        So the blocking call is wrapped and offloaded the same way the
+        other pipeline seams are.
         """
         llm = str(self.search_params.get("final_answer_llm") or "").strip()
         if not llm:
             return []
-        from ..Chat.Chat_Functions import chat_api_call
+        from ..Chat.Chat_Functions import chat_api_call, chat_reply_text
 
         prompt = (
             "You are reviewing a research synthesis for completeness. Given "
@@ -186,10 +227,9 @@ class LocalResearchEngine:
             f"Sub-questions asked: {context.get('sub_questions')}\n"
             f"Synthesized answer:\n{context.get('answer_text')}"
         )
-        try:
-            from ..Chat.Chat_Functions import chat_reply_text
 
-            response = chat_reply_text(
+        def _call_llm() -> str:
+            return chat_reply_text(
                 chat_api_call(
                     api_endpoint=llm,
                     messages_payload=[{"role": "user", "content": prompt}],
@@ -204,6 +244,9 @@ class LocalResearchEngine:
                     topp=None,
                 )
             )
+
+        try:
+            response = await self._offload_pipeline_call(_call_llm)
             parsed = json.loads(str(response or "[]"))
             if isinstance(parsed, list):
                 return [str(q) for q in parsed if str(q).strip()][:5]
@@ -215,6 +258,35 @@ class LocalResearchEngine:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    def _offload_pipeline_call(
+        self, fn: "Callable[..., Any]", *args: Any, **kwargs: Any
+    ) -> Any:
+        """Invoke a pipeline seam without blocking the event loop.
+
+        The production ``search_fn``/``paper_search_fn`` default to a plain
+        ``def`` performing a sequential loop of blocking HTTP calls
+        (``generate_and_search``, and any non-async academic provider). If
+        that were called inline on the event loop, the call would monopolize
+        it for its whole duration, starving the ``_keepalive`` timer -- a
+        lease that expires mid-call re-opens the double-execution race the
+        lease exists to prevent (task-18060 review finding 1). A coroutine
+        function carries no such risk and is invoked exactly as before.
+
+        Args:
+            fn: The pipeline callable to invoke (``search_fn`` or
+                ``paper_search_fn``).
+            *args: Positional arguments for ``fn``.
+            **kwargs: Keyword arguments for ``fn``.
+
+        Returns:
+            An awaitable: ``fn``'s own coroutine when ``fn`` is a coroutine
+            function, otherwise an ``asyncio.to_thread`` coroutine that runs
+            it on a worker thread.
+        """
+        if inspect.iscoroutinefunction(fn):
+            return fn(*args, **kwargs)
+        return asyncio.to_thread(fn, *args, **kwargs)
 
     async def _llm_bounded_call(self, make_call: "Callable[[], Any]") -> Any:
         """Run one LLM-bearing call inside a usage scope and settle the
@@ -285,14 +357,81 @@ class LocalResearchEngine:
             "that does not need them)."
         )
 
+    def _require_lease(self) -> None:
+        """Refuse to persist anything if this executor lost its lease.
+
+        Raises:
+            _LeaseLost: When another executor now holds the run.
+        """
+        if self._lease_id is None or self._run_id is None:
+            return
+        if not self.service.holds_lease(self._run_id, lease_id=self._lease_id):
+            raise _LeaseLost("execution lease lost")
+
+    async def _keepalive(self, run_id: str) -> None:
+        """Renew the lease on a timer for as long as a phase is in flight.
+
+        A renewal that RAISES (e.g. a transient ``sqlite3.OperationalError``
+        while another process writes the DB) is not lease loss, but it is
+        also not survivable here: an unhandled exception in this task would
+        surface at ``await keepalive`` inside ``execute_run``'s ``finally``
+        block, skipping ``release_lease`` (stranding the lease) and escaping
+        the engine entirely. It is contained the same way a lost lease is:
+        stop renewing and warn; the next fence the engine hits decides what
+        the run's real state is.
+
+        Args:
+            run_id: The leased run.
+        """
+        while True:
+            await asyncio.sleep(max(0.01, float(self.keepalive_seconds)))
+            lease_id = self._lease_id
+            if lease_id is None:
+                return
+            try:
+                renewed = self.service.renew_lease(
+                    run_id, lease_id=lease_id, lease_seconds=self.lease_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - never hijack execute_run
+                logger.warning(
+                    f"Research run {run_id} lease renewal errored "
+                    f"(treated as lost): {exc}"
+                )
+                return
+            if not renewed:
+                return
+
     def _get_run(self, run_id: str) -> dict[str, Any]:
         run = self.service.get_run(run_id)
         if run is None:
             raise ValueError("research run not found")
         return run
 
+    def _quiet_lease_lost_return(self, run_id: str) -> dict[str, Any]:
+        """The shared quiet return for every ``_LeaseLost`` landing spot.
+
+        Deliberately NOT ``fail_run``: another executor owns this run now
+        and is responsible for its terminal state. Writing one here would
+        be the displaced executor overwriting the live one's work
+        (task-18060 review finding 3).
+
+        Args:
+            run_id: The run this executor was displaced from.
+
+        Returns:
+            The run's current record, as last written by whoever holds it
+            now.
+        """
+        logger.warning(f"Research run {run_id} lease lost mid-flight")
+        return self._get_run(run_id)
+
     def _check_control(self, run_id: str, next_phase: str) -> dict[str, Any]:
         """Honor pause/cancel BEFORE entering ``next_phase`` (ADR-068).
+
+        Both resolutions are run-state writes and are fenced the same way
+        artifact writes are (task-3 review finding 2): a displaced executor
+        must not be the one recording "paused" or resolving "cancelled" for
+        a run it no longer owns.
 
         Returns the still-current run record when execution may proceed.
         """
@@ -300,6 +439,7 @@ class LocalResearchEngine:
         control = str(run.get("control_state") or "")
         status = str(run.get("status") or "")
         if control in {"paused", "pause_requested"} and status not in TERMINAL_RUN_STATUSES:
+            self._require_lease()
             self.service.update_run_progress(
                 run_id,
                 progress_message=f"Engine paused before {next_phase}",
@@ -309,6 +449,7 @@ class LocalResearchEngine:
             raise _RunPaused(run)
         if control in {"cancelled", "cancel_requested"} or status == "cancelled":
             if status != "cancelled":
+                self._require_lease()
                 run = self.service.cancel_run(run_id)
             raise _RunCancelled(run)
         return run
@@ -356,10 +497,18 @@ class LocalResearchEngine:
         self, run_id: str, checkpoint_type: str, proposed_payload: dict[str, Any]
     ) -> None:
         """Create the pending checkpoint and park the run in a non-terminal
-        awaiting state (task-16482). Raises _RunAwaitingReview."""
+        awaiting state (task-16482). Raises _RunAwaitingReview.
+
+        Both writes are fenced (task-3 review finding 2): a displaced
+        executor must not be the one creating a checkpoint or parking the
+        run in an awaiting-review state on behalf of a run it no longer
+        owns.
+        """
+        self._require_lease()
         checkpoint = self.service.create_checkpoint(
             run_id, checkpoint_type=checkpoint_type, proposed_payload=proposed_payload
         )
+        self._require_lease()
         updated = self.service.update_run_progress(
             run_id,
             control_state=f"awaiting_{checkpoint_type}",
@@ -395,7 +544,13 @@ class LocalResearchEngine:
         plan_patch_limits = self._approved_patch(run_id, "plan_review").get("limits")
         if isinstance(plan_patch_limits, dict) and plan_patch_limits:
             limits = {**limits, **plan_patch_limits}
-        ledger = BudgetLedger.from_limits(limits)
+        # task-18060: a resumed run continues its budget rather than being
+        # granted it again. The snapshot is the ledger the previous executor
+        # wrote; its absence means this run has never executed.
+        previous_ledger = (
+            self.service.get_artifact(run_id, "budget_ledger.json") or {}
+        ).get("content")
+        ledger = BudgetLedger.from_snapshot(previous_ledger, limits)
         self._active_ledger = ledger
         # task-16791: per-run routing/overrides (server parity). The run's
         # provider_overrides merge OVER the engine's construction params.
@@ -417,6 +572,43 @@ class LocalResearchEngine:
         self._active_policy = policy
         self._active_academic_providers = overrides.get("academic_providers")
 
+        # task-18060: exactly one executor may run a run. The window's
+        # exclusive-worker guard is per-session and cannot see another process,
+        # so the lease is what actually prevents duplicate searches and spend.
+        self._run_id = run_id
+        try:
+            self._lease_id = self.service.claim_run(
+                run_id, worker_id=self.worker_id, lease_seconds=self.lease_seconds
+            )
+        except LeaseBudgetExhausted as exhausted:
+            # task-18060 review finding 1: exhausting the reclaim budget
+            # means this run's executor keeps dying, not that a healthy
+            # executor is merely racing another for it -- distinct from the
+            # None branch below, which MUST leave the run alone for
+            # whichever executor holds the live lease. Left unhandled, the
+            # run would stay status=running forever, permanently unclaimable.
+            self._run_id = None
+            logger.warning(f"Research run {run_id} failed: {exhausted}")
+            return self.service.fail_run(
+                run_id,
+                error_msg=(
+                    "repeated executor failures: this run's lease was "
+                    f"claimed and abandoned {exhausted.attempts} time(s) "
+                    "without completing (lease retry budget exhausted)"
+                ),
+            )
+        if self._lease_id is None:
+            self._run_id = None
+            logger.info(f"Research run {run_id} is leased by another executor")
+            # An event, never a run-state write: this executor holds no
+            # lease, and update_run_progress would stomp the live
+            # executor's progress message and version mid-flight
+            # (PR-1822 review follow-up). The returned record is the
+            # holder's current truth.
+            self.service.record_run_event(run_id, "lease_declined")
+            return self._get_run(run_id)
+        keepalive = asyncio.create_task(self._keepalive(run_id))
+
         try:
             if self._uses_default_search_fn:
                 self._require_pipeline_params(run_params)
@@ -436,13 +628,53 @@ class LocalResearchEngine:
             # resolve through the service's terminal failure transition --
             # partial artifacts saved by earlier phases are preserved.
             logger.warning(f"Research run {run_id} stopped by budget: {exceeded}")
-            self._save_ledger(run_id, ledger)
-            return self.service.fail_run(run_id, error_msg=str(exceeded))
+            # task-18060 review finding 3: _save_ledger is itself fenced, and
+            # a _LeaseLost it raises here is NOT caught by the sibling
+            # `except _LeaseLost` below -- Python only matches a raise inside
+            # an except body against a NEW try, never a sibling clause of the
+            # same try it was raised from. Uncaught, it would escape
+            # execute_run entirely (contradicting the docstring, which
+            # promises only ValueError) instead of resolving to the same
+            # quiet return every other fenced write produces.
+            try:
+                self._save_ledger(run_id, ledger)
+                self._require_lease()
+            except _LeaseLost:
+                return self._quiet_lease_lost_return(run_id)
+            return self.service.fail_run(
+                run_id, error_msg=str(exceeded), lease_id=self._lease_id
+            )
+        except _LeaseLost:
+            # Deliberately NOT fail_run: another executor owns this run now and
+            # is responsible for its terminal state. Writing one here would be
+            # the displaced executor overwriting the live one's work.
+            return self._quiet_lease_lost_return(run_id)
         except Exception as exc:
             logger.opt(exception=True).error(f"Research run {run_id} failed: {exc}")
-            self._save_ledger(run_id, ledger)
-            return self.service.fail_run(run_id, error_msg=str(exc))
+            # See the ResearchLimitExceeded branch above: same leak, same fix.
+            try:
+                self._save_ledger(run_id, ledger)
+                self._require_lease()
+            except _LeaseLost:
+                return self._quiet_lease_lost_return(run_id)
+            return self.service.fail_run(
+                run_id, error_msg=str(exc), lease_id=self._lease_id
+            )
         finally:
+            keepalive.cancel()
+            # CancelledError (normal teardown) AND any stored exception from
+            # the keep-alive task must both be contained here: either raising
+            # into this finally block would skip release_lease below and
+            # strand the lease.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await keepalive
+            if self._lease_id is not None:
+                # Releasing on every invocation is safe: a clean release resets
+                # the reclaim budget, so a paused-and-resumed run does not
+                # spend its crash allowance (task-18060).
+                self.service.release_lease(run_id, lease_id=self._lease_id)
+                self._lease_id = None
+            self._run_id = None
             self._active_ledger = None
             self._active_run_params = None
             self._active_policy = None
@@ -484,7 +716,9 @@ class LocalResearchEngine:
                 params["search_default_max_queries"] = cap
                 ledger.reserve_searches(cap)
                 reserved_for_call = cap
-            outcome = await self._llm_bounded_call(lambda: self.search_fn(query, params))
+            outcome = await self._llm_bounded_call(
+                lambda: self._offload_pipeline_call(self.search_fn, query, params)
+            )
             if isinstance(outcome, tuple) and len(outcome) == 2:
                 wsr, sqd = outcome
             else:
@@ -583,7 +817,91 @@ class LocalResearchEngine:
             queries.append(str(facet).strip())
         return queries, reserved_extras
 
+    #: Bytes of evidence persisted per round before bodies are dropped
+    #: (task-18060). Sized against the measured worst case: 66 admitted sources
+    #: of scraped text is roughly 0.7-3 MB, so a normal round fits whole and a
+    #: pathological one degrades to references rather than growing without
+    #: bound inside SQLite.
+    EVIDENCE_POOL_CAP_BYTES = 8 * 1024 * 1024
+
+    def _bounded_evidence(
+        self, results: list[dict[str, Any]], iteration: int
+    ) -> dict[str, Any]:
+        """Shape a round's evidence for persistence, under a byte cap.
+
+        Entries past the cap keep their references and lose their bodies, so a
+        resumed run can re-fetch them rather than the artifact growing with the
+        pool. The payload records that this happened; a reader cannot otherwise
+        tell a truncated pool from a small one.
+
+        The cap is enforced on what is actually kept, not merely checked
+        before stripping a body (task-3 review finding 7): an entry is only
+        appended once it is known to fit -- full, or stripped -- within
+        what remains of the cap. An entry that still does not fit even
+        stripped of its body (e.g. a single pathological entry whose
+        references alone exceed the whole cap) is DROPPED from the
+        persisted pool entirely rather than being appended anyway; its
+        reference is lost for this round (a resumed run would need to
+        re-search rather than re-fetch it), and ``dropped_count`` records
+        how many entries this happened to so a reader can tell a
+        fully-represented pool from one that shed evidence outright, not
+        just one that lost bodies.
+
+        Args:
+            results: The round's merged evidence records.
+            iteration: The round these belong to.
+
+        Returns:
+            ``{iteration, results, truncated, cap_bytes, dropped_count}``.
+            The sum of ``results``' own serialized sizes never exceeds
+            ``cap_bytes``.
+        """
+        kept: list[dict[str, Any]] = []
+        used = 0
+        truncated = False
+        dropped = 0
+        for record in results:
+            entry = dict(record)
+            # Sized with the SAME json.dumps() arguments save_artifact uses
+            # to actually persist this payload (sort_keys=True, no
+            # default=str). A mismatch here previously let a non-JSON-native
+            # value pass this check under-sized (default=str silently
+            # stringified it) only to raise inside save_artifact's own dump,
+            # failing the whole run instead of this method's own graceful
+            # truncation. An entry that cannot be measured at all (a
+            # non-JSON-native value) is dropped and counted like an
+            # oversized one rather than raising here -- a run's evidence
+            # artifact must degrade, never fail the run (PR-1822 review
+            # follow-up: the earlier fix moved this crash from save_artifact
+            # into the measurement; it did not remove it).
+            try:
+                size = len(json.dumps(entry, sort_keys=True))
+            except (TypeError, ValueError):
+                dropped += 1
+                continue
+            if used + size > self.EVIDENCE_POOL_CAP_BYTES:
+                entry.pop("content", None)
+                entry.pop("original_content", None)
+                truncated = True
+                size = len(json.dumps(entry, sort_keys=True))
+                if used + size > self.EVIDENCE_POOL_CAP_BYTES:
+                    # Even reference-only, this entry alone cannot fit in
+                    # what remains of the cap -- drop it rather than
+                    # persist a pool larger than cap_bytes promises.
+                    dropped += 1
+                    continue
+            used += size
+            kept.append(entry)
+        return {
+            "iteration": iteration,
+            "results": kept,
+            "truncated": truncated,
+            "cap_bytes": self.EVIDENCE_POOL_CAP_BYTES,
+            "dropped_count": dropped,
+        }
+
     def _save_ledger(self, run_id: str, ledger: BudgetLedger) -> None:
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="budget_ledger.json",
@@ -613,6 +931,9 @@ class LocalResearchEngine:
         ledger.check_runtime()  # zero/degenerate runtime budgets stop here
 
         # Draft runs (window "Create Run" flow) normalize to running here.
+        # Both branches are run-state writes, fenced the same way artifact
+        # writes are (task-3 review finding 2).
+        self._require_lease()
         if str(run.get("status") or "") != "running" or str(
             run.get("control_state") or ""
         ) != "running":
@@ -631,6 +952,7 @@ class LocalResearchEngine:
                 progress_percent=_PROGRESS_PLANNING,
                 progress_message="Planning research",
             )
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="plan.json",
@@ -678,6 +1000,7 @@ class LocalResearchEngine:
         while True:
             iteration += 1
             round_queries = [question] if iteration == 1 else list(remaining_gaps)
+            self._require_lease()
             self.service.update_run_progress(
                 run_id,
                 phase="collecting",
@@ -728,11 +1051,13 @@ class LocalResearchEngine:
                         attempted_extras += 1
                     try:
                         if providers_filter is not None and accepts_providers:
-                            papers = await self._maybe_await(
-                                self.paper_search_fn(query, providers=providers_filter)
+                            papers = await self._offload_pipeline_call(
+                                self.paper_search_fn, query, providers=providers_filter
                             )
                         else:
-                            papers = await self._maybe_await(self.paper_search_fn(query))
+                            papers = await self._offload_pipeline_call(
+                                self.paper_search_fn, query
+                            )
                     except Exception as exc:  # noqa: BLE001 - lane degrades
                         merged_warnings.append(f"academic search failed: {exc}")
                         continue
@@ -764,6 +1089,7 @@ class LocalResearchEngine:
             # Record what was collected BEFORE enforcement: the collection
             # happened, and a budget stop on processing must preserve the
             # evidence of it (partial-artifact contract, task-16323).
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="plan.json",
@@ -775,6 +1101,7 @@ class LocalResearchEngine:
                     "iterations": iteration,
                 },
             )
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="collection_summary.json",
@@ -785,6 +1112,18 @@ class LocalResearchEngine:
                     "sub_questions": all_sub_questions,
                     "warnings": merged_warnings,
                 },
+            )
+            # task-18060: the summary above records COUNTS; the pool itself is
+            # persisted here so a resumed run has the evidence it already paid
+            # for. Written after the doc-budget settle below would lose the
+            # entries that settle trims, so it is written before it and the
+            # trim is reflected in the summary's own count.
+            self._require_lease()
+            self.service.save_artifact(
+                run_id,
+                artifact_name="evidence_pool.json",
+                content_type="application/json",
+                content=self._bounded_evidence(merged_results, iteration),
             )
             # Settle the fetched-doc batch at the remaining doc budget
             # BEFORE synthesis processes it (allot raises on an exhausted
@@ -836,6 +1175,7 @@ class LocalResearchEngine:
 
             self._check_control(run_id, "synthesizing")
             ledger.check_runtime()
+            self._require_lease()
             run = self.service.update_run_progress(
                 run_id,
                 phase="synthesizing",
@@ -882,6 +1222,7 @@ class LocalResearchEngine:
                 )
                 or []
             )
+            self._require_lease()
             self.service.update_run_progress(
                 run_id,
                 progress_message=f"Iteration {iteration} complete ({len(gaps)} gap(s))",
@@ -898,6 +1239,7 @@ class LocalResearchEngine:
         # Persist the ledger AFTER the last settlement of the run (synthesis
         # + gap analysis) so the artifact reflects final usage.
         self._save_ledger(run_id, ledger)
+        self._require_lease()
         run = self.service.update_run_progress(
             run_id,
             phase="packaging",
@@ -924,12 +1266,14 @@ class LocalResearchEngine:
             report_lines.append("## Remaining gaps")
             report_lines.extend(f"- {gap}" for gap in remaining_gaps)
         report_markdown = "\n".join(report_lines)
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="report_v1.md",
             content_type="text/markdown",
             content=report_markdown,
         )
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="sources.json",
@@ -954,6 +1298,7 @@ class LocalResearchEngine:
             verification_summary["citation_verification"] = final_answer[
                 "citation_verification"
             ]
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="verification_summary.json",
@@ -968,6 +1313,7 @@ class LocalResearchEngine:
         )
         if claims:
             supported = sum(1 for c in claims if c.get("status") == "supported")
+            self._require_lease()
             self.service.save_artifact(
                 run_id,
                 artifact_name="claims.json",
@@ -988,6 +1334,7 @@ class LocalResearchEngine:
             "iterations": iteration,
             "remaining_gaps": remaining_gaps,
         }
+        self._require_lease()
         self.service.save_artifact(
             run_id,
             artifact_name="bundle.json",
@@ -995,9 +1342,19 @@ class LocalResearchEngine:
             content=bundle_content,
         )
 
+        # A displaced executor reaching this point would otherwise stomp the
+        # new owner's terminal state by marking the run "completed" out from
+        # under it -- fenced immediately before, not just before the
+        # artifact writes that precede it. self._require_lease() is the
+        # cheap early-out; passing lease_id makes the write itself
+        # lease-conditional at the SQL level too, closing the remaining
+        # check-then-act gap between that early-out and the write landing
+        # (task-3 review finding 4).
+        self._require_lease()
         completed = self.service.complete_run(
             run_id,
             progress_message=f"Completed with {len(evidence)} source(s)",
+            lease_id=self._lease_id,
         )
         chat_handoff = run.get("chat_handoff")
         if (
