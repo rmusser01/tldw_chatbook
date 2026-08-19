@@ -136,4 +136,18 @@ defects found by an independent review, each fixed test-first:
   dropped and counted like an oversized entry (the artifact degrades, the
   run does not fail).
 - ADR-070 records the lease/durability contract (linked above).
+
+**Qodo PR-1822 finding 7 (unversioned lease migration): fixed, reversing the
+earlier decline.** The branch had landed the lease columns as bare startup
+ALTERs and the first adjudication declined rehoming them ("no migration
+infrastructure in this service"). On merge review the repo DOES carry a
+versioned-migration convention (``TTS/migrations/`` Python steps stamped via
+``PRAGMA user_version``; numbered SQL under ``DB/migrations/``), so the
+service now has ``Research_Interop/migrations/``: v0->v1 adds the lease
+columns and stamps ``user_version = 1``, fresh and pre-existing databases
+pass through the same path, interim unversioned databases (columns present,
+version 0) upgrade without re-ALTERing, and a database stamped by a newer
+build is refused rather than silently downgraded. Four tests cover the
+upgrade, the fresh stamp, idempotent reopen, and the future-version refusal.
+ADR-070's "no migration framework" consequence entry is superseded by this.
 <!-- SECTION:NOTES:END -->

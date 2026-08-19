@@ -97,13 +97,22 @@ re-searched everything it had already paid for.
    external object has no lease columns or API; external mode degrades to a
    documented, per-instance in-memory exclusion instead of failing
    outright.
+- **Keep the unversioned startup ALTERs** (first adjudication of Qodo
+   finding 7): reversed on merge review — the repo carries versioned-
+   migration conventions the service can adopt directly, so the columns
+   moved into `Research_Interop/migrations/` rather than staying outside
+   the auditable path.
 
 ## Consequences
 
 - Schema: four added columns on `research_runs` (`lease_owner`, `lease_id`,
-  `leased_until`, `lease_attempts`), applied by idempotent
-  `PRAGMA table_info`-guarded `ALTER`s (the service has no migration
-  framework; introducing one was adjudicated out of scope for this change).
+  `leased_until`, `lease_attempts`), applied by the versioned migration
+  `Research_Interop/migrations/v0_to_v1_run_lease_columns.py` (stamps
+  `PRAGMA user_version = 1`; interim databases created by the unversioned
+  ALTER path upgrade without re-ALTERing, and newer-stamped databases are
+  refused). Originally landed as idempotent startup ALTERs; rehomed into a
+  versioned migration on review (Qodo PR-1822 finding 7) to match the
+  repo's migration conventions (`TTS/migrations/`, `DB/migrations/`).
 - Callers of `claim_run` must handle `LeaseBudgetExhausted` separately from
   a `None` return.
 - External-DB mode leases are single-process only; cross-process exclusion

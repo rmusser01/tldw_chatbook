@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+from .migrations import MIGRATIONS
 from .research_normalizers import (
     ResearchRecord,
     ResearchRecordList,
@@ -325,33 +326,40 @@ class LocalResearchService:
                 );
                 """
             )
-            self._ensure_run_lease_columns(conn)
+            # The base script above ships the v0 shape (CREATE TABLE IF NOT
+            # EXISTS never revisits an existing database); the versioned
+            # migrations below take it from there (Qodo PR-1822 finding 7).
+            self._apply_migrations(conn)
 
-    #: Columns added after the original schema shipped. CREATE TABLE IF NOT
-    #: EXISTS never revisits an existing database, so each one is applied by
-    #: an idempotent ALTER guarded on PRAGMA table_info (task-18060).
-    _RUN_COLUMN_ADDITIONS = (
-        ("lease_owner", "TEXT"),
-        ("lease_id", "TEXT"),
-        ("leased_until", "TEXT"),
-        ("lease_attempts", "INTEGER NOT NULL DEFAULT 0"),
-    )
+    def _apply_migrations(self, conn: sqlite3.Connection) -> None:
+        """Upgrade the database to the newest known schema version.
 
-    def _ensure_run_lease_columns(self, conn: sqlite3.Connection) -> None:
-        """Add lease columns to research_runs when they are absent.
+        Each migration in ``migrations.MIGRATIONS`` whose target version
+        exceeds the database's current ``PRAGMA user_version`` is applied
+        in order, inside one transaction per step (the guard inside each
+        migration makes re-runs no-ops). A database stamped by a NEWER
+        service is refused rather than silently downgraded or half-used.
 
         Args:
-            conn: An open connection inside the caller's transaction.
+            conn: An open connection.
+
+        Raises:
+            RuntimeError: If the database's schema version is newer than
+                this code knows about.
         """
-        existing = {
-            str(row["name"])
-            for row in conn.execute("PRAGMA table_info(research_runs)").fetchall()
-        }
-        for column, declaration in self._RUN_COLUMN_ADDITIONS:
-            if column not in existing:
-                conn.execute(
-                    f"ALTER TABLE research_runs ADD COLUMN {column} {declaration}"
-                )
+        current = int(
+            conn.execute("PRAGMA user_version").fetchone()[0] or 0
+        )
+        newest = MIGRATIONS[-1][0] if MIGRATIONS else current
+        if current > newest:
+            raise RuntimeError(
+                f"research database schema version {current} is newer than "
+                f"this build supports ({newest}); update the application "
+                "before opening this database"
+            )
+        for target_version, apply_step in MIGRATIONS:
+            if target_version > current:
+                apply_step(conn)
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
