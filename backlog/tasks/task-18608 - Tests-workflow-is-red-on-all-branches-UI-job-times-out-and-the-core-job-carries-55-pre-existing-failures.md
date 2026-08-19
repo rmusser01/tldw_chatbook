@@ -3,7 +3,7 @@ id: TASK-18608
 title: >-
   Tests workflow is red on all branches: UI job times out and the core job
   carries 55 pre-existing failures
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-08-19 07:45'
@@ -40,11 +40,11 @@ Found while reviewing/merging PR #1824. The `Tests` workflow
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Both core-suite legs finish within their job budget on a PR (budget raised 60->120m: the ubuntu leg was killed at its own 60m cap mid-run while macOS finished at ~58m).
-- [ ] #2 The UI job finishes within its 45-minute budget, via a 12-way deterministic pytest-shard matrix (~5.8 serial-equivalent hours / 12 = ~30 min per shard), with xdist retained within each shard and per-shard result artifacts.
-- [ ] #3 The workflow shape contract (Tests/CI/test_github_actions_test_workflow.py) pins the sharding: ids 0..N-1 matching --num-shards, >=10 shards, per-shard artifact names.
-- [ ] #4 With the suite able to COMPLETE, the ubuntu leg's full failure list is captured (it died at 42% before; no artifact existed) and every failure is triaged: fixed, or filed with names for a follow-up task.
-- [ ] #5 The macOS leg's 55 failures (all pass on a local macOS 3.12; runner-env-specific, concentrated in subprocess/thread/SSH/fs-sensitive tests) are triaged with a filed follow-up; they must not mask NEW failures.
+- [x] #1 Both core-suite legs finish within their job budget on a PR (budget raised 60->120m: the ubuntu leg was killed at its own 60m cap mid-run while macOS finished at ~58m).
+- [x] #2 The UI job finishes within its 45-minute budget, via a 12-way deterministic pytest-shard matrix (~5.8 serial-equivalent hours / 12 = ~30 min per shard), with xdist retained within each shard and per-shard result artifacts.
+- [x] #3 The workflow shape contract (Tests/CI/test_github_actions_test_workflow.py) pins the sharding: ids 0..N-1 matching --num-shards, >=10 shards, per-shard artifact names.
+- [x] #4 With the suite able to COMPLETE, the ubuntu leg's full failure list is captured (it died at 42% before; no artifact existed) and every failure is triaged: fixed, or filed with names for a follow-up task.
+- [x] #5 The macOS leg's 55 failures (all pass on a local macOS 3.12; runner-env-specific, concentrated in subprocess/thread/SSH/fs-sensitive tests) are triaged with a filed follow-up; they must not mask NEW failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,5 +75,14 @@ are runner-environment-specific and are AC#5, not this phase: the point of
 Phase 1 is that every future run COMPLETES and produces complete,
 name-level failure data for Phase 2 triage instead of interleaved xdist
 progress dots.
+
+
+**Phase 1 verified (PR #1826, run 32268704382):** all 12 UI shards
+COMPLETED in 18-28 minutes against the 45-minute budget -- the suite's
+first complete UI run in 100+ attempts -- each uploading its named
+failure report (13,558 collected / 13,432 passed / 119 failed / 57 files).
+The complete inventory and its triage are filed as TASK-18609 (AC#4/#5).
+Core legs run under the 120-minute budget. Status -> Done with the merge
+of PR #1826.
 
 <!-- SECTION:NOTES:END -->
