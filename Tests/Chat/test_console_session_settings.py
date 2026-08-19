@@ -2282,3 +2282,41 @@ class TestConsoleSettingsWarnings:
         # mapping, so it must not warn as unconsumed.
         settings = self._settings(provider="openai", reasoning_effort="none")
         assert console_settings_warnings(settings) == []
+
+
+class TestReadinessKeySetCaching:
+    """TASK-18909: the readiness key-sets are pure functions of a constant.
+
+    A warm Console switch called `build_console_settings_readiness` ~400
+    times; each call re-resolved provider identity for all 29 handler keys
+    twice (supported + send-capable) -- 24k identity resolutions, the
+    largest app-side cost of the switch. The no-injection path must cache.
+    """
+
+    def test_default_key_sets_are_cached_objects(self):
+        # Same object returned when no keys are injected: the frozensets are
+        # rebuilt from a module constant, so repeated calls must not
+        # recompute (and callers may rely on the identity for cheap checks).
+        assert (
+            session_settings._supported_readiness_keys()
+            is session_settings._supported_readiness_keys()
+        )
+        assert (
+            session_settings._send_capable_readiness_keys()
+            is session_settings._send_capable_readiness_keys()
+        )
+
+    def test_injected_keys_are_not_served_from_cache(self):
+        # The test-injection seam (native_provider_keys) changes the result;
+        # it must never be served from the no-injection cache.
+        with_injection = session_settings._supported_readiness_keys({"openai"})
+        assert "openai" in with_injection
+        assert with_injection is not session_settings._supported_readiness_keys()
+
+    def test_cached_set_matches_uncached_derivation(self):
+        # The cached set equals a fresh derivation over the same constant.
+        fresh = session_settings.supported_console_provider_readiness_keys(
+            session_settings.CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+        )
+        assert session_settings._supported_readiness_keys() == fresh
+        assert session_settings._send_capable_readiness_keys() == fresh
