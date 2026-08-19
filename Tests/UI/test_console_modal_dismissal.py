@@ -1092,19 +1092,42 @@ def _binding_key_action(binding: object) -> tuple[str, str]:
     return binding[0], binding[1]  # type: ignore[index,return-value]
 
 
+@dataclass(frozen=True)
+class _LaunchWalkResult:
+    """Outcome of one launch-graph walk (task-18810)."""
+
+    reachable: set[str | type[Screen[Any]]]
+    mismatches: tuple[str, ...]
+
+
 def _walk_modal_launch_graph(
     root: str | type[Screen[Any]],
     edges: tuple[_ModalLaunchEdge, ...],
     *,
     source_overrides: dict[str, str] | None = None,
     owner_source_paths: dict[type[Screen[Any]], tuple[str, ...]] | None = None,
-) -> set[str | type[Screen[Any]]]:
-    """Assert every reachable screen's actual modal launches match its row."""
+) -> "_LaunchWalkResult":
+    """Walk the launch graph, collecting every declaration mismatch.
+
+    Args:
+        root: The graph root (the Console owner token or a Screen class).
+        edges: Declared launch edges.
+        source_overrides: Synthetic sources, for the tests that exercise
+            this walker itself.
+        owner_source_paths: Source paths for owners the walker cannot
+            resolve by inspection.
+
+    Returns:
+        The reachable DECLARED nodes and every mismatch found. Nothing is
+        raised here (task-18810): the caller decides, so a mismatch cannot
+        stop the caller's own inventory assertions from running.
+    """
     edges_by_owner = {edge.owner: edge for edge in edges}
     source_paths_by_owner = owner_source_paths or {}
     reachable: set[str | type[Screen[Any]]] = {root}
     frontier: list[str | type[Screen[Any]]] = [root]
     mismatches: list[str] = []
+    scanned_strays: set[type[Screen[Any]]] = set()
     while frontier:
         owner = frontier.pop()
         edge = edges_by_owner.get(owner)
@@ -1153,7 +1176,7 @@ def _walk_modal_launch_graph(
         unexpected = actual - expected
         missing = expected - actual
         if unexpected or missing:
-            # COLLECTED, not raised here (task-18810): asserting per-owner
+            # COLLECTED, never raised (task-18810): asserting per-owner
             # aborted the walk at the first mismatch, so every later owner
             # -- and every assertion in the calling test after the walk --
             # silently stopped being checked. Two real launches shipped
@@ -1168,8 +1191,27 @@ def _walk_modal_launch_graph(
             if launched not in reachable:
                 reachable.add(launched)
                 frontier.append(launched)
-    assert not mismatches, "\n".join(mismatches)
-    return reachable
+        # Traverse UNDECLARED launches too, without adding them to the
+        # returned reachable set (task-18810 review): a stale parent
+        # declaration would otherwise hide every mismatch beneath the modal
+        # it failed to declare. `reachable` stays the declared-reachable
+        # set the contract table is compared against.
+        for stray in unexpected:
+            if stray not in reachable and stray not in scanned_strays:
+                scanned_strays.add(stray)
+                frontier.append(stray)
+    return _LaunchWalkResult(reachable=reachable, mismatches=tuple(mismatches))
+
+
+def test_console_modal_launch_declarations_match_runtime_construction() -> None:
+    """Every declared launch edge matches what the code actually constructs.
+
+    Split from the inventory test (task-18810): when a declaration goes
+    stale, THIS test fails while the inventory test still runs and reports
+    its own count/set drift, instead of the first mismatch hiding both.
+    """
+    result = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
+    assert not result.mismatches, "\n".join(result.mismatches)
 
 
 def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -> None:
@@ -1194,7 +1236,12 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     assert discovered_console_types - console_contract_types == inventory_only_types
     assert discovered_console_types == console_contract_types | inventory_only_types
 
-    reachable = _walk_modal_launch_graph(_CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES)
+    # The mismatch check is its own test below: a bad declaration must not
+    # stop the inventory assertions in THIS test from running (task-18810
+    # review) -- that masking is the whole defect being fixed.
+    reachable = _walk_modal_launch_graph(
+        _CONSOLE_ROOT, CONSOLE_MODAL_LAUNCH_EDGES
+    ).reachable
 
     reachable_modal_types = {
         node
@@ -1254,6 +1301,12 @@ class _SyntheticDeclaredOwner(Screen[None]):
     pass
 
 
+class _SyntheticStrayOwner(ModalScreen[None]):
+    """An undeclared modal that itself launches another (task-18810)."""
+
+    pass
+
+
 def test_launch_inventory_scans_reachable_owners_without_declared_rows() -> None:
     root_path = "synthetic_root.py"
     rowless_path = "synthetic_rowless_owner.py"
@@ -1274,13 +1327,15 @@ class _SyntheticRowlessOwner:
 """,
     }
 
-    with pytest.raises(AssertionError, match="ConsoleRunLogModal"):
-        _walk_modal_launch_graph(
-            "SyntheticRoot",
-            edges,
-            source_overrides=sources,
-            owner_source_paths={_SyntheticRowlessOwner: (rowless_path,)},
-        )
+    result = _walk_modal_launch_graph(
+        "SyntheticRoot",
+        edges,
+        source_overrides=sources,
+        owner_source_paths={_SyntheticRowlessOwner: (rowless_path,)},
+    )
+    assert any("ConsoleRunLogModal" in entry for entry in result.mismatches), (
+        result.mismatches
+    )
 
 
 def test_launch_inventory_unions_declared_helpers_with_owner_class_body() -> None:
@@ -1313,13 +1368,15 @@ class _SyntheticDeclaredOwner:
 """,
     }
 
-    with pytest.raises(AssertionError, match="ConsoleRunLogModal"):
-        _walk_modal_launch_graph(
-            "SyntheticRoot",
-            edges,
-            source_overrides=sources,
-            owner_source_paths={_SyntheticDeclaredOwner: (owner_path,)},
-        )
+    result = _walk_modal_launch_graph(
+        "SyntheticRoot",
+        edges,
+        source_overrides=sources,
+        owner_source_paths={_SyntheticDeclaredOwner: (owner_path,)},
+    )
+    assert any("ConsoleRunLogModal" in entry for entry in result.mismatches), (
+        result.mismatches
+    )
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
@@ -2983,11 +3040,14 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
 
 
 def test_launch_walk_reports_every_mismatch_not_just_the_first() -> None:
-    """task-18810: the walk used to assert per owner, so the FIRST bad owner
+    """Every mismatch is reported, not just the first one found.
+
+    task-18810: the walk used to assert per owner, so the FIRST bad owner
     aborted it and every later owner -- plus the calling test's own
     assertions -- silently stopped being checked. Two real undeclared
-    launches shipped behind that. Mismatches are now collected and raised
-    together, so one stale declaration cannot hide the rest."""
+    launches shipped behind that. Mismatches are now collected and returned
+    together, so one stale declaration cannot hide the rest.
+    """
     first_path = "synthetic_multi_first.py"
     second_path = "synthetic_multi_second.py"
     edges = (
@@ -3013,14 +3073,56 @@ Second(run_id='extra', log_text='extra')
 """,
     }
 
-    with pytest.raises(AssertionError) as excinfo:
-        _walk_modal_launch_graph(
-            "SyntheticRoot",
-            edges,
-            source_overrides=sources,
-            owner_source_paths={_SyntheticDeclaredOwner: (second_path,)},
-        )
+    result = _walk_modal_launch_graph(
+        "SyntheticRoot",
+        edges,
+        source_overrides=sources,
+        owner_source_paths={_SyntheticDeclaredOwner: (second_path,)},
+    )
 
-    message = str(excinfo.value)
+    message = "\n".join(result.mismatches)
     assert "ConsoleCostModal" in message, message
     assert "ConsoleRunLogModal" in message, message
+
+
+def test_launch_walk_scans_beneath_an_undeclared_modal() -> None:
+    """Mismatches beneath an undeclared modal are reported too.
+
+    task-18810 review: an UNDECLARED modal used to be reported but never
+    traversed, so a stale parent declaration still hid every mismatch below
+    it. The walk now scans strays as well, without counting them as
+    reachable -- that stays the declared set the contract table is compared
+    against.
+    """
+    root_path = "synthetic_stray_root.py"
+    stray_path = "synthetic_stray_owner.py"
+    edges = (
+        _ModalLaunchEdge("SyntheticRoot", (), (root_path,)),
+        _ModalLaunchEdge(_SyntheticStrayOwner, (), (stray_path,)),
+    )
+    sources = {
+        # The root constructs the stray owner's modal without declaring it.
+        root_path: """
+from Tests.UI.test_console_modal_dismissal import _SyntheticStrayOwner as Stray
+Stray()
+""",
+        # ...and that stray itself constructs a second undeclared modal.
+        stray_path: """
+from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Hidden
+Hidden(run_id='hidden', log_text='hidden')
+""",
+    }
+
+    result = _walk_modal_launch_graph(
+        "SyntheticRoot",
+        edges,
+        source_overrides=sources,
+        owner_source_paths={_SyntheticStrayOwner: (stray_path,)},
+    )
+
+    message = "\n".join(result.mismatches)
+    assert "_SyntheticStrayOwner" in message, message
+    # The mismatch BELOW the undeclared modal is the point of this test.
+    assert "ConsoleRunLogModal" in message, message
+    # Strays are scanned, not promoted into the declared-reachable set.
+    assert _SyntheticStrayOwner not in result.reachable

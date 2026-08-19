@@ -45,3 +45,22 @@ if only the first mismatch is reported.
 
 Reachable-modal count 42 -> 44; TASK4 contracts 9 -> 11. Whole file green
 (117 tests) — it had been red on dev at its first assertion.
+
+## Review round (Qodo, PR #1821)
+
+Two of three findings were real defects in the first fix, and both were
+about the guarantee being weaker than claimed:
+
+- Collecting mismatches but still RAISING at the end of the walk left the
+  caller's count/set assertions unreached in exactly the failure case the
+  task was about. The walk now returns `_LaunchWalkResult(reachable,
+  mismatches)` and raises nothing; the mismatch check is its own test, so a
+  stale declaration fails that test while the inventory test still runs and
+  reports its own drift.
+- The frontier only followed DECLARED launches, so an undeclared modal was
+  reported but never traversed and could still hide every mismatch beneath
+  it. Strays are now scanned too, without being promoted into `reachable`
+  (which stays the declared set the contract table is compared against).
+  Pinned by a test proven to fail with the traversal disabled.
+
+Third finding was a docstring-style fix. File now 119 green.
