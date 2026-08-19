@@ -95,4 +95,16 @@ Not "fixed" in code on purpose: re-stamping the version string would assert that
 model evaluation describes images it never saw. A `uv pip install pillow==11.2.1`
 dry-run resolves cleanly (only pillow changes), but that mutates a venv shared with
 other concurrent sessions, so it is left as an owner decision.
+
+**AC#6 disposition (2026-08-19, post-review):** superseded by TASK-18606,
+which removed the `pillow==11.2.1` pin this AC was written against. There
+is no longer a "project's pinned Pillow" for the environment to match; the
+renderer-identity guard was rewritten as
+`test_checked_in_evaluator_v3_matrix_never_enables_on_stale_evidence` and
+passes on any supported Pillow (verified on 12.1.1). The AC stays unchecked
+because its literal wording no longer describes the system; the underlying
+concern -- stale evidence must not authorize enablement -- is covered and
+green. Closing this task requires only re-wording or dropping AC#6, an
+owner call.
+
 <!-- SECTION:NOTES:END -->
