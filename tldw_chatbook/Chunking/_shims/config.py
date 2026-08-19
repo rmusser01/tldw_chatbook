@@ -27,6 +27,8 @@ def _chunking_section() -> Dict[str, Any]:
     """Return chatbook's chunking TOML table as a flat dict (possibly empty)."""
     config = load_cli_config_and_ensure_existence()
     merged: Dict[str, Any] = {}
+    # [chunking] first, then [Chunking]: the capitalized table is applied
+    # last, so it wins on key conflict (review M-4).
     for name in ("chunking", "Chunking"):
         section = config.get(name)
         if isinstance(section, dict):
@@ -42,10 +44,18 @@ class _ChunkingConfigParser(configparser.ConfigParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        # interpolation=None: raw pass-through of '%' in values. With the
+        # default BasicInterpolation, any '%' in a [Chunking]/[chunking]
+        # TOML value raised ValueError("invalid interpolation syntax") here
+        # at construction time (review I-1) — the engine catches only
+        # ImportError around this call, so every Chunker construction died,
+        # even for keys the engine never reads. '%(name)s'-style values
+        # previously raised InterpolationMissingOptionError at .get() time,
+        # which no engine exception tuple covers.
+        super().__init__(interpolation=None)
         chunking = _chunking_section()
         if chunking:
-            self.read_dict({"Chunking": {k: str(v) for k, v in chunking.items()}})
+            self.read_dict({"Chunking": {str(k): str(v) for k, v in chunking.items()}})
 
 
 def load_comprehensive_config() -> _ChunkingConfigParser:

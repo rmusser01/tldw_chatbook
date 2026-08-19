@@ -19,6 +19,61 @@ def test_config_shim():
     # config-parser-like object must come back.
     assert hasattr(cfg, "has_section")
     assert hasattr(cfg, "get")
+    # No chunking table ships by default, so every engine has_section guard
+    # is False and engine defaults apply (review M-1).
+    assert cfg.has_section("Chunking") is False
+    # configparser get() semantics: fallback is returned for missing keys,
+    # including when the section itself is absent (review M-1).
+    assert cfg.get("Chunking", "missing", fallback="d") == "d"
+
+
+def test_config_shim_percent_values_do_not_crash(monkeypatch):
+    # Regression (review I-1): with ConfigParser's default BasicInterpolation
+    # any '%' in a [Chunking]/[chunking] TOML value raised
+    # ValueError("invalid interpolation syntax in '50%'") at construction
+    # time — and the engine catches only ImportError there, so EVERY Chunker
+    # construction died, even for keys the engine never reads. Interpolation
+    # is now disabled; raw values must round-trip verbatim, including
+    # '%(name)s' (which previously raised InterpolationMissingOptionError at
+    # .get() time, in no engine exception tuple) and non-string TOML keys.
+    from tldw_chatbook.Chunking._shims import config as shim
+
+    monkeypatch.setattr(
+        shim,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"Chunking": {
+            "max_size": "50%",
+            "note": "100% sure",
+            "tmpl": "pre-%(name)s-post",
+            "count": 3,
+            7: "int-key",
+        }},
+    )
+    cfg = shim.load_comprehensive_config()
+    assert cfg.get("Chunking", "max_size") == "50%"
+    assert cfg.get("Chunking", "note") == "100% sure"
+    assert cfg.get("Chunking", "tmpl") == "pre-%(name)s-post"
+    assert cfg.get("Chunking", "count") == "3"
+    assert cfg.get("Chunking", "7") == "int-key"
+
+
+def test_config_shim_merge_order_capitalized_wins(monkeypatch):
+    # Review M-1/M-4: both [chunking] and [Chunking] tables are accepted and
+    # merged; on key conflict the capitalized table wins (applied last in
+    # _chunking_section()).
+    from tldw_chatbook.Chunking._shims import config as shim
+
+    monkeypatch.setattr(
+        shim,
+        "load_cli_config_and_ensure_existence",
+        lambda: {
+            "chunking": {"max_size": "100", "lower_only": "yes"},
+            "Chunking": {"max_size": "200"},
+        },
+    )
+    cfg = shim.load_comprehensive_config()
+    assert cfg.get("Chunking", "max_size") == "200"
+    assert cfg.get("Chunking", "lower_only") == "yes"
 
 
 def test_prompt_loader_shim_maps_rolling_summarize():
