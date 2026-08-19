@@ -48,6 +48,7 @@ if __name__ == "__mp_main__" or _early_multiprocessing.parent_process() is not N
         pass
 
 # Imports
+import argparse
 import concurrent.futures
 import contextlib
 import functools
@@ -5610,6 +5611,12 @@ class TldwCli(
             f"App __init__: Determined initial tab value: {self._initial_tab_value}"
         )
         # current_tab reactive will be set in on_mount after UI is composed
+
+        # --- Focus mode (task-16320) ---
+        self.focus_mode = False
+        self._focus_mode_config = bool(
+            get_cli_setting("general", "focus_mode", False)
+        )
 
         self._rich_log_handler: Optional[RichLogHandler] = (
             None  # For the RichLog widget in Logs tab
@@ -12431,6 +12438,31 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
+    parser = argparse.ArgumentParser(
+        description="tldw chatbook - A Textual TUI for chatting with LLMs",
+        prog="tldw-cli",
+    )
+    parser.add_argument(
+        "--serve", action="store_true", help="Run the application as a web server"
+    )
+    parser.add_argument(
+        "--host", type=str, help="Host address for web server (default: localhost)"
+    )
+    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
+    parser.add_argument("--web-title", type=str, help="Title for the web page")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode for web server"
+    )
+    parser.add_argument(
+        "--focus",
+        action="store_true",
+        help="Start chrome-free in the Console (hides nav bar and workbench header)",
+    )
+    return parser
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Record the launch directory first, before anything can chdir -- the
@@ -12603,8 +12635,18 @@ if __name__ == "__main__":
 
     warm_up_image_protocol()
 
+    try:
+        _main_args = _build_arg_parser().parse_args()
+    except SystemExit:
+        # Bare `python3 -m tldw_chatbook.app` with an unknown flag must not
+        # hard-exit before logging is up; fall back to defaults.
+        _main_args = None
+
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(
+        getattr(_main_args, "focus", False) if _main_args is not None else False
+    )
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
@@ -12829,25 +12871,7 @@ def main_cli_runner():
             logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-
-    args = parser.parse_args()
+    args = _build_arg_parser().parse_args()
 
     # If --serve flag is provided, run as web server
     if args.serve:
@@ -12885,6 +12909,7 @@ def main_cli_runner():
 
     # Create instance with early logging flag
     app_instance = TldwCli()
+    app_instance._cli_focus_override = bool(args.focus)
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
