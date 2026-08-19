@@ -4,6 +4,8 @@ pytest-asyncio
 pytest-mock
 pytest-timeout
 pytest-xdist
+# TASK-18608: deterministic cross-job sharding of the UI suite in CI
+pytest-shard
 pytest-cov
 hypothesis
 aiohttp
