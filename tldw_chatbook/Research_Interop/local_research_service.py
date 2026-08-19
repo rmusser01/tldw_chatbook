@@ -17,6 +17,37 @@ from .research_normalizers import (
     normalize_research_record,
 )
 
+__all__ = ["LocalResearchService", "LeaseBudgetExhausted"]
+
+
+class LeaseBudgetExhausted(Exception):
+    """Raised by ``claim_run`` when a run's crash-retry budget is spent.
+
+    Reclaiming an EXPIRED lease counts against ``max_attempts``. This is
+    distinct from a normal claim refusal (another executor holds a LIVE
+    lease, signalled by ``claim_run`` returning ``None``): once the retry
+    budget itself is spent, the run's executor keeps dying rather than
+    merely losing a race, and the caller must fail the run instead of
+    leaving it ``status=running`` forever and unclaimable by anyone
+    (task-18060 review finding 1).
+
+    Attributes:
+        run_id: The run whose retry budget is exhausted.
+        attempts: How many times the run's lease was claimed and then
+            abandoned (left to expire unrenewed and unreleased) before this
+            attempt.
+        max_attempts: The configured budget that was reached.
+    """
+
+    def __init__(self, run_id: str, *, attempts: int, max_attempts: int) -> None:
+        super().__init__(
+            f"research run {run_id} exhausted its lease retry budget "
+            f"({attempts} of {max_attempts} allowed attempts)"
+        )
+        self.run_id = run_id
+        self.attempts = attempts
+        self.max_attempts = max_attempts
+
 
 class LocalResearchService:
     """Local-first persistence for research sessions, runs, events, and artifacts."""
@@ -694,17 +725,23 @@ class LocalResearchService:
         """Take the execution lease on a run, or decline it.
 
         The claim is atomic: the UPDATE matches only when no live lease
-        exists, so two racing executors cannot both succeed. Every
+        exists, so two racing executors cannot both succeed -- that WIN/LOSE
+        decision between racing claimants is exactly what the single UPDATE
+        below decides, and a losing race still returns None. Every
         successful claim counts against ``max_attempts`` (the run's total
         attempt budget), but the budget is only ENFORCED when reclaiming an
         EXPIRED lease -- a run's very first claim always succeeds. A run
         whose executor keeps dying is broken rather than slow, and must
         stop being retried once the budget is spent (task-18060, following
-        the server job manager's retry budget). A clean ``release_lease``
-        resets the counter to 0, since a run that was voluntarily released
-        was not abandoned -- so the budget tracks CONSECUTIVE abandonments
-        (crashes that leave the lease to expire), not the run's lifetime
-        claim count.
+        the server job manager's retry budget) -- signalled by raising
+        ``LeaseBudgetExhausted`` rather than returning None, so a caller
+        cannot mistake "the budget is spent" for "someone else holds it
+        live" (review finding 1: those two cases need different responses --
+        the first must fail the run, the second must leave it alone). A
+        clean ``release_lease`` resets the counter to 0, since a run that
+        was voluntarily released was not abandoned -- so the budget tracks
+        CONSECUTIVE abandonments (crashes that leave the lease to expire),
+        not the run's lifetime claim count.
 
         Args:
             run_id: The run to claim.
@@ -715,14 +752,22 @@ class LocalResearchService:
                 lease) before further reclaims are refused.
 
         Returns:
-            A new lease id when the claim succeeded, otherwise None.
+            A new lease id when the claim succeeded, otherwise None (another
+            executor currently holds a live lease).
+
+        Raises:
+            LeaseBudgetExhausted: When reclaiming an EXPIRED lease would
+                exceed ``max_attempts`` -- the caller must fail the run
+                rather than treat this like a routine claim refusal.
         """
         row = self._require_one("research_runs", run_id, "research run")
         previous = row["leased_until"] if "leased_until" in row.keys() else None
         attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
         reclaiming = previous is not None
         if reclaiming and attempts >= int(max_attempts):
-            return None
+            raise LeaseBudgetExhausted(
+                run_id, attempts=attempts, max_attempts=int(max_attempts)
+            )
         lease_id = uuid.uuid4().hex
         now = self._now()
         expires = self._timestamp_after(lease_seconds)

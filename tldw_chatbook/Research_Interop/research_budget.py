@@ -108,7 +108,8 @@ class BudgetLedger:
                 only when this argument is empty/None.
 
         Returns:
-            A ledger whose used counters continue from the snapshot.
+            A ledger whose used counters -- and elapsed runtime -- continue
+            from the snapshot.
         """
         snapshot = snapshot or {}
         ledger = cls(dict(limits or snapshot.get("limits") or {}))
@@ -124,6 +125,18 @@ class BudgetLedger:
             ledger.tokens_settled_exact = 0
         else:
             ledger.tokens_settled_exact = ledger.tokens_settled
+        # task-18060 review finding 4: the same leak already fixed above for
+        # searches/docs/tokens also applied to runtime -- elapsed_seconds()
+        # is derived from _start_monotonic, which the constructor stamps at
+        # "now", so a resumed run was silently re-granted its whole
+        # max_runtime_seconds. Back-dating _start_monotonic by the
+        # snapshot's own elapsed time makes elapsed_seconds() continue
+        # rather than restart.
+        try:
+            previous_elapsed = float(snapshot.get("runtime_elapsed_s") or 0.0)
+        except (TypeError, ValueError):
+            previous_elapsed = 0.0
+        ledger._start_monotonic = time.monotonic() - max(0.0, previous_elapsed)
         return ledger
 
     # -- searches ---------------------------------------------------------

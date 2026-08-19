@@ -3,7 +3,12 @@
 import re
 from datetime import datetime, timezone
 
-from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+import pytest
+
+from tldw_chatbook.Research_Interop.local_research_service import (
+    LeaseBudgetExhausted,
+    LocalResearchService,
+)
 
 # _now()/_timestamp_after() must always render this exact shape: fixed
 # microsecond precision (never omitted) and a trailing "Z". See
@@ -129,6 +134,12 @@ def test_a_displaced_worker_cannot_renew_or_release():
 
 
 def test_reclaim_stops_at_the_retry_budget():
+    """Review finding 1: once the retry budget is spent, claim_run raises
+    LeaseBudgetExhausted rather than returning None -- overloading None to
+    mean both "someone else holds it live" and "the budget is spent" left
+    callers unable to tell the two apart, and the caller MUST respond to
+    them differently (see the engine-level tests in
+    test_local_research_engine.py for the two different responses)."""
     service = _service()
     run = service.launch_run(query="q", autonomy_mode="autonomous")
     for _ in range(3):
@@ -136,9 +147,11 @@ def test_reclaim_stops_at_the_retry_budget():
             run["id"], worker_id="w", lease_seconds=0, max_attempts=3
         )
 
-    assert service.claim_run(
-        run["id"], worker_id="w", lease_seconds=0, max_attempts=3
-    ) is None
+    with pytest.raises(LeaseBudgetExhausted) as excinfo:
+        service.claim_run(run["id"], worker_id="w", lease_seconds=0, max_attempts=3)
+    assert excinfo.value.run_id == run["id"]
+    assert excinfo.value.attempts == 3
+    assert excinfo.value.max_attempts == 3
 
 
 def test_release_frees_the_run_for_the_next_executor():

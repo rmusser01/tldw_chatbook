@@ -9,6 +9,7 @@ artifact/event storage run real.
 
 import asyncio
 import concurrent.futures
+from unittest.mock import patch
 
 import pytest
 
@@ -1534,9 +1535,17 @@ def test_a_failed_synthesis_is_recorded_on_the_run():
 
 def test_a_second_engine_declines_a_leased_run():
     """task-18060: two executors must not run one run. The window's
-    exclusive-worker guard is per-session and cannot see a second process."""
+    exclusive-worker guard is per-session and cannot see a second process.
+
+    Review finding 6: the original version of this test asserted only
+    `status != "completed"` and captured `_calls` without ever checking it
+    -- it would have passed even if the declined executor had gone ahead
+    and run a phase anyway (e.g. if the None-return short-circuit were
+    accidentally removed further down the call stack). Assert directly
+    that the declined executor performed no work.
+    """
     service = _make_service()
-    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    search_fn, analyze_fn, calls = _make_pipeline("q")
     first = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
     second = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
     run = service.launch_run(query="q", autonomy_mode="autonomous")
@@ -1545,7 +1554,292 @@ def test_a_second_engine_declines_a_leased_run():
     final = asyncio.run(second.execute_run(run["id"]))
 
     assert final["status"] != "completed"
+    assert final["status"] != "failed"  # declined =/= failed: the run is left alone
     assert "lease" in str(final.get("progress_message") or "").lower()
+    assert calls == {"search": 0, "analyze": 0}, calls
+
+
+def test_a_run_whose_lease_retry_budget_is_exhausted_is_failed():
+    """task-18060 review finding 1: before the fix, exhausting the reclaim
+    budget made claim_run return None -- exactly like "another executor
+    holds it live" -- so execute_run wrote a lease_declined progress event
+    and left the run status=running forever, permanently unclaimable
+    (a REGRESSION: before this branch such a run could simply be
+    re-executed). A budget-exhausted run must instead be failed, since its
+    executor keeps dying rather than merely losing a race.
+    """
+    service = _make_service()
+    run = service.launch_run(query="q", autonomy_mode="autonomous")
+    # Simulate a dead executor: claimed and abandoned (never released) three
+    # times in a row, each with an already-expired lease so the next claim
+    # can reclaim it deterministically (no time.sleep(), same technique as
+    # test_reclaim_stops_at_the_retry_budget in test_research_run_lease.py).
+    for _ in range(3):
+        assert service.claim_run(
+            run["id"], worker_id="dead-executor", lease_seconds=0, max_attempts=3
+        )
+
+    engine = LocalResearchEngine(service)  # never reaches the pipeline
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    message = str(final.get("progress_message") or "")
+    assert "lease" in message.lower() or "executor" in message.lower(), message
+
+
+def test_a_lease_stolen_during_synthesis_blocks_packaging_writes_and_completion():
+    """task-18060 review finding 2: regression guard for the nine
+    `_require_lease()` fences threaded through `_execute_phases`. Steals the
+    run out from under the executing engine from INSIDE a fake pipeline seam
+    (`analyze_fn`, which the engine awaits directly on the loop thread, so
+    the steal needs no cross-thread plumbing) once collecting has already
+    written its artifacts under a still-valid lease. Every packaging write
+    that follows the theft must be blocked, and the run must never be
+    marked completed.
+
+    Mutation-verified (task report): deleting the `_require_lease()` call
+    at the top of `_save_ledger` (the first fence reached after this test's
+    theft point, called again at the top of the packaging section) turns
+    this test red; restoring it turns it green again.
+    """
+    service = _make_service()
+    search_fn, _default_analyze, _calls = _make_pipeline("q")
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    async def stealing_analyze_fn(wsr, sqd, params, cancel_event=None):
+        # A live (unexpired) lease cannot be reclaimed by another claim_run
+        # call -- that non-double-claim guarantee is the whole point of the
+        # atomic UPDATE. Releasing it first (using the lease id the engine
+        # itself is holding, right now, mid-flight) is what actually
+        # simulates "a second executor now owns this run", deterministically
+        # and without a real sleep.
+        released = service.release_lease(run["id"], lease_id=engine._lease_id)
+        assert released is True, "the engine must still hold its own lease at this point"
+        stolen = service.claim_run(run["id"], worker_id="rescuer", lease_seconds=60)
+        assert stolen is not None, "the steal itself must succeed for this test to mean anything"
+        return {
+            "final_answer": {"text": "Answer[1].", "evidence": [], "confidence": 0.5, "chunks": []},
+            "relevant_results": {},
+            "web_search_results_dict": wsr,
+        }
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=stealing_analyze_fn)
+
+    complete_calls = {"n": 0}
+    original_complete_run = service.complete_run
+
+    def spy_complete_run(*args, **kwargs):
+        complete_calls["n"] += 1
+        return original_complete_run(*args, **kwargs)
+
+    service.complete_run = spy_complete_run
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] != "completed"
+    assert complete_calls["n"] == 0, "the displaced executor must never call complete_run"
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    # Round-1 collecting wrote its artifacts before the theft (partial-
+    # artifact contract) -- packaging must not have written anything after it.
+    assert "plan.json" in names
+    assert "collection_summary.json" in names
+    for packaging_artifact in ("report_v1.md", "sources.json", "verification_summary.json", "bundle.json"):
+        assert packaging_artifact not in names, f"{packaging_artifact} must not exist: {names}"
+
+
+def test_the_last_lease_fence_blocks_completion_after_the_final_write():
+    """task-18060 review finding 2 (mutation-check companion): isolates the
+    VERY LAST `_require_lease()` call -- immediately before `complete_run`
+    -- from every fence before it, by stealing the lease as a side effect of
+    the LAST artifact write (`bundle.json`) rather than from inside a
+    pipeline seam. Every earlier fence has already passed by the time the
+    theft happens, so only that one final fence stands between the theft and
+    a wrongly "completed" run.
+
+    Mutation-verified (task report): deleting the `_require_lease()` call
+    immediately preceding `self.service.complete_run(...)` turns this test
+    red (the run gets marked completed on a stolen lease); restoring it
+    turns it green again.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    original_save_artifact = service.save_artifact
+
+    def stealing_save_artifact(run_id, *, artifact_name, content_type, content):
+        result = original_save_artifact(
+            run_id, artifact_name=artifact_name, content_type=content_type, content=content
+        )
+        if artifact_name == "bundle.json":
+            # The very last write before complete_run -- steal right after
+            # it succeeds, so everything up to and including it has already
+            # legitimately happened under this engine's own lease. A live
+            # lease can't be reclaimed directly (that's the whole point of
+            # claim_run's atomicity), so release it first using the id the
+            # engine itself is still holding.
+            released = service.release_lease(run_id, lease_id=engine._lease_id)
+            assert released is True
+            stolen = service.claim_run(run_id, worker_id="rescuer", lease_seconds=60)
+            assert stolen is not None
+        return result
+
+    service.save_artifact = stealing_save_artifact
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] != "completed"
+    names = {a["artifact_name"] for a in service.get_bundle(run["id"])["artifacts"]}
+    assert "bundle.json" in names  # the write that triggered the steal did land
+
+
+def test_lease_lost_while_handling_a_pipeline_error_returns_quietly():
+    """task-18060 review finding 3: `_save_ledger` is fenced, and it is
+    called from INSIDE the `except ResearchLimitExceeded` and
+    `except Exception` handlers in execute_run. A `_LeaseLost` raised from
+    inside an except body is NOT caught by that same try's sibling
+    `except _LeaseLost` clause (Python only matches a raise against a NEW
+    try), so before the fix it propagated out of execute_run entirely --
+    callers saw "Local research engine error: execution lease lost" instead
+    of the quiet return every other fenced write produces, contradicting
+    execute_run's own docstring (which promises only ValueError).
+
+    The lease is left to expire naturally (a real elapsed-time wait,
+    deterministic because the wait comfortably exceeds `lease_seconds`) and
+    reclaimed from inside `search_fn` on the loop's own thread (routed
+    through `_run_on_loop`, matching this suite's established pattern for
+    touching the thread-affine `:memory:` connection from an offloaded,
+    synchronous search_fn) -- then search_fn raises, landing in
+    `except Exception`, exactly where finding 3 lives.
+    """
+    service = _make_service()
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+    loop_box: dict[str, asyncio.AbstractEventLoop] = {}
+
+    import time as time_module
+
+    def search_fn(q, params):
+        time_module.sleep(0.3)  # comfortably past lease_seconds=0.1 below
+        stolen = _run_on_loop(
+            loop_box["loop"],
+            lambda: service.claim_run(run["id"], worker_id="rescuer", lease_seconds=60),
+        )
+        assert stolen is not None
+        raise RuntimeError("pipeline exploded")
+
+    engine = LocalResearchEngine(service, search_fn=search_fn)
+    engine.lease_seconds = 0.1
+    engine.keepalive_seconds = 999  # never renews inside the test window
+
+    fail_calls = {"n": 0}
+    original_fail_run = service.fail_run
+
+    def spy_fail_run(*args, **kwargs):
+        fail_calls["n"] += 1
+        return original_fail_run(*args, **kwargs)
+
+    service.fail_run = spy_fail_run
+
+    async def _run():
+        loop_box["loop"] = asyncio.get_running_loop()
+        return await engine.execute_run(run["id"])  # must not raise _LeaseLost
+
+    final = asyncio.run(_run())
+
+    assert fail_calls["n"] == 0, "a displaced executor must not fail a run it no longer owns"
+    assert final["status"] != "failed"
+
+
+def test_a_resumed_run_continues_its_runtime_budget():
+    """task-18060 review finding 4: snapshot() records runtime_elapsed_s but
+    from_snapshot dropped it, so `_start_monotonic` reset on every resume
+    and a resumed run was granted its whole max_runtime_seconds again -- the
+    same leak already fixed for searches, docs, and tokens. A run resumed
+    with prior elapsed time already past the budget must fail immediately
+    rather than get a fresh clock.
+    """
+    service = _make_service()
+    search_fn, analyze_fn, calls = _make_pipeline("q")
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    run = service.launch_run(
+        query="q",
+        autonomy_mode="autonomous",
+        limits_json={"max_runtime_seconds": 5, "max_iterations": 1},
+    )
+    service.save_artifact(
+        run["id"],
+        artifact_name="budget_ledger.json",
+        content_type="application/json",
+        content={
+            "limits": {"max_runtime_seconds": 5},
+            "searches_used": 0,
+            "searches_overshoot": 0,
+            "docs_used": 0,
+            "tokens_settled": 0,
+            "runtime_elapsed_s": 999.0,  # already blew the budget in a "previous" execution
+        },
+    )
+
+    final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert final["status"] == "failed"
+    assert "research_limit_exceeded:max_runtime_seconds" in final["progress_message"]
+    assert calls == {"search": 0, "analyze": 0}, "must fail at entry, before any pipeline call"
+
+
+def test_default_gap_fn_offloads_its_blocking_llm_call():
+    """task-18060 review finding 5: `_default_gap_fn` is `async def`, so
+    `_offload_pipeline_call` routes it INLINE when it is invoked as the
+    engine's gap_fn -- but it used to call `chat_api_call` synchronously,
+    directly on the loop thread, inside that coroutine. A gap-analysis call
+    longer than `lease_seconds` would starve the keep-alive and lapse the
+    lease, exactly the bug finding 1 of task-18060's original review fixed
+    for `search_fn`. The blocking call must be offloaded the same way.
+    """
+    import time as time_module
+
+    service = _make_service()
+    search_fn, analyze_fn, _calls = _make_pipeline("q")
+
+    def blocking_chat_api_call(**kwargs):
+        time_module.sleep(0.3)
+        return "[]"
+
+    engine = LocalResearchEngine(service, search_fn=search_fn, analyze_fn=analyze_fn)
+    engine.search_params = {"final_answer_llm": "fake-llm"}
+    engine.lease_seconds = 0.1
+    engine.keepalive_seconds = 0.02
+    run = service.launch_run(
+        query="q", autonomy_mode="autonomous", limits_json={"max_iterations": 1}
+    )
+
+    renewals = {"count": 0}
+    original_renew_lease = service.renew_lease
+
+    def spy_renew_lease(*args, **kwargs):
+        renewals["count"] += 1
+        return original_renew_lease(*args, **kwargs)
+
+    service.renew_lease = spy_renew_lease
+
+    with patch(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        side_effect=blocking_chat_api_call,
+    ):
+        final = asyncio.run(engine.execute_run(run["id"]))
+
+    assert renewals["count"] > 0, (
+        "the keep-alive never ran while the blocking gap-analysis LLM call was in flight"
+    )
+    assert final["status"] == "completed", final.get("progress_message")
 
 
 def test_a_long_silent_phase_keeps_its_lease():

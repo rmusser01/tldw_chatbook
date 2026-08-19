@@ -29,7 +29,7 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from .local_research_service import LocalResearchService
+from .local_research_service import LeaseBudgetExhausted, LocalResearchService
 from ..Chat.usage_recorder import usage_scope
 from .academic_providers import papers_to_evidence
 from .research_budget import BudgetLedger, ResearchLimitExceeded
@@ -193,11 +193,21 @@ class LocalResearchEngine:
         Uses the synthesis LLM when one is configured; returns no gaps
         otherwise. Failure here must never break the run -- an unparseable
         gap analysis reads as "no gaps" with a warning, not a failed report.
+
+        The LLM call itself is a plain, blocking ``chat_api_call`` (review
+        finding 5): being ``async def`` makes ``_offload_pipeline_call``
+        route THIS function inline (a coroutine function carries no
+        blocking-call risk by itself), but the call it makes on the loop
+        thread is exactly the risk that offload exists to avoid -- a gap
+        analysis longer than ``lease_seconds`` would starve the keep-alive
+        and lapse the lease, same as an un-offloaded ``search_fn`` would.
+        So the blocking call is wrapped and offloaded the same way the
+        other pipeline seams are.
         """
         llm = str(self.search_params.get("final_answer_llm") or "").strip()
         if not llm:
             return []
-        from ..Chat.Chat_Functions import chat_api_call
+        from ..Chat.Chat_Functions import chat_api_call, chat_reply_text
 
         prompt = (
             "You are reviewing a research synthesis for completeness. Given "
@@ -211,10 +221,9 @@ class LocalResearchEngine:
             f"Sub-questions asked: {context.get('sub_questions')}\n"
             f"Synthesized answer:\n{context.get('answer_text')}"
         )
-        try:
-            from ..Chat.Chat_Functions import chat_reply_text
 
-            response = chat_reply_text(
+        def _call_llm() -> str:
+            return chat_reply_text(
                 chat_api_call(
                     api_endpoint=llm,
                     messages_payload=[{"role": "user", "content": prompt}],
@@ -229,6 +238,9 @@ class LocalResearchEngine:
                     topp=None,
                 )
             )
+
+        try:
+            response = await self._offload_pipeline_call(_call_llm)
             parsed = json.loads(str(response or "[]"))
             if isinstance(parsed, list):
                 return [str(q) for q in parsed if str(q).strip()][:5]
@@ -372,6 +384,24 @@ class LocalResearchEngine:
             raise ValueError("research run not found")
         return run
 
+    def _quiet_lease_lost_return(self, run_id: str) -> dict[str, Any]:
+        """The shared quiet return for every ``_LeaseLost`` landing spot.
+
+        Deliberately NOT ``fail_run``: another executor owns this run now
+        and is responsible for its terminal state. Writing one here would
+        be the displaced executor overwriting the live one's work
+        (task-18060 review finding 3).
+
+        Args:
+            run_id: The run this executor was displaced from.
+
+        Returns:
+            The run's current record, as last written by whoever holds it
+            now.
+        """
+        logger.warning(f"Research run {run_id} lease lost mid-flight")
+        return self._get_run(run_id)
+
     def _check_control(self, run_id: str, next_phase: str) -> dict[str, Any]:
         """Honor pause/cancel BEFORE entering ``next_phase`` (ADR-068).
 
@@ -508,9 +538,27 @@ class LocalResearchEngine:
         # exclusive-worker guard is per-session and cannot see another process,
         # so the lease is what actually prevents duplicate searches and spend.
         self._run_id = run_id
-        self._lease_id = self.service.claim_run(
-            run_id, worker_id=self.worker_id, lease_seconds=self.lease_seconds
-        )
+        try:
+            self._lease_id = self.service.claim_run(
+                run_id, worker_id=self.worker_id, lease_seconds=self.lease_seconds
+            )
+        except LeaseBudgetExhausted as exhausted:
+            # task-18060 review finding 1: exhausting the reclaim budget
+            # means this run's executor keeps dying, not that a healthy
+            # executor is merely racing another for it -- distinct from the
+            # None branch below, which MUST leave the run alone for
+            # whichever executor holds the live lease. Left unhandled, the
+            # run would stay status=running forever, permanently unclaimable.
+            self._run_id = None
+            logger.warning(f"Research run {run_id} failed: {exhausted}")
+            return self.service.fail_run(
+                run_id,
+                error_msg=(
+                    "repeated executor failures: this run's lease was "
+                    f"claimed and abandoned {exhausted.attempts} time(s) "
+                    "without completing (lease retry budget exhausted)"
+                ),
+            )
         if self._lease_id is None:
             self._run_id = None
             logger.info(f"Research run {run_id} is leased by another executor")
@@ -540,17 +588,31 @@ class LocalResearchEngine:
             # resolve through the service's terminal failure transition --
             # partial artifacts saved by earlier phases are preserved.
             logger.warning(f"Research run {run_id} stopped by budget: {exceeded}")
-            self._save_ledger(run_id, ledger)
+            # task-18060 review finding 3: _save_ledger is itself fenced, and
+            # a _LeaseLost it raises here is NOT caught by the sibling
+            # `except _LeaseLost` below -- Python only matches a raise inside
+            # an except body against a NEW try, never a sibling clause of the
+            # same try it was raised from. Uncaught, it would escape
+            # execute_run entirely (contradicting the docstring, which
+            # promises only ValueError) instead of resolving to the same
+            # quiet return every other fenced write produces.
+            try:
+                self._save_ledger(run_id, ledger)
+            except _LeaseLost:
+                return self._quiet_lease_lost_return(run_id)
             return self.service.fail_run(run_id, error_msg=str(exceeded))
         except _LeaseLost:
             # Deliberately NOT fail_run: another executor owns this run now and
             # is responsible for its terminal state. Writing one here would be
             # the displaced executor overwriting the live one's work.
-            logger.warning(f"Research run {run_id} lease lost mid-flight")
-            return self._get_run(run_id)
+            return self._quiet_lease_lost_return(run_id)
         except Exception as exc:
             logger.opt(exception=True).error(f"Research run {run_id} failed: {exc}")
-            self._save_ledger(run_id, ledger)
+            # See the ResearchLimitExceeded branch above: same leak, same fix.
+            try:
+                self._save_ledger(run_id, ledger)
+            except _LeaseLost:
+                return self._quiet_lease_lost_return(run_id)
             return self.service.fail_run(run_id, error_msg=str(exc))
         finally:
             keepalive.cancel()
