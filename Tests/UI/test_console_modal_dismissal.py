@@ -38,7 +38,9 @@ from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel, WorkbenchHelpSta
 from tldw_chatbook.Widgets.cancel_confirmation_dialog import (
     CancelConfirmationDialog,
 )
+from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
@@ -136,6 +138,7 @@ from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
 )
 from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileOpen,
+    # task-18810: declared launches -- see CONSOLE_MODAL_LAUNCH_EDGES.
     EnhancedFileSave,
 )
 from tldw_chatbook.Widgets.modal_dismissal import (
@@ -710,6 +713,26 @@ TASK4_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task4ModalContract(
+        WorkspaceCreateModal,
+        "#workspace-create-modal",
+        None,
+        "request_safe_cancel",
+        "Console workspace browser create action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
+        SelectDirectory,
+        "#file-system-picker-dialog",
+        None,
+        "request_safe_cancel",
+        "Workspace create modal folder bind",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task4ModalContract(
         EnhancedFileOpen,
         "#enhanced-file-dialog",
         None,
@@ -878,7 +901,10 @@ _CONSOLE_DIRECT_MODAL_TYPES = tuple(
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in TASK4_MODAL_CONTRACTS
-    if contract.modal_type is not ChangeRevertConfirmModal
+    # Shared modals the Console root does NOT construct itself: each is
+    # declared on the edge of the owner that actually opens it
+    # (ChangeReviewScreen; the workspace create dialog -- task-18810).
+    if contract.modal_type not in {ChangeRevertConfirmModal, SelectDirectory}
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
     _ModalLaunchEdge(
@@ -888,6 +914,7 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             *_DIRECT_SHARED_MODAL_TYPES,
             ChangeReviewScreen,
             TrajectoryScreen,
+            WorkspaceCreateModal,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
@@ -896,6 +923,24 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         (ConsoleWorkspaceRenameModal,),
         ("tldw_chatbook/UI/Console_Modules/workspace.py",),
         ("_open_console_workspace_rename",),
+    ),
+    # task-18810: the Console workspace browser opens the shared create
+    # dialog (`_create_console_workspace`), which itself opens the vendored
+    # directory picker. Both were reachable but undeclared, which is what
+    # made the inventory walk abort before its own later assertions.
+    _ModalLaunchEdge(
+        WorkspaceCreateModal,
+        (SelectDirectory,),
+        ("tldw_chatbook/Widgets/workspace_create_modal.py",),
+    ),
+    # task-18810: the review-notes modal confirms each delete. This launch
+    # shipped in task-18515 WITHOUT being caught by this test -- the walk
+    # was already aborting on WorkspaceCreateModal above, which is the
+    # silent-skip this task exists to close.
+    _ModalLaunchEdge(
+        ConsoleReviewNotesModal,
+        (ConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_review_notes_modal.py",),
     ),
     _ModalLaunchEdge(
         ConsolePromptQueueModal,
@@ -1059,6 +1104,7 @@ def _walk_modal_launch_graph(
     source_paths_by_owner = owner_source_paths or {}
     reachable: set[str | type[Screen[Any]]] = {root}
     frontier: list[str | type[Screen[Any]]] = [root]
+    mismatches: list[str] = []
     while frontier:
         owner = frontier.pop()
         edge = edges_by_owner.get(owner)
@@ -1106,15 +1152,23 @@ def _walk_modal_launch_graph(
         }
         unexpected = actual - expected
         missing = expected - actual
-        assert not unexpected and not missing, (
-            f"{getattr(owner, '__name__', owner)} modal launch mismatch; "
-            f"unexpected={sorted(item.__name__ for item in unexpected)}, "
-            f"missing={sorted(item.__name__ for item in missing)}"
-        )
+        if unexpected or missing:
+            # COLLECTED, not raised here (task-18810): asserting per-owner
+            # aborted the walk at the first mismatch, so every later owner
+            # -- and every assertion in the calling test after the walk --
+            # silently stopped being checked. Two real launches shipped
+            # undeclared behind exactly that: WorkspaceCreateModal and
+            # ConsoleReviewNotesModal's delete confirmation.
+            mismatches.append(
+                f"{getattr(owner, '__name__', owner)} modal launch mismatch; "
+                f"unexpected={sorted(item.__name__ for item in unexpected)}, "
+                f"missing={sorted(item.__name__ for item in missing)}"
+            )
         for launched in declared:
             if launched not in reachable:
                 reachable.add(launched)
                 frontier.append(launched)
+    assert not mismatches, "\n".join(mismatches)
     return reachable
 
 
@@ -1147,7 +1201,9 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    assert len(reachable_modal_types) == 42
+    # 44 since task-18810 declared the two launches this walk used to
+    # abort on: WorkspaceCreateModal and its SelectDirectory picker.
+    assert len(reachable_modal_types) == 44
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | {TrajectoryScreen}
@@ -1362,7 +1418,7 @@ def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK4_MODAL_CONTRACTS) == 9
+    assert len(TASK4_MODAL_CONTRACTS) == 11
     assert {contract.modal_type.__name__ for contract in TASK4_MODAL_CONTRACTS} == {
         "WorkbenchHelpPanel",
         "DictionaryPicker",
@@ -1373,6 +1429,8 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
         "EnhancedFileSave",
         "VideoPlayerScreen",
         "ChangeRevertConfirmModal",
+        "WorkspaceCreateModal",
+        "SelectDirectory",
     }
     for contract in TASK4_MODAL_CONTRACTS:
         assert issubclass(contract.modal_type, SafeModalDismissMixin)
@@ -2922,3 +2980,47 @@ async def test_old_request_generation_cannot_dismiss_repushed_presentation():
         await pilot.click(offset=click_point)
         await pilot.pause()
         assert app.host.underlying_button_presses == 0
+
+
+def test_launch_walk_reports_every_mismatch_not_just_the_first() -> None:
+    """task-18810: the walk used to assert per owner, so the FIRST bad owner
+    aborted it and every later owner -- plus the calling test's own
+    assertions -- silently stopped being checked. Two real undeclared
+    launches shipped behind that. Mismatches are now collected and raised
+    together, so one stale declaration cannot hide the rest."""
+    first_path = "synthetic_multi_first.py"
+    second_path = "synthetic_multi_second.py"
+    edges = (
+        _ModalLaunchEdge(
+            "SyntheticRoot",
+            (_SyntheticDeclaredOwner,),
+            (first_path,),
+        ),
+        _ModalLaunchEdge(
+            _SyntheticDeclaredOwner,
+            (),
+            (second_path,),
+        ),
+    )
+    sources = {
+        first_path: """
+from tldw_chatbook.Widgets.Console.console_cost_modal import ConsoleCostModal as First
+First([], None)
+""",
+        second_path: """
+from tldw_chatbook.Widgets.Console.console_run_log_modal import ConsoleRunLogModal as Second
+Second(run_id='extra', log_text='extra')
+""",
+    }
+
+    with pytest.raises(AssertionError) as excinfo:
+        _walk_modal_launch_graph(
+            "SyntheticRoot",
+            edges,
+            source_overrides=sources,
+            owner_source_paths={_SyntheticDeclaredOwner: (second_path,)},
+        )
+
+    message = str(excinfo.value)
+    assert "ConsoleCostModal" in message, message
+    assert "ConsoleRunLogModal" in message, message
