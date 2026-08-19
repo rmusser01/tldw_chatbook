@@ -60,3 +60,27 @@ Reminders you create or edit while the app is running reach the live
 scheduler queue immediately — they do not wait for the periodic reload,
 and creating one for a time that already passed reports as missed-while-
 away only if it genuinely outruns the grace window.
+
+## Run now — dispatch a reminder immediately
+
+Press **r** on a highlighted reminder (or its **Run now** button in the
+task detail pane) to dispatch it right away, without waiting for its
+schedule. This is a **real dispatch** through the same path the scheduler
+uses — not a preview:
+
+- A **recurring** reminder's next occurrence is computed from the moment
+  you run it, exactly as a scheduled firing would.
+- A **one-time** reminder is consumed: it completes and disables itself.
+- A reminder whose last dispatch **failed** (status *Missed* — it ran and
+  raised) offers the same action labeled **Run now (retry)**: its retry
+  is simply another real dispatch.
+
+**Disabled reminders can be run manually** — manual intent outranks the
+schedule — and running one does **not** re-enable it: the row stays
+disabled, and the toast says so ("…ran now (still disabled)."). If you
+then enable it, it will not double-fire: the manual run already advanced
+the schedule.
+
+A reminder that is both queued and run manually dispatches exactly once —
+the pending scheduled occurrence is claimed by the manual run rather than
+firing twice.

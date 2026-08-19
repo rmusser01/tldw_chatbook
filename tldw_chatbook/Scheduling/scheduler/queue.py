@@ -86,6 +86,18 @@ class PriorityQueue:
         self._items.append(item)
         self._items.sort(key=self._sort_key)
 
+    def remove(self, task_id: Any) -> bool:
+        """Drop a task from the queue by id (task-18938 manual-run guard).
+
+        Returns True when a matching entry was found and removed. Used by the
+        manual run-now path so a task that is BOTH queued and manually run
+        dispatches exactly once; the post-dispatch reload re-adds it (with
+        its new ``next_run_at``) if it remains eligible.
+        """
+        before = len(self._items)
+        self._items = [item for item in self._items if item.get("id") != task_id]
+        return len(self._items) < before
+
     def peek(self) -> Optional[dict[str, Any]]:
         """Return the next task without removing it."""
         return self._items[0] if self._items else None

@@ -14,6 +14,7 @@ from ....Scheduling.events import (
     DisableTaskRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RunReminderNowRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
@@ -343,6 +344,16 @@ class TaskDetail(Vertical):
                 tooltip="Edit this reminder.",
             ),
             Button(
+                "Run now",
+                id="scheduling-run-now",
+                variant="primary",
+                tooltip="Dispatch this reminder immediately, without waiting "
+                "for its schedule. A real dispatch: a recurring reminder's "
+                "next occurrence is computed from now, a one-time reminder "
+                "is consumed. Works on disabled reminders without enabling "
+                "them.",
+            ),
+            Button(
                 "Enable",
                 id="scheduling-enable-task",
                 variant="success",
@@ -377,6 +388,7 @@ class TaskDetail(Vertical):
         button_id = event.button.id
         if button_id in {
             "scheduling-edit-task",
+            "scheduling-run-now",
             "scheduling-enable-task",
             "scheduling-disable-task",
             "scheduling-delete-task",
@@ -384,6 +396,8 @@ class TaskDetail(Vertical):
             event.stop()
         if button_id == "scheduling-edit-task":
             self._request_edit()
+        elif button_id == "scheduling-run-now":
+            self._request_run_now()
         elif button_id == "scheduling-enable-task":
             self._request_enable()
         elif button_id == "scheduling-disable-task":
@@ -405,6 +419,11 @@ class TaskDetail(Vertical):
         """Post a disable request for the current reminder."""
         if isinstance(self._current_task, ReminderTask):
             self.post_message(DisableTaskRequested(self._current_task))
+
+    def _request_run_now(self) -> None:
+        """Post a run-now request for the current reminder (task-18938)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(RunReminderNowRequested(self._current_task))
 
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
@@ -466,6 +485,19 @@ class TaskDetail(Vertical):
             enabled = bool(getattr(task, "enabled", True))
             self.query_one("#scheduling-enable-task", Button).disabled = enabled
             self.query_one("#scheduling-disable-task", Button).disabled = not enabled
+            # The retry affordance for a failed dispatch (task-18938): a
+            # reminder whose last dispatch ran and raised offers Run now as
+            # its retry -- the never-wired "Retry run" concept, now real.
+            run_now_button = self.query_one("#scheduling-run-now", Button)
+            if _task_status(task) is TaskStatus.MISSED:
+                run_now_button.label = "Run now (retry)"
+                run_now_button.tooltip = (
+                    "Retry this reminder now: its last dispatch ran and "
+                    "failed. Dispatches immediately through the same path "
+                    "the scheduler uses."
+                )
+            else:
+                run_now_button.label = "Run now"
 
         self._update_static("scheduling-task-detail-title", task.title)
         self._update_static("scheduling-task-detail-type", _task_type_label(task))

@@ -301,6 +301,47 @@ class SchedulingService:
         target_owner = owner_id if owner_id is not None else self.owner_id
         await self.sync_engine.sync_now(target_owner)
 
+    async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
+        """Dispatch a reminder immediately through the scheduler's own path.
+
+        The service seam for the workbench's Run-now action (task-18938):
+        it delegates to ``SchedulerLoop.run_reminder_now`` -- the SAME
+        dispatch unit ``tick`` uses -- so a manual run is a real dispatch
+        (recurring next occurrence persisted; one_time consumed), never a
+        parallel code path. The task keeps its enabled/disabled state.
+
+        Args:
+            task_id: The reminder's local id.
+            loop: The app's ``SchedulerLoop``. When omitted, manual dispatch
+                is refused honestly (returned as ``None`` with a log line)
+                rather than silently skipped -- without the loop there is no
+                registered handler to run.
+
+        Returns:
+            The refreshed task after dispatch, or ``None`` when the task is
+            missing, the loop/handler is unavailable, or the handler failed
+            (the failure is already recorded on the task's ``last_status``
+            by the dispatch seam).
+        """
+        if loop is None:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: no scheduler "
+                "loop available",
+                task_id=task_id,
+            )
+            return None
+        row = self.db.get_reminder_task(task_id)
+        if row is None:
+            return None
+
+        succeeded = await loop.run_reminder_now(task_id)
+        self._notify_queue_changed()
+
+        row = self.db.get_reminder_task(task_id)
+        if row is None or not succeeded:
+            return None
+        return self._row_to_reminder(row)
+
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""
         return self.server_client is not None and self.owner_id.startswith("server:")

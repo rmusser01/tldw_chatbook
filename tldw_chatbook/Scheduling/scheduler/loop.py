@@ -166,32 +166,96 @@ class SchedulerLoop:
                     task_id=task_id,
                 )
                 continue
-            try:
-                await handler(task)
-            except Exception:
-                logger.exception(
-                    "{task_type} handler failed for task {task_id}",
-                    task_type=task_type,
-                    task_id=task_id,
-                )
-                if task_type == "reminder" and task_id:
-                    await asyncio.to_thread(
-                        self.db.mark_reminder_dispatched,
-                        task_id,
-                        now,
-                        False,
-                        grace_seconds=self.missed_fire_grace_seconds,
-                    )
-                continue
+            await self.dispatch_reminder(task, handler, task_type, now)
 
+    async def dispatch_reminder(
+        self,
+        task: dict[str, Any],
+        handler: Handler,
+        task_type: str,
+        now: datetime,
+    ) -> bool:
+        """Run one task's handler and record the dispatch outcome.
+
+        This is the single dispatch seam shared by ``tick`` and
+        ``run_reminder_now`` (task-18938): handler await, then
+        ``mark_reminder_dispatched`` with this loop's clock and missed-fire
+        grace. Returns True when the handler succeeded.
+
+        Args:
+            task: The queue/task row being dispatched.
+            handler: The registered handler for ``task_type``.
+            task_type: The task's type key (``"reminder"`` for DB rows).
+            now: The dispatch time (the loop's clock for scheduled runs;
+                the caller's "now" for manual runs).
+        """
+        task_id = task.get("id")
+        try:
+            await handler(task)
+        except Exception:
+            logger.exception(
+                "{task_type} handler failed for task {task_id}",
+                task_type=task_type,
+                task_id=task_id,
+            )
             if task_type == "reminder" and task_id:
                 await asyncio.to_thread(
                     self.db.mark_reminder_dispatched,
                     task_id,
                     now,
-                    True,
+                    False,
                     grace_seconds=self.missed_fire_grace_seconds,
                 )
+            return False
+
+        if task_type == "reminder" and task_id:
+            await asyncio.to_thread(
+                self.db.mark_reminder_dispatched,
+                task_id,
+                now,
+                True,
+                grace_seconds=self.missed_fire_grace_seconds,
+            )
+        return True
+
+    async def run_reminder_now(self, task_id: str) -> bool:
+        """Dispatch one reminder immediately, bypassing the poll wait.
+
+        The manual "Run now" path (task-18938). Uses the SAME dispatch seam
+        as ``tick`` and the SAME handler the scheduler would use, so a
+        manual run is a real dispatch: a recurring task's next occurrence is
+        computed and persisted, a one_time task is consumed exactly as a
+        scheduled firing would consume it. Works on disabled tasks --
+        manual intent outranks the schedule -- without re-enabling them.
+
+        No-duplicate guard: a task sitting in the live queue is popped
+        first, so a manual run and a pending scheduled occurrence cannot
+        both dispatch it. The queue is reloaded after, reconciling the
+        post-dispatch next_run_at.
+
+        Returns True when the handler succeeded; False for a missing task,
+        no registered reminder handler, or a handler failure (each also
+        reported through the task's ``last_status`` where applicable).
+        """
+        handler = self.handlers.get("reminder")
+        if handler is None:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: no reminder "
+                "handler registered",
+                task_id=task_id,
+            )
+            return False
+
+        self.queue.remove(task_id)
+        row = await asyncio.to_thread(self.db.get_reminder_task, task_id)
+        if row is None:
+            return False
+
+        succeeded = await self.dispatch_reminder(
+            row, handler, "reminder", self.clock()
+        )
+        await asyncio.to_thread(self.queue.load)
+        return succeeded
 
     def stop(self) -> None:
         """Signal the loop to exit after the current tick."""
