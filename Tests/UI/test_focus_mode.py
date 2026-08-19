@@ -164,3 +164,20 @@ class TestFocusChromeSuppression:
             screen._apply_focus_chrome()
             assert not screen.has_class("-focus")
             assert screen.query_one(MainNavigationBar).display is not False
+
+
+class TestFocusFooterHint:
+    async def test_footer_advertises_toggle_in_both_states(self):
+        app_instance = _make_app_instance(focus=True)
+        harness = FocusConsoleHarness(app_instance)
+        async with harness.run_test(size=_FOCUS_TERMINAL_SIZE) as pilot:
+            screen = pilot.app.screen
+            source, shortcuts = screen._footer_shortcut_registration
+            assert source == "console"
+            assert ("Ctrl+Shift+F", "exit focus") in shortcuts
+
+            app_instance.focus_mode = False
+            screen._register_console_footer_shortcuts()
+            _, shortcuts = screen._footer_shortcut_registration
+            assert ("Ctrl+Shift+F", "focus") in shortcuts
+            assert ("Ctrl+Shift+F", "exit focus") not in shortcuts

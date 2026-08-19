@@ -3116,6 +3116,16 @@ class ChatScreen(BaseAppScreen):
             if self._console_setup_modal_blocking()
             else CONSOLE_WORKBENCH_SHORTCUTS
         )
+        # task-16320 / ADR-031: advertise the focus toggle in the footer —
+        # the only exit affordance visible in focus mode (no nav bar). The
+        # label names the action the key will perform, per the truthfulness
+        # rule.
+        focus_label = (
+            "exit focus"
+            if bool(getattr(self.app_instance, "focus_mode", False))
+            else "focus"
+        )
+        shortcuts = (*shortcuts, ("Ctrl+Shift+F", focus_label))
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
     def _apply_focus_chrome(self) -> None:
