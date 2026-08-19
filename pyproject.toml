@@ -50,9 +50,12 @@ dependencies = [
     # verified, identity hashed from pixels not PNG bytes), so the identity no
     # longer rides on this version. Freezing an image PARSER that this app
     # points at untrusted input was too high a price for reproducibility that
-    # belongs in the renderer. Floor is 10.1, which introduced
-    # `ImageFont.load_default_imagefont()`.
-    "pillow>=10.1",
+    # belongs in the renderer. Floor is 10.4, which introduced
+    # `ImageFont.load_default_imagefont()` (10.1 is what changed
+    # `load_default()` to the proportional TrueType face -- the very break
+    # this renderer pins its way out of -- but the explicit legacy-font
+    # accessor the renderer needs did not exist until 10.4).
+    "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
     "portalocker==3.2.0",

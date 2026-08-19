@@ -56,10 +56,12 @@ CORPUS_PATH = (
 SUPPORT_MATRIX_PATH = CORPUS_PATH.with_name("support-matrix.json")
 CLI_PATH = REPOSITORY_ROOT / "scripts" / "evaluate_visual_compaction.py"
 #: TASK-18606: the renderer no longer pins an exact Pillow. This is the FLOOR
-#: it needs -- 10.1 introduced `ImageFont.load_default_imagefont()`, the frozen
-#: fixed-cell font the renderer resolves explicitly instead of trusting
-#: `load_default()`, which Pillow redefined mid-10.x to a proportional face.
-MINIMUM_PILLOW_VERSION = "10.1"
+#: it needs -- 10.4 introduced `ImageFont.load_default_imagefont()`, the
+#: frozen fixed-cell font the renderer resolves explicitly instead of trusting
+#: `load_default()`, which 10.1 had redefined to a proportional TrueType face.
+#: (10.4, not 10.1: the accessor the renderer calls first appeared in
+#: 10.4.0 per Pillow's CHANGES; 10.1.0 is the `load_default()` change itself.)
+MINIMUM_PILLOW_VERSION = "10.4"
 
 
 def test_pillow_requirement_is_consistent_and_not_frozen() -> None:

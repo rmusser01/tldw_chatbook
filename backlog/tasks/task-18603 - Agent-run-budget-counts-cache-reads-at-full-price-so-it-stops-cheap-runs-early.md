@@ -2,7 +2,7 @@
 id: TASK-18603
 title: >-
   Agent run budget counts cache reads at full price, so it stops cheap runs early
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18 21:15'
 labels:

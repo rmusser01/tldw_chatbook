@@ -1298,9 +1298,13 @@ def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
 # Note what the gateway's normalization does to the third bucket: it folds
 # `cache_creation_input_tokens` into `prompt_tokens` and reports only
 # `cached_tokens` separately, so a cache WRITE arrives indistinguishable
-# from uncached input and is weighted at full price. That is the
-# conservative direction (a write really does cost 1.25x input), which is
-# why the 111-token case simply adds 111.
+# from uncached input and is weighted at 1.0x instead of its real 1.25x
+# rate. For a budget that is UNDER-counting (the permissive direction): a
+# write-heavy run consumes less budget than it truly costs and can overshoot
+# the user's spend ceiling by ~25% of its write portion. Accepted here as a
+# known gap in the gateway's normalization, filed as TASK-18607; this test
+# asserts the accounting the normalization currently makes possible, which
+# is why the 111-token case simply adds 111.
 @pytest.mark.parametrize(
     ("cache_creation_input_tokens", "expected_total"),
     [(0, 4_964), (111, 5_075)],

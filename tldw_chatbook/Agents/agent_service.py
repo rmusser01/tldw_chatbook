@@ -571,6 +571,15 @@ def _budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
     or unknown model keeps exactly the previous accounting rather than
     silently getting a free ride.
 
+    Known gap (TASK-18607): the Console gateway's streaming normalization
+    folds Anthropic `cache_creation_input_tokens` into `prompt_tokens`
+    without preserving the write bucket, so through that path a cache WRITE
+    is weighted at 1.0x instead of its real 1.25x rate -- an UNDER-count,
+    i.e. the permissive direction for a budget: a write-heavy run can
+    overshoot the user's spend ceiling by ~25% of its write portion. The
+    Anthropic-native path below weights writes correctly; the two agree
+    again once the normalization preserves the bucket.
+
     Args:
         resp: The provider response.
         provider: Provider key for the pricing lookup.

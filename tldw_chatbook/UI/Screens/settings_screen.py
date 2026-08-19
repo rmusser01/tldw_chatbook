@@ -724,9 +724,10 @@ AGENT_BUDGET_FIELDS: tuple[AgentBudgetField, ...] = (
         help_text=(
             "Ceiling on a SINGLE tool call - the real limit on long "
             "crawls, ingests, and builds, which a large wall-clock budget "
-            "alone will not save. 0 = unlimited. A call reported as timed "
-            "out may still finish later on its own thread, so lowering "
-            "this below ~186s can double-execute an MCP tool."
+            "alone will not save. 0 = no ceiling (Stop still works: it is "
+            "polled every 0.5s while a tool runs). A call reported as "
+            "timed out may still finish later on its own thread, so "
+            "lowering this below ~186s can double-execute an MCP tool."
         ),
     ),
     AgentBudgetField(
@@ -4069,8 +4070,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             parsed = float(text_value) if field.is_float else int(text_value)
         except (TypeError, ValueError):
+            kind = "number" if field.is_float else "whole number"
             raise ValueError(
-                f"{field.label} must be a number of at least "
+                f"{field.label} must be a {kind} of at least "
                 f"{self._format_agent_budget_number(field, field.minimum)}."
             ) from None
         if parsed != parsed or parsed in (float("inf"), float("-inf")):
@@ -18787,6 +18789,10 @@ class SettingsScreen(BaseAppScreen):
         methods. `_syncing_console_agent_budget` guards the same
         write-back loop every other Console field guards against: the
         revert/sync path assigns `.value`, which re-fires Input.Changed.
+
+        Args:
+            event: The Input.Changed carrying the edited text. Its input's
+                id selects which `AGENT_BUDGET_FIELDS` entry to stage.
         """
         if self._syncing_console_agent_budget:
             return

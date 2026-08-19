@@ -189,14 +189,55 @@ def test_unparsable_values_fall_back_to_the_default(monkeypatch, bad):
 
 def test_zero_is_accepted_where_it_means_unlimited(monkeypatch):
     """0 is a real, documented value for the two ceilings that support it
-    -- and must not be confused with the below-floor rejection above."""
+    -- and must not be confused with the below-floor rejection below.
+
+    The two keys differ in how 0 reaches the engine: tokens pass through
+    literally (the engine's 0 already means "no token ceiling"), while
+    tool-call seconds are translated to `UNLIMITED_TOOL_CALL_DEADLINE_
+    SECONDS` -- the engine's literal 0 would bypass the timeout wrapper,
+    which is also the only thing polling Stop while a tool runs."""
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        UNLIMITED_TOOL_CALL_DEADLINE_SECONDS,
+    )
+
     _pin_console(
         monkeypatch,
         {"agent_max_total_tokens": 0, "agent_max_tool_call_seconds": 0.0},
     )
     budget = console_run_budget()
     assert budget.max_total_tokens == 0
-    assert budget.max_tool_call_seconds == 0.0
+    assert budget.max_tool_call_seconds == UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
+
+
+def test_unlimited_tool_call_seconds_still_wrap_the_cancellation_poll(monkeypatch):
+    """A configured `agent_max_tool_call_seconds = 0` must NOT reach the
+    engine as its literal 0.
+
+    The engine's 0 means "bypass `_call_with_timeout` entirely" (pinned by
+    `test_make_invoke_tool_bypasses_wrapper_when_unlimited`), but that
+    wrapper is the run's ONLY Stop poller while a tool call is in flight --
+    `run_agent_loop` checks `should_cancel()` at step boundaries, which a
+    hung tool never returns to. Passing 0 through would make "unlimited"
+    silently mean "Stop does nothing until the tool returns by itself,"
+    contradicting the documented "Stop works throughout". The resolver
+    maps 0 to a finite-but-unfireable deadline instead, so the wrapper --
+    and with it the 0.5s cancellation poll -- stays alive.
+    """
+    from tldw_chatbook.Chat.console_agent_bridge import (
+        UNLIMITED_TOOL_CALL_DEADLINE_SECONDS,
+    )
+    from tldw_chatbook.Agents.agent_models import RunBudget
+
+    _pin_console(monkeypatch, {"agent_max_tool_call_seconds": 0.0})
+    budget = console_run_budget()
+    assert budget.max_tool_call_seconds == UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
+    # The wrapper gate in agent_service is `if timeout and timeout > 0` --
+    # the translated value must clear it, i.e. be a live deadline the poll
+    # loop runs under, not the engine's bypass sentinel.
+    assert budget.max_tool_call_seconds > 0
+    # And it must be absurdly beyond any wall budget a user can set, so it
+    # can never pre-empt the run's own wall-clock ceiling.
+    assert budget.max_tool_call_seconds > RunBudget().max_wall_seconds * 100
 
 
 def test_there_is_no_upper_ceiling(monkeypatch):

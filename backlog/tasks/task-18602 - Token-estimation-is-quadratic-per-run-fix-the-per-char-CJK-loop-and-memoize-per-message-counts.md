@@ -3,7 +3,7 @@ id: TASK-18602
 title: >-
   Token estimation is quadratic per run: fix the per-char CJK loop and memoize
   per-message counts
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18 21:00'
 labels:

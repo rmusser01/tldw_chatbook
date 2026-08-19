@@ -3,7 +3,7 @@ id: TASK-18605
 title: >-
   Fix 17 red tests on dev: continuation restore-target mismatch, eager TTS
   import, stale test guards
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-18 22:00'
 labels:

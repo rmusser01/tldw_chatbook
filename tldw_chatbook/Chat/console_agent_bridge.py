@@ -121,12 +121,17 @@ _LOOP_THREAD_JOIN_SECONDS = 5.0
 
 #: Ceiling on ONE submitted provider turn (`_StreamingModelAdapter.
 #: chat_call`). Deliberately generous -- this is not a request timeout (the
-#: gateway and the run's own `max_wall_seconds` own that) but a deadlock
-#: backstop for an abandoned fleet child still waiting on a loop that
-#: `run_reply` has already stopped. Set to TWICE
-#: `CONSOLE_RUN_BUDGET.max_wall_seconds` (1800) so it can never pre-empt a
-#: legitimately slow turn -- by the time it could fire, the run's own wall
-#: budget has long since ended the run.
+#: gateway's own read timeout and the run's `max_wall_seconds` own that) but
+#: a deadlock backstop for an abandoned fleet child still waiting on a loop
+#: that `run_reply` has already stopped. NOT derived from the run budget:
+#: it was once sized at 2x the old 1800s wall default, but TASK-18600 made
+#: the wall user-configurable (default 86400), so a budget-derived multiple
+#: would follow the user's wall to absurd values while buying nothing -- by
+#: the time this fires, the run's own wall budget has long since ended the
+#: run. A submitted turn is bounded far below this by the gateway's read
+#: timeout (GENERATION_READ_TIMEOUT_SECONDS, 300s) plus streaming wrap-up,
+#: so 3600s remains a pure "wedged loop" tripwire that can never pre-empt a
+#: legitimately slow turn.
 _CHAT_CALL_TIMEOUT_SECONDS = 3600.0
 
 # Skills Phase-2 gate finding 1 (Task-14 report, scenario 5: "Find a skill
@@ -249,6 +254,19 @@ DEFAULT_CONSOLE_MAX_TOTAL_TOKENS = 25_000_000
 #: long-running tool cannot defeat the 24h run budget.
 DEFAULT_CONSOLE_MAX_TOOL_CALL_SECONDS = 3600.0
 
+#: What a configured `agent_max_tool_call_seconds = 0` ("unlimited")
+#: resolves to. The engine's own 0 means "bypass the timeout wrapper
+#: entirely" (pinned by `test_make_invoke_tool_bypasses_wrapper_when_unlimited`),
+#: but the wrapper is ALSO the run's cancellation poller -- it checks
+#: Stop every `_CANCEL_POLL_SECONDS` (0.5s) while a tool runs, and inside a
+#: hung tool call that is the ONLY place a Stop can be observed. Passing the
+#: engine's literal 0 through would therefore make "unlimited" silently mean
+#: "Stop does not work until the tool returns by itself," contradicting the
+#: documented "Stop works throughout". A century-long deadline keeps the
+#: wrapper -- and Stop-polling -- alive while staying unfireable for any
+#: real run (the run's own `max_wall_seconds` ends it long before).
+UNLIMITED_TOOL_CALL_DEADLINE_SECONDS = 100 * 365 * 24 * 3600.0
+
 #: The shipped budget with NO config applied: what a fresh install runs at,
 #: and the value tests assert against so a settings-layer bug can never make
 #: a defaults assertion pass by accident. Production does NOT use this --
@@ -323,6 +341,21 @@ def console_run_budget() -> RunBudget:
             return default
         return coerce_float_setting(raw, default, minimum=minimum)
 
+    def _tool_call_seconds(key: str, default: float, minimum: float) -> float:
+        """`_float`, plus the 0-means-unlimited translation.
+
+        A configured 0 is documented as "unlimited", and is translated to
+        `UNLIMITED_TOOL_CALL_DEADLINE_SECONDS` rather than passed through
+        as the engine's literal 0: the engine's 0 bypasses the timeout
+        wrapper entirely, and the wrapper is the only thing polling Stop
+        while a tool call is hung, so a literal pass-through would disable
+        Stop for the duration of every unlimited-length tool call.
+        """
+        resolved = _float(key, default, minimum)
+        if resolved == 0:
+            return UNLIMITED_TOOL_CALL_DEADLINE_SECONDS
+        return resolved
+
     return RunBudget(
         max_steps=_int(
             "agent_max_steps",
@@ -344,7 +377,7 @@ def console_run_budget() -> RunBudget:
             DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
         ),
-        max_tool_call_seconds=_float(
+        max_tool_call_seconds=_tool_call_seconds(
             "agent_max_tool_call_seconds",
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,

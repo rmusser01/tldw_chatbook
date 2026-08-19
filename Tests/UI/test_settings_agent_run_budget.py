@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from textual.widgets import Input
+
 from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsCategoryId,
     SettingsDraft,
@@ -318,3 +320,79 @@ async def test_opening_the_category_does_not_create_a_draft():
         assert not staged_budget_keys, (
             f"opening the category staged {sorted(staged_budget_keys)}"
         )
+
+
+@pytest.mark.asyncio
+async def test_an_edit_saves_and_reaches_the_run_budget_resolver(monkeypatch):
+    """The full integration the staging tests cannot cover: a user edit in
+    the mounted screen is staged, saved through the real save path, written
+    into the app config the resolver reads, and `console_run_budget()`
+    then returns the saved number. Any broken link in that chain -- a field
+    that stages but does not save, a key saved under a different name, a
+    resolver reading a different key -- fails here with the exact number
+    that got lost.
+    """
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from Tests.UI.test_settings_configuration_hub import (
+        _open_settings_category,
+        _wait_for_settings_text,
+    )
+    from tldw_chatbook.Chat import console_agent_bridge
+    from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
+
+    app = _build_test_app()
+    app.app_config["console"] = {}
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(
+        settings_screen_module, "SettingsConfigAdapter", FakeAdapter
+    )
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        tokens_field = AGENT_BUDGET_FIELDS_BY_KEY["agent_max_total_tokens"]
+        await _wait_for_selector(
+            screen, pilot, f"#{tokens_field.widget_id}", timeout=8.0
+        )
+        widget = screen.query_one(f"#{tokens_field.widget_id}", Input)
+        widget.value = "1234567"
+        screen.handle_console_agent_budget_changed(
+            Input.Changed(widget, widget.value)
+        )
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(
+            screen, pilot, "Console behavior settings saved."
+        )
+
+    # The save path persisted the staged value under the resolver's key...
+    assert saved == [{"console": {"agent_max_total_tokens": 1234567}}]
+    assert app.app_config["console"]["agent_max_total_tokens"] == 1234567
+    # ...and the resolver returns it when the config it reads holds it.
+    # `console_run_budget()` reads the on-disk config cache via
+    # `get_cli_setting`, not this harness's in-memory `app.app_config`, so
+    # pin the read to what the adapter just persisted -- the assertion is
+    # that the resolver honours a saved value with no restart, which is
+    # AC#2 of the task this closes.
+    written = dict(app.app_config["console"])
+
+    def _fake_get(section, key, default=None, *a, **k):
+        if section != "console":
+            return default
+        return written.get(key, default)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting", _fake_get, raising=True
+    )
+    budget = console_agent_bridge.console_run_budget()
+    assert budget.max_total_tokens == 1234567

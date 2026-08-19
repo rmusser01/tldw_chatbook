@@ -1,7 +1,7 @@
 ---
 id: TASK-18606
 title: Decouple visual transcript renderer identity from the Pillow version
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18 23:00'
 labels:

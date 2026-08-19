@@ -11,12 +11,13 @@ which coupled reproducibility to a dependency the app must be free to update
 couplings did that, all removed here:
 
 * ``ImageFont.load_default()`` returns whatever font the installed Pillow
-  considers default, and Pillow changed that from the legacy 6px bitmap font to
-  a proportional TrueType face during the 10.x line. That was not merely a
+  considers default, and Pillow 10.1 changed that from the legacy 6px bitmap
+  font to a proportional TrueType face. That was not merely a
   hash change -- it silently BROKE rendering: at Pillow 12.1.1 an 82-character
   line measured 738px against 496px of usable canvas and ran off the right
   edge, losing transcript text. `_renderer_font` now pins the legacy fixed-cell
-  font explicitly and VERIFIES its metrics, so a future change fails loudly
+  font explicitly (``load_default_imagefont()``, added in Pillow 10.4) and
+  VERIFIES its metrics, so a future change fails loudly
   instead of clipping.
 * Page identity hashed the encoded PNG bytes, putting Pillow's PNG encoder
   (compression level, chunk ordering) into the identity even when every pixel
@@ -81,9 +82,10 @@ def _load_renderer_font():
     font, whose glyph data is frozen -- instead of ``load_default()``, which
     returns whatever the installed Pillow currently considers default. That
     distinction is not cosmetic: Pillow 10.1 changed ``load_default()`` to a
-    proportional TrueType face, and at 12.1.1 that rendered an 82-character
-    line 738px wide against 496px of usable canvas, running text off the
-    right edge with no error (TASK-18606).
+    proportional TrueType face (``load_default_imagefont()`` itself first
+    appeared in 10.4), and at 12.1.1 the proportional face rendered an
+    82-character line 738px wide against 496px of usable canvas, running
+    text off the right edge with no error (TASK-18606).
 
     The advance width is then MEASURED and checked against ``CELL_WIDTH``,
     because that is the number the whole layout is derived from. A font that
@@ -92,7 +94,9 @@ def _load_renderer_font():
     time, never a truncated transcript.
 
     Returns:
-        A Pillow font object with a verified ``CELL_WIDTH``-pixel advance.
+        ImageFont.FreeTypeFont or ImageFont.ImageFont: The legacy fixed-cell
+            bitmap font (``ImageFont.ImageFont`` on every Pillow that
+            supplies it), with a verified ``CELL_WIDTH``-pixel advance.
 
     Raises:
         VisualRendererFontError: If the host's Pillow exposes no legacy
@@ -103,7 +107,7 @@ def _load_renderer_font():
         raise VisualRendererFontError(
             "This Pillow does not expose load_default_imagefont(); the visual "
             "transcript renderer requires the legacy fixed-cell bitmap font "
-            "(Pillow >= 10.1)."
+            "(Pillow >= 10.4)."
         )
     font = legacy()
     probe = "M" * MAX_LINE_CHARACTERS
@@ -124,8 +128,17 @@ def _load_renderer_font():
 _RENDERER_FONT = None
 
 
-def renderer_font():
-    """The renderer's font, loaded and verified on first use."""
+def renderer_font() -> "ImageFont.ImageFont":
+    """The renderer's font, loaded and verified on first use.
+
+    Returns:
+        The cached legacy fixed-cell bitmap font, with metrics verified
+        against ``CELL_WIDTH`` (see ``_load_renderer_font``).
+
+    Raises:
+        VisualRendererFontError: On first use, if this host's Pillow cannot
+            supply the fixed-cell font or its metrics have changed.
+    """
     global _RENDERER_FONT
     if _RENDERER_FONT is None:
         _RENDERER_FONT = _load_renderer_font()

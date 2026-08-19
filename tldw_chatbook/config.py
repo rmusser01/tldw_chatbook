@@ -808,10 +808,16 @@ DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 25_000_000
 MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 0
 #: Wall-clock ceiling for ONE tool call, in seconds. Raised from the engine
 #: default (300) because a 24h run budget is useless if a single long
-#: crawl, ingest, or build dies at five minutes. 0 = unlimited (opt out of
-#: the timeout wrapper entirely). Lowering this below ~186s risks the
-#: wrapper reporting "timed out" for an MCP call that later really executes
-#: on its abandoned thread -- see `RunBudget.max_tool_call_seconds`.
+#: crawl, ingest, or build dies at five minutes. 0 = no ceiling: the Console
+#: resolver translates it to a finite-but-unfireable deadline
+#: (`console_agent_bridge.UNLIMITED_TOOL_CALL_DEADLINE_SECONDS`) rather than
+#: passing the engine's literal 0, which would bypass the timeout wrapper --
+#: the wrapper is also the only thing polling Stop (every 0.5s) while a
+#: tool runs, so a literal 0 would silently disable Stop for the duration
+#: of every unlimited tool call. Lowering the configured value below ~186s
+#: risks the wrapper reporting "timed out" for an MCP call that later
+#: really executes on its abandoned thread -- see
+#: `RunBudget.max_tool_call_seconds`.
 DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
 MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
 

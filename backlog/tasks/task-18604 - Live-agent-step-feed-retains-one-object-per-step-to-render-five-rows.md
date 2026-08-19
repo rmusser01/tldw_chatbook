@@ -1,7 +1,7 @@
 ---
 id: TASK-18604
 title: Live agent step feed retains one object per step to render five rows
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-18 21:20'
 labels:

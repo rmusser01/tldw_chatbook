@@ -67,8 +67,8 @@ pinned to `pillow==11.2.1` to honour it. That is superseded: the renderer now ow
 its determinism directly rather than borrowing it from a version pin.
 
 The amendment was forced by a defect the pin was supposed to prevent and did not.
-`ImageFont.load_default()` is not a stable input -- Pillow changed it from the
-legacy fixed-cell bitmap font to a proportional TrueType face during the 10.x line
+`ImageFont.load_default()` is not a stable input -- Pillow 10.1 changed it from the
+legacy fixed-cell bitmap font to a proportional TrueType face
 -- so on any host whose Pillow had moved past the pin, an 82-character line
 measured 738px against 496px of usable canvas and ran off the right edge, losing
 transcript text with no error. Pinning made the supported configuration narrow; it
@@ -76,9 +76,11 @@ did not make the renderer correct outside it.
 
 Three changes move determinism into the renderer:
 
-- The font is pinned explicitly (`ImageFont.load_default_imagefont()`, whose glyph
+- The font is pinned explicitly (`ImageFont.load_default_imagefont()`, which
+  first appeared in Pillow 10.4 and whose glyph
   data is frozen legacy) and its cell metrics are VERIFIED at load, so a future
-  change fails loudly instead of clipping.
+  change fails loudly instead of clipping. The dependency floor is therefore
+  `pillow>=10.4`.
 - Page identity hashes raw pixel data plus mode and size, not encoded PNG bytes,
   removing Pillow's PNG encoder from the identity. A separate byte digest is kept
   purely for wire integrity, which is a different question from reproducibility.

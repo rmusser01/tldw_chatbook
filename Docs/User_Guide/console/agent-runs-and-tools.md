@@ -1019,6 +1019,9 @@ run budget will not save a crawl, ingest, or build that takes longer than
 the per-tool-call ceiling; that is the limit that kills it. Lowering this
 one below about 186 seconds is the risky direction — a call reported as
 timed out may still be running, and an MCP tool can end up executing twice.
+Setting it to 0 removes the ceiling but not Stop: cancellation is still
+polled every 0.5 s while a tool runs, so pressing Stop interrupts the wait
+(even though the tool's own thread may finish in the background).
 
 **Setting the token budget to 0 means unlimited, and costs you your only
 safety net.** The loop detector only catches a tool called repeatedly with
