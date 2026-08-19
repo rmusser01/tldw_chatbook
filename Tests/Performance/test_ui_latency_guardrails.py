@@ -32,8 +32,6 @@ its 30 s deadline expiry was misread as app latency.
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
 from pathlib import Path
 
 import pytest
