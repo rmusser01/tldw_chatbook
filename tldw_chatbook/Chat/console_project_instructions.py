@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
+from ipaddress import ip_address
 from urllib.parse import urlsplit, urlunsplit
+
+from httpx import InvalidURL, URL
 
 
 PROJECT_CONTEXT_VERSION = 1
@@ -26,7 +30,10 @@ _CONTROL_KEYS = (
     "project_instruction_notice_key",
 )
 _PROJECT_CONTEXT_KEYS = frozenset(("version", *_CONTROL_KEYS))
-_INVALID_ENDPOINT_IDENTITY = "invalid-endpoint"
+
+
+class _DuplicateJSONKeyError(ValueError):
+    """Raised when an untrusted JSON object repeats a key."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,17 +47,32 @@ class ProjectInstructionControlState:
 
     @classmethod
     def new_session(cls) -> ProjectInstructionControlState:
-        """Return the explicit opt-in default for a newly created session."""
+        """Return the explicit opt-in default for a newly created session.
+
+        Returns:
+            Enabled control state with no selected binding or notice key.
+        """
         return cls(project_instructions_enabled=True)
 
     @classmethod
     def legacy_disabled(cls) -> ProjectInstructionControlState:
-        """Return the fail-closed default for absent or untrusted state."""
+        """Return the fail-closed default for absent or untrusted state.
+
+        Returns:
+            Disabled control state with no selected binding or notice key.
+        """
         return cls(project_instructions_enabled=False)
 
 
 def encode_project_context_json(state: ProjectInstructionControlState) -> str:
-    """Encode only the versioned four-field control contract."""
+    """Encode only the versioned four-field control contract.
+
+    Args:
+        state: Validated local Console project-instruction controls.
+
+    Returns:
+        Compact v1 JSON containing only the version and four control fields.
+    """
     payload = {
         "version": PROJECT_CONTEXT_VERSION,
         "project_instructions_enabled": state.project_instructions_enabled,
@@ -66,12 +88,20 @@ def encode_project_context_json(state: ProjectInstructionControlState) -> str:
 def decode_project_context_json(
     raw_state: str | None,
 ) -> ProjectInstructionControlState:
-    """Decode a proven v1 control envelope, otherwise fail closed."""
+    """Decode a proven v1 control envelope, otherwise fail closed.
+
+    Args:
+        raw_state: Untrusted local JSON, or ``None`` for missing legacy state.
+
+    Returns:
+        Parsed v1 controls, or legacy-disabled controls for every invalid shape,
+        including duplicate object keys.
+    """
     if raw_state is None:
         return ProjectInstructionControlState.legacy_disabled()
     try:
-        payload = json.loads(raw_state)
-    except (json.JSONDecodeError, TypeError):
+        payload = json.loads(raw_state, object_pairs_hook=_strict_json_object)
+    except (json.JSONDecodeError, TypeError, _DuplicateJSONKeyError):
         return ProjectInstructionControlState.legacy_disabled()
     if not isinstance(payload, dict):
         return ProjectInstructionControlState.legacy_disabled()
@@ -98,14 +128,32 @@ def decode_project_context_json(
 
 
 def fingerprint_canonical_locator(canonical_locator_identity: str) -> str:
-    """Return an opaque domain-separated fingerprint of a canonical locator."""
+    """Return an opaque domain-separated fingerprint of a canonical locator.
+
+    Args:
+        canonical_locator_identity: Already-canonical workspace locator identity.
+
+    Returns:
+        Lowercase SHA-256 hex digest without retaining the raw locator.
+    """
     return hashlib.sha256(
         LOCATOR_FINGERPRINT_DOMAIN + canonical_locator_identity.encode("utf-8")
     ).hexdigest()
 
 
 def fingerprint_provider_destination(provider: str, endpoint: str | None) -> str:
-    """Fingerprint a provider adapter and credential-free endpoint identity."""
+    """Fingerprint a provider adapter and credential-free endpoint identity.
+
+    Args:
+        provider: Resolved provider adapter key.
+        endpoint: Resolved provider endpoint, or blank for the adapter default.
+
+    Returns:
+        Lowercase domain-separated SHA-256 hex digest.
+
+    Raises:
+        ValueError: If a nonempty endpoint cannot be canonicalized safely.
+    """
     identity = (
         _canonical_provider_key(provider)
         + "\0"
@@ -121,7 +169,19 @@ def project_instruction_notice_key(
     provider: str,
     endpoint: str | None,
 ) -> str:
-    """Return the consent key for one locator and resolved destination."""
+    """Return the consent key for one locator and resolved destination.
+
+    Args:
+        locator_fingerprint: Opaque canonical-locator fingerprint.
+        provider: Resolved provider adapter key.
+        endpoint: Resolved provider endpoint, or blank for the adapter default.
+
+    Returns:
+        Lowercase domain-separated SHA-256 consent-key digest.
+
+    Raises:
+        ValueError: If a nonempty endpoint cannot be canonicalized safely.
+    """
     destination_fingerprint = fingerprint_provider_destination(provider, endpoint)
     framed_identity = (
         locator_fingerprint.encode("ascii")
@@ -134,9 +194,19 @@ def project_instruction_notice_key(
 def sanitized_destination_label(
     provider_label: str, custom_endpoint: str | None
 ) -> str:
-    """Show a provider and, when custom, only its credential-free URL origin."""
+    """Show a provider and, when custom, only its credential-free URL origin.
+
+    Args:
+        provider_label: User-visible provider name.
+        custom_endpoint: Custom endpoint to sanitize, or blank for the provider
+            default.
+
+    Returns:
+        Provider label alone for a default endpoint, provider plus canonical
+        origin for a valid custom endpoint, or a content-free invalid label.
+    """
     label = provider_label.strip() or "Provider"
-    if not custom_endpoint:
+    if not str(custom_endpoint or "").strip():
         return label
     origin = _endpoint_origin(custom_endpoint)
     return f"{label} ({origin or 'invalid endpoint'})"
@@ -149,7 +219,9 @@ def _canonical_provider_key(provider: str) -> str:
 def _canonical_endpoint_identity(endpoint: str | None) -> str:
     parsed = _parse_endpoint(endpoint)
     if parsed is None:
-        return "" if not str(endpoint or "").strip() else _INVALID_ENDPOINT_IDENTITY
+        if not str(endpoint or "").strip():
+            return ""
+        raise ValueError("invalid provider endpoint")
     scheme, hostname, port, path = parsed
     return urlunsplit((scheme, _netloc(scheme, hostname, port), path, "", ""))
 
@@ -163,10 +235,13 @@ def _endpoint_origin(endpoint: str) -> str:
 
 
 def _parse_endpoint(endpoint: str | None) -> tuple[str, str, int | None, str] | None:
-    raw_endpoint = str(endpoint or "").strip()
+    raw_value = str(endpoint or "")
+    raw_endpoint = raw_value.strip()
     if not raw_endpoint or any(
-        character.isspace() or ord(character) < 32 or ord(character) == 127
-        for character in raw_endpoint
+        character == "\\"
+        or character.isspace()
+        or unicodedata.category(character).startswith("C")
+        for character in raw_value
     ):
         return None
     candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
@@ -179,7 +254,49 @@ def _parse_endpoint(endpoint: str | None) -> tuple[str, str, int | None, str] | 
         return None
     if scheme not in {"http", "https"} or not hostname:
         return None
-    return scheme, hostname.lower(), port, parsed.path.rstrip("/")
+    normalized_hostname = _canonical_hostname(hostname)
+    if normalized_hostname is None:
+        return None
+    return scheme, normalized_hostname, port, parsed.path.rstrip("/")
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJSONKeyError
+        result[key] = value
+    return result
+
+
+def _canonical_hostname(hostname: str) -> str | None:
+    try:
+        return str(ip_address(hostname))
+    except ValueError:
+        pass
+    try:
+        normalized = (
+            URL(f"http://{hostname.rstrip('.')}").raw_host.decode("ascii").lower()
+        )
+    except (InvalidURL, UnicodeDecodeError):
+        return None
+    labels = normalized.split(".")
+    if (
+        not normalized
+        or len(normalized) > 253
+        or any(not _valid_dns_label(label) for label in labels)
+    ):
+        return None
+    return normalized
+
+
+def _valid_dns_label(label: str) -> bool:
+    return (
+        1 <= len(label) <= 63
+        and label[0].isalnum()
+        and label[-1].isalnum()
+        and all(character.isalnum() or character == "-" for character in label)
+    )
 
 
 def _netloc(scheme: str, hostname: str, port: int | None) -> str:

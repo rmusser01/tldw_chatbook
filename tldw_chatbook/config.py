@@ -2934,8 +2934,9 @@ collapse_large_pastes = true  # Display large pasted chunks compactly in Console
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
-# Max bytes of root/nested project instructions admitted per source.
+# Root-source byte limit; allowed range is 1-1048576 (1 MiB).
 project_instructions_startup_max_bytes = 32768
+# Cumulative nested-source byte limit per dispatch; allowed range is 1-1048576 (1 MiB).
 project_instructions_nested_max_bytes = 32768
 # Conversation-memory defaults (ADR-052). Model capacity remains capability data,
 # not a persisted policy value.

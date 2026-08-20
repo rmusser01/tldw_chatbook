@@ -68,6 +68,38 @@ def test_untrusted_or_legacy_state_fails_closed(raw_state: str | None) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("duplicate_key", "duplicate_value"),
+    [
+        ("version", 1),
+        ("project_instructions_enabled", True),
+        ("working_folder_binding_id", "binding-7"),
+        ("working_folder_locator_fingerprint", "locator-fingerprint"),
+        ("project_instruction_notice_key", "notice-key"),
+    ],
+)
+def test_duplicate_json_keys_fail_closed(
+    duplicate_key: str, duplicate_value: object
+) -> None:
+    pairs = [
+        ("version", 1),
+        ("project_instructions_enabled", True),
+        ("working_folder_binding_id", "binding-7"),
+        ("working_folder_locator_fingerprint", "locator-fingerprint"),
+        ("project_instruction_notice_key", "notice-key"),
+        (duplicate_key, duplicate_value),
+    ]
+    raw_state = (
+        "{"
+        + ",".join(f"{json.dumps(key)}:{json.dumps(value)}" for key, value in pairs)
+        + "}"
+    )
+
+    assert decode_project_context_json(raw_state) == (
+        ProjectInstructionControlState.legacy_disabled()
+    )
+
+
 def test_control_state_round_trips_only_the_version_and_four_control_fields() -> None:
     state = ProjectInstructionControlState(
         project_instructions_enabled=True,
@@ -207,3 +239,83 @@ def test_destination_label_rejects_control_characters(
     assert sanitized_destination_label("OpenAI", endpoint) == (
         "OpenAI (invalid endpoint)"
     )
+
+
+@pytest.mark.parametrize(
+    "unsafe_endpoint",
+    [
+        "https://api.example.test\\@evil.test/private",
+        "https://api.example\u202e.test/private",
+        "https://api.example\u2066.test/private",
+        "https://api.example\ue000.test/private",
+        "https://api.example.test/private\n",
+    ],
+)
+def test_destination_label_rejects_backslashes_and_bidi_controls(
+    unsafe_endpoint: str,
+) -> None:
+    assert sanitized_destination_label("OpenAI", unsafe_endpoint) == (
+        "OpenAI (invalid endpoint)"
+    )
+    with pytest.raises(ValueError, match="invalid provider endpoint"):
+        fingerprint_provider_destination("openai", unsafe_endpoint)
+
+
+@pytest.mark.parametrize(
+    ("unicode_host", "punycode_host"),
+    [
+        ("münich.example", "xn--mnich-kva.example"),
+        ("faß.de", "xn--fa-hia.de"),
+    ],
+)
+def test_unicode_and_punycode_hosts_share_one_destination_identity(
+    unicode_host: str,
+    punycode_host: str,
+) -> None:
+    unicode_endpoint = f"https://{unicode_host}/v1"
+    punycode_endpoint = f"https://{punycode_host}/v1"
+
+    assert fingerprint_provider_destination(
+        "openai", unicode_endpoint
+    ) == fingerprint_provider_destination("openai", punycode_endpoint)
+    assert sanitized_destination_label("OpenAI", unicode_endpoint) == (
+        f"OpenAI (https://{punycode_host})"
+    )
+    assert sanitized_destination_label("OpenAI", punycode_endpoint) == (
+        f"OpenAI (https://{punycode_host})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_label"),
+    [
+        ("https://127.0.0.1:8443/v1", "OpenAI (https://127.0.0.1:8443)"),
+        (
+            "https://[2001:db8::1]:8443/v1",
+            "OpenAI (https://[2001:db8::1]:8443)",
+        ),
+    ],
+)
+def test_destination_label_preserves_ip_address_hosts(
+    endpoint: str, expected_label: str
+) -> None:
+    assert sanitized_destination_label("OpenAI", endpoint) == expected_label
+
+
+def test_invalid_endpoints_cannot_produce_reusable_notice_keys() -> None:
+    locator_fingerprint = fingerprint_canonical_locator("file:///repo")
+
+    for malformed_endpoint in ("not a valid endpoint", "https://[broken"):
+        with pytest.raises(ValueError, match="invalid provider endpoint"):
+            project_instruction_notice_key(
+                locator_fingerprint,
+                "openai",
+                malformed_endpoint,
+            )
+
+
+def test_blank_endpoint_is_the_valid_default_provider_identity() -> None:
+    assert fingerprint_provider_destination(
+        "openai", None
+    ) == fingerprint_provider_destination("openai", "  ")
+    assert sanitized_destination_label("OpenAI", "  ") == "OpenAI"
