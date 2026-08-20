@@ -12,7 +12,7 @@ the user acted on.
 TASK-397 will first reproduce or rule out the reported failure under a deterministic
 pilot harness. Regardless of whether the exact live symptom is repeatable, the app
 will add a narrow compatibility shim that stops result gathering when keyboard
-navigation or Enter/go-button selection acts on an actionable visible list. The
+navigation or Enter selection acts on an actionable visible list. The
 displayed options then remain stable for the remainder of that selection gesture.
 Navigation before any result appears, or while only Textual's stale disabled
 “No matches” placeholder is visible, continues waiting normally. The underlying
@@ -76,7 +76,7 @@ This one interception point covers:
 
 - cursor movement delegated by Down and Up;
 - page, first, and last navigation;
-- selection delegated by Enter or the palette's go button.
+- selection delegated by Enter.
 
 No provider is changed. No Textual source is copied. No timing constants, sleeps, or
 debounces are added to production behavior.
@@ -208,7 +208,7 @@ In scope:
 - `TldwCli` palette construction;
 - deterministic mounted regression tests;
 - the upstream issue; and
-- task/spec/plan/user-guide notes required by closeout.
+- task/spec/plan notes required by closeout.
 
 Out of scope:
 
