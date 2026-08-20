@@ -660,19 +660,29 @@ such as `null`, `false`, `0`, and `"0"` cannot collide.
 
 Stable locator digests use the same canonical encoder:
 
+- raw legacy scalar: `{"type": "tldw_notes_sync_legacy_value", "value":
+  <exact JSON scalar>, "version": 1}`. Its digest is computed before path-text
+  admission and is the fixed-size identity for null, non-string, empty, NUL,
+  or over-limit values; raw malformed values are not persisted in receipts;
 - root: `{"lexical_root_path": <exact bounded stored text>, "type":
   "tldw_notes_sync_legacy_root_locator", "version": 1}`;
 - recognizable binding: `{"lexical_relative_path": <exact bounded stored
   text>, "note_id": <exact note id>, "root_locator_digest": <root digest>,
   "type": "tldw_notes_sync_legacy_binding_locator", "version": 1}`; and
 - migration item: `{"item_kind": <root|binding|legacy_conflict>,
-  "legacy_primary_key": <root digest | [note id, root digest, relative path] |
-  integer conflict id>, "type": "tldw_notes_sync_legacy_item_locator",
-  "version": 1}`.
+  "legacy_primary_key": <valid root/binding locator digest | rejected-root
+  object | rejected-binding object | integer conflict id>, "type":
+  "tldw_notes_sync_legacy_item_locator", "version": 1}`. A rejected-root
+  primary key is `{"field": "notes.sync_directory", "value_digest": <raw
+  scalar digest>}`. A rejected-binding primary key is `{"note_id": <exact
+  note id>, "relative_value_digest": <raw scalar digest>,
+  "root_value_digest": <raw scalar digest>}`.
 
 The migration-item form also identifies rejected inputs and therefore never
-depends on a destination ID. Lexical root grouping compares exact stored
-strings; it performs no Unicode, case, separator, tilde, environment-variable,
+depends on a destination ID or a valid candidate path. Its canonical hash is
+the non-null `sync_migration_items.source_locator_digest`. Lexical root grouping
+compares exact stored strings; it performs no Unicode, case, separator, tilde,
+environment-variable,
 absolute-path, or filesystem normalization. Legacy direction maps
 `disk_to_db`/`folder_to_notes` to `folder_to_notes`,
 `db_to_disk`/`notes_to_folder` to `notes_to_folder`, and `bidirectional` to
@@ -813,6 +823,8 @@ construction.
 - Mutation-test canonical digest stability across row input order, dictionary
   order, Unicode spellings, missing/default/aliased config, and distinct JSON
   scalar types; prove every locator input change changes the intended digest.
+- Prove null, non-string, empty, NUL, and over-limit rejected paths each produce
+  a deterministic non-null item locator without persisting the raw value.
 - Mutation-test every relevant-note predicate term and the exact unresolved/skip
   conflict predicate so unrelated rows cannot perturb or disappear from a run.
 - Reject impossible migration-item field combinations through the canonical
