@@ -243,7 +243,11 @@ Select:focus {
  * via Textual's `border: none !important` on `.-textual-compact`, which
  * cannot outrank this app's CSS -- app CSS always wins over a widget's own
  * DEFAULT_CSS in Textual's cascade regardless of `!important`, same
- * mechanism as the compact-Input fix above). That border alone, combined
+ * mechanism as the compact-Input fix above). Textual's own DEFAULT_CSS is
+ * a second, independent source: `ToggleButton`'s
+ * `&.-textual-compact { &:focus { border: tall $border; } }` reinstates a
+ * border on compact-focus even with no app CSS in play, so the restated
+ * `border: none` below neutralizes both. Either border alone, combined
  * with this app's unscoped `Checkbox { height: 2; }` (features/
  * _conversations.tcss), leaves zero rows for content -- so the compact
  * variant restates `border: none` too. Focus stays visible either way via

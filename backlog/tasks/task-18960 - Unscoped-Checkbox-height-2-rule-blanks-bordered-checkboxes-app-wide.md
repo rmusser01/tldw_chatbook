@@ -18,7 +18,7 @@ Found during TASK-17961's painted-frame verification: the Settings ▸ Workspace
 "Show archived" Checkbox renders with zero content rows in EVERY state —
 blurred included — so it is a different defect from the focus-outline family
 17961 fixed. An unscoped `Checkbox { height: 2; }` rule in
-`css/components/_conversations.tcss` applies app-wide; combined with a
+`css/features/_conversations.tcss` applies app-wide; combined with a
 `border: tall` (2 rows of chrome) the widget's content area is squeezed to
 0 rows. Any bordered, non-compact Checkbox outside the conversations UI is
 affected. TASK-17961's new painted-frame test file
