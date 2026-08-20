@@ -24,13 +24,15 @@ The parent agent and subagents share a run-local activation ledger and budget,
 while each model conversation tracks which activation revisions it has
 actually received. Newly required guidance causes an atomic batch deferral,
 content-free tool-result stubs, and a separate ephemeral provider-context
-update. Repository contents never travel through tool results or durable
-review records.
+update. Automatically loaded repository contents never travel through tool
+results or durable review records.
 
 Chatbook's system prompt, workspace authorization, path confinement,
 permission review, risk policy, and provider safety remain authoritative.
-Instruction bodies are never persisted to conversations, agent runs, steps,
-transcript markers, or logs.
+Automatically loaded instruction bodies are never persisted to conversations,
+agent runs, steps, transcript markers, compaction summaries, exchange captures,
+or logs. Explicit file reads and model-authored quotations retain their normal
+persistence semantics; automatic loading is not a data-loss-prevention system.
 
 ## Context
 
@@ -72,8 +74,12 @@ preflight boundary.
   nonpersisted context updates.
 - Parent/subagent concurrency must distinguish globally activated content from
   content delivered to an individual model conversation.
+- Omitted, stale, invalid, or failed sources need terminal, per-chain-visible
+  outcomes so fail-open retries cannot loop.
 - Initial and nested instruction content each have a 32 KiB raw-content budget
   and must also fit the model's remaining token allowance.
+- Compaction excludes automatic riders from summary input and rebuilds active
+  guidance from the immutable run snapshot rather than rereading files.
 - Missing or broken project guidance warns but does not grant or revoke tool
   authority. Invalid saved binding identity blocks silent retargeting and
   requires user recovery.
