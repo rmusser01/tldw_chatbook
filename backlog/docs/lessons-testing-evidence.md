@@ -5388,3 +5388,24 @@ Two rules, both incident-backed here:
    from this tree could not migrate an existing DB past v39) sat undetected
    from the v40 bump until this task. Re-greening a trivially-red probe is
    not cosmetics; until it runs green, everything it guards is unguarded.
+
+## A "pristine" probe worktree cut from `origin/dev` is not pinned to your base (task-19043, 2026-08-20)
+
+Attributing a red test to my-change-vs-pre-existing, the standard move is a
+throwaway pristine worktree. First attempt: `git worktree add --detach probe
+origin/dev`. The probe PASSED the test my tree failed -- which read as "my
+change broke it" and burned a diagnostic round chasing a regression that did
+not exist, complete with a module-identity probe whose results contradicted
+the pytest run (the assert was statically false in BOTH trees' source, yet
+"passed pristine"). The resolution: the shared checkout's `origin/dev` ref had
+MOVED between my branch's creation and the probe's creation (base `25500ad87`
+-> `fa0268519`, hours apart, another session's fetch), and the newer dev had
+already FIXED the red by rewriting the test (`ab468a4a2`). A second probe
+pinned to the exact base SHA (`git worktree add --detach probe 25500ad87`)
+showed the test red on pristine base code: pre-existing, fixed upstream, not
+mine. Two rules with teeth: (1) a baseline probe must be cut at the **base
+SHA your branch was cut from**, never at a moving ref name -- in a checkout
+other sessions fetch into, `origin/dev` at probe time is routinely not
+`origin/dev` at branch time; (2) `git log --oneline -1` inside the probe is
+part of the probe -- a comparison whose two arms' commits were never printed
+has not established which code either arm ran.

@@ -2783,37 +2783,6 @@ class STTSEventHandler:
             logger.error(f"Failed to play audio: {e}")
             self.app.notify(f"Failed to play audio: {e}", severity="error")
 
-    async def export_current_audio(self, target_path: Path) -> None:
-        """Export the current audio file"""
-        audio_path = self._current_playground_audio_path()
-        if audio_path is None or not audio_path.exists():
-            self.app.notify("No audio file to export", severity="warning")
-            return
-
-        try:
-            import shutil
-
-            from tldw_chatbook.Utils.path_validation import (
-                validate_filename,
-                validate_path_simple,
-            )
-
-            target_path = Path(target_path)
-            validate_path_simple(target_path, require_exists=False)
-            validated_parent = validate_path_simple(
-                target_path.parent, require_exists=True
-            ).resolve()
-            validated_filename = validate_filename(target_path.name)
-            validated_target_path = validated_parent / validated_filename
-
-            shutil.copy2(audio_path, validated_target_path)
-            self.app.notify(
-                f"Audio exported to {validated_target_path}", severity="information"
-            )
-        except Exception as e:
-            logger.error(f"Failed to export audio: {e}")
-            self.app.notify(f"Failed to export audio: {e}", severity="error")
-
     def _current_playground_audio_path(self) -> Path | None:
         """Return artifact provenance before the compatibility path field."""
         if self._current_playground_artifact is not None:
