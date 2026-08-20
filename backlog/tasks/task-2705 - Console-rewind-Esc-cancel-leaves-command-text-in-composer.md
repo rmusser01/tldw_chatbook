@@ -31,6 +31,8 @@ opened-and-cancelled while browsing. Observed live on dev @ ff435772c
       text typed after the Enter keypress (empty if there was no later text).
 - [ ] If `/rewind` cannot open because there are no prompts, its captured
       invocation is restored and the existing warning is shown.
+- [ ] A modal-launch failure or a changed/replaced composer never loses or
+      clears the user's current draft.
 - [ ] Choosing "Restore to here" still replaces the draft with the restored
       prompt text (existing behavior preserved).
 - [ ] The User Guide quirk note is updated/removed to match.

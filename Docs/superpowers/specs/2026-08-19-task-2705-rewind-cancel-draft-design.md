@@ -2,7 +2,8 @@
 
 ## Status
 
-Approved in conversation on 2026-08-19.
+Approved in conversation on 2026-08-19; amended after independent review to
+preserve post-Enter input and dispatch-failure rollback.
 
 ## Problem
 
@@ -54,17 +55,28 @@ it before dispatch:
    and dispatch `_console_command_rewind` without putting that invocation back
    in front of the live draft.
 2. If it came from the visible Send button, leave the live argument-free
-   command in place while `_console_command_rewind` runs. The handler currently
-   has no suspension point before its synchronous `push_screen`/return, so no
-   later input can be folded into that draft during dispatch.
+   command in place while `_console_command_rewind` runs and retain the exact
+   composer reference, dispatched text, and the `(edit_serial, generation)`
+   pair from its existing immutable `capture_draft_snapshot()`. The handler
+   currently has no suspension point before its synchronous
+   `push_screen`/return.
 3. Have `_console_command_rewind` return whether it actually opened the modal.
    A session with prompt rows returns `True` after `push_screen`; the existing
    no-row warning returns `False`.
-4. On `True`, discard the keyboard invocation stash, or clear the visible-Send
-   command through the existing `_clear_console_composer_draft()` seam. On
-   `False`, restore the keyboard stash with `restore_stashed_draft`, preserving
-   the existing rejected-send ordering in front of any text typed after Enter;
-   the visible-Send draft was never changed.
+4. On `True`, discard the keyboard invocation stash. For visible Send, clear
+   through the existing `_clear_console_composer_draft()` seam only when the
+   same mounted composer still has the captured edit serial, generation, and
+   dispatched text. The edit serial detects ordinary typing (including an
+   edit-and-retype of identical bytes); generation detects programmatic draft
+   scope replacement. Neither treats harmless focus/cursor movement as draft
+   replacement. If identity, either counter, or text changed, preserve the
+   draft rather than risking user-data loss.
+   On `False`, restore the keyboard stash with `restore_stashed_draft`,
+   preserving the existing rejected-send ordering in front of any text typed
+   after Enter; the visible-Send draft was never changed. If dispatch raises
+   before opening succeeds, perform the same keyboard-stash restoration before
+   propagating the existing error; this path must not turn a modal-launch
+   failure into draft loss.
 
 All other command parses keep the current restore-before-dispatch path.
 In particular, `/rewind anything` has non-empty `parse.args`, remains outside
@@ -73,8 +85,10 @@ command grammar or add argument validation.
 
 The modal callback remains unchanged:
 
-- `None` only restores composer focus; the invocation is already consumed and
-  any post-Enter text remains.
+- `None` makes the existing immediate composer-focus request; the shared safe
+  dismissal policy then restores the actual opener. A keyboard invocation's
+  opener remains the composer, while a visible-Send invocation's opener is the
+  Send button. This task does not change that focus policy.
 - `restore` deliberately replaces the current draft (including any post-Enter
   text) with the selected prompt's full text, preserving the existing
   `replace=True` contract.
@@ -108,11 +122,19 @@ consumed.
   assert Escape and **Never mind** preserve that text exactly.
 - Exercise both terminal negative paths: Escape and visible **Never mind**.
   Each must close only the modal, leave no command invocation in the draft,
-  preserve any post-Enter text, and return focus to the composer.
+  and preserve any post-Enter text. Assert the existing opener-specific focus:
+  keyboard dispatch returns to the composer; visible-Send dispatch returns to
+  the Send button.
 - Exercise **Restore to here** through the mounted modal and assert the selected
-  full prompt replaces the cleared draft.
+  full prompt replaces the current draft.
 - Assert a no-prompts refusal restores `/rewind` ahead of any post-Enter text
   and emits the existing warning.
+- Inject a modal-launch exception and assert the keyboard command stash is
+  restored before the existing error propagates; the visible-Send draft stays
+  unchanged.
+- Simulate visible-Send dispatches whose composer identity, edit serial, or
+  generation changes before success returns—including edit-and-retype to
+  identical text—and assert the newer draft is not cleared.
 - Assert `/rewind anything` stays on the ordinary command-dispatch path and is
   not auto-consumed by this fix.
 - Run the rewind modal, restore wiring, command-dispatch, and safe-dismissal
@@ -122,8 +144,9 @@ consumed.
 ## Failure handling and privacy
 
 This change adds no I/O, persistence, logging, or user-data flow. The existing
-no-target warning and modal mutation guards remain authoritative. Tests use
-synthetic in-memory Console sessions.
+no-target warning and modal mutation guards remain authoritative. A dispatch
+exception restores the keyboard stash before following the existing error
+path. Tests use synthetic in-memory Console sessions.
 
 ## ADR check
 
