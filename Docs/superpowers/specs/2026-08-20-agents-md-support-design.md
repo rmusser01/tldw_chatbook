@@ -1,7 +1,7 @@
 # Console AGENTS.md Project Instructions — Design
 
 - **Date:** 2026-08-20
-- **Status:** Owner-approved; pending independent spec review
+- **Status:** Owner-approved; independently reviewed
 - **Scope:** Console agent runs only
 - **Decision record:** [ADR-068](../../../backlog/decisions/068-console-project-instruction-context-boundary.md)
 
