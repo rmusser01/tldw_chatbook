@@ -1074,15 +1074,18 @@ async def _review_guarded_commit(
     )
 
 
-def _assert_visible_editor_actions_fit(
+async def _assert_visible_editor_actions_fit(
     workspace: LibraryFileNotesWorkspace,
+    pilot,
 ) -> None:
-    """Assert visible editor actions keep complete labels inside their pane."""
+    """Assert each disclosed action is complete when scrolled into its pane."""
     pane = workspace.query_one("#file-notes-editor-pane")
     visible_actions = tuple(button for button in pane.query(Button) if button.display)
     assert visible_actions
     clipped_labels: dict[str | None, tuple[str, str]] = {}
     for button in visible_actions:
+        button.scroll_visible(animate=False)
+        await pilot.pause()
         label = str(button.label)
         rendered_label = button.render_line(0).text.strip()
         if rendered_label != label:
@@ -5321,7 +5324,7 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
         delete = workspace.query_one("#file-notes-delete", Button)
         delete.press()
         await _wait_until(
@@ -5347,7 +5350,7 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
             1 if workspace.has_class("-single-editor-actions") else 2
         )
         assert delete.styles.column_span == expected_span
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
 
         editor = workspace.query_one("#file-notes-editor", TextArea)
         editor.focus()
@@ -5359,7 +5362,7 @@ async def test_narrow_delete_confirmation_keeps_complete_action_labels(
         )
         await pilot.pause()
         assert not delete.has_class("-confirm-delete")
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
@@ -5376,7 +5379,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
         assert await workspace.open_path("folder/one.md")
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
         workspace.query_one("#file-notes-maintenance-toggle", Button).press()
         await pilot.pause()
         protect = workspace.query_one("#file-notes-protect", Button)
@@ -5389,7 +5392,7 @@ async def test_narrow_editor_actions_keep_complete_labels_at_40_by_20(
             "Protect did not expose the complete Unprotect label",
         )
         await pilot.pause()
-        _assert_visible_editor_actions_fit(workspace)
+        await _assert_visible_editor_actions_fit(workspace, pilot)
     await workspace.shutdown()
     owner.shutdown()
     replica.close()
