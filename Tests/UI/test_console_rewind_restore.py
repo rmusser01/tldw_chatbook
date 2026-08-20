@@ -2,11 +2,11 @@
 
 Mirrors ``Tests/UI/test_console_edit_resend_wiring.py``'s harness style:
 ``ConsoleHarness`` mounts a real ``ChatScreen`` over a real
-``ConsoleChatStore``/``ConsoleChatController`` pair, and each test drives the
-screen's own restore machinery directly (``_console_command_rewind`` /
-``_apply_console_rewind_choice``) rather than clicking through the modal --
-the modal's own click/dismiss behavior is covered by
-``Tests/Chat/test_console_rewind_modal.py``.
+``ConsoleChatStore``/``ConsoleChatController`` pair. Legacy wiring tests drive
+the screen's restore machinery directly (``_console_command_rewind`` /
+``_apply_console_rewind_choice``); the TASK-2705 regressions use the mounted
+keyboard/Send product paths and real modal interactions. Focused modal behavior
+is also covered by ``Tests/Chat/test_console_rewind_modal.py``.
 
 Restore is pure tree navigation (SP1 primitives): the selected USER prompt's
 PARENT (found by an id lookup in ``active_path_message_ids``, never
