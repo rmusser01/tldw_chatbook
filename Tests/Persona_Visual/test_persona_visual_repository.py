@@ -14,6 +14,7 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Persona_Visual.contracts import ALLOWED_ASSET_ROLES
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualGraph,
     PersonaVisualIdentity,
@@ -55,12 +56,13 @@ def _valid_manifest(asset_key: str = "idle", *, frame_rate: int = 1) -> dict[str
 def _asset(
     asset_key: str = "idle",
     *,
+    role: str = "frame",
     sha256: str = "b" * 64,
     storage_relpath: str = "persona_visual/pack/v1/idle.png",
 ) -> dict[str, Any]:
     return {
         "asset_key": asset_key,
-        "role": "sprite",
+        "role": role,
         "storage_relpath": storage_relpath,
         "mime_type": "image/png",
         "bytes": 12,
@@ -100,6 +102,7 @@ def _activate(
     *,
     persona_id: str = "persona-local-1",
     persona_revision: int = 7,
+    role: str = "frame",
 ) -> PersonaVisualGraph:
     return repository.activate_new_pack(
         persona_id=persona_id,
@@ -109,10 +112,50 @@ def _activate(
         source_context={"provenance": "workbench"},
         manifest=_valid_manifest(),
         manifest_storage_relpath="persona_visual/pack/v1/manifest.json",
-        assets=[_asset()],
+        assets=[_asset(role=role)],
         expected_persona_revision=persona_revision,
         authority_guard=lambda: True,
     )
+
+
+@pytest.mark.parametrize("role", ALLOWED_ASSET_ROLES)
+def test_each_pinned_asset_role_can_activate_and_read(
+    repository: PersonaVisualRepository,
+    role: str,
+) -> None:
+    graph = _activate(repository, role=role)
+
+    assert graph.assets[0].role == role
+    assert repository.get_active_persona_pack(graph.identity.persona_id) == graph
+
+
+@pytest.mark.parametrize("role", ALLOWED_ASSET_ROLES)
+def test_each_pinned_asset_role_can_publish_and_read(
+    repository: PersonaVisualRepository,
+    role: str,
+) -> None:
+    active = _activate(repository)
+    published = repository.publish_version(
+        persona_id=active.identity.persona_id,
+        manifest=_valid_manifest(frame_rate=2),
+        manifest_storage_relpath="persona_visual/roles/v2/manifest.json",
+        assets=[_asset(role=role, storage_relpath="persona_visual/roles/v2/idle.png")],
+        expected_identity=active.identity,
+        expected_persona_revision=active.identity.persona_revision,
+        authority_guard=lambda: True,
+    )
+
+    assert published.assets[0].role == role
+    assert repository.get_active_persona_pack(active.identity.persona_id) == published
+
+
+@pytest.mark.parametrize("role", ("sprite", "unknown"))
+def test_unpinned_asset_roles_are_rejected_on_write(
+    repository: PersonaVisualRepository,
+    role: str,
+) -> None:
+    with pytest.raises(ValueError, match="^persona_visual_asset_invalid$"):
+        _activate(repository, role=role)
 
 
 @pytest.mark.parametrize(
@@ -1257,6 +1300,7 @@ def test_corrupt_stored_numeric_fields_use_fixed_graph_category(
         ("persona_visual_pack_versions", "manifest_version", 2, "version"),
         ("persona_visual_pack_versions", "manifest_sha256", "A" * 64, "version"),
         ("persona_visual_assets", "role", "", "asset"),
+        ("persona_visual_assets", "role", "sprite", "asset"),
         ("persona_visual_assets", "role", "unknown", "asset"),
         ("persona_visual_assets", "mime_type", "text/plain", "asset"),
         ("persona_visual_assets", "sha256", "A" * 64, "asset"),

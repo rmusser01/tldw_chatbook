@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
@@ -17,6 +17,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBErro
 
 from .contracts import (
     ALLOWED_ASSET_MIME_TYPES,
+    ALLOWED_ASSET_ROLES,
     MAX_ASSET_DIMENSION,
     MAX_FRAME_DURATION_MS,
     MAX_FRAMES_PER_ANIMATION,
@@ -34,7 +35,6 @@ _ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _SOURCE_KIND_PATTERN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _GRAPH_STATUSES = frozenset({"active", "archived", "deleted"})
-_ASSET_ROLES = frozenset({"sprite"})
 _SQLITE_CORRUPTION_CODES = frozenset(
     {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT, sqlite3.SQLITE_NOTADB}
 )
@@ -667,7 +667,10 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
             height = candidate["height"]
             frame_count = candidate.get("frame_count")
             duration_ms = candidate.get("duration_ms")
-            if role not in _ASSET_ROLES or mime_type not in ALLOWED_ASSET_MIME_TYPES:
+            if (
+                role not in ALLOWED_ASSET_ROLES
+                or mime_type not in ALLOWED_ASSET_MIME_TYPES
+            ):
                 raise ValueError
             asset_key = _asset_key(asset_key)
             if not _is_sha256(sha256):
@@ -788,7 +791,7 @@ def _decode_asset(row: Mapping[str, Any]) -> PersonaVisualAssetRecord:
             pack_id=_db_positive_int(row["pack_id"]),
             pack_version_id=_db_positive_int(row["pack_version_id"]),
             asset_key=asset_key,
-            role=_db_enum(row["role"], _ASSET_ROLES),
+            role=_db_enum(row["role"], ALLOWED_ASSET_ROLES),
             mime_type=_db_enum(row["mime_type"], frozenset(ALLOWED_ASSET_MIME_TYPES)),
             byte_count=_db_positive_int(row["bytes"]),
             sha256=_db_digest(row["sha256"]),
@@ -1094,7 +1097,7 @@ def _db_text(value: object, maximum: int, *, allow_empty: bool = False) -> str:
         raise ValueError("persona_visual_graph_invalid") from None
 
 
-def _db_enum(value: object, allowed: frozenset[str]) -> str:
+def _db_enum(value: object, allowed: Collection[str]) -> str:
     result = _db_text(value, 64)
     if result not in allowed:
         raise ValueError("persona_visual_graph_invalid")
