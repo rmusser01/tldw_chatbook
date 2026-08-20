@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.12, Textual 8.x, SQLite, immutable dataclasses, pytest/pytest-asyncio, Ruff, existing TCSS bundle tooling.
 
-**ADR required:** no new ADR  
-**ADR path:** `backlog/decisions/067-library-top-level-pagination-contracts.md`  
+**ADR required:** no new ADR
+**ADR path:** `backlog/decisions/067-library-top-level-pagination-contracts.md`
 **Reason:** This task directly implements ADR-067's approved Media paging, complete-facet, stale-recovery, and privacy contracts without changing storage schema, runtime, or cross-source ownership.
 
 ---
