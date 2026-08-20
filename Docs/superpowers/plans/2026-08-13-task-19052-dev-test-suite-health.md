@@ -1,4 +1,4 @@
-# TASK-19048 Latest-dev Test-Suite Health Implementation Plan
+# TASK-19052 Latest-dev Test-Suite Health Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -16,7 +16,7 @@ In this plan, derive `TASK16073_EVIDENCE_ROOT` at runtime from the shared Git di
 
 The `TASK16073_*` harness protocol and ignored evidence namespace are retained as
 immutable internal identifiers from before latest `dev` claimed TASK-16073. The
-human-facing work item is TASK-19048; changing the sealed protocol identifiers would
+human-facing work item is TASK-19052; changing the sealed protocol identifiers would
 invalidate the reviewed harness evidence without improving runtime isolation.
 
 ```bash
@@ -37,11 +37,11 @@ repository file.
   - `TASK16073_EVIDENCE_ROOT/harness/test_checkpointed_pytest.py` — standard-library harness contract and mutation tests.
   - Immutable `generations/<generation-id>/...` directories — fingerprints, collection manifest, chunk slices, logs, JUnit, ledgers, classifications, and hashes.
 - Create after baseline classification:
-  - `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md` — sanitized red-outcome inventory only; no raw traces, passing-node rows, secrets, or private paths.
+  - `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md` — sanitized red-outcome inventory only; no raw traces, passing-node rows, secrets, or private paths.
 - Modify only as baseline outcomes justify:
   - Exact production/test/config files named by each classified repair cluster.
 - Modify at closeout:
-  - `backlog/tasks/task-19048 - Restore-latest-dev-test-suite-health.md`
+  - `backlog/tasks/task-19052 - Restore-latest-dev-test-suite-health.md`
   - This plan document.
 - Do not add a runtime or test dependency. Do not commit the raw harness/evidence tree.
 
@@ -74,7 +74,7 @@ Reason: Task 2 negative testing exposed a Darwin process-ownership boundary. ADR
 ### Task 1: Pin the newest `dev` and prepare an isolated generation
 
 **Files:**
-- Modify: `backlog/tasks/task-19048 - Restore-latest-dev-test-suite-health.md`
+- Modify: `backlog/tasks/task-19052 - Restore-latest-dev-test-suite-health.md`
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/<id>/provenance/`
 
 - [ ] **Step 1: Verify ownership and cleanliness**
@@ -247,7 +247,7 @@ Record SHA-256 for all three harness files and their test output in the generati
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/baseline-<sha>/`
-- Create after completion: `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md`
+- Create after completion: `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md`
 
 - [ ] **Step 1: Freeze source and collect with the concrete interface**
 
@@ -296,7 +296,7 @@ For each red outcome record only: stable outcome ID, exact repository-relative n
 - [ ] **Step 5: Commit the baseline inventory**
 
 ```bash
-git add Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md
+git add Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md
 git commit -m "test: inventory latest-dev suite failures"
 ```
 
@@ -305,7 +305,7 @@ Expected: one documentation-only commit; raw evidence remains ignored.
 ### Task 4: Classify every baseline red outcome
 
 **Files:**
-- Modify: `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md`
 - Read as authority where applicable: `backlog/tasks/`, `backlog/decisions/`, maintained `Docs/`, tests and production seams named by each outcome.
 
 - [ ] **Step 1: Diagnose one cluster at a time**
@@ -327,7 +327,7 @@ Map every red outcome to exactly one repair cluster. Prove every changed hunk pl
 - [ ] **Step 5: Commit the classified inventory**
 
 ```bash
-git add Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md
+git add Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md
 git commit -m "docs(test): classify latest-dev suite failures"
 ```
 
@@ -335,7 +335,7 @@ git commit -m "docs(test): classify latest-dev suite failures"
 
 **Files:**
 - Modify/Test: exact files named by the cluster inventory; do not pre-authorize other files.
-- Modify: `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md`
 
 Repeat these steps independently for every repair cluster:
 
@@ -368,7 +368,7 @@ Run Ruff format/check, py_compile, targeted mypy, diagnostic inventory, CSS/gene
 Record category, authority/evidence, RED-GREEN/repetition results, files, commit SHA placeholder, and affected tests.
 
 ```bash
-git add <exact-cluster-files> Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md
+git add <exact-cluster-files> Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md
 git commit -m "fix(<scope>): <root-cause summary>"
 ```
 
@@ -376,7 +376,7 @@ git commit -m "fix(<scope>): <root-cause summary>"
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/candidate-<sha>/`
-- Modify: `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md`
 
 - [ ] **Step 1: Freeze the candidate and refresh provenance**
 
@@ -442,14 +442,14 @@ Expected: 106 passes and only the unchanged TASK-3070 size-ratchet red across th
 
 Expected: no unresolved Critical/Important/Minor finding.
 
-### Task 9: Open the review PR while TASK-19048 remains In Progress
+### Task 9: Open the review PR while TASK-19052 remains In Progress
 
 **Files:**
 - Modify: PR title/body and remote branch only.
 
 - [ ] **Step 1: Push and create one ready PR against `dev`**
 
-Keep TASK-19048 In Progress and ACs unchecked until review/rebase/final-head verification is complete. The PR body must include the failure-cluster table, baseline/current-candidate generation hashes and counts, commands, static checks, privacy statement, and any explicit limitations.
+Keep TASK-19052 In Progress and ACs unchecked until review/rebase/final-head verification is complete. The PR body must include the failure-cluster table, baseline/current-candidate generation hashes and counts, commands, static checks, privacy statement, and any explicit limitations.
 
 - [ ] **Step 2: Verify the posted PR state**
 
@@ -483,9 +483,9 @@ beyond the unchanged TASK-3070 size ratchet.
 ### Task 11: Complete task hygiene on the reviewed, rebased source/test tree
 
 **Files:**
-- Modify: `backlog/tasks/task-19048 - Restore-latest-dev-test-suite-health.md`
-- Modify: `Docs/superpowers/plans/2026-08-13-task-19048-dev-test-suite-health.md`
-- Modify: `Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md`
+- Modify: `backlog/tasks/task-19052 - Restore-latest-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/plans/2026-08-13-task-19052-dev-test-suite-health.md`
+- Modify: `Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md`
 - Modify if genuinely new knowledge exists: applicable `backlog/docs/lessons-*.md`
 
 - [ ] **Step 1: Finish task notes truthfully**
@@ -497,7 +497,7 @@ Check ACs only after the reviewed/rebased executable-input candidate is green. A
 Use file-safe editing for the five-digit task ID, then run:
 
 ```bash
-backlog task 19048 --plain
+backlog task 19052 --plain
 git diff --check origin/dev...HEAD
 git status --short
 ```
@@ -505,9 +505,9 @@ git status --short
 - [ ] **Step 3: Commit and push closeout documentation**
 
 ```bash
-git add "backlog/tasks/task-19048 - Restore-latest-dev-test-suite-health.md" \
-  Docs/superpowers/plans/2026-08-13-task-19048-dev-test-suite-health.md \
-  Docs/superpowers/reports/2026-08-13-task-19048-dev-test-suite-health.md
+git add "backlog/tasks/task-19052 - Restore-latest-dev-test-suite-health.md" \
+  Docs/superpowers/plans/2026-08-13-task-19052-dev-test-suite-health.md \
+  Docs/superpowers/reports/2026-08-13-task-19052-dev-test-suite-health.md
 git commit -m "docs(test): complete latest-dev suite restoration"
 git push
 ```
@@ -516,7 +516,7 @@ git push
 
 **Files:**
 - Evidence: `TASK16073_EVIDENCE_ROOT/generations/ready-pr-final/`
-- Modify repository files only if this gate fails; a failure reopens TASK-19048.
+- Modify repository files only if this gate fails; a failure reopens TASK-19052.
 
 - [ ] **Step 1: Freeze exact post-closeout HEAD**
 
@@ -530,7 +530,7 @@ green.
 
 - [ ] **Step 3: Handle any mismatch without papering it over**
 
-If the exact-head pipeline, required check, or review state differs from the documented expectation, set TASK-19048 back to In Progress, classify and repair via Tasks 4–6, repeat Tasks 10–12, and do not merge.
+If the exact-head pipeline, required check, or review state differs from the documented expectation, set TASK-19052 back to In Progress, classify and repair via Tasks 4–6, repeat Tasks 10–12, and do not merge.
 
 - [ ] **Step 4: Update only external PR evidence and merge**
 

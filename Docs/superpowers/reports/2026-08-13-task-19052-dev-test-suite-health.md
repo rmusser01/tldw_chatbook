@@ -1,4 +1,4 @@
-# TASK-19048 Latest-dev Test-Suite Health Report
+# TASK-19052 Latest-dev Test-Suite Health Report
 
 ## Scope
 
@@ -41,13 +41,16 @@ nodes at that commit produced:
 - zero errors, skips, xfails, deselections, or missing nodes;
 - 198.12 seconds wall time.
 
-Before PR closeout, the branch was rebased again onto current `origin/dev` at
-`a9b6a6b88`. The executable PR candidate `108c5e672` then passed the exact seven
-CI-reported UI failures 21/21 across three fresh two-worker runs, the adjacent
-Prompt pagination/lifecycle matrix 8/8, the touched Core/process matrix 17/17,
-and the TASK-15103 diagnostic-ledger matrix 48/48. The rebase preserved the new
-ADR-067 Library pagination contract; this suite-health task was renumbered to
-TASK-19048 because current `dev` now owns TASK-18912 for that pagination series.
+Before PR closeout, the branch was rebased onto `origin/dev` at `a9b6a6b88`; its
+executable candidate `108c5e672` passed the seven exact CI failures 21/21 across
+three fresh two-worker runs. When `dev` advanced again during the Actions queue,
+the final executable tree `78e525413` rebased cleanly onto `10509d286`. It passed
+49 exact CI/overlapping-Console UI tests, nine adjacent Prompt selection and
+lifecycle tests, 11 sandbox-safe Core tests, seven native local-socket/process
+tests, and the TASK-15103 diagnostic-ledger matrix 48/48. The rebases preserved
+ADR-067's Library pagination contract; this suite-health task was renumbered to
+TASK-19052 because advancing `dev` owns both earlier candidate IDs, TASK-18912
+and TASK-19048.
 
 ## Focused evidence
 

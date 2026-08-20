@@ -1,5 +1,5 @@
 ---
-id: TASK-19048
+id: TASK-19052
 title: Restore latest dev test-suite health
 status: Done
 assignee: []
@@ -39,14 +39,14 @@ ADR required: yes. ADR path: `backlog/decisions/072-checkpoint-harness-process-o
 <!-- SECTION:NOTES:BEGIN -->
 Reproduced 47,572 frozen baseline nodes with complete retained accounting, classified 107 terminal reds across 54 files plus six structurally red chunks, and repaired every actionable product, stale-contract, isolation, and flake root cause without skipping or weakening coverage. The unchanged Console size ratchet remains delegated to TASK-3070.5 through TASK-3070.11.
 
-The final reviewed historical set was 106 passes plus that one unchanged ratchet. After rebasing PR #1838 onto `a9b6a6b88`, the exact seven CI-reported UI failures passed 21/21 under repeated two-worker load; adjacent Prompt pagination/lifecycle passed 8/8, touched Core/process tests passed 17/17, TASK-15103 diagnostic-ledger tests passed 48/48, Ruff passed on touched files, and cumulative `git diff --check` passed. Qodo reported zero bugs and zero rule violations on the rebased executable head; final required GitHub checks remain a merge gate.
+The final reviewed historical set was 106 passes plus that one unchanged ratchet. After PR #1838's final executable tree rebased cleanly onto `10509d286`, 49 exact CI/overlapping-Console UI tests passed, nine adjacent Prompt selection/lifecycle tests passed, 11 sandbox-safe Core tests passed, seven native local-socket/process tests passed, and TASK-15103 diagnostic-ledger tests passed 48/48. Ruff passed on owned production scopes; whole-file findings in current-dev `chat_screen.py` and large pre-existing test files were reproduced as inherited, while cumulative `git diff --check` passed. Qodo reported zero bugs and zero rule violations on the prior executable head; final-head Qodo and required GitHub checks remain merge gates.
 
-ADR-072 documents the checkpoint process-ownership boundary. The final rebase also retained ADR-067's Library pagination contract and required renumbering this task from TASK-18912 to TASK-19048 because `dev` now owns TASK-18912. No new dependency or speculative architecture was added. Existing testing, live-verification, and Backlog-hygiene lessons already cover the incidents, so no duplicate lesson entry was added.
+ADR-072 documents the checkpoint process-ownership boundary. The final rebases retained ADR-067's Library pagination contract and required renumbering this task to TASK-19052 because advancing `dev` claimed the earlier TASK-18912 and TASK-19048 candidates. No new dependency or speculative architecture was added. Existing testing, live-verification, and Backlog-hygiene lessons already cover the incidents, so no duplicate lesson entry was added.
 <!-- SECTION:NOTES:END -->
 
 ## References
 
-- `Docs/superpowers/specs/2026-08-13-task-19048-dev-test-suite-health-design.md`
-- `Docs/superpowers/plans/2026-08-13-task-19048-dev-test-suite-health.md`
+- `Docs/superpowers/specs/2026-08-13-task-19052-dev-test-suite-health-design.md`
+- `Docs/superpowers/plans/2026-08-13-task-19052-dev-test-suite-health.md`
 - `backlog/decisions/072-checkpoint-harness-process-ownership.md`
 - Follow-up to TASK-2703 scoped verification; the new baseline is captured independently on latest `dev`.
