@@ -322,6 +322,15 @@ def _painted_style_of_text(app: App, region, needle: str):
     return None
 
 
+def _painted_text_in_region(app: App, region) -> str:
+    """Return only compositor cells painted inside ``region``."""
+    strips = list(app.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text.rstrip()
+        for y in range(region.y, region.bottom)
+    )
+
+
 def _assert_legible_painted_text(
     app: App,
     widget,
@@ -624,8 +633,13 @@ async def test_folder_files_authority_row_tracks_root_save_and_session_git(
 
         workspace._set_save_state("error", "permission denied")
         save_failure = _static_text(workspace, "#file-notes-authority")
-        assert "Save failed: draft preserved in editor; permission denied" in save_failure
-        assert "Next: Resolve the save error or save the draft as a copy." in save_failure
+        assert "Save failed" in save_failure
+        assert "permission denied" not in save_failure
+        assert "permission denied" in _static_text(
+            workspace,
+            "#file-notes-save-status",
+        )
+        assert "Next: Retry or save a copy." in save_failure
 
         workspace._set_save_state("saved")
         workspace._push_phase = "needs_attention"
@@ -703,8 +717,11 @@ async def test_folder_files_authority_merges_save_and_git_in_either_update_order
 
         expected = _static_text(workspace, "#file-notes-authority")
         assert "Local folder: notes" in expected
-        assert _static_text(workspace, "#file-notes-save-status") in expected
-        assert save_detail in expected
+        assert (
+            "Conflict" if save_state == "conflict" else "Save failed"
+        ) in expected
+        assert save_detail not in expected
+        assert save_detail in _static_text(workspace, "#file-notes-save-status")
         assert "Session Git: 1 change" in expected
         assert "Next:" in expected
 
@@ -4072,6 +4089,80 @@ async def test_file_notes_authority_is_painted_and_contained_at_60x20_shell(
         assert 0 < authority.region.height <= 2
         assert _painted_style_of_text(pilot.app, authority.region, "Folder files")
         assert _painted_style_of_text(pilot.app, authority.region, "Next:")
+
+    await workspace.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("save_state", "state_copy", "next_copy"),
+    (
+        ("error", "Save failed", "Next: Retry or save a copy."),
+        ("conflict", "Conflict", "Next: Resolve conflict or copy."),
+    ),
+)
+@pytest.mark.asyncio
+async def test_file_notes_merged_recovery_authority_paints_at_60x20_shell(
+    tmp_path: Path,
+    save_state: str,
+    state_copy: str,
+    next_copy: str,
+) -> None:
+    """Long save failures keep all authority facts and recovery above the fold."""
+    root = tmp_path / "Research notes with a very long private directory name"
+    root.mkdir()
+    detail = (
+        "permission denied while writing an unusually long private filesystem path"
+    )
+    owner = FileNotesSessionOwner()
+    workspace = LibraryFileNotesWorkspace(
+        root=root,
+        replica_path=tmp_path / "owned.sqlite",
+        session_owner=owner,
+        poll_interval=10,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Database note", "id": "db-note-1"}],
+    )
+    screen = LibraryScreen(app, file_notes_workspace_factory=lambda: workspace)
+
+    async with LibraryHarness(app, screen=screen).run_test(size=(60, 20)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
+        await _wait_until(
+            pilot,
+            lambda: bool(screen.query("#library-notes-source-files")),
+            "Notes source strip did not compose",
+        )
+        screen.query_one("#library-notes-source-files", Button).press()
+        await _wait_until(
+            pilot,
+            lambda: workspace.initialized and workspace.is_mounted,
+            "File Notes workspace did not mount",
+        )
+        binding = workspace._session_binding
+        assert binding is not None
+        assert owner.record_change(binding, SessionChange("modified", "draft.md"))
+        workspace._set_save_state(save_state, detail)
+        workspace._render_session_git_label()
+        await pilot.pause()
+
+        authority = workspace.query_one("#file-notes-authority", Static)
+        canvas = screen.query_one("#library-canvas")
+        painted = _painted_text_in_region(pilot.app, authority.region)
+        assert authority in pilot.app.screen._compositor.visible_widgets
+        assert workspace.content_region.contains_region(authority.region)
+        assert canvas.content_region.contains_region(workspace.region)
+        assert authority.region.height == 2
+        assert "Folder files" in painted
+        assert "Local folder: Research no…" in painted
+        assert state_copy in painted
+        assert "Session Git: 1 change" in painted
+        assert next_copy in painted
+        assert detail not in _static_text(workspace, "#file-notes-authority")
+        assert detail in _static_text(workspace, "#file-notes-save-status")
 
     await workspace.shutdown()
 

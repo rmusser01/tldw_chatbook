@@ -1354,16 +1354,18 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._root is None:
             return "Folder files · No folder selected · Next: Choose folder."
         folder_name = self._root.name or self._root.anchor or str(self._root)
+        folder_label = Text(folder_name)
+        folder_label.truncate(12, overflow="ellipsis")
+        folder_name = folder_label.plain
         segments = ["Folder files", f"Local folder: {folder_name}"]
         if self._root_offline is True:
             segments.append("Folder offline")
         elif self._runtime_warning:
             segments.append("Folder needs attention")
         if self._save_state in {"conflict", "error"}:
-            status = _SAVE_STATE_COPY[self._save_state]
-            if self._save_detail:
-                status = f"{status}; {self._save_detail}"
-            segments.append(status)
+            segments.append(
+                "Conflict" if self._save_state == "conflict" else "Save failed"
+            )
         elif self._save_state == "saving":
             segments.append("Saving to local folder…")
         elif self._save_state == "dirty":
@@ -1380,6 +1382,34 @@ class LibraryFileNotesWorkspace(Vertical):
             session_git_count = len(coalesce_session_changes(changes))
         change_word = "change" if session_git_count == 1 else "changes"
         segments.append(f"Session Git: {session_git_count} {change_word}")
+        if (
+            self._save_state in {"conflict", "error"}
+            and self._root_offline is not True
+            and not self._runtime_warning
+        ):
+            if self._push_phase == "idle":
+                next_action = (
+                    "Resolve conflict or copy."
+                    if self._save_state == "conflict"
+                    else "Retry or save a copy."
+                )
+                git_copy = segments[-1]
+            else:
+                push_copy = {
+                    "checking": "Check push",
+                    "pushing": "Pushing",
+                    "needs_attention": "Push attention",
+                }[self._push_phase]
+                git_copy = f"Session Git: {session_git_count} · {push_copy}"
+                next_action = (
+                    "Resolve/copy."
+                    if self._save_state == "conflict"
+                    else "Retry/copy."
+                )
+            return (
+                f"{' · '.join(segments[:-1])}\n"
+                f"{git_copy} · Next: {next_action}"
+            )
         if self._push_phase != "idle":
             status = {
                 "checking": "Checking push",
