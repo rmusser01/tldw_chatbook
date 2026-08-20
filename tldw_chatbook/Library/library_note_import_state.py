@@ -314,7 +314,11 @@ def set_destination_segments(
 
 
 def begin_checking(state: NoteImportWorkflowSnapshot) -> NoteImportWorkflowSnapshot:
-    if not state.can_check and state.phase is not NoteImportPhase.REVIEW:
+    if (
+        not state.can_check
+        and state.phase is not NoteImportPhase.REVIEW
+        and state.plan is None
+    ):
         raise ValueError("The import selection is not ready to check.")
     return replace(
         state,
