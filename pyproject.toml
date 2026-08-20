@@ -71,7 +71,6 @@ dependencies = [
     "aiofiles",
     "croniter>=1.4.0",
     "textual-image",
-    "anytree",
     "tiktoken",      # engine tokens strategy (Q2: hard-required, shim-enforced)
     "defusedxml",    # engine xml security parsing (Q9: core)
 ]
@@ -230,10 +229,6 @@ chatterbox = [
     "torchaudio",
     "torch",
     "faster-whisper",  # For validation of generated audio
-]
-mindmap = [
-    # anytree is already in base dependencies
-    # No additional dependencies needed for basic functionality
 ]
 local_tts = [
     "kokoro-onnx",

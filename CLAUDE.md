@@ -70,7 +70,7 @@ Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `
 - **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes); the current schema version is the `_CURRENT_SCHEMA_VERSION` constant in this file — bump it and add a migration when changing schema
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
-- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`
+- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`, `VisualIdentity_DB.py`
 - Patterns: soft deletion, optimistic locking, FTS5 triggers, parameterized queries only
 
 ### Agents Runtime (`Agents/`)
