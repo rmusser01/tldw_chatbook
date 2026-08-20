@@ -52,13 +52,18 @@ or a second set of simplified data models.
 - Important states use text and structure; color is never the only carrier.
 - Existing guarded Escape, dirty-state, conflict, trust, and durable mutation
   behavior remains authoritative.
+- The application-wide first-run wizard remains the sole startup/setup owner.
+  Library onboarding is destination-local composition after normal admission;
+  it never adds a competing startup route or completion flag.
 
 ## Non-Goals
 
 - A global Beginner/Expert preference.
 - A first-run modal wizard or separate tutorial dataset.
 - A generic Library lifecycle controller, generic canvas, or editor base class.
-- New Library data services solely to populate the landing page.
+- New Library record-list services solely to populate the landing page. A
+  narrow source-owned graduation-evidence query is allowed when an existing
+  count cannot distinguish user content from bundled or inaccessible content.
 - A recommendation engine, activity database, telemetry pipeline, or pinned
   shortcut system.
 - Merging the three Study/Flashcard/Quiz Library routes in this programme.
@@ -86,6 +91,9 @@ or a second set of simplified data models.
    records outranks preview and repeated explanatory chrome.
 8. **Reuse owners, not abstractions.** Similar UX grammar is implemented in the
    existing source canvas or screen owner.
+9. **Preferences have one owner.** New rail lifecycle state extends the
+   existing Library preference/config path with backward-compatible coercion;
+   it does not create another persistence mechanism.
 
 ## Wave 1: First-Run And Empty States
 
@@ -126,11 +134,38 @@ Rules:
   existing first-run evidence unambiguously identifies a new empty profile.
 - The state is profile-local, not workspace-local.
 - Deep links and command-palette navigation bypass rail filtering.
+- The global first-run wizard resolves before Library applies destination-local
+  onboarding. Library reads its outcome only as new-profile evidence; it never
+  writes or reinterprets the wizard's setup state.
+- "New profile" comes from the startup admission fact captured before the
+  wizard completes. Library does not infer newness from `setup_completed`
+  alone, which would misclassify upgraded profiles that predate this state.
+- Persisted lifecycle state lives beside the existing
+  `library.rail_state.sections` value under the same Library config owner.
+  Existing section-collapse preferences survive lifecycle transitions.
 
 User-owned usable content includes active Notes, Media, Conversations, Prompts,
 Skills, and Collections created or imported by the user. A saved Console
 conversation counts. Bundled/system/sample records, Trash-only records, failed
 or incomplete imports, and inaccessible records do not graduate onboarding.
+
+Each source owner exposes only tri-state graduation evidence:
+
+```text
+UNKNOWN | EMPTY | HAS_USER_CONTENT
+```
+
+The evidence seam returns no records, titles, or content. Existing exact counts
+may satisfy it only when that source can prove every counted record is eligible
+user content. Where Prompt, Skill, or another source cannot distinguish bundled
+from user-created records, it reports `UNKNOWN` until a source-owned provenance
+query can do so; Library never guesses from a broad count. Library aggregates
+these independent results: any `HAS_USER_CONTENT` graduates, all `EMPTY` allows
+Starter, and any unresolved `UNKNOWN` preserves the uncertainty behavior above.
+Evidence reads share one profile/route generation. Late results from an older
+generation or an unmounted screen cannot transition or persist state. A
+successful create/import mutation triggers a new evidence generation; it does
+not wait for an app restart or a broad landing refresh to graduate.
 
 ### Starter Composition
 
@@ -323,6 +358,14 @@ The tool allowlist is explained as a restriction, not a permission grant.
 Unknown imported tool names remain visible, unavailable, and losslessly
 round-tripped. Normal runtime approval and workspace policy remain separate.
 
+The allowlist picker treats the captured ordered tool-name sequence as content,
+not as catalog output. Opening, searching, refreshing the catalog, switching
+Basic/Advanced, canceling, or saving without an allowlist edit preserves the
+original names, order, duplicates, and unknown entries. On an explicit picker
+change, deselected names are removed and newly selected names append in stable
+chooser order; untouched entries are neither sorted nor deduplicated. Catalog
+availability changes presentation and warnings only, never the draft by itself.
+
 Healthy trust is a compact one-line state. Pending, changed, quarantined,
 script-access, manifest-error, or other actionable safety states expand the
 existing trust workbench automatically. Users may open healthy trust details
@@ -435,6 +478,13 @@ displays and Study validates and consumes. It contains:
 - active workspace/authority context; and
 - supported context limit.
 
+"Immutable" applies to the selected identities, policy, counts, authority, and
+captured generation—not to a copied snapshot of every source's content. Study
+resolves content through the owning source at handoff. Versioned sources carry a
+captured revision and require rebuild/reconfirmation when it changed; unversioned
+sources are revalidated for current availability and eligibility. The UI never
+claims that reviewed content bytes were frozen when only selection was frozen.
+
 The manifest does not log titles, IDs, excerpts, queries, or private workspace
 labels. Diagnostics may log only destination, bounded counts, policy,
 generation, and fixed error classifications.
@@ -460,7 +510,9 @@ source identities actually included
 
 Conversation records are labeled summary-only until Study supports them as
 concrete generation inputs. Unknown totals remain unknown rather than producing
-omitted-count arithmetic.
+omitted-count arithmetic. Summary disclosure names the bounded summary records
+actually represented; it does not imply that full conversation records or every
+known conversation were carried.
 
 Example:
 
@@ -552,6 +604,13 @@ The programme remains three ordered waves, decomposed into atomic tasks:
 Study disclosure ships before optional review so misleading copy is not blocked
 on the larger selection surface.
 
+The programme spec is integrated first. Implementation starts from current
+`dev` in a fresh task worktree rather than accumulating all fourteen changes on
+the earlier pagination branch. Detailed implementation plans are written one
+atomic task (or one tightly coupled wave slice) at a time; the next plan covers
+Wave 1 only. Each task rebases before review and remains independently testable
+and revertible.
+
 ## ADR Check
 
 ADR required: yes
@@ -604,6 +663,17 @@ containment, not only declared widget sizes.
 One bounded isolated-profile live UAT is run after each completed wave, not
 after every task. It covers all four personas at 100x30 and 170x48. Real profile
 paths remain fingerprinted and untouched.
+
+Wave UAT also records outcome-level checks rather than screenshots alone:
+
+- Starter exposes no more than three primary choices, with Import and New note
+  reachable without scrolling at 100x30.
+- Prompt/Skill Basic mode reaches a valid first save using only its visible
+  required fields, while no-op disclosure changes and unchanged saves preserve
+  the owner's structural round-trip invariants (identities, order, metadata,
+  and tool names).
+- Study's displayed included identities/counts equal the validated payload Study
+  receives; summaries and exclusions are compared separately.
 
 ## Persona Acceptance
 
