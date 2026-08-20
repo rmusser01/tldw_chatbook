@@ -1041,7 +1041,7 @@ class ToolsSettingsWindow(Container):
 
                     yield Label("Model:", classes="settings-label")
                     yield Input(
-                        value=character_config.get("model", "claude-3-haiku-20240307"),
+                        value=character_config.get("model", "claude-haiku-4-5"),
                         id="general-character-model",
                         classes="settings-input",
                         placeholder="e.g., claude-3-haiku, gpt-3.5-turbo",
@@ -2453,7 +2453,7 @@ class ToolsSettingsWindow(Container):
         widgets.append(Label("Default Model:", classes="form-label"))
         widgets.append(
             Input(
-                value=char_config.get("model", "claude-3-haiku-20240307"),
+                value=char_config.get("model", "claude-haiku-4-5"),
                 id="config-character-model",
                 placeholder="Enter model name",
             )
@@ -4113,7 +4113,7 @@ class ToolsSettingsWindow(Container):
             ).value = default_char_provider
             self.query_one(
                 "#general-character-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-haiku-4-5"
             self.query_one("#general-character-temperature", Input).value = "0.8"
 
             # Reset Encryption
@@ -4848,7 +4848,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#config-anthropic-api-key", Input).value = "<API_KEY_HERE>"
             self.query_one(
                 "#config-anthropic-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-sonnet-5"
             self.query_one("#config-anthropic-temperature", Input).value = "0.7"
 
             self.app_instance.notify("API configuration reset to defaults!")
@@ -5644,7 +5644,7 @@ class ToolsSettingsWindow(Container):
             self.query_one("#config-character-provider", Select).value = "Anthropic"
             self.query_one(
                 "#config-character-model", Input
-            ).value = "claude-3-haiku-20240307"
+            ).value = "claude-haiku-4-5"
             self.query_one(
                 "#config-character-system-prompt", TextArea
             ).text = "You are roleplaying as a witty pirate captain."

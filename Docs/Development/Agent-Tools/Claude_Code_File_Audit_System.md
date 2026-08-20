@@ -172,7 +172,7 @@ await record_file_operation(
 
 ## Reference Configuration (Does Not Activate Hooks)
 
-`[tools].code_audit_enabled` was the historical System A registration flag; its install caller was deleted with System A. The `[audit]` block below was only proposed/example configuration in this guide, and the retained code consumes none of its keys. Instead, it hardcodes `max_records = 10000`, `model = "claude-3-haiku-20240307"`, `temp = 0.1`, and `max_tokens = 500`; it implements neither `analysis_timeout` nor the `enable_*` toggles. None of these reference settings wire the subsystem into the Console runtime.
+`[tools].code_audit_enabled` was the historical System A registration flag; its install caller was deleted with System A. The `[audit]` block below was only proposed/example configuration in this guide, and the retained code consumes none of its keys. Instead, it hardcodes `max_records = 10000`, `model = "claude-haiku-4-5"` (TASK-19048 replaced the retired `claude-3-haiku-20240307`), `temp = 0.1`, and `max_tokens = 500`; it implements neither `analysis_timeout` nor the `enable_*` toggles. None of these reference settings wire the subsystem into the Console runtime.
 
 ```toml
 [tools]
