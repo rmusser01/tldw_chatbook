@@ -10763,10 +10763,8 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            # TASK-18913: ``compact_override`` is layout-minimum-waiver
-            # authority only. It covers default Context at exactly 100,
-            # eligible explicit opens below either compact threshold, and
-            # Inspector priority; it records no preference or user intent.
+            # Mirror compose-time geometry: these state flags waive the main
+            # minimum during a live rail-visibility sync.
             main_column.styles.min_width = (
                 0 if rail_state.single_pane or rail_state.compact_override else 56
             )
@@ -13187,10 +13185,11 @@ class ChatScreen(BaseAppScreen):
                 # workspace grid has 96 content columns after two border and
                 # two horizontal-padding cells. Default horizontal-label
                 # geometry resolves as Context 30 + main outer 55 + collapsed
-                # Inspector handle 11 = 96; the main min-width waiver keeps
-                # Context open at this boundary. Below 100, default Context
-                # force-collapses without rewriting preference; eligible
-                # explicit opens instead receive the same layout-only waiver.
+                # Inspector handle 11 = 96. The main min-width waiver keeps
+                # the row solvable; `rail_state.left_open` determines Context
+                # visibility. Below 100, default Context force-collapses
+                # without rewriting preference; eligible explicit opens
+                # instead receive the same layout-only waiver.
                 # TASK-2154.3 (LY-01/LY-07): 30 is the Context content minimum
                 # (12-col label + 10-col value + 7 cells of chrome). A 3-column
                 # handle applies only when stacked rail labels are configured.
@@ -13226,13 +13225,12 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
                 main_column.styles.width = "13fr"
-                # TASK-2154.1 (LY-09): in single-pane mode the min-width
-                # guarantee is waived so the transcript renders at ANY width
-                # (60x18 included) instead of overflowing out of the grid;
-                # the handles are hidden, so nothing else competes for the
-                # row. At the 84-column boundary, default horizontal handles
-                # (13 + 11), main 56, two borders, and two padding cells fit
-                # exactly; stacked-label handles are 3 columns each instead.
+                # TASK-2154.1 (LY-09): below 84 the handles hide and the main
+                # minimum is waived. The default layout is transcript-only;
+                # budget-eligible explicit rails may still render from their
+                # 70/74 floors through 83 via compact override. At 84, default
+                # horizontal handles (13 + 11), main 56, two borders, and two
+                # padding cells fit exactly; stacked handles are 3 columns each.
                 # TASK-2154.2/TASK-18913: ``compact_override`` is only
                 # layout-minimum-waiver authority. It covers eligible explicit
                 # opens below the thresholds, default Context at exactly 100,

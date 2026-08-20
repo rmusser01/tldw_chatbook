@@ -34,9 +34,10 @@ CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
 # TASK-2154.1 (LY-08/LY-09): below this width even the collapsed-handle
 # layout fills the terminal (left handle 13 + main 56 + right handle 11 +
-# two borders + two horizontal-padding cells = 84), so the workspace drops
-# to a single pane: both rail handles hide and the main column's min-width is
-# waived so the transcript always renders (covers the 80x24 and 60x18 captures).
+# two borders + two horizontal-padding cells = 84). Below 84 the default
+# layout is transcript-only: both handles hide and the main minimum is waived.
+# Budget-eligible explicit rails may still render from their 70/74 floors
+# through 83 via compact override while the handles remain hidden.
 CONSOLE_SINGLE_PANE_COLUMNS = 84
 #: task-18911: rail min-widths mirrored from ChatScreen's compose-time
 #: styles (left 30, right 34), plus the floor a transcript needs to stay
