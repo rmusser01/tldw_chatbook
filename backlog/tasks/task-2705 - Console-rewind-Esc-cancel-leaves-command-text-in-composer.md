@@ -26,9 +26,11 @@ opened-and-cancelled while browsing. Observed live on dev @ ff435772c
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] Cancelling the Rewind menu (Esc or "Never mind") leaves the composer
-      draft as it was before `/rewind` was typed (empty if it only
-      contained the command).
+- [ ] After an argument-free `/rewind` successfully opens the Rewind menu,
+      Esc or "Never mind" leaves the invocation consumed while preserving
+      text typed after the Enter keypress (empty if there was no later text).
+- [ ] If `/rewind` cannot open because there are no prompts, its captured
+      invocation is restored and the existing warning is shown.
 - [ ] Choosing "Restore to here" still replaces the draft with the restored
       prompt text (existing behavior preserved).
 - [ ] The User Guide quirk note is updated/removed to match.
