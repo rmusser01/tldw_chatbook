@@ -5335,3 +5335,42 @@ design has a cliff no threshold placement can fix; the durable resolution is
 one semantic at every size (the fix round retired the alignment tier and made
 the order-insensitive ratio the sole mechanism, with "a moved segment is not a
 change" as the documented decision), not a relocated boundary.
+
+## A probe left red on a stale trivial pin stops guarding — the real regression ships behind it (task-19044, 2026-08-20)
+
+The installed-migration probe (`Tests/Packaging/test_installed_distribution.py`,
+`INSTALLED_MIGRATION_PROBE`) proves a v35 ChaChaNotes DB migrates to the current
+schema under the *installed wheel*. It had been red since `4a2d48046` on pure
+test-health noise: a hand-bumped `assert current_schema_version == 39` pin plus
+a sentinel pair that same commit left self-inconsistent (probe printed
+`...-v35-to-v39-ok`, the outer test asserted `...-v35-to-v38-ok`, function named
+`..._to_v38`). Because the gate was already red on the pin, nobody could see
+what arrived behind it: the v39→v40 bump (`46945ebbe`) never added
+`chachanotes_v39_to_v40_transcript_annotations.sql` to
+`[tool.setuptools.package-data]` (`include-package-data = false`, explicit
+list), so **shipped wheels could not migrate an existing DB past v39 at all** —
+`_migrate_from_v39_to_v40` reads that SQL file from the installed package and
+died `FileNotFoundError → SchemaError`. The fix round proved this with a
+control: pyproject line reverted → probe red through the real chain
+(`Migration from V39 to V40 failed ... No such file or directory`); restored →
+green (`installed-wheel-v35-to-v38` run: 2 failed at the pin; fixed run:
+7 passed incl. both wheel sources and the release-checker mutation params).
+
+Two rules, both incident-backed here:
+
+1. **Every hand-bumped copy of a moving constant is a miss waiting for the
+   next bump — compare against the constant in the environment where the
+   assertion runs.** The probe already read
+   `CharactersRAGDB._CURRENT_SCHEMA_VERSION` *inside the child process against
+   the installed distribution* and asserted the migrated version equals it;
+   the literal pin added nothing but staleness. The same class hid in the
+   sentinel string pair and the test name (now version-agnostic
+   `..._to_current`). Sibling class to watch: a schema bump's packaging
+   contract spans four hand lists (pyproject package-data, both
+   `Packaging/check_manifest.py` sets, the test's `RUNTIME_MIGRATION_PATHS`)
+   — `46945ebbe` missed all four.
+2. **A known-red gate is a masked gate.** "That test is just stale on the
+   version pin" was true AND the reason a shipped production bug (installed
+   users bricked at v39→v40) went undetected for three days. Re-greening a
+   trivially-red probe is not cosmetics; until it runs green, everything it
+   guards is unguarded.
