@@ -14,37 +14,37 @@
 
 Create or update only these planning artifacts:
 
-- Create: `backlog/decisions/<ADR_PACK_ID>-portable-actor-packs-and-local-persona-visual-runtime.md`
-- Create: `backlog/decisions/<ADR_EMOTE_ID>-durable-character-emote-metadata.md`
-- Create: `backlog/tasks/task-<TASK_PERSONA_FOUNDATION_ID> - Add-local-Persona-Visual-pack-foundation.md`
-- Create: `backlog/tasks/task-<TASK_PERSONA_AUTHORING_ID> - Author-and-import-Persona-Visual-packs.md`
-- Create: `backlog/tasks/task-<TASK_BUDDY_ID> - Add-opt-in-app-wide-floating-Persona-Buddy.md`
-- Create: `backlog/tasks/task-<TASK_PERSONA_SVI_ID> - Enable-Shared-Visual-Identity-for-Persona-actors.md`
-- Create: `backlog/tasks/task-<TASK_ACTOR_FOUNDATION_ID> - Define-and-create-portable-Actor-Packs.md`
-- Create: `backlog/tasks/task-<TASK_ACTOR_EXPORT_ID> - Export-self-contained-Actor-Packs.md`
-- Create: `backlog/tasks/task-<TASK_ACTOR_IMPORT_ID> - Import-review-and-activate-Actor-Packs.md`
-- Create: `backlog/tasks/task-<TASK_EMOTE_ID> - Match-server-streaming-emotes-and-persistence.md`
+- Create: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
+- Create: `backlog/decisions/075-durable-character-emote-metadata.md`
+- Create: `backlog/tasks/task-19053 - Add-local-Persona-Visual-pack-foundation.md`
+- Create: `backlog/tasks/task-19054 - Author-and-import-Persona-Visual-packs.md`
+- Create: `backlog/tasks/task-19055 - Add-opt-in-app-wide-floating-Persona-Buddy.md`
+- Create: `backlog/tasks/task-19056 - Enable-Shared-Visual-Identity-for-Persona-actors.md`
+- Create: `backlog/tasks/task-19057 - Define-and-create-portable-Actor-Packs.md`
+- Create: `backlog/tasks/task-19058 - Export-self-contained-Actor-Packs.md`
+- Create: `backlog/tasks/task-19059 - Import-review-and-activate-Actor-Packs.md`
+- Create: `backlog/tasks/task-19060 - Match-server-streaming-emotes-and-persistence.md`
 - Modify: `Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md`
 - Modify: this plan only to replace the allocation table placeholders after the final collision sweep.
 
 Do not create production, migration, UI, CSS, fixture, or test files. Do not add an `## Implementation Plan` or `## Implementation Notes` section to a Backlog task while it remains To Do; AGENTS.md requires the task to move In Progress first.
 
-## Provisional allocation observed during planning
+## Final allocation
 
-The 2026-08-20 all-ref/all-worktree sweep observed task ceiling `19021` and ADR ceiling `073`. These values are evidence only, not reservations. Task and ADR IDs must be re-swept and allocated in Task 1 immediately before files are created.
+The initial local/remote sweep on 2026-08-20 after `git fetch --all --prune` reported task ceiling `19048` and ADR ceiling `073`. A follow-up all-reachable-history path scan found task IDs through `19051`, and the registered-worktree scan found `19052`; the task allocation is strictly above `19052`. The Backlog CLI allocator probe proposed unsafe `18912`, so it was removed and not used. The following IDs are allocated strictly above the swept maxima.
 
-| Symbol | Provisional value | Title |
+| Symbol | Allocated value | Title |
 | --- | ---: | --- |
 | `ADR_PACK_ID` | `074` | Portable Actor Packs and local Persona Visual runtime |
 | `ADR_EMOTE_ID` | `075` | Durable character emote metadata |
-| `TASK_PERSONA_FOUNDATION_ID` | `19022` | Add local Persona Visual pack foundation |
-| `TASK_PERSONA_AUTHORING_ID` | `19023` | Author and import Persona Visual packs |
-| `TASK_BUDDY_ID` | `19024` | Add opt-in app-wide floating Persona Buddy |
-| `TASK_PERSONA_SVI_ID` | `19025` | Enable Shared Visual Identity for Persona actors |
-| `TASK_ACTOR_FOUNDATION_ID` | `19026` | Define and create portable Actor Packs |
-| `TASK_ACTOR_EXPORT_ID` | `19027` | Export self-contained Actor Packs |
-| `TASK_ACTOR_IMPORT_ID` | `19028` | Import, review, and activate Actor Packs |
-| `TASK_EMOTE_ID` | `19029` | Match server streaming emotes and persistence |
+| `TASK_PERSONA_FOUNDATION_ID` | `19053` | Add local Persona Visual pack foundation |
+| `TASK_PERSONA_AUTHORING_ID` | `19054` | Author and import Persona Visual packs |
+| `TASK_BUDDY_ID` | `19055` | Add opt-in app-wide floating Persona Buddy |
+| `TASK_PERSONA_SVI_ID` | `19056` | Enable Shared Visual Identity for Persona actors |
+| `TASK_ACTOR_FOUNDATION_ID` | `19057` | Define and create portable Actor Packs |
+| `TASK_ACTOR_EXPORT_ID` | `19058` | Export self-contained Actor Packs |
+| `TASK_ACTOR_IMPORT_ID` | `19059` | Import, review, and activate Actor Packs |
+| `TASK_EMOTE_ID` | `19060` | Match server streaming emotes and persistence |
 
 ### Task 1: Allocate collision-free ADR and task IDs
 
@@ -52,7 +52,7 @@ The 2026-08-20 all-ref/all-worktree sweep observed task ceiling `19021` and ADR 
 - Modify: `Docs/superpowers/plans/2026-08-20-actor-pack-persona-buddy-task-filing-plan.md`
 - Inspect: every `backlog/tasks/` and `backlog/decisions/` tree in local heads, remote refs, and worktrees
 
-- [ ] **Step 1: Refresh remote refs**
+- [x] **Step 1: Refresh remote refs**
 
 Run:
 
@@ -62,25 +62,25 @@ git fetch --all --prune
 
 Expected: fetch succeeds; no working-tree files change.
 
-- [ ] **Step 2: Re-sweep task IDs across every ref and worktree**
+- [x] **Step 2: Re-sweep task IDs across every ref and worktree**
 
 Run the numeric, NUL-safe sweep from `backlog/docs/lessons-backlog-hygiene.md`. Include both `refs/remotes` and `refs/heads`, then inspect every path from `git worktree list --porcelain`. Never assign zsh's special lowercase `path` variable.
 
 Expected: one numeric maximum from refs and one from worktrees. Allocate eight consecutive IDs strictly above the larger maximum.
 
-- [ ] **Step 3: Re-sweep ADR IDs and existing programme titles**
+- [x] **Step 3: Re-sweep ADR IDs and existing programme titles**
 
 Run the equivalent NUL-safe scan for `backlog/decisions/<number>-*.md`. Search all ref task filenames and the current tree for `Actor Pack`, `Persona Visual`, `Persona Buddy`, `Shared Visual Identity`, and `streaming emote` duplicates.
 
 Expected: two unused ADR numbers above the larger all-ref/all-worktree ADR ceiling; no task already covers an approved programme increment.
 
-- [ ] **Step 4: Probe the Backlog CLI allocator without trusting it**
+- [x] **Step 4: Probe the Backlog CLI allocator without trusting it**
 
 Create one unmistakable throwaway task with `backlog task create`, read the generated filename, and remove that probe before any real task is filed. If the CLI's proposed ID is not above the swept maximum, keep the swept allocation and use the generated task only as a formatting template.
 
 Expected: no probe file remains in `backlog/tasks/`.
 
-- [ ] **Step 5: Record the final allocation**
+- [x] **Step 5: Record the final allocation**
 
 Replace the provisional values in this plan's allocation table with the freshly
 allocated values, then replace every corresponding `<ADR_*_ID>` and `<TASK_*_ID>`
@@ -88,7 +88,7 @@ symbol throughout this plan's paths, dependencies, commands, and link instructio
 Use whole-document searches to prove no dynamic ID symbol remains. Do not carry any
 “next safe ID” beyond this filing session.
 
-- [ ] **Step 6: Verify allocation uniqueness**
+- [x] **Step 6: Verify allocation uniqueness**
 
 Run whole-repo and all-ref searches for every chosen ADR/task ID before creating files.
 
@@ -97,7 +97,7 @@ Expected: zero pre-existing matches for all ten chosen IDs.
 ### Task 2: Write the portable Actor Pack and Persona Visual ADR
 
 **Files:**
-- Create: `backlog/decisions/<ADR_PACK_ID>-portable-actor-packs-and-local-persona-visual-runtime.md`
+- Create: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
 - Reference: `Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md`
 - Reference: `backlog/decisions/067-bundled-samira-visual-identity-pack.md`
 
@@ -130,7 +130,7 @@ Run:
 
 ```bash
 git diff --check
-rg -n "TBD|TODO|PLACEHOLDER|<ADR_|<TASK_" backlog/decisions/<ADR_PACK_ID>-portable-actor-packs-and-local-persona-visual-runtime.md
+rg -n "TBD|TODO|PLACEHOLDER|<ADR_|<TASK_" backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 ```
 
 Expected: diff check passes; placeholder search returns no matches.
@@ -138,14 +138,14 @@ Expected: diff check passes; placeholder search returns no matches.
 - [ ] **Step 5: Commit the ADR**
 
 ```bash
-git add backlog/decisions/<ADR_PACK_ID>-portable-actor-packs-and-local-persona-visual-runtime.md
+git add backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 git commit -m "docs: decide portable actor pack architecture"
 ```
 
 ### Task 3: Write the durable character emote ADR
 
 **Files:**
-- Create: `backlog/decisions/<ADR_EMOTE_ID>-durable-character-emote-metadata.md`
+- Create: `backlog/decisions/075-durable-character-emote-metadata.md`
 - Reference: `backlog/decisions/067-bundled-samira-visual-identity-pack.md`
 - Reference: `Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md`
 
@@ -175,14 +175,14 @@ State explicitly that this ADR amends ADR-067's session-only message boundary wi
 Run `git diff --check`, placeholder search, and then:
 
 ```bash
-git add backlog/decisions/<ADR_EMOTE_ID>-durable-character-emote-metadata.md
+git add backlog/decisions/075-durable-character-emote-metadata.md
 git commit -m "docs: decide durable character emote metadata"
 ```
 
 ### Task 4: File Task 1 — local Persona Visual foundation
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_PERSONA_FOUNDATION_ID> - Add-local-Persona-Visual-pack-foundation.md`
+- Create: `backlog/tasks/task-19053 - Add-local-Persona-Visual-pack-foundation.md`
 
 - [ ] **Step 1: Create the task through Backlog.md**
 
@@ -214,11 +214,11 @@ Re-read the file directly and through `backlog task list --plain`; confirm eight
 ### Task 5: File Task 2 — Persona Visual authoring and import
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_PERSONA_AUTHORING_ID> - Author-and-import-Persona-Visual-packs.md`
+- Create: `backlog/tasks/task-19054 - Author-and-import-Persona-Visual-packs.md`
 
 - [ ] **Step 1: Create the task with dependency on Task 1**
 
-Status `To Do`, priority `high`, dependency `<TASK_PERSONA_FOUNDATION_ID>`, references to the spec and portable-pack ADR.
+Status `To Do`, priority `high`, dependency `TASK-19053`, references to the spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
 
@@ -242,11 +242,11 @@ Confirm dependency and eight ACs through direct read plus `backlog task list --p
 ### Task 6: File Task 3 — floating Persona Buddy
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_BUDDY_ID> - Add-opt-in-app-wide-floating-Persona-Buddy.md`
+- Create: `backlog/tasks/task-19055 - Add-opt-in-app-wide-floating-Persona-Buddy.md`
 
 - [ ] **Step 1: Create the task with dependency on Task 1**
 
-Status `To Do`, priority `high`, dependency `<TASK_PERSONA_FOUNDATION_ID>`, references
+Status `To Do`, priority `high`, dependency `TASK-19053`, references
 to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
@@ -271,7 +271,7 @@ Confirm eight ACs, one dependency, and no Implementation Plan/Notes; commit only
 ### Task 7: File Task 4 — Shared Visual Identity for Personas
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_PERSONA_SVI_ID> - Enable-Shared-Visual-Identity-for-Persona-actors.md`
+- Create: `backlog/tasks/task-19056 - Enable-Shared-Visual-Identity-for-Persona-actors.md`
 
 - [ ] **Step 1: Create the task against the merged ADR-067 foundation**
 
@@ -299,7 +299,7 @@ Confirm dependency on `TASK-16319`, eight ACs, and exact ADR links; commit only 
 ### Task 8: File Task 5 — Actor Pack format, identity, and creation
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_ACTOR_FOUNDATION_ID> - Define-and-create-portable-Actor-Packs.md`
+- Create: `backlog/tasks/task-19057 - Define-and-create-portable-Actor-Packs.md`
 
 - [ ] **Step 1: Create the independent foundation task**
 
@@ -327,11 +327,11 @@ Confirm empty dependencies, eight ACs, and no premature export/import implementa
 ### Task 9: File Task 6 — Actor Pack export
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_ACTOR_EXPORT_ID> - Export-self-contained-Actor-Packs.md`
+- Create: `backlog/tasks/task-19058 - Export-self-contained-Actor-Packs.md`
 
 - [ ] **Step 1: Create the task with Tasks 1, 4, and 5 dependencies**
 
-Status `To Do`, priority `high`, dependencies `<TASK_PERSONA_FOUNDATION_ID>`, `<TASK_PERSONA_SVI_ID>`, and `<TASK_ACTOR_FOUNDATION_ID>`.
+Status `To Do`, priority `high`, dependencies `TASK-19053`, `TASK-19056`, and `TASK-19057`.
 Add references to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
@@ -356,11 +356,11 @@ Confirm the three exact dependencies and eight ACs; commit only this task file.
 ### Task 10: File Task 7 — Actor Pack import and activation
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_ACTOR_IMPORT_ID> - Import-review-and-activate-Actor-Packs.md`
+- Create: `backlog/tasks/task-19059 - Import-review-and-activate-Actor-Packs.md`
 
 - [ ] **Step 1: Create the task with Tasks 1, 3, 4, 5, and 6 dependencies**
 
-Status `To Do`, priority `high`, dependencies `<TASK_PERSONA_FOUNDATION_ID>`, `<TASK_BUDDY_ID>`, `<TASK_PERSONA_SVI_ID>`, `<TASK_ACTOR_FOUNDATION_ID>`, and `<TASK_ACTOR_EXPORT_ID>`.
+Status `To Do`, priority `high`, dependencies `TASK-19053`, `TASK-19055`, `TASK-19056`, `TASK-19057`, and `TASK-19058`.
 Add references to the programme spec and portable-pack ADR.
 
 - [ ] **Step 2: Set the description**
@@ -385,7 +385,7 @@ Confirm five exact dependencies and eight ACs; commit only this task file.
 ### Task 11: File Task 8 — server-parity streaming emotes
 
 **Files:**
-- Create: `backlog/tasks/task-<TASK_EMOTE_ID> - Match-server-streaming-emotes-and-persistence.md`
+- Create: `backlog/tasks/task-19060 - Match-server-streaming-emotes-and-persistence.md`
 
 - [ ] **Step 1: Create the independent emote task**
 
