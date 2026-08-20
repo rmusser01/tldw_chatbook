@@ -1,6 +1,6 @@
 # ADR-069: Keep Console project-instruction state local and prepare tool context before security review
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-20
 Related Task: Implementation tasks will be created from the approved design during planning.
 Supersedes: ADR-068

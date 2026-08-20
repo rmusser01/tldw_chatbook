@@ -1,6 +1,6 @@
 # ADR-068: Treat repository instructions as ephemeral path-aware Console context
 
-Status: Accepted
+Status: Superseded by ADR-069
 Date: 2026-08-20
 Related Task: Implementation tasks will be created from the approved design during planning.
 Supersedes: N/A
@@ -9,8 +9,8 @@ Supersedes: N/A
 > conversation metadata could not own device-local binding state, mutable
 > binding IDs could not detect retargeting alone, and the existing
 > security-review callback should not absorb optional context preparation.
-> Proposed [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
-> will supersede this decision if accepted.
+> Accepted [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+> supersedes this decision.
 
 ## Decision
 
