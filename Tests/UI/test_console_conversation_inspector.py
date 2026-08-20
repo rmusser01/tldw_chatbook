@@ -12,26 +12,33 @@ handed in at construction, same shape as ``ConsoleCostModal``/
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Collapsible, Static, TabPane
+from textual.widgets._collapsible import CollapsibleTitle
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
-from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRow, ConsoleCostRowTotals
+from tldw_chatbook.Chat.console_cost_tracker import (
+    ConsoleCostRow,
+    ConsoleCostRowTotals,
+    build_cost_rows,
+)
 from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     ConsoleConversationInspector,
     InspectorTurn,
 )
 
 
-def _row(index: int = 0) -> ConsoleCostRow:
+def _row(index: int = 0, model: str = "m") -> ConsoleCostRow:
     return ConsoleCostRow(
         index=index,
         role="assistant",
-        model="m",
+        model=model,
         uncached_input=10,
         cache_read=0,
         cache_write=0,
@@ -96,6 +103,20 @@ class InspectorHarness(App):
         self.push_screen(ConsoleConversationInspector(**self._modal_kwargs))
 
 
+def _rendered_title(collapsible: Collapsible) -> str:
+    """Plain text of a Collapsible's ACTUAL rendered title label.
+
+    Review finding 1/2: ``Collapsible.title`` alone can't reveal markup
+    mangling -- Textual parses a Collapsible's title as markup by default
+    (``CollapsibleTitle.__init__`` -> ``Content.from_text(label)``, whose
+    ``markup`` default is ``True``), so a raw ``"x" in collapsible.title``
+    assertion would still pass even if the label had been silently eaten
+    or had raised. Reading the mounted ``CollapsibleTitle`` widget's own
+    ``.label.plain`` is what actually appears on screen.
+    """
+    return collapsible.query_one(CollapsibleTitle).label.plain
+
+
 async def _wait_until(
     pilot: object, predicate: Callable[[], bool], attempts: int = 30
 ) -> None:
@@ -138,11 +159,59 @@ async def test_costs_rows_render_and_totals() -> None:
         collapsibles = list(rows_container.query(Collapsible))
         assert len(collapsibles) == 1
         # Reuses ConsoleCostModal._format_row's exact format (Step 3 moves
-        # it here verbatim).
-        assert "in:10" in collapsibles[0].title
+        # it here verbatim). Asserts on the RENDERED label, not the raw
+        # ``.title`` attribute -- see ``_rendered_title``'s docstring.
+        assert "in:10" in _rendered_title(collapsibles[0])
 
         totals = modal.query_one("#console-inspector-costs-totals", Static)
         assert "15 tokens" in str(totals.renderable)
+
+
+@pytest.mark.asyncio
+async def test_collapsible_title_is_not_markup_parsed() -> None:
+    """Regression pin (review finding 1): a Collapsible's title IS
+    markup-parsed by Textual unless built with ``Content.from_text(...,
+    markup=False)``. Proven against installed Textual: a model id
+    containing ``"[test]"`` was silently eaten to an empty label, and one
+    containing ``"[/]"`` raised ``MarkupError`` inside ``compose()``,
+    taking the whole modal down with it (``ConsoleCostModal`` avoided this
+    by rendering the same string through ``Static(..., markup=False)``;
+    the move to a ``Collapsible`` title dropped that guard).
+
+    Two rows: one whose model contains ``"[test]"`` (must survive intact
+    in the rendered label, not be eaten), one whose model contains
+    ``"[/]"`` (the modal opening at all, with no exception, is the proof
+    the row didn't raise)."""
+    eatable_row = _row(index=0, model="model-[test]")
+    raising_row = _row(index=1, model="model-[/]")
+
+    app = InspectorHarness(
+        **_default_kwargs(
+            rows=[eatable_row, raising_row],
+            turns=[
+                _turn(index=0, message_id="p1", native_message_id="n1"),
+                _turn(index=1, message_id="p2", native_message_id="n2"),
+            ],
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        rows_container = modal.query_one(
+            "#console-inspector-costs-rows", VerticalScroll
+        )
+        collapsibles = {c.id: c for c in rows_container.query(Collapsible)}
+        assert set(collapsibles) == {
+            "console-inspector-cost-row-0",
+            "console-inspector-cost-row-1",
+        }
+
+        eaten_title = _rendered_title(collapsibles["console-inspector-cost-row-0"])
+        assert "model-[test]" in eaten_title
+
+        raising_title = _rendered_title(collapsibles["console-inspector-cost-row-1"])
+        assert "model-[/]" in raising_title
 
 
 @pytest.mark.asyncio
@@ -198,7 +267,66 @@ async def test_no_capture_recorded_row() -> None:
         await _wait_until(pilot, _has_body_text)
 
 
-def _capture(run_tag: str, seq: int, created_at: str, model: str) -> ExchangeCapture:
+@pytest.mark.asyncio
+async def test_loader_failure_shows_a_distinct_message_and_allows_retry() -> None:
+    """Review finding 3: an ``exchanges_loader`` exception (e.g.
+    ``get_message_exchanges`` raising ``CharactersRAGDBError``) must NOT be
+    folded into the "no captures" empty state -- that would permanently
+    misreport a transient failure as "this turn was never captured", with
+    no way to retry short of reopening the whole modal. It renders a
+    DISTINCT message, and the row is un-marked as loaded so a
+    collapse/re-expand tries again."""
+    calls = 0
+
+    async def flaky_loader(
+        _native_message_id: str,
+    ) -> list[tuple[ExchangeCapture, bool]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("boom")
+        return []
+
+    app = InspectorHarness(**_default_kwargs(exchanges_loader=flaky_loader))
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        collapsible = modal.query_one("#console-inspector-cost-row-0", Collapsible)
+        collapsible.collapsed = False
+
+        def _shows_failure_message() -> bool:
+            return any(
+                "Could not load captures for this turn" in str(static.renderable)
+                for static in collapsible.query(Static)
+            )
+
+        await _wait_until(pilot, _shows_failure_message)
+        assert calls == 1
+
+        # Distinct wording from the genuine "no captures" empty state --
+        # a caller must be able to tell "failed, retry" apart from
+        # "there really is nothing here".
+        texts = [str(s.renderable) for s in collapsible.query(Static)]
+        assert not any("No capture recorded for this turn" in t for t in texts)
+
+        # Collapse/re-expand retries -- the failed row was NOT permanently
+        # marked as loaded (contrast with test_loader_called_lazily_only_
+        # on_expand's success case, which must NOT retry).
+        collapsible.collapsed = True
+        await pilot.pause()
+        collapsible.collapsed = False
+
+        await _wait_until(pilot, lambda: calls == 2)
+
+
+def _capture(
+    run_tag: str,
+    seq: int,
+    created_at: str,
+    model: str,
+    usage_json: str | None = None,
+) -> ExchangeCapture:
     return ExchangeCapture(
         run_tag=run_tag,
         seq=seq,
@@ -209,9 +337,40 @@ def _capture(run_tag: str, seq: int, created_at: str, model: str) -> ExchangeCap
         request={},
         response={},
         status="complete",
-        usage_json=None,
+        usage_json=usage_json,
         omitted_keys=(),
     )
+
+
+def test_call_cost_line_prices_through_the_same_path_as_build_cost_rows() -> None:
+    """Review finding 6 (closing item): pins the "same pricing path as
+    ``build_cost_rows``" guarantee with an actual test rather than just
+    code reading. Builds a real, catalog-priced ``ProviderUsage`` for a
+    known model, prices an equivalent row through ``build_cost_rows``, and
+    asserts ``ConsoleConversationInspector._call_cost_line`` on a capture
+    carrying that SAME usage (serialized to JSON, as a real capture would
+    store it) reproduces the identical dollar figure -- not a hardcoded
+    price, so this stays correct even if the catalog's rates change."""
+    usage = ProviderUsage(
+        uncached_input=1000,
+        output=500,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    row_message = SimpleNamespace(content="hi", usage=usage, role="assistant")
+    [priced_row] = build_cost_rows(
+        [row_message], provider="anthropic", model="claude-sonnet-4-6"
+    )
+    assert priced_row.cost_usd is not None  # sanity: this model IS priced
+
+    capture = _capture(
+        "run-1", 1, "2026-08-20T10:00:00Z", "claude-sonnet-4-6", usage.to_json()
+    )
+
+    line = ConsoleConversationInspector._call_cost_line(capture)
+
+    assert line == f"${priced_row.cost_usd:.4f}"
+    assert line != "unpriced"
 
 
 @pytest.mark.asyncio

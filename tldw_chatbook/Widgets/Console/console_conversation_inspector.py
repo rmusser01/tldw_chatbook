@@ -45,6 +45,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widget import Widget
@@ -234,7 +235,16 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             return [Static("No priced or estimated messages yet.", markup=False)]
         return [
             Collapsible(
-                title=self._format_row(row),
+                # Unlike Static, Collapsible's title IS markup-parsed
+                # (CollapsibleTitle.__init__ -> Content.from_text(label),
+                # whose `markup` default is True) -- a model id containing
+                # "[test]" would render mangled and one containing "[/]"
+                # raises MarkupError inside compose(), taking the whole
+                # modal down with it. Content.from_text(..., markup=False)
+                # is the literal-text escape hatch; it accepts a Content
+                # unmodified too, so this is safe even if a future edit
+                # hands it one.
+                title=Content.from_text(self._format_row(row), markup=False),
                 collapsed=True,
                 id=f"{_COST_ROW_ID_PREFIX}{row.index}",
                 classes="console-inspector-cost-row",
@@ -330,7 +340,17 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
         Re-sorts by ``(created_at, seq)`` -- never trusts the loader's own
         order (see the module docstring's ordering note).
+
+        A loader failure (e.g. ``get_message_exchanges`` raising
+        ``CharactersRAGDBError``) is NOT folded into the "no captures"
+        empty state -- that would permanently misreport a transient DB
+        error as "this turn was never captured", with no way to retry
+        short of reopening the whole modal (``_loaded_row_indices`` gates
+        re-fetching on re-expand). Instead it renders a distinct message
+        and un-marks the row as loaded so collapsing/re-expanding tries
+        again.
         """
+        load_failed = False
         try:
             pairs = await self._exchanges_loader(turn.native_message_id)
         except Exception:
@@ -339,12 +359,30 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 turn.native_message_id,
             )
             pairs = []
+            load_failed = True
 
+        # Both mount-state checks precede the query/mount below -- querying
+        # or mounting into a Collapsible (or its Contents) that has already
+        # left the DOM (e.g. this worker outlived a modal dismiss) would be
+        # at best wasted work and at worst an error.
+        if not collapsible.is_mounted:
+            return
         try:
             contents = collapsible.query_one(Collapsible.Contents)
         except NoMatches:
             return
-        if not collapsible.is_mounted:
+        if not contents.is_mounted:
+            return
+
+        if load_failed:
+            self._loaded_row_indices.discard(turn.index)
+            await contents.mount(
+                Static(
+                    "Could not load captures for this turn -- expand again "
+                    "to retry.",
+                    markup=False,
+                )
+            )
             return
 
         if not pairs:
