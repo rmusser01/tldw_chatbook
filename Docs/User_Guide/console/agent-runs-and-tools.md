@@ -301,6 +301,84 @@ by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
 that run. It supports notes and Review exactly like a turn's own card.
 
+#### The rail's Changed-files section
+
+Turn file cards only show one turn at a time. To see everything a
+conversation has changed, look for the **Changed files** section in the
+Inspector (right rail) — a quiet-framed section sitting between the
+retrieval Scope row and the run inspector. It lists the conversation's
+changed files across **every** turn, one row per file, latest state only:
+status glyph, cell-elided path, that file's `+A −D`, and a `✎ N` badge
+when the file carries notes.
+
+The header names the honesty rule directly — `Changed files (N) · latest
+turn deltas +A −D` — because the per-row and header counts are each
+file's **newest** covering turn's own deltas, never a cumulative total
+across the conversation. The list caps at 12 rows; past that, a
+`+N more — open Review` tail line names the rest instead of growing the
+rail without bound. If retention pruned a turn's snapshot history, a dim
+`history pruned for N turns` line appears below the list rather than
+hiding the gap. A conversation that hasn't touched a file yet renders no
+header and no empty box at all.
+
+The section is never computed on the rail's regular sync tick — the same
+cached-summary discipline the dictionary/world-book rail sections already
+use. An off-thread worker recomputes only when the conversation switches
+or a new turn's marker message appears (an in-memory check, no DB read),
+and it re-derives incrementally, so only turns it hasn't already read
+cost a fresh git call. Saving or deleting a note anywhere — the card or
+the Review screen below — also forces one refresh so a stale `✎ N` badge
+never lingers.
+
+Set **`[console] changed_files_section`** in `config.toml` to `false` to
+turn the section off (default `true`): it's a pure presentation switch —
+off renders nothing and skips the recompute worker entirely.
+
+**Click a row** (or press Enter on it) to open the Review screen already
+focused on that exact file: its newest covering turn is selected and that
+file's diff loads immediately, pinned to the specific snapshot the row's
+counts came from — so two windows of the same run that happen to touch
+the same path never open to the wrong one.
+
+#### Leaving feedback on a diff line or the whole file
+
+Inside the Review screen, select a file in the tree and press **Enter**
+to focus its diff pane, then **↑/↓** move a line cursor over the
+rendered diff (Page Up/Down/Home/End keep scrolling natively — only
+up/down/`c`/Escape are reclaimed while the pane is focused). Press **`c`**
+to comment on the line under the cursor: a one-line input opens under the
+pane, **Enter** saves it, **Escape** cancels back to the pane. Press
+**`C`** — or the **Comment file** button next to the totals — to leave a
+comment on the whole file instead, regardless of where the cursor sits.
+The footer spells out the keys: `j/k files · Enter diff · c comment line
+· C comment file · Esc back`.
+
+Escape while the pane is focused moves focus to the changed-file tree
+rather than dismissing the screen — press Escape again from the tree to
+actually leave. That's deliberate: a stray Escape while reading a diff
+should never close the whole screen out from under you.
+
+A saved line comment appends a dim `● comment` marker to the end of its
+diff line, so it stays visible as you keep reading. The notes strip below
+the pane lists every note on the focused file — hunk notes from the
+card, file comments, and line comments together — each labeled by kind
+(`hunk`, `file`, or `line <index>`) ahead of its text. A note still
+pending carries a **✕** to delete it; once delivered to the agent the row
+shows `  · sent` instead and drops the delete control — delivered notes
+are the record, the same pending-vs-sent rule the card's hunk notes
+already follow.
+
+Line and file comments join the exact same auto-attach delivery loop as
+hunk notes: everything still pending goes out on your next agent-runtime
+send under the "Diff feedback from the user" heading, gets stamped and
+disclosed the same way, and survives session resume identically. The
+disclosure line is kind-aware — a hunk note still reads `📝 Diff feedback
+attached — a.py @@ -1,4 +1,6 @@: "note"`; a whole-file comment reads
+`📝 Diff feedback attached — a.py (whole file): "note"`; and a line
+comment reads `📝 Diff feedback attached — a.py @@ -1,4 +1,6 @@ line:
+"note"` — one line per note, oldest first, byte-identical whether you're
+watching it happen live or reading it back after a resume.
+
 ### Parallel sub-agents (the fleet)
 
 Sub-agents the supervisor spawns within a **single reply** no longer run one
@@ -1133,6 +1211,11 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   review](#change-review--reviewing-a-turns-file-changes) above, or the
   original plain-text marker row (default `true`, card on). No Settings UI
   switch.
+- **`[console] changed_files_section`** in `config.toml` — whether the
+  Inspector rail's cross-turn [Changed-files
+  section](#the-rails-changed-files-section) renders at all (default
+  `true`, on). A pure presentation switch: `false` renders nothing and
+  skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [MCP](../mcp.md) 🚧 — servers, tools, and permissions.
@@ -1369,3 +1452,30 @@ pending` and reached the child only after the round was answered;
 rail on the next sync; and closing the session cancelled its live child
 immediately. The rest of this page's content is unchanged from the prior
 stamps.*
+
+*The "Change review" section extended @ `4eb073f31` on
+`feat/console-review-rail` (based on dev @ `f00acbd8b`) — 2026-08-20
+(TASK-18060: the Inspector rail's cross-turn Changed-files section, its
+click-through into the Review screen, and the Review screen's
+diff-line/whole-file commenting. Every claim above checked against the
+shipped code — `Widgets/Console/console_changed_files_section.py`,
+`UI/Console_Modules/right_rail.py`'s mount point between the retrieval
+Scope row and the run inspector, `UI/Screens/chat_screen.py`'s
+cached-summary/guard machinery and `_open_change_review` opener, the
+`ChangeReviewDiffPane`/cursor/key-reclaim/comment-save/notes-strip code in
+`UI/Screens/change_review_screen.py`, and the kind-aware
+`render_diff_feedback_block`/`format_diff_feedback_disclosure` in
+`Chat/console_display_state.py` — then confirmed by the targeted sweep:
+`Tests/Chat/test_change_notes_db.py`,
+`Tests/Chat/test_console_conversation_files.py`,
+`Tests/Chat/test_console_diff_hunks.py`,
+`Tests/Chat/test_console_diff_feedback_delivery.py`,
+`Tests/UI/test_change_review_screen.py`,
+`Tests/UI/test_console_changed_files_section.py`,
+`Tests/UI/test_console_changed_files_wiring.py`,
+`Tests/UI/test_console_turn_file_card_notes.py`,
+`Tests/UI/test_console_turn_file_card.py`,
+`Tests/UI/test_console_turn_file_card_factory.py`, and
+`Tests/Chat/test_console_agent_bridge.py`, 414 passed — again a docs-only
+pass against shipped code and the whole-suite test run, not an
+interactive live-tmux walkthrough.)*

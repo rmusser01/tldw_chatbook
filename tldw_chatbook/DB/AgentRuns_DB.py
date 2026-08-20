@@ -53,7 +53,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 11
+    _CURRENT_SCHEMA_VERSION = 12
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -338,7 +338,34 @@ class AgentRunsDB(BaseDB):
                     -- NULL for legacy rows saved before this column
                     -- existed; the card falls back to hunk_index+
                     -- hunk_header matching for those.
-                    snapshot_id INTEGER
+                    snapshot_id INTEGER,
+                    -- v12 (TASK-18060 Task 1, review-rail spec §4): anchor
+                    -- kind + diff-line anchoring, for the Review screen's
+                    -- plannotator-style comments alongside the card's
+                    -- existing hunk notes. 'hunk' is every pre-v11 row's
+                    -- true, honest kind (nothing else existed before this
+                    -- column), so the DEFAULT both back-declares existing
+                    -- rows correctly and keeps every V1.5 caller (which
+                    -- never passes anchor_kind) byte-compatible.
+                    -- diff_line_index is 0-based over the file's FULL diff
+                    -- text (same semantics as hunk_index, a distinct
+                    -- axis), NULL except for 'diff_line' rows.
+                    -- diff_line_text is the anchored line, captured
+                    -- verbatim at note-creation time -- same retention
+                    -- posture as hunk_excerpt (self-contained even after
+                    -- shadow-repo snapshot pruning), NULL except for
+                    -- 'diff_line' rows. For 'diff_line' rows the hunk
+                    -- fields ABOVE are ALSO populated (the hunk the line
+                    -- falls in) -- a deliberate convergence so the card's
+                    -- existing hunk-note filter renders line comments
+                    -- under their hunk with no card changes. For 'file'
+                    -- rows (whole-file comments) hunk_index=-1,
+                    -- hunk_header='', hunk_excerpt='' -- sentinels that
+                    -- can never match a real hunk, keeping them out of
+                    -- the card's hunk-note filter.
+                    anchor_kind TEXT NOT NULL DEFAULT 'hunk',
+                    diff_line_index INTEGER,
+                    diff_line_text TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_change_notes_pending
                     ON change_notes(run_id) WHERE delivered_at IS NULL;
@@ -444,6 +471,28 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER"
                 )
+            # v10->v11 (TASK-18060 Task 1, review-rail spec §4): a file
+            # created while change_notes existed but before the anchor-kind
+            # extension did keeps its old 12-column table -- same
+            # idempotent-ALTER mechanism as every column above. The
+            # DEFAULT 'hunk' on anchor_kind is what makes every row written
+            # before this column existed read as 'hunk' -- truthfully, since
+            # 'hunk' was the only kind that could ever have been written.
+            # No DEFAULT on the two diff_line_* columns: every pre-existing
+            # row correctly reads as NULL (not a diff_line note).
+            if "anchor_kind" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN "
+                    "anchor_kind TEXT NOT NULL DEFAULT 'hunk'"
+                )
+            if "diff_line_index" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
+                )
+            if "diff_line_text" not in note_columns:
+                conn.execute(
+                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -474,6 +523,13 @@ class AgentRunsDB(BaseDB):
             # the from-now-on contract).
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (11)"
+            )
+            # v12: change_notes anchor kinds (TASK-18060 Task 1) --
+            # renumbered from 11 at rebase time: task-15669 minted v11 on
+            # dev concurrently, and the from-now-on contract requires each
+            # migration to own a fresh number AND bump the constant.
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (12)"
             )
 
     def record_change_snapshot(
@@ -669,23 +725,43 @@ class AgentRunsDB(BaseDB):
         hunk_excerpt: str,
         note: str,
         snapshot_id: int | None = None,
+        anchor_kind: str = "hunk",
+        diff_line_index: int | None = None,
+        diff_line_text: str | None = None,
     ) -> int:
-        """Record a user-authored note anchored to one hunk of a turn's diff.
+        """Record a user-authored note anchored to a turn's diff.
 
-        TASK-16800 (spec §1). The anchor is ``(run_id, root, path,
+        TASK-16800 (spec §1), anchor kinds extended by TASK-18060 Task 1
+        (review-rail spec §4). The base anchor is ``(run_id, root, path,
         hunk_index, hunk_header)``; ``hunk_excerpt`` is captured once, at
-        note-creation time, from the full diff text the card already has
+        note-creation time, from the full diff text the caller already has
         -- it is the retention safety net that keeps display and delivery
         self-contained even after shadow-repo snapshot pruning.
+
+        Three anchor kinds share this table (spec §4):
+
+        - ``"hunk"`` (default, V1.5): anchored to a whole hunk, exactly as
+          before this method gained the new keywords.
+        - ``"diff_line"``: anchored to one line of the file's full diff
+          text via ``diff_line_index``/``diff_line_text``, with the hunk
+          fields ALSO populated (the hunk the line falls in) -- a
+          deliberate convergence so the card's existing hunk-note filter
+          renders line comments under their hunk with no card changes.
+        - ``"file"``: a whole-file comment; callers pass the
+          ``hunk_index=-1, hunk_header=''`` sentinels (and typically
+          ``hunk_excerpt=''``) so the row can never match a real hunk.
 
         Args:
             run_id: The agent run whose diff this note is anchored to.
             root: Canonical root path of the changed file.
             path: The changed file's path (root-relative).
-            hunk_index: 0-based index of the hunk over the FULL diff.
-            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim.
+            hunk_index: 0-based index of the hunk over the FULL diff, or
+                ``-1`` for a ``"file"`` note's sentinel.
+            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim,
+                or ``""`` for a ``"file"`` note's sentinel.
             hunk_excerpt: The hunk body captured at note time (already
-                capped/elided by the caller).
+                capped/elided by the caller), or ``""`` for a ``"file"``
+                note.
             note: The user's note text.
             snapshot_id: The owning ``change_snapshots`` row's own DB
                 ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
@@ -699,6 +775,17 @@ class AgentRunsDB(BaseDB):
                 encodes only positions/counts, never content). ``None``
                 (the default) only by callers that predate this column or
                 have no snapshot row to anchor to.
+            anchor_kind: ``"hunk"`` (default), ``"file"``, or
+                ``"diff_line"`` (TASK-18060 Task 1). The default keeps
+                every V1.5 caller of this method byte-compatible.
+            diff_line_index: 0-based index over the file's FULL diff text
+                (a distinct axis from ``hunk_index``'s hunk-count
+                semantics), required for ``"diff_line"`` notes and
+                ``None`` otherwise.
+            diff_line_text: The anchored line, captured verbatim at
+                note-creation time -- same retention posture as
+                ``hunk_excerpt`` -- required for ``"diff_line"`` notes and
+                ``None`` otherwise.
 
         Returns:
             The newly created note's row id.
@@ -709,8 +796,9 @@ class AgentRunsDB(BaseDB):
                 INSERT INTO change_notes
                     (run_id, root, path, hunk_index, hunk_header,
                      hunk_excerpt, note, created_at, delivered_at,
-                     snapshot_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                     snapshot_id, anchor_kind, diff_line_index,
+                     diff_line_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -722,6 +810,9 @@ class AgentRunsDB(BaseDB):
                     note,
                     _now_iso(),
                     snapshot_id,
+                    anchor_kind,
+                    diff_line_index,
+                    diff_line_text,
                 ),
             )
             return int(cursor.lastrowid)
@@ -789,6 +880,44 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def change_note_counts_for_conversation(
+        self, conversation_id: str
+    ) -> dict[tuple[str, str], int]:
+        """Per-file note counts across a conversation's whole history.
+
+        TASK-18060 Task 1 (review-rail spec §1/§4): the cross-turn "Changed
+        files" rail section badges each file with a ``✎ N`` note count.
+        Mirrors :meth:`pending_notes_for_conversation`'s JOIN-through-
+        ``agent_runs`` shape (``agent_runs`` is the one source of truth for
+        which conversation a run belongs to), but counts ALL of the
+        conversation's notes -- pending and delivered alike, every anchor
+        kind -- grouped by ``(root, path)`` in one parameterized query
+        (no N+1 per file).
+
+        Args:
+            conversation_id: The Console conversation id.
+
+        Returns:
+            ``{(root, path): count}`` over every note across every run of
+            the conversation. A ``(root, path)`` with zero notes is simply
+            absent from the dict.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cn.root, cn.path, COUNT(*) AS note_count
+                FROM change_notes cn
+                JOIN agent_runs ar ON ar.id = cn.run_id
+                WHERE ar.conversation_id = ?
+                GROUP BY cn.root, cn.path
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return {
+            (str(row["root"]), str(row["path"])): int(row["note_count"])
+            for row in rows
+        }
 
     def delivered_notes_for_conversation(self, conversation_id: str) -> list[dict]:
         """Return a conversation's delivered notes, oldest first.

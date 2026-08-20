@@ -314,6 +314,7 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
     ConsoleStagedContextState,
     ConsoleStagedEvidenceStripState,
+    ConversationFileEntry,
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
@@ -432,6 +433,8 @@ from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfi
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
+    ConsoleChangedFilesSection,
+    ConsoleChangedFilesState,
     ConsoleCitationSourcesModal,
     ConsoleComposerBar,
     ConsoleComposerUndoHistory,
@@ -560,6 +563,7 @@ from ...Widgets.Console.console_rewind_modal import (
     RewindPromptRow,
 )
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
+from ...Workspaces.change_tracking import ChangedFile
 from ...Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
@@ -813,6 +817,16 @@ CONSOLE_REALTIME_READY_TIMEOUT_SECONDS = 8.0
 #: The immutable writer may outlive this deadline, but never the screen-bound
 #: coordinator or its store/session presentation state.
 CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
+
+#: TASK-18060 Task 5 (review-rail spec §2): sentinel for "the changed-files
+#: conversation tracker has never been set" -- distinct from `None`, which
+#: is a real, valid conversation id state ("no active chat"). Used only to
+#: tell a genuine conversation SWITCH apart from a note-mutation-forced
+#: guard reset (`_last_console_changed_files_scope = None`): both leave the
+#: guard tuple looking like "never checked", but only the former should
+#: clear `_console_changed_files_summary` -- a note mutation on the SAME
+#: conversation must not flash the rail section empty.
+_CONSOLE_CHANGED_FILES_CONVERSATION_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -3857,6 +3871,59 @@ class ChatScreen(BaseAppScreen):
         # Sentinel distinct from any real `(conversation_id,)` tuple so the
         # first scope check always refreshes.
         self._last_console_world_book_scope_ids: tuple | None = None
+        # TASK-18060 Task 5 (review-rail spec §2): cached cross-turn
+        # "Changed files" summary for the active native Console session's
+        # conversation. Mirrors the dictionary/world-book caches above --
+        # `_build_console_changed_files_state` (and therefore the rail's
+        # `ConsoleChangedFilesSection`) reads ONLY this cache, never the
+        # DB/git directly, on compose or on the 0.2s sync tick.
+        # `_console_changed_files_pruned_rows` mirrors the summary's own
+        # retention-pruned-row count. Both are populated off-thread, by
+        # `_dispatch_console_changed_files_worker`'s `call_from_thread`
+        # landing -- unlike the dictionary/world-book caches, this recompute
+        # is a git subprocess PER snapshot row (spec §2's cost model), so it
+        # runs on a `thread=True` worker rather than an in-tick awaited
+        # `asyncio.to_thread`.
+        self._console_changed_files_summary: (
+            "tuple[ConversationFileEntry, ...] | None"
+        ) = None
+        self._console_changed_files_pruned_rows: int = 0
+        # Per-row git-diff memo (fix round, spec §2's stated per-row memo),
+        # keyed by the owning `change_snapshots` row's own DB id -- handed
+        # to `AgentRunsChangeReviewProvider.conversation_changed_files`'s
+        # `row_cache` param so a recompute only runs git for rows it has
+        # not seen before (a new turn costs its own rows' git calls, not
+        # the whole history's -- benchmarked at ~18ms/row-pair, ~900ms at
+        # turn 50 without this, quadratic cumulative across the
+        # conversation's lifetime). Cleared alongside the summary on a
+        # genuine conversation switch (row ids are globally unique, so this
+        # is hygiene, not correctness); deliberately NOT cleared by a
+        # note-mutation-forced guard reset -- the git content behind an
+        # already-seen row does not change when a note is added/deleted,
+        # only the notes join reruns.
+        self._console_changed_files_row_cache: "dict[int, list[ChangedFile]]" = {}
+        # Guard: `(conversation_id, newest change_review_run_id present in
+        # the message store)`. `_sync_console_changed_files_if_scope_changed`
+        # only dispatches the off-thread recompute when this tuple actually
+        # changes -- an unchanged scope costs nothing (no DB, no git) on
+        # every 0.2s tick. `None` is a sentinel distinct from any real scope
+        # tuple (including `(None, None)`, a real "no active chat" scope),
+        # matching the world-book cache's own "first check always
+        # refreshes" convention. Also reset to `None` by every app-side
+        # note-mutation path (the card's save/delete, the Review screen's
+        # dismissal callback) so the rail's `✎ N` badges never go stale --
+        # the guard tuple alone only moves on a NEW run.
+        self._last_console_changed_files_scope: (
+            "tuple[str | None, str | None] | None"
+        ) = None
+        # Tracks ONLY the conversation-id half, across resets that use the
+        # sentinel above -- distinguishes a genuine conversation switch
+        # (clears the summary) from a note-mutation-forced re-check on the
+        # SAME conversation (must not clear it). See
+        # `_CONSOLE_CHANGED_FILES_CONVERSATION_UNSET`'s docstring.
+        self._last_console_changed_files_conversation_id: Any = (
+            _CONSOLE_CHANGED_FILES_CONVERSATION_UNSET
+        )
         # P1g Task 5: guards the Console dictionary attach/detach picker
         # flow against a double-open (mirrors P1f's `_io_dialog_active`),
         # reset in a `finally` in both attach/detach workers.
@@ -12015,6 +12082,257 @@ class ChatScreen(BaseAppScreen):
             rows.append(ConsoleDisplayRow(name, value))
         return tuple(rows)
 
+    # -- Changed-files rail section (TASK-18060 Task 5, review-rail spec §2) -
+
+    @staticmethod
+    def _console_changed_files_section_enabled() -> bool:
+        """Whether `[console] changed_files_section` is on (default True).
+
+        OFF is a pure presentation toggle: the section renders nothing
+        (`_build_console_changed_files_state` returns an empty state) AND
+        the guard-gated recompute worker never dispatches.
+        """
+        return bool(get_cli_setting("console", "changed_files_section", True))
+
+    def _console_changed_files_scope(self) -> "tuple[str | None, str | None]":
+        """`(conversation_id, newest change_review_run_id)` -- the guard.
+
+        `conversation_id` is the same accessor the world-book/dictionary
+        caches use. `newest change_review_run_id` is found by scanning the
+        active session's own in-memory message list (no DB read) in
+        REVERSE, breaking on the first truthy `change_review_run_id`:
+        every change-summary TOOL marker carries `change_review_run_id`
+        (live-appended and resume-injected alike, both real store
+        messages -- see `ConsoleAgentBridge._append_change_markers` /
+        `resume_marker_messages`), and `messages_for_session` returns them
+        in transcript order, so the newest marker sits nearest the end of
+        the list -- markers cluster there in practice, so the reverse scan
+        with an early break makes steady-state cost near-constant instead
+        of walking the whole message list forward on every 0.2s sync tick
+        (worst case is still O(messages), when no message in the session
+        carries a marker at all).
+        """
+        conversation_id = self._current_console_rail_conversation_id()
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        newest_run_id: str | None = None
+        if store is not None and session_id:
+            try:
+                messages = store.messages_for_session(session_id)
+            except KeyError:
+                messages = ()
+            for message in reversed(messages):
+                run_id = getattr(message, "change_review_run_id", None)
+                if run_id:
+                    newest_run_id = str(run_id)
+                    break
+        return (conversation_id, newest_run_id)
+
+    def _build_console_changed_files_state(self) -> ConsoleChangedFilesState:
+        """Project the cached summary into the section's display state.
+
+        Reads ONLY `self._console_changed_files_summary` (and the config
+        gate) -- never the DB/git. `ConsoleChangedFilesSection` itself
+        renders nothing when the state is empty, so the config-OFF and
+        no-history cases both degrade to the same "nothing rendered"
+        outcome without any conditional mounting here.
+        """
+        if not self._console_changed_files_section_enabled():
+            return ConsoleChangedFilesState(entries=())
+        return ConsoleChangedFilesState(
+            entries=self._console_changed_files_summary or (),
+            pruned_rows=self._console_changed_files_pruned_rows,
+        )
+
+    def _sync_console_changed_files_section(self) -> None:
+        """Push the cached summary into the mounted section, in place."""
+        try:
+            section = self.query_one(
+                "#console-changed-files-section", ConsoleChangedFilesSection
+            )
+        except QueryError:
+            return
+        section.update_state(self._build_console_changed_files_state())
+
+    def _land_console_changed_files(
+        self, conversation_id: "str | None", entries: list, pruned_rows: int
+    ) -> None:
+        """Apply a worker's results -- iff its conversation is still live.
+
+        TASK-18060 final-review fix round (Fix 4c): `conversation_id` is
+        the scope this recompute was DISPATCHED for
+        (`_dispatch_console_changed_files_worker`'s caller already advances
+        `_last_console_changed_files_scope` to the new scope BEFORE
+        dispatching, so the guard alone can't be trusted to prove this
+        worker is still relevant by the time it lands). Textual's
+        exclusive worker group only guarantees the run_worker() call
+        cancels the PRIOR WORKER TASK -- a `call_from_thread` callback that
+        worker had already queued on the main loop before the cancellation
+        still runs. Without this check, a stale worker from an older
+        conversation landing late would overwrite a NEWER conversation's
+        summary and stick there until the guard happens to change again --
+        which may never come for a conversation with no further activity.
+
+        Args:
+            conversation_id: The conversation live at DISPATCH time.
+            entries: The recompute's cross-turn summary.
+            pruned_rows: How many rows retention pruned out of it.
+        """
+        if self._current_console_rail_conversation_id() != conversation_id:
+            logger.debug(
+                "Console changed-files: dropping a stale worker result for "
+                f"conversation {conversation_id!r} -- no longer current"
+            )
+            return
+        self._console_changed_files_summary = tuple(entries)
+        self._console_changed_files_pruned_rows = pruned_rows
+        self._sync_console_changed_files_section()
+
+    def _land_console_changed_files_empty(
+        self, conversation_id: "str | None"
+    ) -> None:
+        """The no-provider variant of `_land_console_changed_files`.
+
+        Same stale-conversation guard (Fix 4c) -- see that method's
+        docstring.
+
+        Args:
+            conversation_id: The conversation live at DISPATCH time.
+        """
+        if self._current_console_rail_conversation_id() != conversation_id:
+            logger.debug(
+                "Console changed-files: dropping a stale empty-land for "
+                f"conversation {conversation_id!r} -- no longer current"
+            )
+            return
+        self._console_changed_files_summary = ()
+        self._console_changed_files_pruned_rows = 0
+        self._sync_console_changed_files_section()
+
+    def _dispatch_console_changed_files_worker(
+        self, conversation_id: "str | None"
+    ) -> None:
+        """Fire the off-thread cross-turn changed-files recompute.
+
+        ONE `run_worker(thread=True, exclusive=True,
+        group="console-changed-files")` per guard change -- Textual's own
+        exclusive-group semantics cancel any prior in-flight recompute for
+        this screen, so no additional in-flight flag is needed (mirrors
+        `action_open_trajectory_view`'s `trajectory-launch` group). The
+        provider is acquired INSIDE the worker (fix round, self-review
+        finding: an earlier cut acquired it here, on the UI thread, before
+        this docstring's own claim was true) via the same
+        `_console_change_review_provider()` recipe the card/opener use --
+        confirmed cheap/pure enough for a worker thread (attribute reads
+        and dict lookups on already-constructed objects, no I/O of its
+        own) -- and the provider's own `conversation_changed_files()`
+        walks the conversation's entire snapshot history with a git
+        subprocess pair per UNSEEN row -- this must never run on the UI
+        thread (see that method's own docstring). `_console_changed_files_
+        row_cache` is handed through as `row_cache` so a row this screen
+        has already diffed once is reused rather than re-run.
+
+        A failure inside the worker (the provider raising, or a `None`
+        provider) is caught here and logged -- the summary/section keep
+        their LAST-KNOWN state (stale, not wrong) rather than the whole
+        0.2s sync tick's worker dying; the NEXT guard-triggered dispatch
+        (a new marker, a note mutation, a conversation switch) tries again
+        independently.
+
+        Args:
+            conversation_id: The conversation this dispatch is FOR (the
+                caller's own scope[0], captured before the guard moves on
+                to whatever scope is live when this worker eventually
+                lands) -- threaded through to `_land_console_changed_files`
+                /`_land_console_changed_files_empty` (Fix 4c) so a stale
+                landing can recognize itself and no-op.
+        """
+
+        def build_worker() -> None:
+            try:
+                provider = self._console_change_review_provider()
+                if provider is None:
+                    # No git / no persisted conversation -- an ordinary,
+                    # expected rail state, not an error: degrades to an
+                    # empty cache rather than leaving stale entries around.
+                    self.app.call_from_thread(
+                        self._land_console_changed_files_empty, conversation_id
+                    )
+                    return
+                entries, pruned_rows = provider.conversation_changed_files(
+                    row_cache=self._console_changed_files_row_cache
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Console changed-files recompute failed; the rail "
+                    "section keeps its last-known state."
+                )
+                return
+            self.app.call_from_thread(
+                self._land_console_changed_files,
+                conversation_id,
+                entries,
+                pruned_rows,
+            )
+
+        self.run_worker(
+            build_worker,
+            thread=True,
+            exclusive=True,
+            group="console-changed-files",
+        )
+
+    def _sync_console_changed_files_if_scope_changed(self) -> None:
+        """Recompute the changed-files summary only when the scope changed.
+
+        Mirrors `_refresh_active_world_books_summary_if_scope_changed`'s
+        guard shape, except the recompute is a `thread=True` worker (git
+        subprocess work, never awaited inline) rather than an in-tick
+        `asyncio.to_thread` await -- see
+        `_dispatch_console_changed_files_worker`.
+
+        Also the note-mutation invalidation hook: the card's save/delete
+        handlers and the Review-screen dismissal callback reset
+        `_last_console_changed_files_scope` to `None` and call this
+        directly (rather than merely waiting for a future idle tick, which
+        may never come once a run leaves the active statuses that keep the
+        0.2s poll ticking) so the rail's `✎ N` badges never go stale. That
+        reset must NOT be mistaken for a conversation switch -- see
+        `_last_console_changed_files_conversation_id`'s docstring for why a
+        separate tracker (not `prior is None`) decides that. It ALSO must
+        not clear `_console_changed_files_row_cache`: a note mutation
+        never changes a row's git diff, only the notes join reruns, so the
+        per-row memo survives untouched -- only a genuine conversation
+        switch clears it, below.
+        """
+        if not self._console_changed_files_section_enabled():
+            return
+        scope = self._console_changed_files_scope()
+        prior = self._last_console_changed_files_scope
+        if scope == prior:
+            return
+        conversation_changed = (
+            self._last_console_changed_files_conversation_id
+            is not _CONSOLE_CHANGED_FILES_CONVERSATION_UNSET
+            and scope[0] != self._last_console_changed_files_conversation_id
+        )
+        self._last_console_changed_files_scope = scope
+        self._last_console_changed_files_conversation_id = scope[0]
+        if conversation_changed:
+            # Hygiene (CLAUDE.md: clear caches on context switch) -- without
+            # this, the in-place sync below would flash the PRIOR
+            # conversation's file list for the tick(s) before the worker
+            # lands the new conversation's summary. Row ids are globally
+            # unique, so clearing the summary/row-cache here is hygiene
+            # (memory + freshness), not a correctness requirement (spec
+            # §2) -- a stale row-cache entry from another conversation
+            # could never collide with this one's row ids.
+            self._console_changed_files_summary = None
+            self._console_changed_files_pruned_rows = 0
+            self._console_changed_files_row_cache = {}
+            self._sync_console_changed_files_section()
+        self._dispatch_console_changed_files_worker(scope[0])
+
     def _console_dictionary_inspector_actions(
         self,
     ) -> tuple[ConsoleInspectorAction, ...]:
@@ -14154,6 +14472,7 @@ class ChatScreen(BaseAppScreen):
                     staged_context_state=staged_context_state,
                     retrieval_scope_state=retrieval_scope_state,
                     inspector_state=inspector_state,
+                    changed_files_state=self._build_console_changed_files_state(),
                     settings_summary_state=self._build_console_settings_summary_state(),
                     live_work_card_builder=(
                         lambda: (
@@ -16127,6 +16446,15 @@ class ChatScreen(BaseAppScreen):
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
             await self._character._refresh_active_character_avatar_if_scope_changed()
+            # TASK-18060 Task 5 (review-rail spec §2): same scope-guarded
+            # shape as the dictionary/world-book refreshes above, except the
+            # recompute itself is a fire-and-forget `thread=True` worker
+            # rather than an awaited `asyncio.to_thread` -- see
+            # `_dispatch_console_changed_files_worker`'s docstring for why.
+            # Placed before the control-bar sync below so a conversation
+            # switch's synchronous cache clear (spec §2 hygiene) is already
+            # visible when that sync reads `_build_console_changed_files_state`.
+            self._sync_console_changed_files_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
@@ -18342,7 +18670,13 @@ class ChatScreen(BaseAppScreen):
             )
         return provider
 
-    def _open_change_review(self, run_id: str | None = None) -> None:
+    def _open_change_review(
+        self,
+        run_id: str | None = None,
+        *,
+        initial_path: str | None = None,
+        initial_snapshot_id: int | None = None,
+    ) -> None:
         """Push the Change Review screen for the active conversation.
 
         TASK-1972. Honest empty states are the SCREEN's job: opening with no
@@ -18352,6 +18686,14 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             run_id: Turn to select on open; ``None`` opens the latest.
+            initial_path: TASK-18060 Task 5 (review-rail spec §2's
+                click-through recipe): the rail's own opener passes the
+                pressed row's file so the screen opens focused on it
+                instead of the turn's first leaf. ``None`` for every other
+                (pre-existing) caller -- byte-compatible default.
+            initial_snapshot_id: Paired with ``initial_path`` -- disambiguates
+                two windows of the SAME run covering the same path (spec
+                §2). ``None`` when the caller has no snapshot row to pin to.
         """
         provider = self._console_change_review_provider()
         if provider is None:
@@ -18364,10 +18706,43 @@ class ChatScreen(BaseAppScreen):
             ChangeReviewScreen,
         )
 
-        # initial_run_id rides the constructor: a post-push select_turn call
-        # raced the screen's own compose (NoMatches) -- caught by the opener
-        # wiring test.
-        self.app.push_screen(ChangeReviewScreen(provider, initial_run_id=run_id))
+        # initial_run_id/initial_path/initial_snapshot_id all ride the
+        # constructor: a post-push select_turn/select_file call raced the
+        # screen's own compose (NoMatches) -- caught by the opener wiring
+        # test (TASK-1972 / TASK-18060 Task 3).
+        self.app.push_screen(
+            ChangeReviewScreen(
+                provider,
+                initial_run_id=run_id,
+                initial_path=initial_path,
+                initial_snapshot_id=initial_snapshot_id,
+            ),
+            callback=self._on_console_change_review_dismissed,
+        )
+
+    def _on_console_change_review_dismissed(self, _result: Any = None) -> None:
+        """Reset the changed-files guard when the Review screen closes.
+
+        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation),
+        docstring corrected in the final-review fix round: Task 7 shipped
+        the Review screen's OWN note-mutation UI directly on
+        `ChangeReviewScreen` -- inline `c`/`C` comment creation and
+        per-note delete (`_open_comment_input`/`_save_comment_input`/
+        `_delete_review_note`). Unlike the turn file card's save/delete
+        handlers, which post `NotesChanged` and reset the guard
+        synchronously on EVERY mutation (see
+        `handle_console_turn_file_card_notes_changed`), the Review screen
+        posts nothing back to this screen while it is open -- a save or
+        delete there only refreshes its own notes strip in place. This
+        dismissal callback is therefore the ONLY point that invalidates
+        the rail's `✎ N` badges for anything mutated in-screen: it fires
+        once, when the screen closes, regardless of how many notes were
+        added or removed while it was up. Costs one extra guarded
+        recompute per screen close (cheap: the provider degrades
+        gracefully and the recompute is off-thread).
+        """
+        self._last_console_changed_files_scope = None
+        self._sync_console_changed_files_if_scope_changed()
 
     @on(Button.Pressed, "#console-inspector-review-changes")
     def handle_console_inspector_review_changes(self, event: Button.Pressed) -> None:
@@ -18388,6 +18763,38 @@ class ChatScreen(BaseAppScreen):
         """
         event.stop()
         self._open_change_review(event.run_id)
+
+    @on(ConsoleTurnFileCard.NotesChanged)
+    def handle_console_turn_file_card_notes_changed(
+        self, event: ConsoleTurnFileCard.NotesChanged
+    ) -> None:
+        """A card's note save/delete: reset the changed-files guard.
+
+        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation):
+        the guard tuple only moves on a NEW run, so without this the rail's
+        `✎ N` badges would go stale after a note is added or removed on an
+        already-reviewed turn.
+        """
+        event.stop()
+        self._last_console_changed_files_scope = None
+        self._sync_console_changed_files_if_scope_changed()
+
+    @on(ConsoleChangedFilesSection.FileSelected)
+    def handle_console_changed_files_selected(
+        self, event: ConsoleChangedFilesSection.FileSelected
+    ) -> None:
+        """A rail row press: open the Review screen scoped to that file.
+
+        TASK-18060 Task 5 (review-rail spec §2's click-through recipe):
+        the row already knows its exact identity -- no lookup needed,
+        mirroring the card's own `ReviewRequested` opener above.
+        """
+        event.stop()
+        self._open_change_review(
+            event.run_id,
+            initial_path=event.path,
+            initial_snapshot_id=event.snapshot_id,
+        )
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
@@ -18641,6 +19048,12 @@ class ChatScreen(BaseAppScreen):
         )
         if inspector is not None:
             inspector.sync_state(inspector_state)
+        # TASK-18060 Task 5: same in-place sync shape as the run inspector
+        # immediately above -- reads only the cached summary, never the
+        # DB/git (the guard-gated recompute lives in
+        # `_sync_console_changed_files_if_scope_changed`, called earlier
+        # this same tick by `_sync_native_console_chat_ui`).
+        self._sync_console_changed_files_section()
         self._sync_console_composer_action_state(
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()

@@ -211,6 +211,22 @@ class ConsoleTurnFileCard(Vertical):
             self.run_id = run_id
             super().__init__()
 
+    class NotesChanged(Message):
+        """A note was saved or deleted successfully on this card's run.
+
+        TASK-18060 Task 5 (review-rail spec §2's note-change invalidation):
+        the card mutates notes directly through its own provider (no prior
+        screen hook existed for either `_save_note` or `_delete_note`) --
+        the rail's `_console_changed_files_summary` cache has no other
+        signal that a note count changed, since its own guard tuple only
+        moves on a NEW run. The screen resets that guard on this message,
+        forcing one recompute so the rail's `✎ N` badges stay accurate.
+        """
+
+        def __init__(self, run_id: str) -> None:
+            self.run_id = run_id
+            super().__init__()
+
     def __init__(
         self,
         marker_text: str,
@@ -1090,6 +1106,11 @@ class ConsoleTurnFileCard(Vertical):
                 )
 
             note_id = await asyncio.to_thread(_write)
+            # TASK-18060 Task 5: posted unconditionally on a successful
+            # write, before the mounted-check below -- the note changed
+            # (and any rail cache needs invalidating) regardless of whether
+            # this card's own row still needs a UI update.
+            self.post_message(self.NotesChanged(self._run_id))
             if not note_input.is_mounted:
                 return
             notes_box = note_input.parent
@@ -1154,6 +1175,9 @@ class ConsoleTurnFileCard(Vertical):
                     severity="warning",
                 )
                 return
+            # TASK-18060 Task 5: posted only on an ACTUAL deletion (the
+            # early return above covers "already sent, nothing changed").
+            self.post_message(self.NotesChanged(self._run_id))
             for notes in self._notes_by_key.values():
                 notes[:] = [
                     note for note in notes if int(note.get("id", -1)) != int(note_id)
