@@ -62,8 +62,9 @@ The rejected alternatives were:
    operations in deeper paths.
 3. Apply the same rules to parent agents and subagents, including concurrent
    subagents.
-4. Keep instruction contents out of the conversation transcript, run database,
-   agent steps, persisted logs, and diagnostic logs.
+4. Keep automatically loaded instruction contents out of the conversation
+   transcript, run database, agent steps, persisted logs, diagnostic logs,
+   compaction summaries, and outbound exchange captures.
 5. Make the feature visible and controllable through a per-session toggle,
    folder selection, compact rail state, pre-send notice, and Context
    diagnostics.
@@ -82,8 +83,13 @@ The rejected alternatives were:
   and the existing file tools remain the way to open files.
 - Enforcement of repository prose as a security policy. It is guidance to the
   model; existing runtime controls remain enforcement.
-- Persisting instruction bodies, digests, absolute paths, timestamps, or a
-  history of prior instruction versions.
+- Persisting automatically loaded instruction bodies, digests, absolute paths,
+  timestamps, or a history of prior instruction versions.
+- Data-loss-prevention filtering of ordinary model output or explicit file-tool
+  results. If an agent deliberately calls `fs_read` on `AGENTS.md`, or the model
+  quotes project guidance in its answer, that model-authored/tool-authored data
+  follows the existing persistence rules. The ephemerality guarantee applies
+  to Chatbook's automatic instruction-loading channel.
 
 ## 5. Session working context and rollout defaults
 
@@ -167,14 +173,20 @@ by the parent and all subagents. It contains:
 - warning/deduplication state
 - per-model-chain delivery cursors identifying which source revisions that
   parent or subagent has actually received
+- terminal requirement outcomes, globally or per model chain as appropriate:
+  `delivered`, `omitted_byte_budget`, `omitted_token_budget`, `stale`,
+  `invalid`, or `resolution_failed`
 
 The delivery cursor is essential: one subagent loading a source does not mean
-another model conversation has seen it. A tool batch may proceed only when all
-instructions required by its paths are both activated in the shared ledger and
-delivered to that calling model chain. New subagents receive the currently
-active snapshot in their spawn context and begin with the matching delivery
-cursor. If another chain activates guidance concurrently, each affected chain
-must receive its own ephemeral context update before executing under it.
+another model conversation has seen it. A tool batch may proceed only when
+every instruction requirement for its paths is either delivered to that model
+chain or has a terminal no-content outcome that the chain has received as an
+ephemeral warning. New subagents receive the currently active snapshot in
+their spawn context and begin with the matching delivery cursor. If another
+chain activates guidance concurrently, each affected chain must receive its
+own ephemeral context update before executing under it. A globally selected
+source can still have a chain-specific `omitted_token_budget` outcome when that
+chain's provider payload has less headroom.
 
 The ledger and snapshot die with the dispatch. Neither is serialized.
 
@@ -256,6 +268,14 @@ and reminds the model that system instructions and runtime controls remain
 authoritative. It excludes absolute paths, timestamps, hashes, and other host
 metadata.
 
+Every automatic rider and nested update carries an internal ephemeral-origin
+tag. That tag is not sent to the model, but every persistence, diagnostic,
+compaction, and exchange-capture boundary uses it to omit the body. A future or
+concurrently developed exact-payload inspector must replace these bodies with
+a content-free marker such as `[ephemeral project instructions omitted]` and
+may record only relative source metadata. This ADR-backed exception takes
+priority over exact historical payload capture.
+
 One pure context-rider builder handles text, multimodal submit, retry,
 regenerate, and continue. It produces provider-safe message ordering and a
 synthetic user row where a run path has no natural new user row. It must not
@@ -267,11 +287,31 @@ receives the startup rider. The session transcript is not modified. Context
 preview uses the same pure builder against a copy; previewing must not activate
 sources, consume budgets, acknowledge notices, or mutate the live ledger.
 
-The first time an enabled session uses a selected binding, Chatbook displays a
-pre-dispatch notice naming the provider and workspace-relative instruction
-sources. It contains no file bodies. The user can proceed, cancel, or disable
-project instructions for the session. Acceptance is remembered for that
-binding; changing bindings causes a new notice.
+The first time an enabled session uses a selected binding, Chatbook resolves
+the immutable startup snapshot, then displays a pre-dispatch notice derived
+from that exact snapshot and naming the provider and workspace-relative
+instruction sources. It contains no file bodies. Proceed reuses the captured
+snapshot without rereading; cancel or disable discards it. Acceptance is
+remembered for that binding; changing bindings causes a new notice.
+
+### 8.1 Compaction
+
+Automatic project-context rows and context-event markers are excluded from
+summarizer input, so Chatbook never asks a compaction model to reproduce them
+and never stores them in a persisted summary. Before the first provider call
+after compaction, the context builder reconstructs the currently applicable
+startup and activated riders from the immutable snapshot and ledger; it does
+not reread the filesystem. Any chain delivery cursor whose rider was removed
+by compaction is reset and is advanced only after the rebuilt rider is placed
+in that chain's payload.
+
+Rebuilt content is checked against the provider's current token headroom. A
+source that no longer fits receives the chain-specific
+`omitted_token_budget` terminal outcome and a one-time ephemeral warning. The
+run may then continue under the approved fail-open policy. Content that the
+model itself previously quoted, or content returned by an explicit file read,
+is ordinary conversation/tool data and is not scrubbed from compaction; doing
+so would require a separate data-loss-prevention feature.
 
 ## 9. Atomic tool-batch preflight
 
@@ -298,16 +338,44 @@ received any required source. No earlier call in the same batch may execute.
    instructions. These are appended only to the run-local provider message
    copy after all tool-result stubs, then the model loop continues normally.
 
-Actual instruction contents must never appear in a review verdict string,
-tool result, `AgentStep`, run log, transcript marker, exception, or database
-row. User-visible activation events name only relative sources and scopes.
+The runtime's canonical representation is unambiguous: it appends one tool
+result stub for each original tool call, preserving call ID, tool name, order,
+and cardinality, followed by one distinct, ephemeral user-context row.
+`AgentRuntime` owns canonical result cardinality and ordering;
+`ConsoleProviderGateway` plus the existing provider adapter owns transport
+serialization. That boundary translates the canonical block without allowing
+project text inside an individual tool result:
+
+| Transport | Required serialization |
+| --- | --- |
+| OpenAI-compatible and Gemini native tool messages | Emit every required tool-response row, then a separate user project-context row. |
+| Anthropic native tool use | Emit one user turn containing all required `tool_result` blocks first, followed by a distinct text block containing project context. |
+| Fenced/local transports | Close the complete tool-results fence/section, then emit a separately labeled project-context section in the synthetic user text. |
+
+Provider adapters may coalesce rows only as required by their wire grammar;
+they may not change call IDs, omit results, or blend instruction text into a
+tool-result block. The canonical ephemeral-origin tag survives until request
+capture has omitted the body and wire serialization has consumed it.
+
+Automatically loaded instruction contents must never appear in a review
+verdict string, tool result, `AgentStep`, run log, transcript marker, exception,
+or database row. User-visible activation events name only relative sources and
+scopes. This restriction does not rewrite a later, explicit file-tool result.
 
 The ledger marks a source delivered to a model chain only when that chain's
-provider payload receives the context update. Each batch may cause at most one
-activation deferral per chain for a given ledger revision. If nested resolution
-itself fails, the chain receives one ephemeral content-free warning and one
-deferral; that failure is then marked handled so an identical retry can proceed
-under the previously delivered guidance rather than loop forever.
+provider payload receives the context update. Byte-budget omissions and stale,
+invalid, or failed sources become global terminal no-content outcomes;
+token-budget omissions are per chain. Each new terminal outcome is delivered
+as a content-free ephemeral warning and can defer that chain once. After the
+warning is delivered, the outcome satisfies preflight for that source, so an
+identical retry proceeds and cannot loop forever.
+
+Nested budget admission is serialized by the ledger guard and intentionally
+first-lock-wins across concurrent parent/subagent batches. Within the winning
+batch, selection is deterministic and deepest-first. Later batches use the
+remaining global budget and receive explicit omission outcomes if it is
+exhausted. A global cross-agent scheduler would add complexity without making
+the eventual model-call ordering deterministic.
 
 Permission review happens on the model's reconsidered tool call, not the
 discarded pre-activation call. This preserves the guarantee that approval UI
@@ -329,15 +397,17 @@ target batch, candidates are admitted deepest-first; admitted sources are then
 rendered broad-to-specific. A source is included whole or omitted whole—never
 silently truncated. Omitted sources generate explicit relative-path warnings.
 
-Byte limits are only the outer cap. Before every provider request, Chatbook
-uses the existing model-limit resolver and token estimator to assemble the
-ordinary system prompt, conversation payload, tool schemas, staged context,
-and response reserve, then computes the remaining safe input allowance.
-Project instructions must fit both their byte budget and that remaining token
-allowance. The calculation is repeated before nested context updates because
-tool history grows during a run. If the resolver provides no positive safe
-allowance, Chatbook omits additional instruction content and warns rather than
-overflowing the context window.
+Byte limits are only the outer cap. Before the initial rider, every newly
+activated nested update, and every post-compaction rebuild, Chatbook uses the
+existing model-limit resolver and token estimator to assemble the ordinary
+system prompt, conversation payload, tool schemas, staged context, and
+response reserve, then computes the remaining safe input allowance. New or
+rebuilt project instructions must fit both their byte budget and that remaining
+token allowance. Already delivered riders are not silently evicted between
+ordinary, non-compacting calls; they count as existing payload, and the normal
+compaction trigger handles later growth. If the resolver provides no positive
+safe allowance, Chatbook records the applicable terminal omission, warns once,
+and continues rather than overflowing the context window.
 
 Configuration belongs under `[console]` and exposes only the two byte caps.
 The token allowance reuses existing model context and response-reserve
@@ -367,7 +437,11 @@ Failure behavior is fail-open for optional guidance but explicit to the user:
 
 Warnings are aggregated by category and source and shown once per run to avoid
 toast storms. Persistent and diagnostic logs receive only content-free codes,
-relative paths where safe, counts, and sizes. They never receive source bodies.
+relative paths where safe, counts, and sizes from the automatic loading
+channel. They never receive automatic rider bodies. An ordinary explicit
+`fs_read` of an instruction file is not reclassified: its tool result follows
+existing review, logging, and persistence behavior, as does any model-authored
+quotation.
 
 ## 12. UX
 
@@ -425,18 +499,26 @@ With a deterministic fake provider, verify:
 - resolution failure defers once and cannot loop forever
 - parent and concurrent subagents share one activation budget while each must
   receive unseen revisions before execution
+- byte, token, stale, invalid, and failed outcomes each defer once per affected
+  chain, become terminal, and cannot produce a retry loop
+- first-lock-wins concurrent admission and deterministic deepest-first
+  selection within each admitted batch
 - targets in other authorized bindings warn without activating instructions
 - non-path-aware providers and disabled sessions retain existing behavior
+- compaction excludes automatic riders from summarizer input, rebuilds active
+  guidance without filesystem reads, and reconciles each chain's delivery
+  cursor
 
 Provider grammar tests assert valid assistant-tool-call/tool-result/context
 ordering for OpenAI-compatible, Anthropic, Gemini-style, and fenced/local
 transports.
 
-### 13.3 Persistence-leak sentinel audit
+### 13.3 Automatic-channel persistence-leak sentinel audit
 
-Every instruction fixture contains a unique secret-like sentinel. Across
-success, cancellation, provider failure, resolver failure, and application
-restart, assert the sentinel is absent from:
+Every instruction fixture contains a unique secret-like sentinel, and the fake
+provider is configured not to echo it. Across success, cancellation, provider
+failure, resolver failure, compaction, and application restart, assert the
+automatic loading channel never copies the sentinel into:
 
 - conversation rows and conversation metadata
 - agent-run and step databases
@@ -444,8 +526,17 @@ restart, assert the sentinel is absent from:
 - tool review/result records
 - transcript/context event markers
 - exception text and error reports
+- persisted compaction summaries
+- outbound exchange-capture records
 
-Only the captured outbound fake-provider request may contain it.
+Only the test harness's in-memory outbound provider-request spy may contain it.
+
+A separate boundary test explicitly calls `fs_read` on `AGENTS.md` and asserts
+that its result retains normal tool logging/persistence behavior. Another fake
+provider test returns the sentinel in an assistant response and asserts that
+the normal response is not silently redacted. These tests prevent the
+ephemeral automatic channel from becoming an accidental data-loss-prevention
+filter.
 
 ### 13.4 Session, UI, and compatibility tests
 
