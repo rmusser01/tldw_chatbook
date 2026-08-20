@@ -173,6 +173,7 @@ git commit -m "fix(library): expose complete media type facets"
 
 - [ ] **Write RED pure tests** for `MediaBrowseScope` and `MediaBrowseResult`:
   - fixed Library page size 20, non-bool positive page, checked `(page - 1) * 20 <= 2**63 - 1`;
+  - unfiltered type scope uses unambiguous internal `None`; blank normalizes to `None`, while every nonblank stored type remains literal, including valid source values `All`, `all`, and `ALL`;
   - exact request coordinate echoes and exact cardinality `min(20, max(total-offset, 0))`;
   - every normalized item is exactly the five-key Library summary mapping; `backing_media_id` is a non-bool positive integer, canonical `id` equals `local:media:<backing_media_id>`, and raw/canonical identities are page-unique; missing/`None`/bool/non-integer/mismatched IDs fail closed before projection;
   - malformed/duplicate identities fail closed instead of being silently dropped/deduplicated;

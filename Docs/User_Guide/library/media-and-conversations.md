@@ -27,8 +27,8 @@ Both list canvases follow the same shape, top to bottom:
   "Conversations (3)" — task-2859: Conversations previously had no
   heading at all, so its top row read as bare "Export…"/"Select" with
   nothing naming the canvas), plus "Export…" and "Select". Media adds a
-  "type: All" chooser right after the heading (press it to open a one-row
-  strip of every type — ✓ marks the active one — and pick directly) and a
+  "type: All types" chooser right after the heading (press it to open a
+  bounded list of every type — ✓ marks the active one — and pick directly) and a
   "Trash" action (the browsable Trash view — see "Media Trash" below);
   Conversations instead has a "Filter conversations… (Enter)" text box,
   which now renders above the empty-state text (task-2859: it used to sit
@@ -36,6 +36,8 @@ Both list canvases follow the same shape, top to bottom:
 - **Row list** — one two-line row per item: the title with a **▸** marker,
   then a dimmer second line (Media: type and age; Conversations:
   "3 messages - 4h"). Hovering a row shows its full title as a tooltip.
+  Media rows scroll independently above a pinned 20-item pager, so paging
+  controls remain visible after moving through a full page.
 - **Preview block** — a few summary lines plus one action ("Open in
   viewer" for media, "Open in Console" for conversations). On a wide
   terminal the **Media** list shows it **beside** the row list — list on
@@ -132,7 +134,9 @@ restoring it.
 
 | Control | What it does |
 |---|---|
-| "type: All" | Opens a one-row strip of All plus each media type present in your Library, ✓ on the active one — pick a type directly, press Escape (or pick the current one) to cancel. While filtered, a status line reads "2 of 5 · type: pdf". |
+| "type: All types" | Opens one bounded keyboard list containing the complete type set, with ✓ on the active choice. "All types" means no filter; a stored type literally named "All" remains a separate selectable value. Press Escape (or pick the current choice) to cancel. |
+| "Previous" / "Next" | Moves through exact 20-item pages after the active query, type, and sort are applied. The final page may contain fewer rows; disabled buttons explain why they cannot move. |
+| "Retry" | Repeats a failed page request. If retained rows may be out of date, unsafe row and bulk actions stay disabled until recovery succeeds. |
 | "Export…" / "Select" | The shared grammar above; Export… is scoped to the active type filter. |
 | "Trash" | Opens the Trash view — every deleted media item, restorable per item (see "Media Trash" above). Hidden while selecting, like "Export…". |
 | Row press | Selects the row and shows the preview (title, "Type: …", "Updated: …"). |
@@ -141,6 +145,11 @@ restoring it.
 Empty states: with nothing imported, "No media in your Library yet. Import
 something to see it here."; with a filter that matches nothing, "No media
 of type 'pdf'."
+
+The pager reports the exact visible range, total, and page. Changing page or
+type clears current-page selection with a visible "Selection cleared."
+notice. A failed request keeps the last applied page visible instead of
+silently replacing it with a partial or broad Library snapshot.
 
 ### Media viewer
 
@@ -224,11 +233,12 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 ## Common tasks
 
 ### Filter media by type
-1. In **Media**, click "type: All" — a one-row strip of every type appears
-   in place of the toolbar, with ✓ on the active one.
+1. In **Media**, click "type: All types" — a bounded list of every stored
+   type appears in place of the toolbar, with ✓ on the active one.
 2. Click the type you want. The list narrows and the status line reads
-   e.g. "2 of 5 · type: pdf". Pick "All" the same way to clear, or press
-   Escape to close the strip without changing anything.
+   e.g. "2 of 5 · type: pdf". Pick "All types" to clear the filter, or
+   press Escape to close the list without changing anything. A stored type
+   literally named "All" is distinct from the unfiltered choice.
 
 ### Open a media item and search inside it
 1. Click a row, then "Open in viewer".
@@ -275,9 +285,10 @@ conversation rail instead; that one resumes sessions, this one quotes them.
 
 ## Keyboard & commands
 
-Nothing screen-specific: these panels are mouse/arrow-driven buttons and
-inputs. The only key worth naming is **Enter** to submit the
-"Filter conversations… (Enter)" and "Search content…" boxes. Global
+The Media type chooser supports **Up/Down**, **Home/End**, and **Enter**;
+**Escape** cancels without applying a choice and returns focus to its opener.
+The other panels are mouse/arrow-driven buttons and inputs. **Enter** submits
+the "Filter conversations… (Enter)" and "Search content…" boxes. Global
 navigation keys live in the [guide index](../index.md).
 
 ## Related settings & docs
@@ -305,6 +316,9 @@ navigation keys live in the [guide index](../index.md).
   Library's own Media surface.
 - **Conversations are paged 20 at a time**, newest first. The filter searches
   the complete source before paging, so older matches remain reachable.
+- **Media is paged 20 at a time after filtering.** Its type chooser comes
+  from the complete distinct type set, not only the currently visible rows.
+  If a refresh fails, Retry remains available while stale rows are read-only.
 - **Prompts use the same fixed 20-item page grammar.** Their search, sort, and
   collection scopes apply before paging; selections retain captured versions
   across pages, and a failed refresh keeps the last applied rows read-only with
@@ -408,3 +422,9 @@ an active content search now pins the search box, match count, and
 sit below the visible fold exactly while being used; compositor-strip
 evidence at exactly 80x24 before/after, plus a 120x40 pin that an
 inactive search keeps today's in-flow layout with no reserved space.)*
+
+*Verified against codex/library-top-level-pagination — 2026-08-20
+(TASK-16483 / ADR-067: complete-source Media type filtering and exact 20-item
+database pages, pinned pager at 100x30 and 170x48, bounded complete facet
+chooser with an unambiguous "All types" choice, retained stale recovery,
+selection clearing, and metadata-only diagnostics).*
