@@ -10734,9 +10734,10 @@ class ChatScreen(BaseAppScreen):
                 continue
             handle.sync_state(label, badge)
 
-        # TASK-2154.1: mirrors the compose-time rules -- single-pane mode
-        # hides both handles and waives the main column's min-width so the
-        # transcript keeps the full grid width at any terminal size.
+        # TASK-2154.1: mirrors the compose-time rules -- below 84 both handles
+        # hide and the main minimum is waived. The default layout gives the
+        # transcript the full grid; budget-eligible explicit rails may remain
+        # visible and share it.
         targets = (
             ("#console-left-rail", rail_state.left_open),
             (
