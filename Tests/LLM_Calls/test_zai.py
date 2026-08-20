@@ -288,6 +288,31 @@ def test_zai_rejects_invalid_or_unsupported_reasoning_effort(effort: object) -> 
         )
 
 
+@pytest.mark.parametrize("model", ["glm-5.3", "glm-6", "glm-5.2-air"])
+def test_glm_family_at_or_above_floor_accepts_reasoning_effort(model: str) -> None:
+    """TASK-18803: the old exact-id ``glm-5.2`` pin client-side-rejected
+    every newer GLM release before a request was ever made. The family
+    predicate (version floor 5.2) must let them through."""
+    payload = build_zai_chat_payload(
+        resolution=_resolution(model=model),
+        messages_payload=[{"role": "user", "content": "hello"}],
+        reasoning_effort="medium",
+    )
+    assert payload["reasoning_effort"] == "medium"
+
+
+@pytest.mark.parametrize("model", ["glm-4.6", "glm-5.1", "glm-5"])
+def test_glm_below_floor_still_rejects_reasoning_effort(model: str) -> None:
+    """Control: releases below the known-supported floor keep the historical
+    client-side rejection (no wire evidence exists to liberalise them)."""
+    with pytest.raises(ChatBadRequestError):
+        build_zai_chat_payload(
+            resolution=_resolution(model=model),
+            messages_payload=[{"role": "user", "content": "hello"}],
+            reasoning_effort="medium",
+        )
+
+
 def test_zai_response_normalizes_object_arguments_deterministically() -> None:
     response = {
         "choices": [

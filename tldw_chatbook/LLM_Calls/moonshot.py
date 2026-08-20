@@ -39,13 +39,20 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
+from tldw_chatbook.model_capabilities import (
+    moonshot_model_rejects_sampling_params,
+    moonshot_model_requires_min_temperature_for_multiple_choices,
+    moonshot_model_supports_reasoning_effort,
+)
 
 
 _DEFAULT_BASE_URL = "https://api.moonshot.ai/v1"
 _CHINA_BASE_URL = "https://api.moonshot.cn/v1"
 _DEFAULT_MODEL = "kimi-k3"
 _FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
-_K3_REASONING_EFFORTS = frozenset({"low", "high", "max"})
+# "medium" probe-verified accepted on kimi-k3 and kimi-k2.6 (TASK-18803,
+# chatcmpl-6a872b62bea2d202c1d3f6fa / chatcmpl-6a872affa508b3005f3a5c0b).
+_KIMI_REASONING_EFFORTS = frozenset({"low", "medium", "high", "max"})
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_NODES = 50_000
 _MAX_JSON_STRING_CHARS = 16 * 1024 * 1024
@@ -513,28 +520,41 @@ def build_moonshot_chat_payload(
     if validated_choice is not None:
         payload["tool_choice"] = validated_choice
 
-    if resolution.model == _DEFAULT_MODEL:
-        if reasoning_effort is not None:
-            if (
-                not isinstance(reasoning_effort, str)
-                or reasoning_effort not in _K3_REASONING_EFFORTS
-            ):
-                raise _bad_request("Moonshot Kimi K3 reasoning effort is invalid.")
-            payload["reasoning_effort"] = reasoning_effort
-    elif reasoning_effort is not None:
-        raise _bad_request("Moonshot reasoning effort is unsupported for this model.")
-
-    if resolution.model.startswith("moonshot-v1-"):
-        legacy_n = cast(int | None, n)
-        legacy_temperature = cast(int | float | None, temperature)
-        if (
-            legacy_n is not None
-            and legacy_n > 1
-            and (legacy_temperature is None or legacy_temperature < 0.3)
-        ):
+    # Per-model request capabilities come from `model_capabilities`
+    # predicates, not model-name checks kept here, so a new release in a
+    # covered family never needs a marker edited (TASK-18803; probe evidence
+    # in the predicate docstrings).
+    if reasoning_effort is not None:
+        if not moonshot_model_supports_reasoning_effort(resolution.model):
             raise _bad_request(
-                "Moonshot multiple choices require temperature of at least 0.3."
+                "Moonshot reasoning effort is unsupported for this model."
             )
+        if (
+            not isinstance(reasoning_effort, str)
+            or reasoning_effort not in _KIMI_REASONING_EFFORTS
+        ):
+            raise _bad_request("Moonshot Kimi reasoning effort is invalid.")
+        payload["reasoning_effort"] = reasoning_effort
+
+    if not moonshot_model_rejects_sampling_params(resolution.model):
+        # The versioned kimi reasoning family answers a value-level 400 for
+        # non-default sampling values, so those models keep the historical
+        # omission; everything else (legacy moonshot-v1, kimi-latest, unknown
+        # future families) passes the caller's values through for the server
+        # to adjudicate.
+        if moonshot_model_requires_min_temperature_for_multiple_choices(
+            resolution.model
+        ):
+            legacy_n = cast(int | None, n)
+            legacy_temperature = cast(int | float | None, temperature)
+            if (
+                legacy_n is not None
+                and legacy_n > 1
+                and (legacy_temperature is None or legacy_temperature < 0.3)
+            ):
+                raise _bad_request(
+                    "Moonshot multiple choices require temperature of at least 0.3."
+                )
         for key, value in (
             ("temperature", temperature),
             ("top_p", top_p),

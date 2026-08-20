@@ -40,13 +40,14 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
+from tldw_chatbook.model_capabilities import zai_model_supports_reasoning_effort
 
 
 _DEFAULT_BASE_URL = "https://api.z.ai/api/paas/v4"
 _DEFAULT_MODEL = "glm-5.2"
 _DEFAULT_RETRY_DELAY = 5.0
 _FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
-_GLM_5_2_REASONING_EFFORTS = frozenset(
+_GLM_REASONING_EFFORTS = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 _MAX_JSON_DEPTH = 64
@@ -290,10 +291,14 @@ def build_zai_chat_payload(
     if validated_choice is not None:
         payload["tool_choice"] = validated_choice
     if reasoning_effort is not None:
+        # The supported-model fact is a `model_capabilities` predicate (GLM
+        # family with a version floor), not the exact-id pin this builder
+        # used to carry, so a new release in the family is not client-side
+        # rejected on release day (TASK-18803).
         if (
-            resolution.model != _DEFAULT_MODEL
+            not zai_model_supports_reasoning_effort(resolution.model)
             or not isinstance(reasoning_effort, str)
-            or reasoning_effort not in _GLM_5_2_REASONING_EFFORTS
+            or reasoning_effort not in _GLM_REASONING_EFFORTS
         ):
             raise _bad_request("Z.ai reasoning effort is unsupported or invalid.")
         payload["reasoning_effort"] = reasoning_effort
