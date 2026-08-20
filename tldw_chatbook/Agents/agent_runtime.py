@@ -61,6 +61,9 @@ from tldw_chatbook.Chat.provider_continuation import (
     transition_provider_call,
     validate_continuation_restore,
 )
+from tldw_chatbook.model_capabilities import (
+    moonshot_model_returns_reasoning_content,
+)
 
 FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
@@ -516,13 +519,20 @@ def _valid_final_update(
         or candidate.checkpoint_revision != current.checkpoint_revision + 1
     ):
         return False
-    if current.provider == "moonshot" and current.model == "kimi-k3":
+    if current.provider == "moonshot" and moonshot_model_returns_reasoning_content(
+        current.model
+    ):
         final_round = candidate.rounds[-1]
-        return (
-            candidate.rounds[:-1] == current.rounds
-            and not final_round.calls
-            and final_round.assistant_content == assistant_content
-        )
+        if not final_round.calls:
+            return (
+                candidate.rounds[:-1] == current.rounds
+                and final_round.assistant_content == assistant_content
+            )
+        # Reasoning-absent family completion keeps the pre-19170 durable
+        # shape (rounds unchanged). kimi-k3 cannot reach this arm through
+        # canonical parse -- its complete checkpoints must end with the
+        # final reasoning round (TASK-19170).
+        return candidate.rounds == current.rounds
     return candidate.rounds == current.rounds
 
 
@@ -1084,7 +1094,9 @@ def run_agent_loop(
                     if (
                         candidate.checkpoint_revision != 1
                         or candidate.provider != "moonshot"
-                        or candidate.model != "kimi-k3"
+                        or not moonshot_model_returns_reasoning_content(
+                            candidate.model
+                        )
                         or len(candidate.rounds) != 1
                         or final_round.calls
                         or final_round.assistant_content != turn.text

@@ -104,10 +104,20 @@ def _validated_provider_continuation(value: object) -> tuple[Any, str]:
 
 
 def _validate_continuation_owner_content(checkpoint: Any, content: str) -> None:
-    """Keep complete Kimi K3 final content on its exact assistant owner."""
+    """Keep complete Kimi preserved-thinking content on its exact owner.
+
+    TASK-19170: the rule follows the versioned kimi reasoning family (whose
+    complete checkpoints may end with a final reasoning round), not the
+    kimi-k3 literal. Pre-19170 family checkpoints ending with a tool round
+    are exempt via the no-calls shape guard.
+    """
+    from tldw_chatbook.model_capabilities import (
+        moonshot_model_returns_reasoning_content,
+    )
+
     if (
         checkpoint.provider == "moonshot"
-        and checkpoint.model == "kimi-k3"
+        and moonshot_model_returns_reasoning_content(checkpoint.model)
         and checkpoint.state == "complete"
         and not checkpoint.rounds[-1].calls
         and checkpoint.rounds[-1].assistant_content != content

@@ -19,6 +19,7 @@ from tldw_chatbook.model_capabilities import (
     ModelCapabilities,
     moonshot_model_rejects_sampling_params,
     moonshot_model_requires_min_temperature_for_multiple_choices,
+    moonshot_model_returns_reasoning_content,
     moonshot_model_supports_reasoning_effort,
     zai_model_supports_reasoning_effort,
 )
@@ -131,6 +132,56 @@ def test_zai_below_floor_or_lookalikes_never_match(model):
     assert zai_model_supports_reasoning_effort(model) is False
 
 
+@pytest.mark.parametrize(
+    "model",
+    [
+        "kimi-k3",
+        "kimi-k3-turbo",  # release-day suffix: the old literal pin missed it
+        "kimi-k4",
+        "kimi-k2.5",
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k2.7-code-highspeed",
+        "KIMI-K3",
+        "moonshot/kimi-k3",
+    ],
+)
+def test_moonshot_versioned_kimi_returns_reasoning_content(model):
+    """TASK-19170 probes: every versioned kimi id answered with
+    reasoning_content, with and without reasoning_effort (chatcmpl ids in the
+    predicate docstring)."""
+    assert moonshot_model_returns_reasoning_content(model) is True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        # kimi-latest accepts reasoning_effort on the wire (TASK-18803) but
+        # returned NO reasoning_content (chatcmpl-6a8768a616ceb0c0ae780f2c) --
+        # the response-side family is narrower than the request-side one.
+        "kimi-latest",
+        "kimi",
+        "kimi-thinking-preview",
+        "moonshot-v1-8k",
+        "moonshot-v1-auto",
+        "kimiko-7b",
+        "kimik3",
+        "",
+        None,
+        42,
+    ],
+)
+def test_moonshot_unversioned_and_lookalikes_do_not_return_reasoning_content(model):
+    assert moonshot_model_returns_reasoning_content(model) is False
+
+
+def test_moonshot_response_side_family_is_narrower_than_request_side():
+    """kimi-latest: reasoning_effort accepted (18803) but no reasoning_content
+    returned (19170) -- the two predicates must be allowed to disagree."""
+    assert moonshot_model_supports_reasoning_effort("kimi-latest") is True
+    assert moonshot_model_returns_reasoning_content("kimi-latest") is False
+
+
 def test_chat_predicates_survive_a_user_configured_capability_table():
     """Request-validity facts must not be reachable from the user-overridable
     capability tables (same design rule TASK-18414/18802 pinned)."""
@@ -145,4 +196,5 @@ def test_chat_predicates_survive_a_user_configured_capability_table():
     )
     assert moonshot_model_supports_reasoning_effort("kimi-k3") is True
     assert moonshot_model_rejects_sampling_params("kimi-k3") is True
+    assert moonshot_model_returns_reasoning_content("kimi-k3") is True
     assert zai_model_supports_reasoning_effort("glm-5.2") is True

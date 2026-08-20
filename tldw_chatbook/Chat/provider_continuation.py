@@ -18,6 +18,9 @@ from urllib.parse import urlsplit
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     canonical_connection_identity,
 )
+from tldw_chatbook.model_capabilities import (
+    moonshot_model_returns_reasoning_content,
+)
 
 
 ContinuationProvider = Literal["moonshot", "zai", "deepseek"]
@@ -36,6 +39,10 @@ _MAX_JSON_DEPTH = 32
 _MAX_JSON_NODES = 100_000
 _INVALID_MESSAGE = "Invalid continuation data."
 _DISCARDED_WARNING = "Exact tool continuation was discarded."
+# Retained ONLY for the complete-checkpoint "must end with a final reasoning
+# round" invariant (see _parse_value): documented probe/durable-data evidence
+# in TASK-19170. Every other preserved-thinking gate consults
+# moonshot_model_returns_reasoning_content.
 _KIMI_K3_MODEL = "kimi-k3"
 _FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{2,63}$")
 
@@ -515,10 +522,16 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
             provider != "moonshot"
             or state != "complete"
             or index != len(rounds) - 1
-            or model != _KIMI_K3_MODEL
+            or not moonshot_model_returns_reasoning_content(model)
             or not any(block.strip() for block in round_.reasoning_blocks)
         ):
             _fail()
+    # The must-end-with-a-final-reasoning-round invariant stays pinned to the
+    # exact kimi-k3 id: its pipeline has appended that round since it
+    # shipped, but the wider versioned-kimi family (TASK-19170) has durable
+    # pre-19170 complete checkpoints persisted WITHOUT it, which must keep
+    # parsing forever. Replay branches on the checkpoint shape, so both
+    # complete shapes restore correctly for the family.
     if (
         provider == "moonshot"
         and state == "complete"

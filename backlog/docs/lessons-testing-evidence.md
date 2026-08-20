@@ -5410,6 +5410,27 @@ other sessions fetch into, `origin/dev` at probe time is routinely not
 part of the probe -- a comparison whose two arms' commits were never printed
 has not established which code either arm ran.
 
+## A validator over durable data cannot be widened the way a request gate can (TASK-19170, 2026-08-20)
+
+TASK-18803 converted exact-id REQUEST gates (`model == "kimi-k3"`) to family
+predicates; TASK-19170 did the response side, where the same conversion runs
+through the strict parser for PERSISTED private checkpoints. One of the two
+k3 pins there is a shape invariant -- "a complete checkpoint must END with a
+final no-calls reasoning round" -- and mechanically widening it to the family
+would have made every pre-19170 versioned-kimi (non-k3) complete checkpoint
+already stored in ChaChaNotes/exports/chatbooks UNPARSEABLE: those were
+written complete with all-calls rounds, because only the k3 pipeline appended
+the final round. The rule: before widening a validation predicate, enumerate
+what every OLD pipeline actually persisted under the old predicate --
+acceptance-widening (admit new shapes) is backward-safe, but
+requirement-widening (demand a shape of more models) invalidates history
+unless every covered writer always produced it. The fix kept the must-end
+invariant pinned to the literal id, accepted both complete shapes for the
+rest of the family, branched replay on checkpoint SHAPE instead of model id,
+and pinned the old stored shape with its own test plus a shape-guard
+mutation (M9b/M10b) at each import surface -- the guard-dropped mutants are
+exactly the "old data wrongly discarded" bug.
+
 ## A settle whose predicate can RAISE is still a one-shot sample — and a value flip is not its message cascade (task-19047, 2026-08-20)
 
 Follow-up to the pilot.pause() entry above: `_wait_until`-style condition polls

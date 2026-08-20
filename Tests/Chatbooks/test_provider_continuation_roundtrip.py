@@ -55,6 +55,111 @@ def _checkpoint_json(*, provider: str = "deepseek") -> str:
     return dump_provider_continuation_json(parse_provider_continuation_json(raw)) or ""
 
 
+def _kimi_family_private(
+    content: str,
+    *,
+    model: str = "kimi-k2.6",
+    post_tool_only: bool = False,
+) -> dict:
+    rounds: list[dict] = []
+    if post_tool_only:
+        rounds.append(
+            {
+                "assistant_content": "",
+                "reasoning_blocks": [PRIVATE_REASONING],
+                "calls": [
+                    {
+                        "call_id": "call_1",
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                        "state": "completed",
+                        "result": "4",
+                    }
+                ],
+            }
+        )
+    else:
+        rounds.append(
+            {
+                "assistant_content": content,
+                "reasoning_blocks": [PRIVATE_REASONING],
+                "calls": [],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "checkpoint_revision": 1,
+        "provider": "moonshot",
+        "protocol": "chat_completions",
+        "model": model,
+        "api_base_url": "https://api.moonshot.ai/v1",
+        "state": "complete",
+        "rounds": rounds,
+    }
+
+
+def test_imported_continuation_family_owner_rule_covers_versioned_kimi() -> None:
+    """TASK-19170: the import keep/discard rule for complete preserved-thinking
+    checkpoints follows the versioned-kimi family, with the pre-19170
+    tool-only durable shape still kept."""
+    status = ImportStatus()
+    kept = ChatbookImporter._imported_continuation_json(
+        {
+            "role": "assistant",
+            "content": "visible answer",
+            "_private": {
+                "provider_continuation": _kimi_family_private("visible answer")
+            },
+        },
+        ordinal=1,
+        status=status,
+    )
+    assert kept is not None
+    assert parse_provider_continuation_json(kept).model == "kimi-k2.6"
+    assert status.warnings == []
+
+    dropped = ChatbookImporter._imported_continuation_json(
+        {
+            "role": "assistant",
+            "content": "visible answer",
+            "_private": {
+                "provider_continuation": _kimi_family_private("does not match")
+            },
+        },
+        ordinal=2,
+        status=status,
+    )
+    assert dropped is None
+    assert status.warnings == [
+        "Exact tool continuation was discarded for message 2."
+    ]
+
+
+def test_imported_continuation_keeps_pre_19170_family_tool_only_shape() -> None:
+    """Durable-data control: an old-style kimi-k2.6 complete checkpoint (no
+    final reasoning round) must never be discarded by the owner rule -- its
+    final round is a tool round whose content is not the visible answer."""
+    status = ImportStatus()
+    kept = ChatbookImporter._imported_continuation_json(
+        {
+            "role": "assistant",
+            "content": "visible answer",
+            "_private": {
+                "provider_continuation": _kimi_family_private(
+                    "visible answer", post_tool_only=True
+                )
+            },
+        },
+        ordinal=1,
+        status=status,
+    )
+    assert kept is not None
+    assert parse_provider_continuation_json(kept).rounds[-1].calls[0].state == (
+        "completed"
+    )
+    assert status.warnings == []
+
+
 def _source_graph(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> tuple[dict[str, str], str, dict[str, str]]:

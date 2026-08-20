@@ -42,6 +42,7 @@ from tldw_chatbook.config import (
 from tldw_chatbook.model_capabilities import (
     moonshot_model_rejects_sampling_params,
     moonshot_model_requires_min_temperature_for_multiple_choices,
+    moonshot_model_returns_reasoning_content,
     moonshot_model_supports_reasoning_effort,
 )
 
@@ -291,6 +292,22 @@ def _moonshot_turn_response(
     )
 
 
+def _preserved_reasoning(turn: HostedChatTurn, model: str) -> str | None:
+    """Return reasoning worth preserving as a k3-style final round.
+
+    TASK-19170: the versioned kimi reasoning family returns
+    ``reasoning_content`` on every turn (probe-verified); models outside it
+    (``kimi-latest``, ``moonshot-v1``) do not, and canonical parse only
+    accepts final reasoning rounds carrying non-blank reasoning.
+    """
+    if not moonshot_model_returns_reasoning_content(model):
+        return None
+    reasoning = turn.reasoning_content
+    if reasoning is None or not reasoning.strip():
+        return None
+    return reasoning
+
+
 def _moonshot_continuation_candidate(
     turn: HostedChatTurn,
     *,
@@ -305,6 +322,7 @@ def _moonshot_continuation_candidate(
     if len(active) > 1:
         raise HostedChatProtocolError("Moonshot continuation state is ambiguous.")
     current = active[0] if active else None
+    preserved = _preserved_reasoning(turn, resolution.model)
     if turn.tool_calls:
         round_ = ContinuationRound(
             assistant_content=turn.text,
@@ -333,12 +351,17 @@ def _moonshot_continuation_candidate(
         )
     elif current is not None:
         rounds = current.rounds
-        if resolution.model == _DEFAULT_MODEL:
+        # The versioned kimi reasoning family returns reasoning_content on
+        # loop-completing turns (TASK-19170 probes D1/D2); preserve it as the
+        # k3-style final reasoning round. A family turn with no usable
+        # reasoning keeps the pre-19170 complete shape (canonical parse only
+        # accepts final reasoning rounds that carry non-blank reasoning).
+        if preserved is not None:
             rounds = (
                 *rounds,
                 ContinuationRound(
                     assistant_content=turn.text,
-                    reasoning_blocks=(turn.reasoning_content or "",),
+                    reasoning_blocks=(preserved,),
                     calls=(),
                 ),
             )
@@ -352,7 +375,7 @@ def _moonshot_continuation_candidate(
             state="complete",
             rounds=rounds,
         )
-    elif resolution.model == _DEFAULT_MODEL and turn.reasoning_content:
+    elif preserved is not None:
         candidate = ProviderContinuationCheckpoint(
             schema_version=1,
             checkpoint_revision=1,
@@ -364,7 +387,7 @@ def _moonshot_continuation_candidate(
             rounds=(
                 ContinuationRound(
                     assistant_content=turn.text,
-                    reasoning_blocks=(turn.reasoning_content,),
+                    reasoning_blocks=(preserved,),
                     calls=(),
                 ),
             ),
@@ -940,7 +963,14 @@ def _apply_continuations(
             )
         except Exception:
             raise _bad_request("Moonshot provider continuation is invalid.") from None
-        if checkpoint.state == "complete" and resolution.model == _DEFAULT_MODEL:
+        # Shape-based branch (TASK-19170): a complete checkpoint ending with
+        # a no-calls final reasoning round is the preserved-thinking shape --
+        # canonical parse only admits that round for the versioned kimi
+        # reasoning family -- and replays by expanding its private rounds.
+        # A complete checkpoint ending with a tool round (the pre-19170
+        # durable shape for non-k3 family ids) keeps the annotate-in-place
+        # replay below.
+        if checkpoint.state == "complete" and not checkpoint.rounds[-1].calls:
             final_round = checkpoint.rounds[-1]
             match_index = _find_round_owner(
                 messages,

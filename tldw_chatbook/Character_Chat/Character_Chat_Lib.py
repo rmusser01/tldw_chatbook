@@ -38,6 +38,9 @@ from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from tldw_chatbook.model_capabilities import (  # noqa: E402
+    moonshot_model_returns_reasoning_content,
+)
 from tldw_chatbook.Utils.path_validation import (  # noqa: E402
     validate_path,
     validate_path_simple,
@@ -3235,11 +3238,18 @@ def load_chat_history_from_file_and_save_to_db(
                     checkpoint = read_provider_continuation_json(
                         private.get("provider_continuation")
                     ).checkpoint
+                    # TASK-19170: the exact-owner rule for complete
+                    # preserved-thinking checkpoints follows the versioned
+                    # kimi reasoning family; pre-19170 family checkpoints
+                    # ending with a tool round are exempt (shape guard).
                     if (
                         checkpoint is not None
                         and checkpoint.provider == "moonshot"
-                        and checkpoint.model == "kimi-k3"
+                        and moonshot_model_returns_reasoning_content(
+                            checkpoint.model
+                        )
                         and checkpoint.state == "complete"
+                        and not checkpoint.rounds[-1].calls
                         and checkpoint.rounds[-1].assistant_content != content
                     ):
                         checkpoint = None

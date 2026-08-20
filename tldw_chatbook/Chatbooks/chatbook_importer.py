@@ -33,6 +33,7 @@ from ..Chat.provider_continuation import (
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -935,10 +936,14 @@ class ChatbookImporter:
                 private.get("provider_continuation")
             )
             checkpoint = result.checkpoint
+        # TASK-19170: the exact-owner rule for complete preserved-thinking
+        # checkpoints follows the versioned kimi reasoning family; pre-19170
+        # family checkpoints ending with a tool round are kept (shape guard).
         if checkpoint is not None and (
             checkpoint.provider != "moonshot"
-            or checkpoint.model != "kimi-k3"
+            or not moonshot_model_returns_reasoning_content(checkpoint.model)
             or checkpoint.state != "complete"
+            or bool(checkpoint.rounds[-1].calls)
             or checkpoint.rounds[-1].assistant_content == message.get("content")
         ):
             return dump_provider_continuation_json(checkpoint)

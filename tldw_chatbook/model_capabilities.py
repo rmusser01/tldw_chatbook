@@ -539,6 +539,48 @@ def moonshot_model_requires_min_temperature_for_multiple_choices(
     return _MOONSHOT_LEGACY_V1_RE.match(normalized) is not None
 
 
+def moonshot_model_returns_reasoning_content(model: object) -> bool:
+    """Return whether ``model`` returns ``reasoning_content`` in responses.
+
+    This is a RESPONSE-side fact -- which models emit private reasoning that
+    the preserved-thinking checkpoint machinery should capture and replay --
+    distinct from the request-side question of which models *accept* the
+    ``reasoning_effort`` parameter (the whole kimi series, including
+    ``kimi-latest``, per :func:`moonshot_model_supports_reasoning_effort`).
+
+    Probe-verified against api.moonshot.ai on 2026-08-20 (TASK-19170) with
+    the real project key:
+
+    * Every versioned kimi id probed returns ``reasoning_content`` on every
+      turn, with AND without ``reasoning_effort``: kimi-k2.5
+      (chatcmpl-6a8768d3666d8454604d8b5f), kimi-k2.6
+      (chatcmpl-6a8768a3b5c429b466fbc42d with effort,
+      chatcmpl-6a8768a9b5c429b466fbc42f without), kimi-k2.7-code
+      (chatcmpl-6a8768d705f910ba798aeca0), kimi-k3
+      (chatcmpl-6a8768a7659da119063ca38f).
+    * ``kimi-latest`` (served as ``kimi-latest-8k``) returns none
+      (chatcmpl-6a8768a616ceb0c0ae780f2c) -- hence versioned-family, not
+      whole-series.
+    * Replaying the prior turn's ``reasoning_content`` is accepted and never
+      required: multi-turn and tool-loop follow-ups answered 200 both with
+      and without it (chatcmpl-6a8768cb.../6a8768cc... plain,
+      chatcmpl-6a876916.../6a876918... tool loop), so widening k3-style
+      preserved-thinking replay to the family cannot 400.
+
+    Args:
+        model: A Moonshot model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True for the versioned kimi reasoning family (``kimi-k<major>``, any
+        suffix). False for ``kimi-latest``, the legacy ``moonshot-v1``
+        family and unrecognisable ids.
+    """
+    normalized = _moonshot_normalized_model(model)
+    if normalized is None:
+        return False
+    return _MOONSHOT_KIMI_VERSIONED_RE.match(normalized) is not None
+
+
 #
 #######################################################################################################################
 #

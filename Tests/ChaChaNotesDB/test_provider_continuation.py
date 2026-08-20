@@ -49,7 +49,11 @@ def _checkpoint_json(*, canary: str = "private reasoning") -> str:
 
 
 def _kimi_checkpoint_json(
-    content: str, *, post_tool: bool = False, canary: str = "private K3 reasoning"
+    content: str,
+    *,
+    post_tool: bool = False,
+    canary: str = "private K3 reasoning",
+    model: str = "kimi-k3",
 ) -> str:
     rounds: list[dict[str, object]] = []
     if post_tool:
@@ -81,7 +85,7 @@ def _kimi_checkpoint_json(
             "checkpoint_revision": 2 if post_tool else 1,
             "provider": "moonshot",
             "protocol": "chat_completions",
-            "model": "kimi-k3",
+            "model": model,
             "api_base_url": "https://api.moonshot.ai/v1",
             "state": "complete",
             "rounds": rounds,
@@ -235,6 +239,44 @@ def test_add_message_requires_exact_kimi_final_content_before_insert(
     ] == dump_provider_continuation_json(
         parse_provider_continuation_json(checkpoint_json)
     )
+
+
+def test_add_message_family_final_content_rule_covers_versioned_kimi(
+    tmp_path: Path,
+) -> None:
+    """TASK-19170: the exact-final-content ownership rule follows the
+    versioned-kimi family (k2.6 preserved-thinking checkpoints now exist),
+    not the kimi-k3 literal."""
+    db, conversation_id = _db_with_conversation(tmp_path)
+    canary = "PRIVATE-KIMI-FAMILY-CANARY"
+
+    checkpoint_json = _kimi_checkpoint_json("visible answer", model="kimi-k2.6")
+    message_id = db.add_message(
+        {
+            "id": "kimi-family-add-match",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "visible answer",
+            "provider_continuation_json": checkpoint_json,
+        }
+    )
+    assert message_id == "kimi-family-add-match"
+
+    with pytest.raises(InputError) as invalid:
+        db.add_message(
+            {
+                "id": "kimi-family-add-mismatch",
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "visible answer",
+                "provider_continuation_json": _kimi_checkpoint_json(
+                    "different answer", model="kimi-k2.6", canary=canary
+                ),
+            }
+        )
+
+    assert canary not in str(invalid.value)
+    assert db.get_message_by_id("kimi-family-add-mismatch") is None
 
 
 def test_message_search_returns_public_fields_without_private_continuation(
