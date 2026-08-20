@@ -35,6 +35,10 @@ _SOURCE_KIND_PATTERN = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _GRAPH_STATUSES = frozenset({"active", "archived", "deleted"})
 _ASSET_ROLES = frozenset({"sprite"})
+_SQLITE_CORRUPTION_CODES = frozenset(
+    {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT, sqlite3.SQLITE_NOTADB}
+)
+_SQLITE_UTF8_DECODE_PREFIX = "Could not decode to UTF-8 column "
 
 
 @dataclass(frozen=True, slots=True)
@@ -1024,15 +1028,31 @@ def _input_text(value: object, maximum: int, *, allow_empty: bool = False) -> st
 def _fetchone(cursor: sqlite3.Cursor) -> Any:
     try:
         return cursor.fetchone()
-    except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+    except sqlite3.Error as exc:
+        if not _is_sqlite_graph_corruption(exc):
+            raise
+        raise ValueError("persona_visual_graph_invalid") from None
+    except (UnicodeError, RecursionError, TypeError, OverflowError):
         raise ValueError("persona_visual_graph_invalid") from None
 
 
 def _fetchall(cursor: sqlite3.Cursor) -> list[Any]:
     try:
         return cursor.fetchall()
-    except (sqlite3.Error, UnicodeError, RecursionError, TypeError, OverflowError):
+    except sqlite3.Error as exc:
+        if not _is_sqlite_graph_corruption(exc):
+            raise
         raise ValueError("persona_visual_graph_invalid") from None
+    except (UnicodeError, RecursionError, TypeError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
+
+
+def _is_sqlite_graph_corruption(exc: sqlite3.Error) -> bool:
+    error_code = getattr(exc, "sqlite_errorcode", None)
+    return (
+        isinstance(exc, sqlite3.OperationalError)
+        and str(exc).startswith(_SQLITE_UTF8_DECODE_PREFIX)
+    ) or (type(error_code) is int and error_code & 0xFF in _SQLITE_CORRUPTION_CODES)
 
 
 def _db_int(value: object) -> int:

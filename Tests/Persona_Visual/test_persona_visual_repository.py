@@ -491,6 +491,127 @@ def test_read_operational_error_uses_fixed_repository_category(
         repository.get_active_persona_pack("Ada Lovelace / local")
 
 
+class _FailingFetchCursor:
+    def __init__(self, method: str, error: sqlite3.Error) -> None:
+        self.method = method
+        self.error = error
+
+    def fetchone(self) -> None:
+        if self.method == "fetchone":
+            raise self.error
+        raise AssertionError("unexpected fetchone")
+
+    def fetchall(self) -> None:
+        if self.method == "fetchall":
+            raise self.error
+        raise AssertionError("unexpected fetchall")
+
+
+@pytest.mark.parametrize(
+    ("operation", "fetch_method", "query_marker", "failure_detail", "error_code"),
+    (
+        (
+            "read",
+            "fetchone",
+            "FROM persona_visual_bindings",
+            "database is locked",
+            sqlite3.SQLITE_LOCKED,
+        ),
+        (
+            "read",
+            "fetchall",
+            "FROM persona_visual_assets",
+            "interrupted",
+            sqlite3.SQLITE_INTERRUPT,
+        ),
+        (
+            "write",
+            "fetchone",
+            "SELECT COALESCE(MAX",
+            "interrupted",
+            sqlite3.SQLITE_INTERRUPT,
+        ),
+        (
+            "write",
+            "fetchall",
+            "FROM persona_visual_assets",
+            "database is locked",
+            sqlite3.SQLITE_LOCKED,
+        ),
+    ),
+)
+def test_fetch_operational_errors_use_repository_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    fetch_method: str,
+    query_marker: str,
+    failure_detail: str,
+    error_code: int,
+) -> None:
+    active = (
+        _activate(repository)
+        if query_marker != "FROM persona_visual_bindings"
+        else None
+    )
+    original_execute = db.execute_query
+
+    def execute_with_failing_fetch(
+        query: str, *args: object, **kwargs: object
+    ) -> object:
+        cursor = original_execute(query, *args, **kwargs)  # type: ignore[arg-type]
+        if query_marker in query:
+            error = sqlite3.OperationalError(failure_detail)
+            error.sqlite_errorcode = error_code
+            return _FailingFetchCursor(fetch_method, error)
+        return cursor
+
+    monkeypatch.setattr(db, "execute_query", execute_with_failing_fetch)
+    category = f"persona_visual_repository_{operation}_failed"
+    with pytest.raises(ValueError, match=f"^{category}$"):
+        if operation == "read":
+            repository.get_active_persona_pack(
+                "persona-local-1" if active is not None else "missing"
+            )
+        else:
+            assert active is not None
+            repository.publish_version(
+                persona_id=active.identity.persona_id,
+                manifest=_valid_manifest(frame_rate=2),
+                manifest_storage_relpath="persona_visual/fetch/v2/manifest.json",
+                assets=[_asset(storage_relpath="persona_visual/fetch/v2/idle.png")],
+                expected_identity=active.identity,
+                expected_persona_revision=active.identity.persona_revision,
+                authority_guard=lambda: True,
+            )
+
+
+@pytest.mark.parametrize("error_code", (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB))
+def test_fetch_database_corruption_uses_graph_category(
+    repository: PersonaVisualRepository,
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+    error_code: int,
+) -> None:
+    original_execute = db.execute_query
+    corruption = sqlite3.DatabaseError("private malformed database detail")
+    corruption.sqlite_errorcode = error_code
+
+    def execute_with_corrupt_fetch(
+        query: str, *args: object, **kwargs: object
+    ) -> object:
+        cursor = original_execute(query, *args, **kwargs)  # type: ignore[arg-type]
+        if "FROM persona_visual_bindings" in query:
+            return _FailingFetchCursor("fetchone", corruption)
+        return cursor
+
+    monkeypatch.setattr(db, "execute_query", execute_with_corrupt_fetch)
+
+    with pytest.raises(ValueError, match="^persona_visual_graph_invalid$"):
+        repository.get_active_persona_pack("persona-local-1")
+
+
 @pytest.mark.parametrize(
     "guard_behavior",
     (
