@@ -390,6 +390,7 @@ Then in `_revoke_tool_approval_rounds`, replace the loop that pops the payload m
 ```
 
 The "is this the last armed round for the session" test existed only because the slot was shared. With per-round storage each revoked round drops exactly its own payload, so a still-armed sibling keeps its own.
+**Lock discipline — this bit the Task 2 implementer.** `self._approval_state_lock` is a plain non-reentrant `threading.Lock`, and `_unpark_round_payload` acquires it internally. The replacement loop must therefore sit OUTSIDE any enclosing `with self._approval_state_lock:` block. Placed inside one it self-deadlocks on every run cancellation. Check the indentation of the code you are replacing before you paste.
 
 - [ ] **Step 6: Re-key the three re-derive call sites**
 
@@ -758,7 +759,9 @@ The round registry keeps its own `_pending_skill_script_lock`; only the payload 
 
 Delete the whole `_clear_pending_skill_script_if_round_is_current` method — the third copy of the same order-dependent guard.
 
-In `_revoke_skill_script_rounds`, replace the conditional `self._parked_skill_script_payloads.pop(session_id, None)` and its "last armed for this session" guard with a per-round unpark, exactly as Task 2 Step 5 did for `_revoke_tool_approval_rounds`:
+In `_revoke_skill_script_rounds`, replace the conditional `self._parked_skill_script_payloads.pop(session_id, None)` and its "last armed for this session" guard with a per-round unpark, exactly as Task 2 Step 5 did for `_revoke_tool_approval_rounds`.
+
+**The same lock trap applies here.** `_unpark_round_payload` acquires the non-reentrant `_approval_state_lock` internally, so this loop must sit OUTSIDE any enclosing `with self._approval_state_lock:` block or it self-deadlocks on every run cancellation. Task 2's implementer hit exactly this and had to move the loop out of the lock:
 
 ```python
             for round_id_to_drop, session_id in revoked:
