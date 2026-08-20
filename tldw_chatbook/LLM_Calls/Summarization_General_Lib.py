@@ -48,6 +48,7 @@ from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_sampling_params,
+    anthropic_model_rejects_temperature_top_p_combination,
     openai_model_rejects_sampling_params,
     openai_model_requires_max_completion_tokens,
 )
@@ -1058,7 +1059,11 @@ def summarize_with_anthropic(
         logging.debug("Anthropic: Prompt prepared")
         user_message = {"role": "user", "content": f"{text} \n\n\n\n{anthropic_prompt}"}
 
-        model = get_cli_setting("anthropic_api", "model", "claude-3-haiku-20240307")
+        # TASK-19020: the former fallback default claude-3-haiku-20240307 is
+        # retired server-side (404 not_found_error, req_011CeEDXZ8iS29MZCgyySwQa);
+        # claude-haiku-4-5 is its currently-served successor in the same
+        # cheap-fast-haiku lineage.
+        model = get_cli_setting("anthropic_api", "model", "claude-haiku-4-5")
 
         data = {
             "model": model,
@@ -1080,7 +1085,17 @@ def summarize_with_anthropic(
         if not anthropic_model_rejects_sampling_params(model):
             data["temperature"] = temp
             data["top_k"] = 0
-            data["top_p"] = 1.0
+            # TASK-19020: every served Claude 4.x rejects temperature and top_p
+            # together ("`temperature` and `top_p` cannot both be specified for
+            # this model."). Mirror the chat path's precedence (LLM_API_Calls
+            # chat_with_anthropic): send temperature and drop top_p; top_k is
+            # probe-verified compatible alongside temperature. No warning log
+            # here, deliberately: the diagnostic-privacy manifest
+            # (test_summarization_diagnostic_privacy.py) freezes this module's
+            # reviewed diagnostic set, and the drop is deterministic -- both
+            # values are this function's own constants, not caller input.
+            if not anthropic_model_rejects_temperature_top_p_combination(model):
+                data["top_p"] = 1.0
 
         for attempt in range(max_retries):
             try:

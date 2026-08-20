@@ -250,6 +250,54 @@ def anthropic_model_rejects_fixed_thinking_budget(model: object) -> bool:
     return _anthropic_is_modern_request_family(model)
 
 
+def anthropic_model_rejects_temperature_top_p_combination(model: object) -> bool:
+    """Return whether ``model`` rejects ``temperature`` and ``top_p`` together.
+
+    Distinct from :func:`anthropic_model_rejects_sampling_params`: the families
+    that still *accept* sampling parameters individually reject the pair --
+    ``400 invalid_request_error: `temperature` and `top_p` cannot both be
+    specified for this model. Please use only one.``
+
+    Probe-verified against api.anthropic.com with the exact trio the
+    summarization path used to build (``temperature=0.1, top_k=0, top_p=1.0``):
+
+    * 2026-08-20 (TASK-18802 discovery probes): ``claude-haiku-4-5``
+      (req_011CeEDXPHNyF7apkaZepbTN) and ``claude-sonnet-4-5``
+      (req_011CeEDXa9V99yBoHN5vcjDG) -> 400; ``temperature`` alone and
+      ``temperature``+``top_k`` -> 200 (req_011CeEDXQwqi7yXoozbdrXFX,
+      req_011CeEDXVk4nXXCoBGdf9mFm).
+    * 2026-08-20 (TASK-19020 boundary probes): ``claude-opus-4-6``
+      (req_011CeEFGsbHd7VCjcjz4etar), ``claude-sonnet-4-6``
+      (req_011CeEFGuRfeCzC6PiLyDtFb) and ``claude-opus-4-5``
+      (req_011CeEFGvySC6z61NDRH5uN5) -> the identical 400;
+      ``claude-opus-4-6`` + ``temperature``+``top_k`` without ``top_p`` -> 200
+      (msg_011CeEFGzjeXQ6ftPf9KH45n).
+
+    Together with Anthropic's published migration guidance ("passing both will
+    error on every Claude 4+ model"), the rule covers every tier-first-named
+    family -- a naming scheme that began with the Claude 4 generation -- so the
+    predicate is true for any id the family parser recognises with major >= 4.
+    The Claude 3.x generation, which accepted the pair, is number-first-named
+    (``claude-3-haiku-20240307``), never parses into a family, and is entirely
+    retired (that id itself now 404s: req_011CeEDXZ8iS29MZCgyySwQa); unparsed
+    ids keep their historical payload unchanged.
+
+    Args:
+        model: An Anthropic model identifier (any prefixed or suffixed form).
+
+    Returns:
+        True when sending ``temperature`` and ``top_p`` in the same request
+        would be answered with the 400 above. A caller holding both must send
+        temperature and drop top_p (``top_k`` remains compatible alongside
+        temperature). False for unrecognisable ids.
+    """
+    family = _anthropic_model_family(model)
+    if family is None:
+        return False
+    _tier, major, _minor = family
+    return major >= 4
+
+
 #
 #######################################################################################################################
 #
