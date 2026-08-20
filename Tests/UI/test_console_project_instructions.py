@@ -49,6 +49,7 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 import tldw_chatbook.Chat.console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -441,7 +442,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     preview_consent.assert_not_called()
 
 
-def test_run_log_bind_failure_keeps_preview_live_eviction_and_admission_exact(
+def test_run_log_bind_failure_keeps_preview_live_first_request_log_neutral(
     tmp_path, monkeypatch
 ):
     class BindFailureWriter:
@@ -513,7 +514,7 @@ def test_run_log_bind_failure_keeps_preview_live_eviction_and_admission_exact(
         runtime_schemas=list(schemas.runtime_schemas),
         messages=messages,
         active_schemas=schemas.active_schemas,
-        log_active=schemas.log_active,
+        log_active=False,
     )
     provider_calls = []
 
@@ -541,11 +542,11 @@ def test_run_log_bind_failure_keeps_preview_live_eviction_and_admission_exact(
     assert writer.is_active is False
     assert list(preview_request.messages) == provider_calls[0]["messages_payload"]
     assert list(preview_request.tools) == provider_calls[0]["tools"]
-    assert RUN_LOG_PROMPT_SECTION in preview_request.messages[0]["content"]
+    assert RUN_LOG_PROMPT_SECTION not in preview_request.messages[0]["content"]
     assert preview_snapshot.primary_delivery.source_digests == (
         candidate.source.digest,
     )
-    assert bound_calls and set(bound_calls) == {(True, 1)}
+    assert bound_calls and set(bound_calls) == {(False, 1)}
 
 
 @pytest.mark.asyncio
@@ -595,15 +596,18 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
-    controller.app = SimpleNamespace(
-        workspace_registry_service=object(), unified_mcp_service=None
-    )
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
         root_identity=None,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
     )
     monkeypatch.setattr(
         controller_module,
@@ -617,7 +621,7 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     )
     monkeypatch.setattr(
         controller_module,
-        "project_instruction_authority_is_current",
+        "project_instruction_authority_snapshot_is_current",
         lambda **_kwargs: True,
     )
     mcp_provider = _PreviewCatalogProvider("mcp__srv__search", "mcp")
@@ -652,7 +656,10 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
     assert {"fs_read", "mcp__srv__search", "search_run_log"} <= native_names
     assert "install_skill" not in native_names
     assert "run_skill_script" not in native_names
-    assert RUN_LOG_PROMPT_SECTION in preview.next_send_payload["messages"][0]["content"]
+    assert (
+        RUN_LOG_PROMPT_SECTION
+        not in preview.next_send_payload["messages"][0]["content"]
+    )
     gateway.resolve_for_send.assert_awaited_once()
     controller._compose_mcp_provider.assert_awaited_once_with(
         session.id, publish_counts=False
@@ -721,15 +728,18 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
         agent_runtime_enabled=True,
         skills_service=skills,
     )
-    controller.app = SimpleNamespace(
-        workspace_registry_service=object(), unified_mcp_service=None
-    )
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
         root=tmp_path,
         locator_fingerprint="f" * 64,
         allow_write=True,
         root_identity=None,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
     )
     monkeypatch.setattr(
         controller_module,
@@ -743,7 +753,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     )
     monkeypatch.setattr(
         controller_module,
-        "project_instruction_authority_is_current",
+        "project_instruction_authority_snapshot_is_current",
         lambda **_kwargs: True,
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
@@ -812,12 +822,7 @@ async def test_preview_revalidates_authority_after_awaited_composition(
         ready=True, provider="openai", execution_key="openai", model="m", max_tokens=20
     )
     gateway = SimpleNamespace(resolve_for_send=AsyncMock(return_value=resolution))
-    composed = asyncio.Event()
-    release = asyncio.Event()
-
     async def compose(**_kwargs):
-        composed.set()
-        await release.wait()
         return None, Mock(), None, None
 
     bridge = SimpleNamespace(
@@ -851,26 +856,35 @@ async def test_preview_revalidates_authority_after_awaited_composition(
         "resolve_startup",
         lambda _resolver, **_kwargs: candidate,
     )
+    loop = asyncio.get_running_loop()
 
-    task = asyncio.create_task(
-        controller._build_project_instruction_preview_for_session(
-            session.id,
-            {"messages": [{"role": "user", "content": "question"}]},
-            [{"role": "user", "content": "question"}],
-        )
+    def mutate_after_authority_check():
+        if race == "disable":
+            store.set_session_project_instruction_state(
+                session.id, ProjectInstructionControlState.legacy_disabled()
+            )
+        elif race == "remove":
+            registry.current = None
+        else:
+            registry.current = replace(binding, locator=str(other))
+
+    def authority_check(**_kwargs):
+        loop.call_soon_threadsafe(mutate_after_authority_check)
+        return True
+
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_snapshot_is_current",
+        authority_check,
     )
-    await composed.wait()
-    if race == "disable":
-        store.set_session_project_instruction_state(
-            session.id, ProjectInstructionControlState.legacy_disabled()
-        )
-    elif race == "remove":
-        registry.current = None
-    else:
-        registry.current = replace(binding, locator=str(other))
-    release.set()
 
-    assert await task is None
+    preview = await controller._build_project_instruction_preview_for_session(
+        session.id,
+        {"messages": [{"role": "user", "content": "question"}]},
+        [{"role": "user", "content": "question"}],
+    )
+
+    assert preview is None
 
 
 @pytest.mark.asyncio
@@ -913,7 +927,9 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
         agent_runtime_enabled=True,
     )
     app = SimpleNamespace(
-        workspace_registry_service=object(),
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
         unified_mcp_service=object(),
         console_mcp_tool_count=41,
         console_mcp_not_connected_count=7,
@@ -938,7 +954,7 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
     )
     monkeypatch.setattr(
         controller_module,
-        "project_instruction_authority_is_current",
+        "project_instruction_authority_snapshot_is_current",
         lambda **_kwargs: True,
     )
 
@@ -1112,10 +1128,6 @@ async def test_controller_preview_does_not_advance_live_session_state(
         agent_runtime_enabled=True,
         confirm_project_instruction_dispatch=consent,
     )
-    controller.app = SimpleNamespace(
-        workspace_registry_service=object(), unified_mcp_service=None
-    )
-    controller._run_state_histories[session.id] = []
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
         root=tmp_path,
@@ -1123,6 +1135,13 @@ async def test_controller_preview_does_not_advance_live_session_state(
         allow_write=True,
         root_identity=None,
     )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
+    )
+    controller._run_state_histories[session.id] = []
     monkeypatch.setattr(
         controller_module,
         "resolve_project_instruction_binding",
@@ -1135,7 +1154,7 @@ async def test_controller_preview_does_not_advance_live_session_state(
     )
     monkeypatch.setattr(
         controller_module,
-        "project_instruction_authority_is_current",
+        "project_instruction_authority_snapshot_is_current",
         lambda **_kwargs: True,
     )
     state_setter = Mock(side_effect=AssertionError("preview changed controls"))
@@ -1294,6 +1313,112 @@ async def test_context_snapshot_stays_on_captured_session_after_active_switch():
         "captured transcript"
     ]
     assert snapshot.next_send_payload["messages"][-1]["content"] == "captured draft"
+
+
+@pytest.mark.asyncio
+async def test_captured_context_uses_own_session_destination_model_system_and_reserve(
+    tmp_path, monkeypatch
+):
+    candidate = _candidate(tmp_path)
+    control = ProjectInstructionControlState(True, "binding-1", "f" * 64, None)
+    captured_settings = ConsoleSessionSettings(
+        provider="captured-provider",
+        model="captured-model",
+        max_tokens=70,
+        system_prompt="CAPTURED SYSTEM",
+    )
+    active_settings = ConsoleSessionSettings(
+        provider="active-provider",
+        model="active-model",
+        max_tokens=10,
+        system_prompt="ACTIVE SYSTEM",
+    )
+    store = ConsoleChatStore()
+    captured = store.create_session(
+        settings=captured_settings, project_instruction_state=control
+    )
+    store.append_message(
+        captured.id, role=ConsoleMessageRole.USER, content="captured question"
+    )
+    store.create_session(
+        settings=active_settings,
+        project_instruction_state=ProjectInstructionControlState.legacy_disabled(),
+    )
+
+    class Gateway:
+        def __init__(self):
+            self.selections = []
+
+        async def resolve_for_send(self, selection):
+            self.selections.append(selection)
+            return SimpleNamespace(
+                ready=True,
+                provider=selection.provider,
+                execution_key=f"exec-{selection.provider}",
+                model=selection.explicit_model,
+                max_tokens=selection.max_tokens,
+            )
+
+    gateway = Gateway()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "captured-preview.db", client_id="test"),
+        store=store,
+        provider_gateway=gateway,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="active-provider",
+        model="active-model",
+        max_tokens=10,
+        system_prompt="ACTIVE SYSTEM",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    selection = SimpleNamespace(
+        binding=SimpleNamespace(binding_id="binding-1"),
+        root=tmp_path,
+        locator_fingerprint="f" * 64,
+        allow_write=True,
+        root_identity=None,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=SimpleNamespace(
+            get_runtime_binding=lambda _binding_id: selection.binding
+        ),
+        unified_mcp_service=None,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "resolve_project_instruction_binding",
+        lambda _session, _registry: selection,
+    )
+    monkeypatch.setattr(
+        controller_module.ProjectInstructionResolver,
+        "resolve_startup",
+        lambda _resolver, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "project_instruction_authority_snapshot_is_current",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
+    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 15)
+    monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
+
+    snapshot = await controller.build_context_snapshot("", session_id=captured.id)
+
+    preview = snapshot.project_instruction_preview
+    assert preview is not None
+    assert gateway.selections[0].provider == "captured-provider"
+    assert gateway.selections[0].explicit_model == "captured-model"
+    assert gateway.selections[0].max_tokens == 70
+    assert preview.next_send_payload["model"] == "captured-model"
+    assert "CAPTURED SYSTEM" in preview.next_send_payload["messages"][0]["content"]
+    assert "ACTIVE SYSTEM" not in str(preview.next_send_payload)
+    assert "omitted_token_budget" in preview.outcomes
 
 
 @pytest.mark.asyncio

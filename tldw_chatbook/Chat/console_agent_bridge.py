@@ -2994,7 +2994,7 @@ class ConsoleAgentBridge:
             runtime_schemas=list(plan.schemas.runtime_schemas),
             messages=list(plan.messages),
             active_schemas=plan.schemas.active_schemas,
-            log_active=plan.schemas.log_active,
+            log_active=False,
         )
         payload: dict[str, Any] = {
             "model": plan.config.model,

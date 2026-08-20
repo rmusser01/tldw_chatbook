@@ -527,6 +527,21 @@ def project_instruction_authority_is_current(
     session = next((item for item in store.sessions() if item.id == session_id), None)
     if session is None:
         return False
+    return project_instruction_authority_snapshot_is_current(
+        session_snapshot=session,
+        registry=registry,
+        expected_selection=expected_selection,
+    )
+
+
+def project_instruction_authority_snapshot_is_current(
+    *,
+    session_snapshot: Any,
+    registry: Any,
+    expected_selection: ProjectInstructionBindingSelection,
+) -> bool:
+    """Re-resolve filesystem authority from an immutable session snapshot."""
+    session = session_snapshot
     state = session.project_instruction_state
     if (
         not state.project_instructions_enabled
@@ -5170,11 +5185,11 @@ class ConsoleChatController:
         composed catalog is empty (nothing to register, and -- since
         ``not_connected_count`` is only ever non-zero for servers that
         already contributed at least one eligible tool -- nothing an
-        empty catalog could usefully report either). Every return path
-        also publishes this run's inspector counts via
-        ``_publish_mcp_inspector_counts`` -- see that method's docstring;
-        this is the only production writer of ``console_mcp_tool_count``/
-        ``console_mcp_not_connected_count``.
+        empty catalog could usefully report either). Live composition
+        publishes this run's inspector counts on every return path via
+        ``_publish_mcp_inspector_counts``. Disposable Context composition
+        passes ``publish_counts=False`` and never mutates those app-level
+        inspector values.
 
         Args:
             session_id: The run's OWNING session (Task 3/9) -- threaded
@@ -5186,6 +5201,8 @@ class ConsoleChatController:
                 check exactly like the batch review-hook path does.
                 ``None`` (the default -- every pre-Task-9 call site) keeps
                 ``request_mcp_approvals``' legacy no-session behavior.
+            publish_counts: Whether to publish app-level MCP inspector counts.
+                Live dispatch keeps the default; disposable preview disables it.
 
         Returns:
             A composed ``MCPToolProvider`` ready to hand to
@@ -5253,7 +5270,12 @@ class ConsoleChatController:
         LocalToolProvider | None,
         Callable[[list["ToolCall"]], dict[str, str]] | None,
     ]:
-        """Compose the per-request providers shared by live and preview."""
+        """Compose providers shared by live and preview.
+
+        ``publish_mcp_counts`` is true for live dispatch and false for the
+        disposable Context preflight, whose composition must not mutate the
+        app-level inspector counters.
+        """
         mcp_provider = await self._compose_mcp_provider(
             session_id, publish_counts=publish_mcp_counts
         )
@@ -7634,6 +7656,7 @@ class ConsoleChatController:
         session = next(
             (item for item in self.store.sessions() if item.id == session_id), None
         )
+        provider_selection = self._provider_selection_for_session(session_id)
         current_messages = list(self.store.messages_for_session(session_id))
         staged_sources_list = [
             {"source_id": s.source_id, "label": s.label, "type": s.source_type}
@@ -7763,7 +7786,10 @@ class ConsoleChatController:
             )
 
             next_send_payload: dict[str, Any] = {
-                "model": self.model or self.configured_model,
+                "model": (
+                    provider_selection.explicit_model
+                    or provider_selection.configured_model
+                ),
                 "messages": redacted_messages,
                 # `system` is intentionally duplicated from the leading system
                 # message in `messages` so the preview viewer can show the
@@ -7789,6 +7815,7 @@ class ConsoleChatController:
                     session_id,
                     next_send_payload,
                     exact_provider_messages,
+                    provider_selection=provider_selection,
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
                 )
@@ -7830,7 +7857,10 @@ class ConsoleChatController:
                     session_id, current_messages
                 ),
                 next_send_payload={
-                    "model": self.model or self.configured_model,
+                    "model": (
+                        provider_selection.explicit_model
+                        or provider_selection.configured_model
+                    ),
                     "messages": degraded_messages,
                     "system": degraded_system,
                     "staged_sources": staged_sources_list,
@@ -7849,6 +7879,7 @@ class ConsoleChatController:
         base_payload: dict[str, Any],
         provider_messages: list[dict[str, Any]],
         *,
+        provider_selection: ConsoleProviderSelection | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
     ) -> ProjectInstructionPreview | None:
@@ -7864,9 +7895,13 @@ class ConsoleChatController:
         ):
             return None
         expected_control = session.project_instruction_state
+        expected_session_snapshot = copy.deepcopy(session)
+        owning_provider_selection = (
+            provider_selection or self._provider_selection_for_session(session_id)
+        )
         try:
             resolution = await self.provider_gateway.resolve_for_send(
-                self._provider_selection()
+                owning_provider_selection
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
@@ -7930,7 +7965,11 @@ class ConsoleChatController:
                 candidate=candidate,
                 session_id=session_id,
                 resolution=resolution,
-                fallback_model=self.model or self.configured_model or "",
+                fallback_model=(
+                    owning_provider_selection.explicit_model
+                    or owning_provider_selection.configured_model
+                    or ""
+                ),
                 session_system_prompt=session_system_prompt,
                 agent_messages=agent_messages,
                 mcp_provider=mcp_provider,
@@ -7955,15 +7994,30 @@ class ConsoleChatController:
             return None
         try:
             authority_current = await asyncio.to_thread(
-                project_instruction_authority_is_current,
-                store=self.store,
-                session_id=session_id,
+                project_instruction_authority_snapshot_is_current,
+                session_snapshot=expected_session_snapshot,
                 registry=registry,
                 expected_selection=selection,
             )
         except Exception:  # noqa: BLE001 - authority doubt fails closed
             return None
         if not authority_current:
+            return None
+        current_session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if (
+            current_session is None
+            or current_session.project_instruction_state != expected_control
+        ):
+            return None
+        try:
+            current_binding = registry.get_runtime_binding(
+                str(selection.binding.binding_id)
+            )
+        except Exception:  # noqa: BLE001 - in-memory registry doubt fails closed
+            return None
+        if current_binding != selection.binding:
             return None
         payload = copy.deepcopy(base_payload)
         payload.pop("tools", None)

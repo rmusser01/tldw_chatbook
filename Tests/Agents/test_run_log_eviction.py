@@ -29,7 +29,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
     ToolSchema,
 )
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import RUN_LOG_PROMPT_SECTION, AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat import console_history_budget as budget_module
 from tldw_chatbook.Chat.console_history_budget import (
@@ -652,7 +652,10 @@ def test_flag_on_and_log_active_fence_protocol_drops_old_rounds_intact(
         api_endpoint="llama_cpp",
     )
     assert outcome.final_text == "done."
+    first_payload = chat.calls[0]["messages_payload"]
     last_payload = chat.calls[-1]["messages_payload"]
+    assert RUN_LOG_PROMPT_SECTION not in str(first_payload[0].get("content", ""))
+    assert RUN_LOG_PROMPT_SECTION in str(last_payload[0].get("content", ""))
     assert not any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "the earliest round should have been evicted under this tiny window"
     )
