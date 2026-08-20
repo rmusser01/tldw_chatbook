@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import PurePosixPath
 from typing import Any
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 
 from .contracts import PersonaVisualManifest, PersonaVisualManifestError
 from .validation import validate_persona_visual_manifest
+
+
+_SOURCE_CONTEXT_KEYS = frozenset(
+    {"source_id", "provenance", "license", "source_server_commit"}
+)
+_MAX_SOURCE_CONTEXT_VALUE_LENGTH = 256
+_ASSET_KEY_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,8 +176,10 @@ class PersonaVisualRepository:
 
         try:
             with self.db.transaction(immediate=True):
+                transaction_connection = self.db.get_connection()
                 if self._active_binding_row(persona_id) is not None:
                     raise ValueError("persona_visual_binding_changed")
+                _run_authority_guard(authority_guard, self.db, transaction_connection)
                 pack_id = int(
                     self.db.execute_query(
                         """
@@ -191,7 +201,6 @@ class PersonaVisualRepository:
                     storage_relpath=manifest_relpath,
                 )
                 self._insert_assets(pack_id, version_id, asset_writes)
-                _run_authority_guard(authority_guard)
                 activated = self.db.execute_query(
                     """
                     UPDATE persona_visual_packs
@@ -244,6 +253,7 @@ class PersonaVisualRepository:
 
         try:
             with self.db.transaction(immediate=True):
+                transaction_connection = self.db.get_connection()
                 current = self._get_active_persona_pack(persona_id)
                 if current is None:
                     raise ValueError("persona_visual_identity_changed")
@@ -252,7 +262,7 @@ class PersonaVisualRepository:
                 if current.identity != expected_identity:
                     raise ValueError("persona_visual_identity_changed")
 
-                source_manifest_json = self._reserve_identity(current.identity)
+                source_manifest_json = self._read_identity_snapshot(current.identity)
                 next_number = int(
                     self.db.execute_query(
                         """
@@ -263,6 +273,7 @@ class PersonaVisualRepository:
                         (current.pack.id,),
                     ).fetchone()[0]
                 )
+                _run_authority_guard(authority_guard, self.db, transaction_connection)
                 version_id = self._insert_version(
                     pack_id=current.pack.id,
                     version_number=next_number,
@@ -272,7 +283,6 @@ class PersonaVisualRepository:
                     storage_relpath=manifest_relpath,
                 )
                 self._insert_assets(current.pack.id, version_id, asset_writes)
-                _run_authority_guard(authority_guard)
 
                 pack_update = self.db.execute_query(
                     """
@@ -381,6 +391,14 @@ class PersonaVisualRepository:
         if binding_row is None:
             return None
         binding = dict(binding_row)
+        for field in (
+            "id",
+            "persona_revision",
+            "pack_id",
+            "active_version_id",
+            "version",
+        ):
+            binding[field] = _db_int(binding[field])
         pack_row = self.db.execute_query(
             "SELECT * FROM persona_visual_packs WHERE id = ?",
             (binding["pack_id"],),
@@ -388,6 +406,8 @@ class PersonaVisualRepository:
         if pack_row is None:
             raise ValueError("persona_visual_pack_relationship_invalid")
         pack = dict(pack_row)
+        for field in ("id", "active_version_id", "version"):
+            pack[field] = _db_int(pack[field])
         if pack["status"] != "active":
             return None
         version_row = self.db.execute_query(
@@ -397,11 +417,13 @@ class PersonaVisualRepository:
         if version_row is None:
             raise ValueError("persona_visual_pack_relationship_invalid")
         version = dict(version_row)
+        for field in ("id", "pack_id", "version_number", "manifest_version"):
+            version[field] = _db_int(version[field])
         if not (
-            int(binding["pack_id"]) == int(pack["id"]) == int(version["pack_id"])
-            and int(binding["active_version_id"])
-            == int(pack["active_version_id"])
-            == int(version["id"])
+            binding["pack_id"] == pack["id"] == version["pack_id"]
+            and binding["active_version_id"]
+            == pack["active_version_id"]
+            == version["id"]
         ):
             raise ValueError("persona_visual_pack_relationship_invalid")
 
@@ -414,13 +436,12 @@ class PersonaVisualRepository:
             """,
             (version["id"],),
         ).fetchall()
+        assets = tuple(_asset_record(row) for row in asset_rows)
         if any(
-            int(row["pack_id"]) != int(pack["id"])
-            or int(row["pack_version_id"]) != int(version["id"])
-            for row in asset_rows
+            asset.pack_id != pack["id"] or asset.pack_version_id != version["id"]
+            for asset in assets
         ):
             raise ValueError("persona_visual_pack_relationship_invalid")
-        assets = tuple(_asset_record(row) for row in asset_rows)
         known_assets = {
             asset.asset_key: (asset.width, asset.height) for asset in assets
         }
@@ -436,53 +457,53 @@ class PersonaVisualRepository:
                 or manifest.manifest_version != version["manifest_version"]
             ):
                 raise PersonaVisualManifestError()
-        except PersonaVisualManifestError:
+        except (PersonaVisualManifestError, RecursionError):
             raise ValueError("persona_visual_manifest_invalid") from None
         _validate_stored_source_context(pack["source_context_json"])
 
         identity = PersonaVisualIdentity(
             persona_id=str(binding["persona_id"]),
-            persona_revision=int(binding["persona_revision"]),
-            binding_id=int(binding["id"]),
-            binding_version=int(binding["version"]),
-            pack_id=int(pack["id"]),
-            pack_revision=int(pack["version"]),
-            pack_version_id=int(version["id"]),
-            version_number=int(version["version_number"]),
+            persona_revision=binding["persona_revision"],
+            binding_id=binding["id"],
+            binding_version=binding["version"],
+            pack_id=pack["id"],
+            pack_revision=pack["version"],
+            pack_version_id=version["id"],
+            version_number=version["version_number"],
             manifest_sha256=str(version["manifest_sha256"]),
         )
         return PersonaVisualGraph(
             identity=identity,
             pack=PersonaVisualPackRecord(
-                id=int(pack["id"]),
+                id=pack["id"],
                 title=str(pack["title"]),
                 description=str(pack["description"]),
                 status=str(pack["status"]),
                 source_kind=str(pack["source_kind"]),
                 created_at=str(pack["created_at"]),
                 updated_at=str(pack["updated_at"]),
-                revision=int(pack["version"]),
+                revision=pack["version"],
             ),
             version=PersonaVisualVersionRecord(
-                id=int(version["id"]),
-                pack_id=int(version["pack_id"]),
-                version_number=int(version["version_number"]),
+                id=version["id"],
+                pack_id=version["pack_id"],
+                version_number=version["version_number"],
                 renderer_type=str(version["renderer_type"]),
-                manifest_version=int(version["manifest_version"]),
+                manifest_version=version["manifest_version"],
                 manifest=manifest,
                 manifest_sha256=str(version["manifest_sha256"]),
                 created_at=str(version["created_at"]),
             ),
             binding=PersonaVisualBindingRecord(
-                id=int(binding["id"]),
+                id=binding["id"],
                 persona_id=str(binding["persona_id"]),
-                persona_revision=int(binding["persona_revision"]),
-                pack_id=int(binding["pack_id"]),
-                active_version_id=int(binding["active_version_id"]),
+                persona_revision=binding["persona_revision"],
+                pack_id=binding["pack_id"],
+                active_version_id=binding["active_version_id"],
                 status=str(binding["status"]),
                 created_at=str(binding["created_at"]),
                 updated_at=str(binding["updated_at"]),
-                revision=int(binding["version"]),
+                revision=binding["version"],
             ),
             assets=assets,
         )
@@ -564,13 +585,22 @@ class PersonaVisualRepository:
                 redact_params=True,
             )
 
-    def _reserve_identity(self, identity: PersonaVisualIdentity) -> str:
-        binding = self.db.execute_query(
+    def _read_identity_snapshot(self, identity: PersonaVisualIdentity) -> str:
+        version = self.db.execute_query(
             """
-            UPDATE persona_visual_bindings SET id = id
-             WHERE id = ? AND persona_id = ? AND persona_revision = ?
-               AND pack_id = ? AND active_version_id = ?
-               AND status = 'active' AND version = ?
+            SELECT version_row.manifest_json
+              FROM persona_visual_bindings AS binding
+              JOIN persona_visual_packs AS pack ON pack.id = binding.pack_id
+              JOIN persona_visual_pack_versions AS version_row
+                ON version_row.id = binding.active_version_id
+               AND version_row.pack_id = binding.pack_id
+             WHERE binding.id = ? AND binding.persona_id = ?
+               AND binding.persona_revision = ? AND binding.pack_id = ?
+               AND binding.active_version_id = ?
+               AND binding.status = 'active' AND binding.version = ?
+               AND pack.status = 'active' AND pack.active_version_id = ?
+               AND pack.version = ? AND version_row.version_number = ?
+               AND version_row.manifest_sha256 = ?
             """,
             (
                 identity.binding_id,
@@ -579,34 +609,13 @@ class PersonaVisualRepository:
                 identity.pack_id,
                 identity.pack_version_id,
                 identity.binding_version,
-            ),
-        )
-        pack = self.db.execute_query(
-            """
-            UPDATE persona_visual_packs SET id = id
-             WHERE id = ? AND status = 'active'
-               AND active_version_id = ? AND version = ?
-            """,
-            (
-                identity.pack_id,
                 identity.pack_version_id,
                 identity.pack_revision,
-            ),
-        )
-        version = self.db.execute_query(
-            """
-            SELECT manifest_json FROM persona_visual_pack_versions
-             WHERE id = ? AND pack_id = ? AND version_number = ?
-               AND manifest_sha256 = ?
-            """,
-            (
-                identity.pack_version_id,
-                identity.pack_id,
                 identity.version_number,
                 identity.manifest_sha256,
             ),
         ).fetchone()
-        if binding.rowcount != 1 or pack.rowcount != 1 or version is None:
+        if version is None:
             raise ValueError("persona_visual_identity_changed")
         return str(version["manifest_json"])
 
@@ -621,7 +630,13 @@ def _manifest_json(
             canonical,
             {asset.asset_key: (asset.width, asset.height) for asset in assets},
         )
-    except (TypeError, ValueError, UnicodeError, PersonaVisualManifestError):
+    except (
+        TypeError,
+        ValueError,
+        UnicodeError,
+        RecursionError,
+        PersonaVisualManifestError,
+    ):
         raise ValueError("persona_visual_manifest_invalid") from None
     return canonical, validated, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -632,7 +647,7 @@ def _source_context_json(value: object) -> str:
     try:
         _validate_source_context_content(value)
         return _json_dump(value)
-    except (TypeError, ValueError, UnicodeError):
+    except (TypeError, ValueError, UnicodeError, RecursionError):
         raise ValueError("persona_visual_source_context_invalid") from None
 
 
@@ -668,11 +683,9 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
             height = candidate["height"]
             frame_count = candidate.get("frame_count")
             duration_ms = candidate.get("duration_ms")
-            if not all(
-                isinstance(value, str) and value
-                for value in (asset_key, role, mime_type)
-            ):
+            if not all(isinstance(value, str) and value for value in (role, mime_type)):
                 raise ValueError
+            asset_key = _asset_key(asset_key)
             if not _is_sha256(sha256):
                 raise ValueError
             if not all(
@@ -703,19 +716,27 @@ def _asset_writes(assets: object) -> tuple[_AssetWrite, ...]:
 
 
 def _asset_record(row: Mapping[str, Any]) -> PersonaVisualAssetRecord:
+    try:
+        asset_key = _asset_key(row["asset_key"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("persona_visual_graph_invalid") from None
     return PersonaVisualAssetRecord(
-        id=int(row["id"]),
-        pack_id=int(row["pack_id"]),
-        pack_version_id=int(row["pack_version_id"]),
-        asset_key=str(row["asset_key"]),
+        id=_db_int(row["id"]),
+        pack_id=_db_int(row["pack_id"]),
+        pack_version_id=_db_int(row["pack_version_id"]),
+        asset_key=asset_key,
         role=str(row["role"]),
         mime_type=str(row["mime_type"]),
-        byte_count=int(row["bytes"]),
+        byte_count=_db_int(row["bytes"]),
         sha256=str(row["sha256"]),
-        width=int(row["width"]),
-        height=int(row["height"]),
-        frame_count=int(row["frame_count"]) if row["frame_count"] is not None else None,
-        duration_ms=int(row["duration_ms"]) if row["duration_ms"] is not None else None,
+        width=_db_int(row["width"]),
+        height=_db_int(row["height"]),
+        frame_count=(
+            _db_int(row["frame_count"]) if row["frame_count"] is not None else None
+        ),
+        duration_ms=(
+            _db_int(row["duration_ms"]) if row["duration_ms"] is not None else None
+        ),
         created_at=str(row["created_at"]),
     )
 
@@ -735,6 +756,12 @@ def _storage_relpath(value: object) -> str:
     return value
 
 
+def _asset_key(value: object) -> str:
+    if not isinstance(value, str) or _ASSET_KEY_PATTERN.fullmatch(value) is None:
+        raise ValueError
+    return value
+
+
 def _validate_persona_id(value: object) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError("persona_visual_persona_id_invalid")
@@ -750,12 +777,22 @@ def _validate_guard(value: object) -> None:
         raise ValueError("persona_visual_authority_guard_invalid")
 
 
-def _run_authority_guard(guard: Callable[[], bool]) -> None:
+def _run_authority_guard(
+    guard: Callable[[], bool],
+    db: CharactersRAGDB,
+    transaction_connection: object,
+) -> None:
     try:
         valid = guard()
     except Exception:
-        raise ValueError("persona_visual_authority_changed") from None
-    if valid is not True:
+        valid = False
+    connection = db.get_connection()
+    if (
+        valid is not True
+        or connection is not transaction_connection
+        or not connection.in_transaction
+        or getattr(db._local, "transaction_depth", 0) != 1
+    ):
         raise ValueError("persona_visual_authority_changed")
 
 
@@ -785,30 +822,35 @@ def _reject_json_constant(_value: str) -> None:
 
 
 def _validate_source_context_content(value: object) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if not isinstance(key, str) or _is_private_context_key(key):
-                raise ValueError
-            _validate_source_context_content(item)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _validate_source_context_content(item)
-        return
-    if isinstance(value, str) and (
-        PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
-    ):
+    if type(value) is not dict or not set(value) <= _SOURCE_CONTEXT_KEYS:
         raise ValueError
-
-
-def _is_private_context_key(key: str) -> bool:
-    normalized = key.casefold().replace("-", "_")
-    private_tokens = ("api_key", "password", "secret", "token", "persona", "prompt")
-    return any(token in normalized for token in private_tokens)
+    for item in value.values():
+        if not isinstance(item, str) or not item:
+            raise ValueError
+        item.encode("utf-8")
+        stripped = item.strip()
+        if (
+            len(item) > _MAX_SOURCE_CONTEXT_VALUE_LENGTH
+            or "/" in item
+            or "\\" in item
+            or any(ord(character) < 32 for character in item)
+            or stripped in {".", ".."}
+            or stripped.startswith(("{", "[", "~"))
+        ):
+            raise ValueError
 
 
 def _is_positive_int(value: object) -> bool:
     return type(value) is int and value > 0
+
+
+def _db_int(value: object) -> int:
+    try:
+        if type(value) is not int:
+            raise TypeError
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("persona_visual_graph_invalid") from None
 
 
 def _is_sha256(value: object) -> bool:
