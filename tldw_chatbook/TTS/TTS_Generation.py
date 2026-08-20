@@ -2997,16 +2997,16 @@ class TTSService:
                 apply_staged=True,
             )
             pending = self._settings_staged_preferences
-            if (
-                pending is not None
-                and self.registry.configuration_generation("audio_cpp") == pending[0]
-            ):
+            if pending is not None:
+                applied_generation = self.registry.configuration_generation("audio_cpp")
                 pending_generation, pending_preferences = pending
-                self._request_admission._publish_preferences(
-                    pending_preferences,
-                    pending_generation,
-                )
-                self._settings_staged_preferences = None
+                if applied_generation == pending_generation:
+                    self._request_admission._publish_preferences(
+                        pending_preferences,
+                        pending_generation,
+                    )
+                if applied_generation >= pending_generation:
+                    self._settings_staged_preferences = None
             return result
 
         task = self._start_audio_cpp_lifecycle(
@@ -3557,6 +3557,7 @@ class TTSService:
         try:
             result = await asyncio.shield(ticket.completion)
         except BaseException:
+            await self._seal_provider_configs((provider_id,))
             return "unavailable"
         if result is ReconfigureResult.CHANGED:
             return "applied"

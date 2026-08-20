@@ -643,6 +643,8 @@ def _native_service(
     adapter: _CapturingAdapter,
     snapshot: TTSPreferencesSnapshot,
     studio_preferences_loader: Callable[[], StudioTTSPreferencesSnapshot] | None = None,
+    *,
+    exclusive_reconfigure: bool = True,
 ) -> tuple[TTSService, _RecordingRegistry]:
     registry = _RecordingRegistry(
         specs=(
@@ -654,7 +656,7 @@ def _native_service(
                 ),
                 factory=lambda _config: adapter,
                 initial_config={"generation": adapter.generation or "initial"},
-                exclusive_reconfigure=True,
+                exclusive_reconfigure=exclusive_reconfigure,
             ),
         ),
         aliases={},
@@ -741,12 +743,13 @@ async def _publish_settings(
     service: TTSService,
     preferences: TTSPreferencesSnapshot,
     provider_configs: Mapping[str, Mapping[str, Any]],
+    timeout: float = 0,
 ) -> Any:
     ticket = service.begin_preferences_publication(
         preferences,
         provider_configs,
         lambda: generation_module.TTSSettingsPersistenceOutcome(True, True, None),
-        foreground_timeout_seconds=0,
+        foreground_timeout_seconds=timeout,
     )
     return await _wait_bounded(ticket.completion)
 
@@ -3408,6 +3411,69 @@ async def test_cancelled_managed_transition_settles_preferences_before_caller() 
     await _wait_bounded(replacement.aclose())
     await _wait_bounded(service.close())
     await _wait_bounded(service.wait_closed())
+
+
+@pytest.mark.asyncio
+async def test_failed_nonexclusive_close_seals_replacement_configuration() -> None:
+    class FailingCloseAdapter(_CapturingAdapter):
+        async def close(self) -> None:
+            await super().close()
+            raise RuntimeError("adapter close failed")
+
+    initial = _snapshot(model_id="Model/One")
+    service, registry = _native_service(
+        FailingCloseAdapter("audio_cpp", generation="one"),
+        initial,
+        exclusive_reconfigure=False,
+    )
+    response = await service.synthesize_default(text="Materialize generation one")
+    await response.aclose()
+
+    try:
+        result = await _publish_settings(
+            service,
+            _snapshot(model_id="Model/Two"),
+            {"audio_cpp": {"generation": "two"}},
+            timeout=_WAIT_SECONDS,
+        )
+        assert result.provider_statuses == {"audio_cpp": "unavailable"}
+        assert service.preferences_snapshot() == initial
+        try:
+            lease = await registry.acquire("audio_cpp")
+        except TTSProviderUnavailableError:
+            pass
+        else:
+            await lease.release()
+            pytest.fail("replacement configuration remained admissible")
+    finally:
+        await asyncio.gather(
+            service.close(), service.wait_closed(), return_exceptions=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_newer_managed_stage_discards_older_staged_preferences() -> None:
+    service, _adapters, _supervisor = _managed_promotion_service()
+    registry = service.registry
+    await _publish_settings(
+        service,
+        _snapshot(model_id="Model/B"),
+        {"audio_cpp": _managed_config(6.0)},
+    )
+    newer_generation = registry.reserve_reconfiguration_generation()
+    await registry.stage_provider_configuration(
+        "audio_cpp",
+        _managed_config(7.0),
+        generation=newer_generation,
+    )
+
+    await service.shutdown_audio_cpp()
+
+    assert registry.configuration_generation("audio_cpp") == newer_generation
+    assert service.preferences_snapshot().model_id == "Model/A"
+    assert service._settings_staged_preferences is None
+    await service.close()
+    await service.wait_closed()
 
 
 @pytest.mark.asyncio
