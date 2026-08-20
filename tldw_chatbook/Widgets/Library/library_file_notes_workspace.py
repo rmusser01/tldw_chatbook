@@ -577,13 +577,9 @@ class LibraryFileNotesWorkspace(Vertical):
         max-height: 1;
     }
 
-    /* LIB-19 / TASK-14880: placement sentence relating Files mode to
-       Database/Sync. Keep the muted treatment used by
-       #library-notes-database-purpose
-       and #library-notes-sync-purpose (library_notes_canvas.py /
-       css/components/_agentic_terminal.tcss), but allow the concise copy
-       one additional row at compact widths rather than clipping it. */
-    #file-notes-purpose {
+    /* Pinned authority remains readable without consuming the editor's
+       compact conflict controls. */
+    #file-notes-authority {
         width: 100%;
         height: auto;
         min-height: 1;
@@ -1162,12 +1158,9 @@ class LibraryFileNotesWorkspace(Vertical):
         status.display = True
 
     def compose(self) -> ComposeResult:
-        # LIB-19: Database mode, Files mode (this surface), and the Sync
-        # sub-canvas are three folder-notes concepts never related to each
-        # other anywhere in the UI -- one placement sentence per surface.
         yield Static(
-            "Files edits this folder directly. Sync mirrors files into Library.",
-            id="file-notes-purpose",
+            self._authority_copy(),
+            id="file-notes-authority",
             markup=False,
         )
         with Horizontal(id="file-notes-root-row"):
@@ -1355,6 +1348,59 @@ class LibraryFileNotesWorkspace(Vertical):
                         compact=True,
                     )
                 yield Static("", id="file-notes-action-status", markup=False)
+
+    def _authority_copy(self, session_git_count: int | None = None) -> str:
+        """Describe disk authority, current work, and the next available action."""
+        if self._root is None:
+            return "Folder files · No folder selected · Next: Choose folder."
+        folder_name = self._root.name or self._root.anchor or str(self._root)
+        prefix = f"Folder files · Local folder: {folder_name}"
+        if self._root_offline is True:
+            return f"{prefix} · Folder offline · Next: Reconnect or choose another folder."
+        if self._runtime_warning:
+            return f"{prefix} · Folder needs attention · Next: Open Details."
+        if self._save_state in {"conflict", "error"}:
+            status = _SAVE_STATE_COPY[self._save_state]
+            if self._save_detail:
+                status = f"{status}; {self._save_detail}"
+            next_action = (
+                "Resolve the conflict or save the draft as a copy."
+                if self._save_state == "conflict"
+                else "Resolve the save error or save the draft as a copy."
+            )
+            return f"{prefix} · {status} · Next: {next_action}"
+        if self._save_state == "saving":
+            return f"{prefix} · Saving to local folder… · Next: Wait for saving to finish."
+        if self._save_state == "dirty":
+            return f"{prefix} · Auto-save pending · Next: Keep editing while auto-save runs."
+        if session_git_count is None:
+            binding = self._session_binding
+            changes = (
+                () if binding is None else self._session_owner.snapshot(binding).changes
+            )
+            session_git_count = len(coalesce_session_changes(changes))
+        change_word = "change" if session_git_count == 1 else "changes"
+        if self._push_phase != "idle":
+            status = {
+                "checking": "Checking push",
+                "pushing": "Pushing",
+                "needs_attention": "Push needs attention",
+            }[self._push_phase]
+            return (
+                f"{prefix} · Session Git: {session_git_count} {change_word} · "
+                f"{status} · Next: Review session changes."
+            )
+        if session_git_count:
+            return (
+                f"{prefix} · Session Git: {session_git_count} {change_word} · "
+                "Ready · Next: Review session changes."
+            )
+        if self._save_state == "saved":
+            return (
+                f"{prefix} · Saved to local folder · "
+                "Next: Keep editing or review session changes."
+            )
+        return f"{prefix} · Ready · Next: Choose a file or create one."
 
     def on_mount(self) -> None:
         """Start background initialization and polling for this mount."""
@@ -1795,6 +1841,7 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active or not self.is_mounted or not self.children:
             return
         try:
+            authority = self.query_one("#file-notes-authority", Static)
             status = self.query_one("#file-notes-root-status", Static)
             body = self.query_one("#file-notes-body")
             details = self.query_one("#file-notes-root-details", Button)
@@ -1823,6 +1870,7 @@ class LibraryFileNotesWorkspace(Vertical):
             details.display = False
             choose.label = "Choose folder…"
             choose.display = True
+            authority.update(self._authority_copy())
             return
         status.set_class(False, "-empty-root")
         is_offline = self._root_offline if offline is None else offline
@@ -1852,6 +1900,7 @@ class LibraryFileNotesWorkspace(Vertical):
         details.display = True
         choose.label = "Change…"
         choose.display = True
+        authority.update(self._authority_copy())
         self._apply_responsive_layout(self.size.width)
         self.call_after_refresh(self._fit_root_status)
 
@@ -2267,9 +2316,11 @@ class LibraryFileNotesWorkspace(Vertical):
         }.get(self._push_phase, "")
         try:
             entry = self.query_one("#file-notes-session-changes", Button)
+            authority = self.query_one("#file-notes-authority", Static)
         except NoMatches:
             return
         entry.label = f"Review session changes ({count}){suffix}"
+        authority.update(self._authority_copy(count))
 
     def _clear_push_presentation(self) -> None:
         """Retire visible push state without canceling service-owned work."""
@@ -3869,6 +3920,9 @@ class LibraryFileNotesWorkspace(Vertical):
             status.set_class(state == "conflict", "-conflict")
             status.set_class(state == "error", "-error")
             status.update(label)
+            self.query_one("#file-notes-authority", Static).update(
+                self._authority_copy()
+            )
             self._update_controls()
 
     def _set_action_status(self, text: str) -> None:

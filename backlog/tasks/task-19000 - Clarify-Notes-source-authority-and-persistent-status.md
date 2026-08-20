@@ -1,9 +1,11 @@
 ---
 id: TASK-19000
 title: Clarify Notes source authority and persistent status
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-20 07:40'
+updated_date: '2026-08-20 14:48'
 labels:
   - notes
   - ux
@@ -27,8 +29,8 @@ Make the two Notes storage modes immediately understandable and keep selected-so
 - [ ] #5 The legacy Sync and Import entries remain visible and operable until the atomic cutover task.
 <!-- AC:END -->
 
-## Decision Record Check
+## Implementation Plan
 
-ADR required: no new ADR
-ADR paths: `backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md`, `backlog/decisions/029-local-private-data-boundary.md`, `backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md`
-Reason: this task changes labels, status presentation, and accessibility without changing authority or behavior.
+<!-- SECTION:PLAN:BEGIN -->
+1. Add RED source-strip and pinned authority-row tests for Library Notes and Folder Files.\n2. Implement the smallest authority projections at existing compose/update choke points without changing storage or routing.\n3. Add RED compact-navigation and readable-error checks, then regenerate CSS.\n4. Run focused UI/CSS gates, perform spec and quality review, update documentation and task evidence.\n\nADR required: no new ADR\nADR path: backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md; backlog/decisions/029-local-private-data-boundary.md; backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md\nReason: presentation, copy, contrast, and retained-status refinement only; existing authority and behavior remain unchanged.\n\nPlan: Docs/superpowers/plans/2026-08-20-notes-files-presentation-refinement.md
+<!-- SECTION:PLAN:END -->

@@ -2292,7 +2292,12 @@ class LibraryScreen(BaseAppScreen):
         min-height: 1;
         content-align: center middle;
     }
-
+    #library-notes-authority {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
     /* Presentation-only row wrappers keep the established wide stacked
        workbench. Compact rules below switch only these wrappers to rows. */
     #library-notes-filter-row,
@@ -2380,7 +2385,15 @@ class LibraryScreen(BaseAppScreen):
         overflow-x: hidden;
         overflow-y: hidden;
     }
-
+    #library-canvas.library-notes-compact #library-notes-authority {
+        height: 2;
+        min-height: 2;
+        max-height: 2;
+        margin: 0;
+        padding: 0 1;
+        text-wrap: wrap;
+        overflow: hidden hidden;
+    }
     #library-canvas.library-notes-compact #library-notes-header {
         height: 1;
         min-height: 1;
@@ -2710,7 +2723,7 @@ class LibraryScreen(BaseAppScreen):
 
     #library-canvas.library-notes-compact #library-note-load-state {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         min-height: 0;
         margin: 0;
         padding: 0;
@@ -10423,7 +10436,7 @@ class LibraryScreen(BaseAppScreen):
                     self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
                 )
                 database_source = Button(
-                    ("Database (selected)" if database_selected else "Database"),
+                    "Library notes",
                     id="library-notes-source-database",
                     compact=True,
                 )
@@ -10439,7 +10452,7 @@ class LibraryScreen(BaseAppScreen):
                 yield source_separator
                 files_selected = self._library_notes_source == LIBRARY_NOTES_SOURCE_FILES
                 files_source = Button(
-                    "Files (selected)" if files_selected else "Files",
+                    "Folder files",
                     id="library-notes-source-files",
                     compact=True,
                 )

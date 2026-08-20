@@ -197,6 +197,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._apply_post_compose_state()
 
     def compose(self) -> ComposeResult:
+        yield Static(
+            self._authority_copy(),
+            id="library-notes-authority",
+            markup=False,
+        )
         if self.mode == "loading":
             yield from self._compose_loading()
             return
@@ -210,6 +215,56 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield from self._compose_sync()
             return
         yield from self._compose_list()
+
+    def _authority_copy(self) -> str:
+        """Describe Library storage, current status, and the next action."""
+        prefix = "Library notes · Library database"
+        if self.mode == "loading":
+            if self.load_state == "failed":
+                status = self.load_message or "Could not load note."
+                return f"{prefix} · {status} · Next: Retry loading."
+            return f"{prefix} · Loading note… · Next: Wait for loading to finish."
+        if self.mode == "editor":
+            state = self.presentation_state
+            if state is None:
+                return f"{prefix} · Editor unavailable · Next: Back to notes."
+            status = state.status_line or "Ready"
+            if state.conflict:
+                next_action = "Resolve the conflict or reload the note."
+            elif state.snapshot.saving:
+                next_action = "Wait for saving to finish."
+            else:
+                next_action = "Keep editing; changes save automatically."
+            return f"{prefix} · {status} · Next: {next_action}"
+        if self.mode == "create":
+            status = self.create_status or (
+                "Creating note…" if self.create_running else "Ready"
+            )
+            next_action = (
+                "Wait for creation to finish."
+                if self.create_running
+                else "Choose Blank note or a template."
+            )
+            return f"{prefix} · {status} · Next: {next_action}"
+        if self.mode == "sync":
+            state = self.sync_panel_state
+            status = "Sync unavailable" if state is None else f"Sync {state.status_line}"
+            if state is None or state.status_line.startswith("failed"):
+                next_action = "Review the error, then Sync now."
+            elif state.running:
+                next_action = "Wait for sync to finish."
+            else:
+                next_action = "Choose a folder, then Sync now."
+            return f"{prefix} · {status} · Next: {next_action}"
+        state = self.list_state
+        status = state.operation_status if state is not None else ""
+        status = status or "Ready"
+        next_action = (
+            "Wait for the running notes operation to finish."
+            if state is not None and state.operation_running
+            else "Create, Sync, or Import."
+        )
+        return f"{prefix} · {status} · Next: {next_action}"
 
     def sync_state(
         self,

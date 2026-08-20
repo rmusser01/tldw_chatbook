@@ -35,6 +35,13 @@ _LIBRARY_NOTES_COMPACT_GEOMETRY = {
         "padding": "0",
         "margin": "0",
     },
+    "#library-canvas.library-notes-compact #library-notes-authority": {
+        "height": "2",
+        "min-height": "2",
+        "max-height": "2",
+        "text-wrap": "wrap",
+        "overflow": "hidden hidden",
+    },
     "#library-canvas.library-notes-compact #library-notes-header": {
         "height": "1",
         "min-height": "1",
@@ -270,6 +277,11 @@ _LIBRARY_NOTES_COMPACT_GEOMETRY = {
         "text-wrap": "nowrap",
         "text-overflow": "ellipsis",
     },
+    "#library-canvas.library-notes-compact #library-note-load-state": {
+        "height": "1fr",
+        "min-height": "0",
+        "overflow": "hidden",
+    },
     "#library-canvas.library-notes-compact #library-note-loading-viewport": {
         "height": "1fr",
         "min-height": "0",
@@ -373,6 +385,24 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
                 value,
                 value,
             ], (selector, name, declarations)
+
+
+def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
+    stylesheets = (
+        _AGENTIC_SOURCE.read_text(encoding="utf-8"),
+        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+    )
+
+    for css in stylesheets:
+        git_error = _declarations(css, ".file-notes-git-commit-error")
+        save_error = _declarations(css, "#file-notes-save-status.-error")
+        assert git_error["color"] == "$ds-status-error-readable"
+        assert save_error["color"] == "$ds-status-error-readable"
+        assert git_error["background"] == "$error-darken-3"
+        assert save_error["background"] == "$error-darken-3"
+        disabled = _declarations(css, "LibraryFileNotesWorkspace Button:disabled")
+        assert disabled["opacity"] == "100%"
+        assert disabled["text-opacity"] == "100%"
 
 
 def _missing_fixture(

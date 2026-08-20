@@ -596,21 +596,71 @@ def _root_transition_workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_files_mode_carries_a_placement_sentence_relating_it_to_sync(
+async def test_folder_files_authority_row_tracks_root_save_and_session_git(
     tmp_path: Path,
 ) -> None:
-    """LIB-19: Database mode, Files mode (this surface), and the Sync
-    sub-canvas were never related to each other anywhere in the UI --
-    Files mode's own placement sentence names Sync and states the actual
-    behavioral difference (edits the folder directly vs. mirrors it in)."""
+    """One pinned row projects facts already owned by each update choke point."""
+    root = tmp_path / "notes"
+    root.mkdir()
     replica = FileNotesReplica(":memory:")
     workspace = LibraryFileNotesWorkspace(root=None, replica=replica)
     async with _WorkspaceHarness(workspace).run_test() as pilot:
         await pilot.pause()
-        purpose = _static_text(workspace, "#file-notes-purpose")
-        assert "Files" in purpose
-        assert "directly" in purpose
-        assert "Sync" in purpose
+        authority = workspace.query_one("#file-notes-authority", Static)
+        assert workspace.children[0] is authority
+        assert authority._render_markup is False
+        assert _static_text(workspace, "#file-notes-authority") == (
+            "Folder files · No folder selected · Next: Choose folder."
+        )
+
+        workspace._root = root
+        workspace._root_offline = False
+        workspace._update_root_surface()
+        assert "Local folder: notes" in _static_text(
+            workspace,
+            "#file-notes-authority",
+        )
+
+        workspace._set_save_state("error", "permission denied")
+        save_failure = _static_text(workspace, "#file-notes-authority")
+        assert "Save failed: draft preserved in editor; permission denied" in save_failure
+        assert "Next: Resolve the save error or save the draft as a copy." in save_failure
+
+        workspace._set_save_state("saved")
+        workspace._push_phase = "needs_attention"
+        workspace._render_session_git_label(2)
+        git_attention = _static_text(workspace, "#file-notes-authority")
+        assert "Session Git: 2 changes · Push needs attention" in git_attention
+        assert "Next: Review session changes." in git_attention
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_folder_files_authority_status_survives_in_surface_navigation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    root.mkdir()
+    replica = FileNotesReplica(":memory:")
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica, poll_interval=10)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        workspace._push_phase = "needs_attention"
+        workspace._render_session_git_label(3)
+        expected = _static_text(workspace, "#file-notes-authority")
+
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._navigator_mode = "files"
+        workspace._sync_navigator_mode()
+        await pilot.pause()
+
+        assert _static_text(workspace, "#file-notes-authority") == expected
+        assert "Push needs attention" in expected
+        assert "Next: Review session changes." in expected
+
+    await workspace.shutdown()
     replica.close()
 
 
@@ -640,12 +690,13 @@ async def test_file_notes_authority_copy_is_complete_and_bounded(
         poll_interval=10,
     )
     expected = (
-        "Files edits this folder directly. Sync mirrors files into Library."
+        "Folder files · Local folder: notes · Ready · "
+        "Next: Choose a file or create one."
     )
 
     async with _WorkspaceHarness(workspace).run_test(size=size) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
-        purpose = workspace.query_one("#file-notes-purpose")
+        purpose = workspace.query_one("#file-notes-authority")
         rendered = " ".join(
             purpose.render_line(row).text.strip()
             for row in range(purpose.region.height)
@@ -3704,11 +3755,11 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         assert strip.content_region.contains_region(separator.region)
         assert strip.content_region.contains_region(files.region)
         assert separator.region.width == 1
-        assert str(database.label) == "Database (selected)"
+        assert str(database.label) == "Library notes"
         assert database.has_class("-selected")
         assert not database.disabled
         assert database.can_focus
-        assert str(files.label) == "Files"
+        assert str(files.label) == "Folder files"
         assert not files.disabled
         assert files.can_focus
 
@@ -3779,9 +3830,9 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         files = screen.query_one("#library-notes-source-files", Button)
         assert strip.content_region.contains_region(database.region)
         assert strip.content_region.contains_region(files.region)
-        assert str(database.label) == "Database"
+        assert str(database.label) == "Library notes"
         assert not database.disabled
-        assert str(files.label) == "Files (selected)"
+        assert str(files.label) == "Folder files"
         assert files.has_class("-selected")
         assert not files.disabled
 
@@ -3825,7 +3876,7 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
                     Button,
                 ).label
             )
-            == "Database (selected)"
+            == "Library notes"
         )
 
     await workspace.shutdown()
@@ -4405,6 +4456,11 @@ async def test_file_notes_discloses_actions_by_editor_state_and_redirects_focus(
             "file-notes-restore",
             "file-notes-maintenance-toggle",
         }
+        await _wait_until(
+            pilot,
+            lambda: workspace.app.focused is not None,
+            "focus did not redirect after delete",
+        )
         focused = workspace.app.focused
         assert focused is not None
         assert not delete.has_focus

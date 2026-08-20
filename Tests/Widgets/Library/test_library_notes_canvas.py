@@ -100,8 +100,49 @@ def _tree_projection() -> LibraryNotesTreeProjection:
     )
 
 
-# -- LIB-19: Database mode, Files mode, and Sync are three folder-notes
-# concepts never related anywhere -- one placement sentence per surface.
+# -- TASK-19000: source authority stays pinned across every Notes subview.
+
+
+@pytest.mark.parametrize(
+    ("mode", "kwargs", "status_fragment"),
+    (
+        (
+            "loading",
+            {"load_state": "failed", "load_message": "Could not load note."},
+            "Could not load note.",
+        ),
+        ("list", {"list_state": _list_state()}, "Ready"),
+        ("editor", {}, "Editor unavailable"),
+        (
+            "create",
+            {"create_status": "Could not create note."},
+            "Could not create note.",
+        ),
+        ("sync", {"sync_panel_state": _sync_state()}, "Sync idle"),
+    ),
+)
+async def test_authority_row_is_first_plain_child_in_every_notes_mode(
+    widget_pilot,  # noqa: F811
+    mode: str,
+    kwargs: dict[str, object],
+    status_fragment: str,
+):
+    async with await widget_pilot(
+        LibraryNotesCanvas,
+        mode=mode,
+        **kwargs,
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+
+        assert canvas.children[0] is authority
+        assert authority._render_markup is False
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Library notes" in text
+        assert "Library database" in text
+        assert status_fragment in text
+        assert "Next:" in text
 
 
 async def test_database_mode_list_carries_a_placement_sentence(widget_pilot):  # noqa: F811
