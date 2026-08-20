@@ -6,7 +6,9 @@ Keep the Console's current Context-only layout at exactly 100 terminal columns,
 but let the transcript yield its standard minimum-width constraint at that one
 responsive boundary. This reuses the existing compact-override mechanism that
 already keeps explicitly opened rails solvable at narrower widths. It changes no
-rail visibility, preference, ordering, label, focus, or mobile behavior.
+rail visibility, preference, ordering, label, focus, or mobile behavior. Exact
+100 also becomes its own resize-deduplication state so cold start and live
+resize cannot diverge at the new waiver boundary.
 
 ## Problem
 
@@ -59,6 +61,13 @@ open below the compact threshold” to “an open rail at or below the compact
 boundary whose row may require the transcript minimum-width waiver.” It does
 not broaden persistence authority and does not change which rail is open.
 
+Give exactly 100 columns its own semantic width-band key in
+`console_rail_width_band()`. The live-resize handler already recomputes effective
+rail state whenever that key changes; separating 100 from the existing
+100–117 band makes 101→100 acquire the waiver and 100→101 remove it. This is
+preferred over recomputing on every resize event or adding a second deduplication
+mechanism because it preserves the existing bounded resize architecture.
+
 ## Alternatives considered
 
 ### Fix Context to 30 columns at exactly 100
@@ -85,8 +94,12 @@ unnecessarily global and less robust.
 ### In scope
 
 - Pure rail-state classification for the exact 100-column, Context-open state.
+- Width-band classification that makes crossing into or out of exact 100 a
+  live-recomputation boundary.
 - Production-CSS compositor coverage of the full workspace hierarchy.
 - Cold-start and resize containment evidence.
+- Focus, selected-message, transcript-anchor, and no-persistence evidence for
+  the affected resize transitions.
 - Regression coverage at adjacent and representative widths.
 - Comments and documentation that describe the inclusive override boundary.
 
@@ -97,6 +110,8 @@ unnecessarily global and less robust.
   Inspector priority.
 - Moving or regrouping Context/Inspector content.
 - Changing rail widths, labels, handles, badges, focus, or persistence.
+- Changing the established focus result of a manual rail collapse; this task
+  covers responsive resize continuity only.
 - Phone, touch, hover, pointer, soft-keyboard, or served-browser work owned by
   TASK-18911.
 - Adding overlays, new settings, or a second layout system.
@@ -109,11 +124,15 @@ unnecessarily global and less robust.
    it by default below 100.
 3. When Context is open at 100, the existing left/aggregate compact-override
    flags are set.
-4. Existing Console compose and visibility-sync paths read the aggregate flag
+4. Exact 100 resolves to its own resize-deduplication band, so entering or
+   leaving that width always rebuilds effective rail state.
+5. Existing Console compose and visibility-sync paths read the aggregate flag
    and waive the transcript minimum width.
-5. Textual resolves Context, transcript, and collapsed Inspector handle inside
+6. Textual resolves Context, transcript, and collapsed Inspector handle inside
    the framed grid.
-6. No preference is written as a consequence of the viewport width.
+7. Responsive focus handoff, selected-message identity, and transcript reading
+   position remain intact; no preference save is called because of viewport
+   width.
 
 There is no new error state or recovery path. If width is unavailable, the
 current standard state remains unchanged.
@@ -137,21 +156,44 @@ Follow test-driven development:
    The final row preserves ADR-043's Inspector priority from 100 through 149
    columns; no stored preference is rewritten.
 2. For every matrix row, assert that each expected displayed child has positive
-   geometry and remains within both grid-content and screen bounds. The
-   transcript must remain in the compositor and measure at least ADR-043's
-   40-column usable-transcript floor. In the default Context-open,
-   Inspector-closed row, also assert the expected approximately 55-column
-   allocation (at minimum 55 columns) so a merely positive but practically
-   unusable sliver cannot pass.
+   geometry and remains within both grid-content and screen bounds. Measure the
+   two distinct width contracts explicitly:
+
+   - In the default Context-open, Inspector-closed row,
+     `#console-main-column.region.width` is at least 55 columns. This is the
+     outer allocation and includes the transcript region's own chrome.
+   - In every row, `#console-native-transcript.content_region.width` is at
+     least ADR-043's 40-column usable-content floor. Borders and padding do not
+     count toward this readable width.
+
+   Configure a ready provider or intentionally dismiss the setup modal before
+   paint assertions, then prove the expected transcript, rail, and handle are
+   painted/hittable so positive geometry cannot conceal clipping or an overlay.
 3. Add pure state coverage proving Context remains open at 100, its stored
-   preference is untouched, and the compact override is active only as needed.
-4. Pin adjacent 99/101-column controls plus 80x24, 120x30, 160x45, and 235x52
+   preference is untouched, and the compact override table is default Context
+   collapsed/no override at 99, open/override at 100, and open/no override at
+   101.
+4. Give exact 100 a distinct width-band expectation and retain the existing
+   expectations at 99 and 101.
+5. Pin adjacent 99/101-column controls plus 80x24, 120x30, 160x45, and 235x52
    representative layouts.
-5. Cover cold start and live resize to 100 so the two existing application
-   paths cannot diverge.
-6. Mutation-check the regression by reverting the inclusive boundary: the
-   exact-100 containment test must fail, then pass again when restored.
-7. Run the directly reachable Console rail/state/resize/compositor suites,
+6. Cover cold start plus 101→100, 100→101, 99→100, and 100→99 live transitions.
+   Assert containment and both width contracts after every transition. Focus
+   remains on the same control for 101↔100; the established Context
+   handle-to-collapse-control handoff applies for 99→100, with its inverse for
+   100→99.
+7. Use a populated transcript to prove selected-message identity and
+   tail-follow/released-anchor state survive the four transitions. Spy on
+   `_save_console_rail_preferences` and assert zero calls during cold start and
+   responsive resize, rather than relying only on deep-equal stored values.
+8. Mutation-check the regression by reverting the inclusive boundary and the
+   exact-100 resize band independently: the relevant cold-start or live-resize
+   test must fail, then pass again when restored.
+9. Update state, compose-time, and live-sync comments to call compact override
+   layout-minimum-waiver authority and to use the shipped 30-column Context
+   minimum, 11-column horizontal Inspector handle, and four cells of grid
+   border/padding in the exact-100 arithmetic.
+10. Run the directly reachable Console rail/state/resize/compositor suites,
    import provenance, CSS bundle integrity, Ruff, formatting, duplicate task-ID,
    and diff checks. Record any unchanged repository baseline failures rather
    than claiming they are green.
@@ -169,6 +211,9 @@ Follow test-driven development:
   one-cell budget mismatch from becoming a catastrophic layout expansion.
 - **Flexibility and efficiency:** Context remains visible for power users while
   first-time users retain a readable transcript.
+- **Recognition and continuity:** cold start and every adjacent resize direction
+  converge without losing the user's focused control, selected message, or
+  transcript reading position.
 
 ## Architecture decision record
 
