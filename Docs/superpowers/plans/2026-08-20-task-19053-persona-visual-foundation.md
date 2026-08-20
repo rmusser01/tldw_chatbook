@@ -19,7 +19,8 @@
 ## File map
 
 - Create `tldw_chatbook/Persona_Visual/__init__.py`: small public export surface.
-- Create `tldw_chatbook/Persona_Visual/contracts.py`: pinned capabilities, state/manifest dataclasses, pure validation, fallback traversal, static/reduced-motion selection.
+- Create `tldw_chatbook/Persona_Visual/contracts.py`: pinned capabilities, immutable state/manifest dataclasses, fallback traversal, and static/reduced-motion selection.
+- Create `tldw_chatbook/Persona_Visual/validation.py`: strict JSON parsing and pinned manifest validation.
 - Create `tldw_chatbook/Persona_Visual/assets.py`: image inspection, immutable asset metadata, confined profile-owned reads, digest/decode/dimension/frame budgets.
 - Create `tldw_chatbook/Persona_Visual/repository.py`: Persona Visual SQLite graph reads/writes, optimistic binding/version authority, stable graph identities.
 - Create `tldw_chatbook/Persona_Visual/runtime.py`: path-free resolution, selected asset loading, portrait fallback, full-identity cache keys.
@@ -79,6 +80,7 @@ V1 accepts at most 256 PNG/JPEG/WebP/GIF assets, at most 100 MiB total, and imag
 **Files:**
 - Create: `tldw_chatbook/Persona_Visual/__init__.py`
 - Create: `tldw_chatbook/Persona_Visual/contracts.py`
+- Create: `tldw_chatbook/Persona_Visual/validation.py`
 - Create: `Tests/Persona_Visual/test_persona_visual_contract.py`
 
 - [ ] **Step 1: Write born-RED contract tests**
@@ -117,7 +119,7 @@ Expected: collection fails because `tldw_chatbook.Persona_Visual` does not exist
 
 - [ ] **Step 3: Implement the minimal immutable contract**
 
-Use frozen/slotted dataclasses for capability, frames, animations, triggers, manifest, and state selection. Parse strict JSON objects with duplicate-key and non-standard-number rejection. Validate known asset IDs but do not read files in this module. Keep diagnostics as stable categories rather than interpolated values.
+Use frozen/slotted dataclasses for capability, frames, animations, triggers, manifest, and state selection in `contracts.py`. Put strict JSON parsing and validation in `validation.py`, including duplicate-key and non-standard-number rejection. Validate known asset IDs but do not read files in either module. Keep diagnostics as stable categories rather than interpolated values.
 
 - [ ] **Step 4: Run the focused contract file and verify GREEN**
 
@@ -126,7 +128,7 @@ Expected: all contract cases pass.
 - [ ] **Step 5: Commit the contract slice**
 
 ```bash
-git add tldw_chatbook/Persona_Visual/__init__.py tldw_chatbook/Persona_Visual/contracts.py Tests/Persona_Visual/test_persona_visual_contract.py
+git add tldw_chatbook/Persona_Visual/__init__.py tldw_chatbook/Persona_Visual/contracts.py tldw_chatbook/Persona_Visual/validation.py Tests/Persona_Visual/test_persona_visual_contract.py
 git commit -m "feat: add Persona Visual manifest contract"
 ```
 
