@@ -361,6 +361,64 @@ def test_posix_open_uses_no_follow(
     assert observed_flags[0] & os.O_NOFOLLOW
 
 
+@pytest.mark.parametrize(
+    ("constant_name", "sentinel"),
+    [("_BINARY", 1 << 28), ("_NONBLOCK", 1 << 29)],
+)
+def test_descriptor_open_includes_required_platform_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    constant_name: str,
+    sentinel: int,
+) -> None:
+    instruction = tmp_path / "AGENTS.md"
+    instruction.write_text("safe descriptor")
+    real_open = resolver_module.os.open
+    observed_flags: list[int] = []
+    monkeypatch.setattr(resolver_module, constant_name, sentinel, raising=False)
+
+    def recording_open(path: os.PathLike[str] | str, flags: int) -> int:
+        observed_flags.append(flags)
+        return real_open(path, flags & ~sentinel)
+
+    monkeypatch.setattr(resolver_module.os, "open", recording_open)
+
+    candidate = _resolve(tmp_path)
+
+    assert candidate.source is not None
+    assert observed_flags[0] & sentinel
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"),
+    reason="platform does not expose FIFO/nonblocking descriptor primitives",
+)
+def test_raced_regular_file_to_fifo_fails_closed_without_blocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instruction = tmp_path / "AGENTS.md"
+    instruction.write_text("race target")
+    real_open = resolver_module.os.open
+    raced = False
+
+    def race_to_fifo(path: os.PathLike[str] | str, flags: int) -> int:
+        nonlocal raced
+        if Path(path) == instruction and not raced:
+            raced = True
+            instruction.unlink()
+            os.mkfifo(instruction)
+            assert flags & os.O_NONBLOCK
+        return real_open(path, flags)
+
+    monkeypatch.setattr(resolver_module.os, "open", race_to_fifo)
+
+    candidate = _resolve(tmp_path)
+
+    assert raced is True
+    assert candidate.source is None
+    assert [item.code for item in candidate.outcomes] == ["resolution_failed"]
+
+
 def test_missing_posix_no_follow_still_uses_identity_checked_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

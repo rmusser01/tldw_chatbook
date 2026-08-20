@@ -23,6 +23,8 @@ _WINDOWS = os.name == "nt"
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", None)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", None)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_BINARY = getattr(os, "O_BINARY", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,7 +251,7 @@ def _read_candidate(
     except _UnsafeMetadata:
         return _ReadResult(outcome=outcome("resolution_failed"))
 
-    flags = os.O_RDONLY | _CLOEXEC
+    flags = os.O_RDONLY | _CLOEXEC | _BINARY | _NONBLOCK
     if _NOFOLLOW is not None:
         flags |= _NOFOLLOW
     try:
