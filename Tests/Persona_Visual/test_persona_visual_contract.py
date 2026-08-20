@@ -245,6 +245,12 @@ def test_json_bytes_are_parsed_without_mutating_the_input() -> None:
     assert encoded == json.dumps(PINNED_VALID_MANIFEST).encode("utf-8")
 
 
+def test_deeply_nested_json_returns_the_fixed_manifest_error() -> None:
+    nested_json = '{"nested":' * 2_000 + "null" + "}" * 2_000
+
+    _assert_invalid(nested_json)
+
+
 @pytest.mark.parametrize(
     "state_id",
     [
@@ -508,6 +514,22 @@ def test_fallback_depth_limit_accepts_eight_nodes_and_rejects_nine() -> None:
 
     accepted["fallbacks"]["error"] = ["offline"]  # type: ignore[index]
     _assert_invalid(accepted)
+
+
+def test_fallback_depth_cannot_be_bypassed_by_a_previsited_shared_descendant() -> None:
+    payload = _manifest()
+    payload["fallbacks"] = {
+        "error": ["offline"],
+        "idle": ["wake_armed"],
+        "wake_armed": ["listening"],
+        "listening": ["thinking"],
+        "thinking": ["speaking"],
+        "speaking": ["tool_running"],
+        "tool_running": ["approval_needed"],
+        "approval_needed": ["error"],
+    }
+
+    _assert_invalid(payload)
 
 
 @pytest.mark.parametrize(

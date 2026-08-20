@@ -159,9 +159,12 @@ def _load_document(payload: object) -> dict[str, Any]:
                 object_pairs_hook=_unique_object,
                 parse_constant=_reject_constant,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             raise PersonaVisualManifestError() from None
-    _json_value(payload)
+    try:
+        _json_value(payload)
+    except RecursionError:
+        raise PersonaVisualManifestError() from None
     if type(payload) is not dict:
         raise PersonaVisualManifestError()
     return payload
@@ -470,21 +473,24 @@ def _fallbacks(
         result[state] = tuple(chain)
 
     visiting: set[str] = set()
-    visited: set[str] = set()
+    depths: dict[str, int] = {}
 
-    def visit(state: str, path: tuple[str, ...]) -> None:
-        if len(path) >= MAX_FALLBACK_DEPTH or state in visiting:
+    def depth(state: str) -> int:
+        if state in visiting:
             raise PersonaVisualManifestError()
-        if state in visited:
-            return
+        if state in depths:
+            return depths[state]
         visiting.add(state)
-        for candidate in result.get(state, ()):
-            visit(candidate, (*path, state))
+        child_depth = max(
+            (depth(candidate) for candidate in result.get(state, ())), default=0
+        )
         visiting.remove(state)
-        visited.add(state)
+        depths[state] = child_depth + 1
+        return depths[state]
 
     for state in result:
-        visit(state, ())
+        if depth(state) > MAX_FALLBACK_DEPTH:
+            raise PersonaVisualManifestError()
     return result
 
 
