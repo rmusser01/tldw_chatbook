@@ -237,6 +237,13 @@ CREATE TABLE sync_roots (
         OR (source_kind IS NOT NULL
             AND source_locator_digest IS NOT NULL
             AND source_migration_id IS NOT NULL)
+    ),
+    CHECK (
+        direction <> 'unspecified' OR (
+            source_kind = 'legacy_notes_sync_v1'
+            AND needs_rescan = 1
+            AND reason_code = 'legacy_direction_invalid'
+        )
     )
 );
 
@@ -384,9 +391,9 @@ canonical table SQL, index columns, uniqueness, and partial-index SQL. A
 database claiming v2 but differing from that census fails closed. Tests compare
 a hand-authored fresh-v2 fixture with an actual v1 repository database upgraded
 through the coordinator; init-order equality alone is not the oracle.
-Migration-run root, binding, and failure counts are derived from
-`sync_migration_items` in the same read transaction. They are not stored as
-independently mutable summary columns.
+Migration receipt aggregates are exact SQL counts grouped by
+`(item_kind, outcome)` from `sync_migration_items` in the same read transaction.
+No generic or independently mutable root/binding/failure summary is stored.
 
 ### 3. Lasting-sync repository
 
@@ -415,9 +422,11 @@ contains only `candidate`, `paused`, and `disconnected`; active/running is not a
 representable value. Its source fields are all-null for a future user-created
 candidate or all-present for a legacy migration generation.
 
-Direction `unspecified` is permitted only for a migrated legacy value that is
-missing or invalid; it always carries `needs_rescan = 1`, and the setup slice
-must require a direction choice before admission.
+Direction `unspecified` is permitted only for an explicit invalid migrated
+legacy value; it always carries `needs_rescan = 1` and reason
+`legacy_direction_invalid`, and the setup slice must require a direction choice
+before admission. A missing direction uses the documented `bidirectional`
+default.
 
 Verified canonical identity and filesystem capability do not exist in v2. The
 later setup slice adds them in a new schema version after it defines their exact
@@ -472,6 +481,13 @@ may disconnect without disconnecting its root. Repository reads fail closed if
 corrupt data ever presents a disconnected root with a live child binding. Thus
 root disconnection releases both root and binding capacity and cannot leave a
 hidden note owner behind.
+
+Every binding create or mutable update acquires an immediate transaction and
+checks its parent root in that same transaction. The parent must be `candidate`
+or `paused`; a disconnected or missing root rejects the whole operation. Binding
+`disconnected` is terminal in v2—there is no reopen operation. These write
+guards, the atomic root-disconnect operation, and the read-side corruption check
+close the parent/child invariant without triggers.
 
 ## Legacy Metadata Migration Seam
 
@@ -547,6 +563,27 @@ Duplicate-note preflight excludes exact locator matches permitted by this state
 machine. All other incoming locators in the same note equivalence class are
 rejected together, and a claim against a different existing live locator is
 rejected. This makes replay independent of input and insertion order.
+
+“Relevant note” is one exact source predicate. A note is selected when any of
+these legacy fields indicates participation:
+
+```text
+is_externally_synced = 1
+OR sync_excluded = 1
+OR file_path_on_disk IS NOT NULL
+OR relative_file_path_on_disk IS NOT NULL
+OR sync_root_folder IS NOT NULL
+OR last_synced_disk_file_hash IS NOT NULL
+OR last_synced_disk_file_mtime IS NOT NULL
+OR sync_strategy IS NOT NULL
+```
+
+The source reader selects every such row, including soft-deleted rows, and then
+sorts by exact note ID as defined below. It selects legacy conflict rows only
+when `resolution IS NULL OR resolution = 'skip'`, because those are the
+unresolved/review outcomes; it sorts them by integer conflict ID. Resolved
+`use_db`, `use_disk`, or `merge` history is left untouched and omitted from the
+migration source. This selection rule is identical for snapshots A and B.
 
 ### Canonical source and locator digests
 
@@ -760,6 +797,9 @@ construction.
 - Prove root disconnect atomically disconnects/version-bumps every live child,
   releases both ceilings, cannot reopen, and rejects corrupted
   disconnected-root/live-binding state.
+- Prove create/update under a disconnected parent and binding reopen both fail,
+  including a two-connection disconnect/create race; prove the canonical DDL
+  rejects `unspecified` direction without the exact migration review state.
 - Cover exact limits at 64 roots and 100,000 bindings plus one-over rejection
   without constructing unbounded payload content.
 
@@ -773,6 +813,8 @@ construction.
 - Mutation-test canonical digest stability across row input order, dictionary
   order, Unicode spellings, missing/default/aliased config, and distinct JSON
   scalar types; prove every locator input change changes the intended digest.
+- Mutation-test every relevant-note predicate term and the exact unresolved/skip
+  conflict predicate so unrelated rows cannot perturb or disappear from a run.
 - Reject impossible migration-item field combinations through the canonical
   DDL and derive aggregate counts from items rather than stored summaries.
 - Simulate cross-owner drift and prove the resulting generation remains
