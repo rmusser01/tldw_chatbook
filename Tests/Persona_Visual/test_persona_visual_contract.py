@@ -266,6 +266,52 @@ def test_json_bytes_are_parsed_without_mutating_the_input() -> None:
     assert encoded == json.dumps(PINNED_VALID_MANIFEST).encode("utf-8")
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "animation_identifier",
+        "asset_identifier",
+        "trigger_identifier",
+        "trigger_match",
+        "catalog_label",
+        "catalog_description",
+        "catalog_tag",
+    ],
+)
+def test_mapping_strings_must_be_strict_utf8(case: str) -> None:
+    payload = _manifest()
+    known_assets = dict(KNOWN_ASSETS)
+    invalid = "\ud800"
+
+    if case == "animation_identifier":
+        payload["animations"][invalid] = payload["animations"].pop("idle")  # type: ignore[index,union-attr]
+        payload["states"]["idle"]["animation_id"] = invalid  # type: ignore[index]
+    elif case == "asset_identifier":
+        payload["animations"]["idle"]["asset_ids"] = [invalid]  # type: ignore[index]
+        known_assets[invalid] = (128, 128)
+    elif case == "trigger_identifier":
+        payload["authored_triggers"][0]["id"] = invalid  # type: ignore[index]
+    elif case == "trigger_match":
+        payload["authored_triggers"][0]["match"] = invalid  # type: ignore[index]
+    elif case == "catalog_label":
+        payload["state_catalog"]["tool.notes_search"]["label"] = invalid  # type: ignore[index]
+    elif case == "catalog_description":
+        payload["state_catalog"]["tool.notes_search"]["description"] = invalid  # type: ignore[index]
+    else:
+        payload["state_catalog"]["tool.notes_search"]["tags"] = [invalid]  # type: ignore[index]
+
+    _assert_invalid(payload, known_assets=known_assets)
+
+
+def test_escaped_json_surrogate_returns_the_fixed_manifest_error() -> None:
+    payload = _manifest()
+    payload["authored_triggers"][0]["match"] = "\ud800"  # type: ignore[index]
+    encoded = json.dumps(payload)
+    assert r"\ud800" in encoded
+
+    _assert_invalid(encoded)
+
+
 def test_deeply_nested_json_returns_the_fixed_manifest_error() -> None:
     nested_json = '{"nested":' * 2_000 + "null" + "}" * 2_000
 

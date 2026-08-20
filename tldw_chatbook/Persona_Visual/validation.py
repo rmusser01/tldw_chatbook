@@ -220,8 +220,7 @@ def _json_value(value: object) -> None:
         if current is None or type(current) in {int, bool}:
             continue
         if type(current) is str:
-            if len(current) > MAX_MANIFEST_STRING_LENGTH:
-                raise PersonaVisualManifestError()
+            _validate_string(current)
             continue
         if type(current) is float:
             if not math.isfinite(current):
@@ -235,11 +234,21 @@ def _json_value(value: object) -> None:
             if nodes > MAX_MANIFEST_NODES:
                 raise PersonaVisualManifestError()
             for key, item in current.items():
-                if not isinstance(key, str) or len(key) > MAX_MANIFEST_STRING_LENGTH:
+                if not isinstance(key, str):
                     raise PersonaVisualManifestError()
+                _validate_string(key)
                 pending.append(item)
             continue
         raise PersonaVisualManifestError()
+
+
+def _validate_string(value: str) -> None:
+    if len(value) > MAX_MANIFEST_STRING_LENGTH:
+        raise PersonaVisualManifestError()
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PersonaVisualManifestError() from None
 
 
 def _object(
