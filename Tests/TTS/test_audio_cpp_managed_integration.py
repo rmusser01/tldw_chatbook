@@ -754,10 +754,15 @@ async def test_optional_reference_recipe_keeps_normal_tts_action(
     """Task 13205 projects setup only for recipes that require a reference."""
 
     supervisor = _PreparationSupervisor()
+    # TASK-18609: the reviewed catalog classified
+    # pocket_tts_english_safetensors as voice_or_reference_required
+    # (e206d0882), so it is NOT text-ready and cannot carry this test's
+    # "an optional-reference recipe still permits normal TTS" intent.
+    # dramabox_q8_0 is the catalog's optional_reference_only TTS recipe.
     recipe = next(
         candidate
         for candidate in AUDIO_CPP_RECIPE_REGISTRY.recipes
-        if candidate.package_variant == "pocket_tts_english_safetensors"
+        if candidate.package_variant == "dramabox_q8_0"
     )
     accepted = AudioCppAcceptedPackage(
         package_uuid="d3f6d610-6fd9-4cde-9ea7-cc5175ca445b",

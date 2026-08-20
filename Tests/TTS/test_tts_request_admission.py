@@ -3239,7 +3239,10 @@ async def test_settings_publication_times_out_without_cancelling_old_speech() ->
     assert foreground.generation == ticket.generation
     assert foreground.persistence.file_replaced is True
     assert foreground.provider_statuses == {"audio_cpp": "pending"}
-    assert service.preferences_snapshot() == new_snapshot
+    # Activation is fenced behind the provider handoff (37da4620a): while
+    # the old speech's open response holds the exclusive lease, the handoff
+    # -- and therefore the in-memory default -- is still the OLD snapshot.
+    assert service.preferences_snapshot() == old_snapshot
     assert registry.configuration_revision("audio_cpp") == 1
     with pytest.raises(TTSProviderReconfiguringError):
         await registry.acquire("audio_cpp")
@@ -3255,6 +3258,9 @@ async def test_settings_publication_times_out_without_cancelling_old_speech() ->
     assert registry.configuration_revision("audio_cpp") == 2
     assert adapters[0].close_calls == 1
     assert len(adapters) == 1
+    # The handoff applied once the old speech released its lease, so the
+    # new default activates only now -- the ordering 37da4620a guarantees.
+    assert service.preferences_snapshot() == new_snapshot
 
     replacement = await service.synthesize_default(text="Generation two")
     assert adapters[1].generation == "two"
@@ -3332,11 +3338,18 @@ async def test_durable_save_advances_saved_generation_when_runtime_staging_fails
 
         assert completion.published is True
         assert completion.provider_statuses == {"audio_cpp": "unavailable"}
-        assert service.preferences_snapshot() == saved_snapshot
+        # The durable save advanced the SAVED generation, but activation is
+        # fenced behind the provider handoff (37da4620a): the runtime
+        # transition failed, so the in-memory default stays on the last
+        # snapshot the runtime actually accepted.
+        assert service.preferences_snapshot() == old_snapshot
         assert service.saved_configuration_revision("audio_cpp") == ticket.generation
         assert service.applied_configuration_revision("audio_cpp") == 0
-        with pytest.raises(TTSProviderUnavailableError):
-            await registry.acquire("audio_cpp")
+        # The PUBLICATION failed, not the provider: the slot is not sealed
+        # (sealing is reserved for a failed reviewed handoff), so the
+        # runtime stays usable for the next attempt.
+        lease = await registry.acquire("audio_cpp")
+        await lease.release()
     finally:
         await service.close()
         await service.wait_closed()
@@ -3461,6 +3474,9 @@ async def test_compatibility_reconfigure_cannot_supersede_pending_publication() 
         )
         foreground = await asyncio.shield(publication.foreground)
         assert foreground.provider_statuses == {"audio_cpp": "pending"}
+        # Fenced activation (37da4620a): pending means not yet activated --
+        # the in-memory default is still the construction-time snapshot.
+        assert service.preferences_snapshot() != saved_snapshot
 
         failed_publication = service.begin_preferences_publication(
             _snapshot(model_id="Model/Not-Replaced"),
@@ -3474,7 +3490,9 @@ async def test_compatibility_reconfigure_cannot_supersede_pending_publication() 
         )
         failed_result = await asyncio.shield(failed_publication.completion)
         assert failed_result.published is False
-        assert service.preferences_snapshot() == saved_snapshot
+        # The first publication is still pending, the second failed before
+        # replace: fenced activation leaves the default untouched.
+        assert service.preferences_snapshot() == _snapshot(model_id="Model/Initial")
 
         compatibility = asyncio.create_task(
             service.reconfigure_provider(
@@ -3490,9 +3508,15 @@ async def test_compatibility_reconfigure_cannot_supersede_pending_publication() 
         completion = await asyncio.shield(publication.completion)
 
         assert completion.provider_statuses == {"audio_cpp": "unavailable"}
-        assert service.preferences_snapshot() == saved_snapshot
-        with pytest.raises(TTSProviderUnavailableError):
-            await registry.acquire("audio_cpp")
+        # Fenced activation (37da4620a): the publication's handoff never
+        # applied -- the old speech held the lease until the compatibility
+        # reconfigure took the generation -- so the default stays on the
+        # snapshot the runtime last accepted: the construction-time
+        # Model/Initial (compatibility reconfigures provider config, not
+        # preferences).
+        assert service.preferences_snapshot() == _snapshot(model_id="Model/Initial")
+        lease = await registry.acquire("audio_cpp")
+        await lease.release()
     finally:
         await service.close()
         await service.wait_closed()
@@ -4036,19 +4060,23 @@ async def test_failed_multi_provider_begin_seals_in_reverse_and_joins_started_wo
             "alpha": "unavailable",
             "beta": "unavailable",
         }
-        assert events[:4] == [
+        # Canonical begin order is still enforced; the reverse SEAL pass is
+        # gone (37da4620a and successors: a failed publication marks its
+        # providers unavailable in the publication result without sealing
+        # the slots -- the providers themselves did not fail, so the next
+        # publication may retry them).
+        assert events == [
             "begin-alpha",
             "begin-beta",
-            "seal-beta",
-            "seal-alpha",
         ]
         assert publication.completion.done() is False
 
         allow_alpha.set()
         completion = await _wait_bounded(publication.completion)
         assert completion.provider_statuses == foreground.provider_statuses
-        with pytest.raises(TTSProviderUnavailableError):
-            await _wait_bounded(registry.acquire("alpha"))
+        # No seal: the slot is usable again immediately.
+        lease = await _wait_bounded(registry.acquire("alpha"))
+        await lease.release()
         assert secret not in repr(completion)
     finally:
         allow_alpha.set()
