@@ -133,13 +133,42 @@ with the exact portable UUID. Server-backed Persona rows never receive registry
 entries and cannot be exported or updated in place. Their UI offers `Save a local
 copy first` rather than attempting a cross-source write.
 
+### Persona cross-store authority
+
+Local Persona profiles currently use the private atomically replaced Persona JSON
+store, while portable identities and visual bindings/versions live in SQLite. V1 does
+not perform a broad Persona-authority migration as incidental Actor Pack work and does
+not claim these stores share an ACID transaction.
+
+Task 5 adds one durable local-actor mutation coordinator for the operations that must
+span those stores. Character mutations stay within the existing SQLite transaction.
+Persona mutations use a SQLite write-ahead intent containing bounded canonical old/new
+Persona snapshots and authority digests, followed by the existing atomic Persona JSON
+replace, then one SQLite commit for the registry and visual rows. The same SQLite
+transaction marks the intent committed. Before the Personas or Actor Pack surfaces
+become available, startup recovery handles any prepared intent idempotently:
+
+- if only the JSON replace occurred and its digest still equals the prepared new
+  value, restore the old record (or remove the newly created record) atomically;
+- if the SQLite commit occurred, retain the new JSON record and finish cleanup;
+- if either store has an unexpected third digest/revision, make no destructive guess,
+  quarantine that Actor Pack operation, and require explicit recovery.
+
+The UI reports success only after the full coordinator completes. Ordinary errors
+compensate before returning; crashes converge during startup recovery. Journal
+payloads are profile-private, never logged/exported, bounded to one actor mutation,
+and deleted after successful completion/recovery. Task 7 consumes this coordinator for
+Persona Create New, Create Copy, and Update Existing rather than inventing another
+cross-store protocol.
+
 ### ADR boundary
 
 Two new ADRs are required:
 
 1. **Portable Actor Packs and local Persona Visual runtime** — governs the separate
-   runtime boundary, local persistence, asset ownership, portable identity, archive
-   format, import trust boundary, activation, and rollback.
+   runtime boundary, local persistence, asset ownership, portable identity, the
+   Persona JSON/SQLite mutation journal and recovery boundary, archive format, import
+   trust boundary, activation, and rollback.
 2. **Durable character emote metadata** — amends ADR-067's session-only message
    boundary for server-parity directives, immutable final-expression references, and
    history reload.
@@ -375,7 +404,8 @@ The flow reuses canonical Character and Persona editors:
 1. User chooses Character or Persona.
 2. The canonical editor collects actor fields.
 3. A portrait is required before pack-ready Save.
-4. One transaction creates the actor and portable-identity registry row.
+4. Character creation uses one SQLite transaction; Persona creation uses the durable
+   cross-store mutation coordinator defined above.
 5. Visual sections may be authored later.
 6. Export remains unavailable until the actor-pack validator passes.
 
@@ -450,14 +480,23 @@ portable actor fields and publishes imported visual sections as new immutable lo
 versions. It never overwrites local database IDs, chats, deletion state, provider
 settings, credentials, or session/UI state.
 
+An optional visual section omitted from an Update Existing archive means **preserve
+the current local binding unchanged**. The review model says `Not included — existing
+visuals will be preserved`. V1 has no archive-level clear/deactivate instruction;
+users clear or replace a binding later through its dedicated Workbench. A present
+section is the only way import can publish and activate a new local version.
+
 Immediately before activation, the importer revalidates actor revision, UUID, both
 bindings, both versions, free-space authority, and exact staged filesystem identity.
 Stale review returns to review; it never auto-merges.
 
-Activation commits actor changes, pack/version/assets, and bindings in one database
-transaction around the existing staged-publication boundary. Cache/Buddy refresh
-occurs only after commit. Failure preserves the prior actor and active versions.
-Post-filesystem database failure exposes only an opaque internal cleanup token.
+For Characters, activation commits actor changes, pack/version/assets, and bindings in
+one database transaction around the existing staged-publication boundary. For
+Personas, the cross-store mutation coordinator owns the JSON authority change and its
+SQLite commit of registry, pack/version/assets, and binding rows. Cache/Buddy refresh
+occurs only after either path fully commits. Failure or recovery preserves the prior
+actor and every binding for an omitted section. Post-filesystem database failure
+exposes only an opaque internal cleanup token.
 
 Cancellation drains uncancellable thread work before cleanup. A bounded startup sweep
 removes crash-left staging only when its recognized name and pinned filesystem
@@ -702,6 +741,8 @@ Depends on the merged TASK-16319/ADR-067 foundation.
 Deliver `tldw.actor-pack/v1`, portable identity registry, actor-kind adapters,
 canonical digest/validation, and New Actor Pack creation through canonical editors.
 Only local actors are eligible; server-backed Personas expose Save Local Copy first.
+Add the durable Persona JSON/SQLite mutation journal, compensation, and startup
+recovery boundary consumed later by import.
 
 Depends on Tasks 1 and 4.
 
@@ -716,7 +757,9 @@ Depends on Tasks 1, 4, and 5.
 ### Task 7 — Import, review, and activate Actor Packs
 
 Deliver hostile-archive defense, private staging, path-free review, Create/Copy/Update,
-authority revalidation, atomic activation, cleanup, and post-commit cache/Buddy refresh.
+authority revalidation, crash-consistent activation, cleanup, and post-commit
+cache/Buddy refresh.
+An omitted optional visual section preserves the matching existing local binding.
 
 Depends on Tasks 1–6.
 
