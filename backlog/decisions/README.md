@@ -43,8 +43,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-039](039-global-and-studio-tts-settings-ownership.md) | Accepted | Keep application-wide TTS configuration in Settings, separately persist sparse Studio preferences, preserve character profile authority, and keep runtime operations in Lab. |
 | [ADR-040](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md) | Accepted | Store Console block Prompts and Recipes as schema-v2 artifacts with a first-class discriminator, compiled compatibility text, sensitive provider calls, and segment-safe composer transactions. |
 | [ADR-043](043-console-rail-compact-collapse-yields-to-explicit-toggle.md) | Accepted | Console rail compact-collapse rules are the responsive default rendering, not a hard block: explicit rail toggles are honored at any width with the main-column min-width waived, so manual toggles never silently no-op. |
-| [ADR-068](068-console-project-instruction-context-boundary.md) | Accepted | Original Console project-instruction context boundary; ADR-069 proposes a replacement after local-state and preflight ownership review. |
-| [ADR-069](069-console-project-instruction-local-state-and-preflight.md) | Proposed | Keep project-instruction control state local-only, detect binding retargets, and prepare ephemeral tool context before unchanged security review. |
+| [ADR-068](068-console-project-instruction-context-boundary.md) | Superseded | Original Console project-instruction context boundary, replaced by ADR-069 after local-state and preflight ownership review. |
+| [ADR-069](069-console-project-instruction-local-state-and-preflight.md) | Accepted | Keep project-instruction control state local-only, detect binding retargets, and prepare ephemeral tool context before unchanged security review. |
 
 ## Historical Decision Material
 
