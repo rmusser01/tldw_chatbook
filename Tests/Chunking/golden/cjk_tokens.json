@@ -3,7 +3,7 @@
     {
       "metadata": {
         "adaptive_chunking_used": false,
-        "chunk_content_hash": "a07a26e29a6c9cc3a547e039c4721550",
+        "chunk_content_hash": "145cea2722707ea012975c850367e42d",
         "chunk_index": 1,
         "chunk_method": "tokens",
         "language": "zh",
@@ -15,7 +15,7 @@
         "relative_position": 0.25,
         "total_chunks": 4
       },
-      "text": "这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一段"
+      "text": "这是一段中文文本。这是一段中文文本。这是一段中文文本。这是一�"
     },
     {
       "metadata": {
@@ -37,7 +37,7 @@
     {
       "metadata": {
         "adaptive_chunking_used": false,
-        "chunk_content_hash": "5e8d0d3e536af1a505924da8d40fe289",
+        "chunk_content_hash": "16f40aa603504dddef5bbe8729c82805",
         "chunk_index": 3,
         "chunk_method": "tokens",
         "language": "zh",
@@ -49,7 +49,7 @@
         "relative_position": 0.75,
         "total_chunks": 4
       },
-      "text": "段中文文本。这是一段中文文本。这是一段中文文本。这是一段中文"
+      "text": "��中文文本。这是一段中文文本。这是一段中文文本。这是一段中文"
     },
     {
       "metadata": {

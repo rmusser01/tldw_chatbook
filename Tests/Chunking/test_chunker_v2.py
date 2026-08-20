@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from Tests.Chunking.conftest import requires_cached_hf_tokenizer as _tokenizer_cached
+from Tests.Chunking.conftest import real_hf_cache  # noqa: F401
 
 from tldw_chatbook.Chunking.engine import (
     DEFAULT_CHUNK_OPTIONS,
@@ -279,13 +279,10 @@ class TestV2Chunker:
         assert any(call.args and call.args[0] == "code_ast" for call in spy.call_args_list)
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # Loads the real 'gpt2' tokenizer from the HF hub; chatbook's network
-    # guard blocks the download and the engine surfaces TokenizerError, so
-    # this only runs where the tokenizer is already cached (env-dependent).
-    @pytest.mark.skipif(
-        not _tokenizer_cached(),
-        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-    )
+    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
+    # HF stack at the real (pre-sandbox) cache with offline mode forced, so
+    # no network is touched. Skips if gpt2 is genuinely not cached.
+    @pytest.mark.usefixtures('real_hf_cache')
     def test_process_text_tokenizer_override(self):
         """tokenizer_name_or_path should use per-call strategy without mutating cached tokens."""
         chunker = Chunker()
@@ -911,13 +908,10 @@ class TestTokensStrategy:
     """Test the tokens chunking strategy."""
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # Loads the real 'gpt2' tokenizer from the HF hub; chatbook's network
-    # guard blocks the download and the engine surfaces TokenizerError, so
-    # this only runs where the tokenizer is already cached (env-dependent).
-    @pytest.mark.skipif(
-        not _tokenizer_cached(),
-        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-    )
+    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
+    # HF stack at the real (pre-sandbox) cache with offline mode forced, so
+    # no network is touched. Skips if gpt2 is genuinely not cached.
+    @pytest.mark.usefixtures('real_hf_cache')
     def test_tokens_basic_chunking(self):
         """Test basic token-based chunking."""
         from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
@@ -950,13 +944,10 @@ class TestTokensStrategy:
         assert all(chunk.strip() for chunk in chunks)
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # Loads the real 'gpt2' tokenizer from the HF hub; chatbook's network
-    # guard blocks the download and the engine surfaces TokenizerError, so
-    # this only runs where the tokenizer is already cached (env-dependent).
-    @pytest.mark.skipif(
-        not _tokenizer_cached(),
-        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-    )
+    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
+    # HF stack at the real (pre-sandbox) cache with offline mode forced, so
+    # no network is touched. Skips if gpt2 is genuinely not cached.
+    @pytest.mark.usefixtures('real_hf_cache')
     def test_tokens_preserve_leading_indentation_when_chunking_mid_block(self):
         """Token chunks must retain leading whitespace to keep code formatting intact."""
         from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
@@ -1260,9 +1251,11 @@ class TestBackwardCompatibility:
         # --- Ported (chunking-engine-parity Task 4) ---------------------
         # Upstream's improved_chunking_process is part of the server package init, which chatbook
         # deliberately does not vendor (spec §5.1); the compat equivalent
-        # lives in the Chunk_Lib shim.
+        # lives in the Chunk_Lib shim (behavioral coverage:
+        # Tests/Chunking/test_shim_backcompat.py, M3).
         pytest.skip(
-            "improved_chunking_process lives in the Chunk_Lib shim, not the engine package (spec §5.1); covered by test_chunk_lib_shim.py"
+            "improved_chunking_process lives in the Chunk_Lib shim, not the engine package "
+            "(spec §5.1); behavioral coverage in test_shim_backcompat.py"
         )
         """Test the backward compatibility improved_chunking_process function."""
         from tldw_chatbook.Chunking.engine import improved_chunking_process
@@ -1282,9 +1275,11 @@ class TestBackwardCompatibility:
         # --- Ported (chunking-engine-parity Task 4) ---------------------
         # Upstream's chunk_for_embedding is part of the server package init, which chatbook
         # deliberately does not vendor (spec §5.1); the compat equivalent
-        # lives in the Chunk_Lib shim.
+        # lives in the Chunk_Lib shim (behavioral coverage:
+        # Tests/Chunking/test_shim_backcompat.py, M3).
         pytest.skip(
-            "chunk_for_embedding lives in the Chunk_Lib shim with the legacy signature, not the engine package (spec §5.1); covered by test_chunk_lib_shim.py"
+            "chunk_for_embedding lives in the Chunk_Lib shim, not the engine package "
+            "(spec §5.1); behavioral coverage in test_shim_backcompat.py"
         )
         """Test the backward compatibility chunk_for_embedding function."""
         from tldw_chatbook.Chunking.engine import chunk_for_embedding
@@ -1453,11 +1448,9 @@ def test_paragraph_chunk_with_metadata_offsets_match_source():
 
 
 # --- Ported (chunking-engine-parity Task 4) -----------------------------
-# Loads the real gpt2 tokenizer from the HF hub; see conftest helper.
-@pytest.mark.skipif(
-    not _tokenizer_cached(),
-    reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-)
+# Loads the real gpt2 tokenizer; the real_hf_cache fixture forces an
+# offline read of the real cache (no network).
+@pytest.mark.usefixtures('real_hf_cache')
 def test_hierarchical_tokens_offsets_map_to_source():
     """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""
     chunker = Chunker()

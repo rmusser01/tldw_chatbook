@@ -106,18 +106,15 @@ ASYNC_GUARD = (
 )
 
 TOK_HELPER_IMPORT = (
-    "from Tests.Chunking.conftest import requires_cached_hf_tokenizer as _tokenizer_cached\n"
+    "from Tests.Chunking.conftest import real_hf_cache  # noqa: F401\n"
 )
 
-TOK_SKIPIF_METHOD = (
+TOK_USEFIXTURES = (
     "    # --- Ported (chunking-engine-parity Task 4) -------------------------\n"
-    "    # Loads the real 'gpt2' tokenizer from the HF hub; chatbook's network\n"
-    "    # guard blocks the download and the engine surfaces TokenizerError, so\n"
-    "    # this only runs where the tokenizer is already cached (env-dependent).\n"
-    "    @pytest.mark.skipif(\n"
-    "        not _tokenizer_cached(),\n"
-    "        reason=\"requires a locally cached gpt2 tokenizer (HF download blocked by network guard)\",\n"
-    "    )\n"
+    "    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the\n"
+    "    # HF stack at the real (pre-sandbox) cache with offline mode forced, so\n"
+    "    # no network is touched. Skips if gpt2 is genuinely not cached.\n"
+    "    @pytest.mark.usefixtures('real_hf_cache')\n"
 )
 
 
@@ -151,7 +148,7 @@ def _insert_module_skip(text: str, upstream_name: str, reason: str) -> str:
 
 def _patch_chunker_v2(text: str) -> str:
     name = "test_chunker_v2.py"
-    # helper import for the tokenizer-cache skipif
+    # fixture import for the tokenizer-cache-dependent tests
     text = _replace_once(
         text, "import pytest\n\n", "import pytest\n\n" + TOK_HELPER_IMPORT + "\n", name
     )
@@ -184,7 +181,8 @@ def _patch_chunker_v2(text: str) -> str:
         + '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
         name,
     )
-    # tokenizer-download tests: skipif unless gpt2 is cached
+    # tokenizer-cache-dependent tests: real_hf_cache fixture (offline read of
+    # the real cache; skip only if gpt2 is genuinely absent on this machine)
     for anchor in (
         '    def test_process_text_tokenizer_override(self):\n'
         '        """tokenizer_name_or_path should use per-call strategy without mutating cached tokens."""\n',
@@ -193,31 +191,25 @@ def _patch_chunker_v2(text: str) -> str:
         '    def test_tokens_preserve_leading_indentation_when_chunking_mid_block(self):\n'
         '        """Token chunks must retain leading whitespace to keep code formatting intact."""\n',
     ):
-        text = _replace_once(text, anchor, TOK_SKIPIF_METHOD + anchor, name)
+        text = _replace_once(text, anchor, TOK_USEFIXTURES + anchor, name)
     text = _replace_once(
         text,
         'def test_hierarchical_tokens_offsets_map_to_source():\n'
         '    """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""\n',
         '# --- Ported (chunking-engine-parity Task 4) -----------------------------\n'
-        '# Loads the real gpt2 tokenizer from the HF hub; see conftest helper.\n'
-        '@pytest.mark.skipif(\n'
-        '    not _tokenizer_cached(),\n'
-        '    reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",\n'
-        ')\n'
+        '# Loads the real gpt2 tokenizer; the real_hf_cache fixture forces an\n'
+        '# offline read of the real cache (no network).\n'
+        "@pytest.mark.usefixtures('real_hf_cache')\n"
         'def test_hierarchical_tokens_offsets_map_to_source():\n'
         '    """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""\n',
         name,
     )
-    # backward-compat functions live in the Chunk_Lib shim, not the engine pkg
-    for fn, why in (
-        ("improved_chunking_process",
-         "improved_chunking_process lives in the Chunk_Lib shim, not the "
-         "engine package (spec §5.1); covered by test_chunk_lib_shim.py"),
-        ("chunk_for_embedding",
-         "chunk_for_embedding lives in the Chunk_Lib shim with the legacy "
-         "signature, not the engine package (spec §5.1); covered by "
-         "test_chunk_lib_shim.py"),
-    ):
+    # backward-compat functions live in the Chunk_Lib shim, not the engine pkg.
+    # Behavioral coverage for the shim equivalents lives in
+    # test_chunk_lib_shim.py plus Tests/Chunking/test_shim_backcompat.py
+    # (M3): the ported assertions here are skipped, not deleted, so a future
+    # engine-package export re-enables them naturally.
+    for fn in ("improved_chunking_process", "chunk_for_embedding"):
         text = _replace_once(
             text,
             f'    def test_{fn}(self):\n',
@@ -225,9 +217,11 @@ def _patch_chunker_v2(text: str) -> str:
             f'        # --- Ported (chunking-engine-parity Task 4) ---------------------\n'
             f'        # Upstream\'s {fn} is part of the server package init, which chatbook\n'
             f'        # deliberately does not vendor (spec §5.1); the compat equivalent\n'
-            f'        # lives in the Chunk_Lib shim.\n'
+            f'        # lives in the Chunk_Lib shim (behavioral coverage:\n'
+            f'        # Tests/Chunking/test_shim_backcompat.py, M3).\n'
             f'        pytest.skip(\n'
-            f'            "{why}"\n'
+            f'            "{fn} lives in the Chunk_Lib shim, not the engine package "\n'
+            f'            "(spec §5.1); behavioral coverage in test_shim_backcompat.py"\n'
             f'        )\n',
             name,
         )
@@ -288,12 +282,25 @@ def _patch_thread_safety(text: str) -> str:
         '    def test_tokenizer_property_concurrent_initialization(self):\n'
         '        """Test concurrent tokenizer property access is thread-safe."""\n'
     )
-    return _replace_once(text, anchor, TOK_SKIPIF_METHOD + anchor, name)
+    return _replace_once(
+        text,
+        anchor,
+        "    # --- Ported (chunking-engine-parity Task 4) -------------------------\n"
+        "    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the\n"
+        "    # HF stack at the real (pre-sandbox) cache with offline mode forced, so\n"
+        "    # no network is touched. Skips if gpt2 is genuinely not cached.\n"
+        "    @pytest.mark.usefixtures('real_hf_cache')\n"
+        + anchor,
+        name,
+    )
 
 
 def _patch_offsets_property(text: str) -> str:
     name = "test_chunking_offsets_property.py"
-    # helper import goes in the import block; module marks after the imports
+    # The 'tokens' method arm needs the real gpt2 tokenizer: request the
+    # real_hf_cache fixture (offline read of the pre-sandbox cache) instead of
+    # a module-wide skip, so the property test always RUNS when the cache
+    # exists on the machine.
     text = _replace_once(
         text,
         "import pytest\n",
@@ -304,19 +311,20 @@ def _patch_offsets_property(text: str) -> str:
         text,
         "from tldw_chatbook.Chunking.engine import Chunker\n",
         "# --- Ported (chunking-engine-parity Task 4) -----------------------------------\n"
-        "# The 'tokens' strategy arm of this property test loads the real gpt2\n"
-        "# tokenizer from the HF hub; chatbook's network guard blocks the download\n"
-        "# and the engine surfaces TokenizerError, so it only runs where the\n"
-        "# tokenizer is already cached (env-dependent, see conftest).\n"
         "# Spec §10.2: also run under the production sanitization path (test mode\n"
-        "# explicitly off) via the production_path marker; Tests/Chunking/conftest.py.\n"
-        "pytestmark = [\n"
-        "    pytest.mark.skipif(\n"
-        "        not _tokenizer_cached(),\n"
-        '        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",\n'
-        "    ),\n"
-        "    pytest.mark.production_path,\n"
-        "]\n"
+        "# explicitly off) via the production_path marker; see the\n"
+        "# _production_sanitization autouse fixture in Tests/Chunking/conftest.py.\n"
+        "pytestmark = pytest.mark.production_path\n"
+        "\n"
+        "# The 'tokens' method arm resolves the real gpt2 tokenizer. The root\n"
+        "# Tests/conftest.py sandboxes HOME per test and the repo network guard\n"
+        "# blocks HF downloads, so this module pulls in the real_hf_cache fixture\n"
+        "# autouse: it points the HF stack at the REAL cache with offline mode\n"
+        "# forced (pure local read, no network) and skips with a true reason only\n"
+        "# if gpt2 is genuinely absent from this machine's cache.\n"
+        "@pytest.fixture(autouse=True)\n"
+        "def _tokens_tokenizer_cache(real_hf_cache):\n"
+        "    return real_hf_cache\n"
         "\nfrom tldw_chatbook.Chunking.engine import Chunker\n",
         name,
     )

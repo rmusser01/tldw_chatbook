@@ -41,16 +41,21 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 # --- Freeze test mode OFF before importing the engine (spec §10.2) ----------
+# The engine's detection (engine/chunker.py:1373) is
+#   os.getenv("PYTEST_CURRENT_TEST") != "" or is_test_mode()
+# where is_test_mode is BOUND into the engine module at import time. Run
+# outside pytest PYTEST_CURRENT_TEST is unset, and patching the engine-bound
+# name (not just the shim's) guarantees the production branch regardless of
+# ambient TLDW_TEST_MODE.
 os.environ.pop("PYTEST_CURRENT_TEST", None)
 os.environ.pop("TLDW_TEST_MODE", None)
-os.environ["TLDW_DISABLE_TEST_MODE"] = "1"
 
 REPO_ROOT = HERE.parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from tldw_chatbook.Chunking._shims import testing as _testing_shim  # noqa: E402
+import tldw_chatbook.Chunking.engine.chunker as _chunker_module  # noqa: E402
 
-_testing_shim.is_test_mode = lambda: False
+_chunker_module.is_test_mode = lambda: False
 
 from tldw_chatbook.Chunking.engine import Chunker, ChunkerConfig  # noqa: E402
 

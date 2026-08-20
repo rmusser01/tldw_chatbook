@@ -12,13 +12,20 @@ sync_chunking_engine.py execution.
 Cross-method combinations that legitimately raise (e.g. the `json` method on
 prose) are recorded as deterministic error outcomes; the test asserts the
 same error type, not a skip.
+
+The 'tokens' method resolves the real gpt2 tokenizer. The root
+Tests/conftest.py sandboxes HOME per test and the repo network guard blocks
+HF downloads, so the parametrized `method` fixture pulls in `real_hf_cache`
+for the tokens arm: it points the HF stack at the REAL (pre-sandbox) cache
+with offline mode forced — a pure local read, no network — and skips with a
+true reason only if gpt2 is genuinely absent from this machine's cache.
 """
 import json
 from pathlib import Path
 
 import pytest
 
-from Tests.Chunking.conftest import requires_cached_hf_tokenizer
+from Tests.Chunking.conftest import real_hf_cache  # noqa: F401
 
 GOLDEN = Path(__file__).parent / "golden"
 CORPUS = {
@@ -34,28 +41,12 @@ METHODS = ["words", "sentences", "paragraphs", "tokens", "json", "xml",
            "ebook_chapters", "structure_aware", "code", "fixed_size"]
 
 
-# The 'tokens' method resolves the real gpt2 tokenizer from the HF hub.
-# Generation (outside pytest, real HOME) uses the locally cached tokenizer;
-# under pytest, Tests/conftest.py redirects HOME to a temp dir and the network
-# guard blocks the hub download, so the tokens fixtures can only be verified
-# where the tokenizer is visible to the test process. The remaining 63
-# fixtures (all non-LLM methods that need no tokenizer) are the primary
-# parity evidence per spec §10.2.
-def _needs_tokenizer(method: str) -> bool:
-    return method == "tokens"
-
-
-def _tokens_available() -> bool:
-    return requires_cached_hf_tokenizer()
-
-
 @pytest.fixture(params=METHODS)
 def method(request):
-    if _needs_tokenizer(request.param) and not _tokens_available():
-        pytest.skip(
-            "tokens fixtures need the gpt2 tokenizer visible under pytest's "
-            "redirected HOME (HF download blocked by network guard)"
-        )
+    if request.param == "tokens":
+        # autouse-style request: make the real (offline) cache visible for the
+        # tokens arm; skips only if gpt2 is genuinely not cached locally
+        request.getfixturevalue("real_hf_cache")
     return request.param
 
 

@@ -15,7 +15,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from Tests.Chunking.conftest import requires_cached_hf_tokenizer as _tokenizer_cached
+from Tests.Chunking.conftest import real_hf_cache  # noqa: F401
 
 
 class TestSecurityLoggerThreadSafety:
@@ -187,13 +187,10 @@ class TestTokenizerFailedCacheThreadSafety:
             assert len(TokenChunkingStrategy._failed_tokenizers) == 50
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
-    # Loads the real 'gpt2' tokenizer from the HF hub; chatbook's network
-    # guard blocks the download and the engine surfaces TokenizerError, so
-    # this only runs where the tokenizer is already cached (env-dependent).
-    @pytest.mark.skipif(
-        not _tokenizer_cached(),
-        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-    )
+    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
+    # HF stack at the real (pre-sandbox) cache with offline mode forced, so
+    # no network is touched. Skips if gpt2 is genuinely not cached.
+    @pytest.mark.usefixtures('real_hf_cache')
     def test_tokenizer_property_concurrent_initialization(self):
         """Test concurrent tokenizer property access is thread-safe."""
         from tldw_chatbook.Chunking.engine.strategies.tokens import (

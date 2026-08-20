@@ -2,23 +2,24 @@ import os
 import re
 import pytest
 
-from Tests.Chunking.conftest import requires_cached_hf_tokenizer as _tokenizer_cached
+from Tests.Chunking.conftest import real_hf_cache  # noqa: F401
 from hypothesis import given, strategies as st, settings as hyp_settings, HealthCheck
 
 # --- Ported (chunking-engine-parity Task 4) -----------------------------------
-# The 'tokens' strategy arm of this property test loads the real gpt2
-# tokenizer from the HF hub; chatbook's network guard blocks the download
-# and the engine surfaces TokenizerError, so it only runs where the
-# tokenizer is already cached (env-dependent, see conftest).
 # Spec §10.2: also run under the production sanitization path (test mode
-# explicitly off) via the production_path marker; Tests/Chunking/conftest.py.
-pytestmark = [
-    pytest.mark.skipif(
-        not _tokenizer_cached(),
-        reason="requires a locally cached gpt2 tokenizer (HF download blocked by network guard)",
-    ),
-    pytest.mark.production_path,
-]
+# explicitly off) via the production_path marker; see the
+# _production_sanitization autouse fixture in Tests/Chunking/conftest.py.
+pytestmark = pytest.mark.production_path
+
+# The 'tokens' method arm resolves the real gpt2 tokenizer. The root
+# Tests/conftest.py sandboxes HOME per test and the repo network guard
+# blocks HF downloads, so this module pulls in the real_hf_cache fixture
+# autouse: it points the HF stack at the REAL cache with offline mode
+# forced (pure local read, no network) and skips with a true reason only
+# if gpt2 is genuinely absent from this machine's cache.
+@pytest.fixture(autouse=True)
+def _tokens_tokenizer_cache(real_hf_cache):
+    return real_hf_cache
 
 from tldw_chatbook.Chunking.engine import Chunker
 
