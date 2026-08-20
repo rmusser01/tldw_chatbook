@@ -66,10 +66,10 @@ class ControlledProvider(Provider):
             yield Hit(0.90, "first", PROBE.callback("first"))
             yield Hit(0.80, "second", PROBE.callback("second"))
             PROBE.batch_waiting.set()
-            await PROBE.release_batch.wait()
+            await wait_event(PROBE.release_batch)
             yield Hit(0.70, "batch", PROBE.callback("batch"))
             PROBE.late_waiting.set()
-            await PROBE.release_late.wait()
+            await wait_event(PROBE.release_late)
             yield Hit(0.60, "late", PROBE.callback("late"))
         except asyncio.CancelledError:
             PROBE.cancelled.set()
