@@ -26,7 +26,15 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.color import Color
-from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
+from textual.events import (
+    Click,
+    DescendantFocus,
+    Key,
+    MouseDown,
+    MouseUp,
+    Paste,
+    Resize,
+)
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -20255,18 +20263,30 @@ class ChatScreen(BaseAppScreen):
         """
         node: object = target
         while node is not None:
-            if isinstance(node, ConsoleTranscript):
-                return  # the transcript's own handlers own in-area dismissal
+            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
+                return  # the transcript/menu own their in-area interaction
             node = getattr(node, "parent", None)
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
         # manager state), then remove any stragglers (e.g. menus mounted by
         # harnesses without a transcript ancestor).
         for transcript in self.query(ConsoleTranscript):
+            transcript.selection_manager.cancel()
+            transcript._selection_origin_row = None
             transcript._remove_selection_menu()
         for menu in self.query(ConsoleSelectionMenu):
             if not getattr(menu, "_pruning", False):
                 menu.remove()
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Dismiss selection UI before descendants may consume the click."""
+        target = getattr(event, "widget", None) or getattr(event, "control", None)
+        if target is None:
+            try:
+                target, _offset = self.get_widget_at(event.screen_x, event.screen_y)
+            except Exception:
+                target = None
+        self._dismiss_console_selection_menus_outside_transcript(target)
 
     def on_click(self, event: Click) -> None:
         """Reset pending paste unfurl confirmation when clicking outside the token."""

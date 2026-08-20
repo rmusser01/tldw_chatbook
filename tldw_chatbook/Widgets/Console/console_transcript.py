@@ -4771,7 +4771,13 @@ class ConsoleTranscript(VerticalScroll):
         ):
             press_node = press_node.parent
         if press_node is None:
+            had_menu = bool(self._attached_selection_menus())
             self._remove_selection_menu()
+            if had_menu:
+                # Popover semantics: this press dismisses the menu only.
+                # Preserve the drag-release suppression token so its Click
+                # cannot also toggle the row underneath the old menu.
+                return
         # Textual encodes a real left press as button 1 (the XTerm driver
         # maps the left button to ``(buttons + 1) & 3``; 0 means "no button",
         # as in plain mouse-move reports).
@@ -4966,6 +4972,8 @@ class ConsoleTranscript(VerticalScroll):
     ) -> None:
         """Escape dismissal clears the whole selection UI (strip included)."""
         event.stop()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
         self._remove_selection_menu()
 
     @on(ConsoleSelectionMenu.MoreDetails)

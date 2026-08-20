@@ -166,6 +166,7 @@ def test_swap_seeds_greeting_only_into_an_empty_chat():
 
     controller = ConsoleSessionController.__new__(ConsoleSessionController)
     controller.app_instance = SimpleNamespace(notify=lambda *_args, **_kwargs: None)
+    controller._manual_reaction_overrides = {}
     seed = CharacterSessionPromptSeed(
         name="Lana",
         system_template="SYS",

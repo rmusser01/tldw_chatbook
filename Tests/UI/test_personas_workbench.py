@@ -3356,6 +3356,11 @@ class TestImportExport:
             "import_character_card_with_outcome",
             persist_character,
         )
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_character_dictionaries=AsyncMock(
+                return_value={"dictionaries": []}
+            )
+        )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
         log_messages: list[str] = []

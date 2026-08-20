@@ -40,7 +40,7 @@ class TwoSidedHarness(App):
 
     CSS = "ConsoleTranscript { height: 24; width: 100; }"
 
-    def __init__(self, *, low: int = 600, high: int = 900) -> None:
+    def __init__(self, *, low: int = 300, high: int = 450) -> None:
         super().__init__()
         self.app_config = {
             "chat_defaults": {

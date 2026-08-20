@@ -6,6 +6,7 @@ import ast
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -73,6 +74,7 @@ from tldw_chatbook.Widgets.Library.prompt_delete_confirmation_modal import (
     PromptDeleteRequest,
 )
 from tldw_chatbook.Widgets.ModelArtifacts.install_modal import ModelInstallModal
+from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -477,6 +479,22 @@ LIBRARY_MODAL_CONTRACTS = (
         _FOCUS_POSTCONDITION,
         None,
     ),
+    LibraryModalContract(
+        WorkspaceCreateModal,
+        lambda: WorkspaceCreateModal(
+            registry_service=SimpleNamespace(
+                list_workspaces=lambda **_kwargs: (),
+            )
+        ),
+        "#workspace-create-modal",
+        "#workspace-create-cancel",
+        _assert_none,
+        type(None),
+        None,
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
 )
 
 
@@ -518,6 +536,12 @@ def _edge(
 
 
 LIBRARY_MODAL_LAUNCH_EDGES = (
+    _edge(
+        _LIBRARY_SCREEN_FILE,
+        "LibraryScreen",
+        "create_local_workspace",
+        WorkspaceCreateModal,
+    ),
     _edge(_LIBRARY_SCREEN_FILE, "LibraryScreen", "_export_library_note", FileSave),
     _edge(
         _LIBRARY_SCREEN_FILE,
@@ -841,6 +865,7 @@ ORDINARY_LIBRARY_MODAL_CONTRACTS = (
     (PromptDeleteConfirmationModal, "#prompt-delete-modal"),
     (LibraryNoteFolderNameDialog, "#library-note-folder-name-dialog"),
     (LibraryNoteFolderTargetDialog, "#library-note-folder-target-dialog"),
+    (WorkspaceCreateModal, "#workspace-create-modal"),
 )
 
 
@@ -1092,7 +1117,7 @@ async def test_authorization_endpoint_details_nested_modal_dismissal_restores_fo
 
 
 def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
-    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 6
+    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 7
     for modal_type, content_selector in ORDINARY_LIBRARY_MODAL_CONTRACTS:
         assert issubclass(modal_type, SafeModalDismissMixin)
         assert modal_type.SAFE_MODAL_CONTENT == content_selector
@@ -1513,7 +1538,7 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
     contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
     edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
 
-    assert len(contract_types) == len(set(contract_types)) == 18
+    assert len(contract_types) == len(set(contract_types)) == 19
     assert edge_types == set(contract_types)
     assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
     assert {SessionGitTrustDialog}.issubset(contract_types)
@@ -1570,7 +1595,7 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     discovered = _discover_library_modal_edges(_production_owner_sources())
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
-    assert len(discovered) == len(declared) == 32
+    assert len(discovered) == len(declared) == 33
     _assert_exact_library_modal_inventory(discovered, declared)
 
 

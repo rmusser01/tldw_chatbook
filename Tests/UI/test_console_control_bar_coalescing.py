@@ -57,12 +57,15 @@ async def test_screen_push_runs_a_bounded_number_of_control_bar_syncs(sync_spy):
         for _ in range(8):
             await pilot.pause()
 
-    # 6, not fewer: the coalescer covers the sync-pipeline burst sites, but
+    # 8, not fewer: the coalescer covers the sync-pipeline burst sites, but
     # immediacy-bearing callers stay direct — the scope-refresh pair and the
     # native-sync inline call (its precomputed rail_state anchors the rail
     # cascade ordering, TASK-251/task-3010 round 2), plus the provider/model
     # Select initializers that legitimately fire once each at mount. Was 14.
-    assert len(sync_spy) <= 6, (
+    # The visible hands-free Switch added two legitimate initialization
+    # synchronizations; this still keeps the pre-coalescer count of 14 nearly
+    # halved while rejecting an actual mount-window burst.
+    assert len(sync_spy) <= 8, (
         f"control-bar sync ran {len(sync_spy)} times during one push — "
         "the mount-window burst is back"
     )

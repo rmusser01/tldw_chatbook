@@ -216,8 +216,10 @@ async def test_a_burst_of_keystrokes_runs_the_debounced_pass_once():
             assert counter.context_syncs == 0
             await pilot.pause(0.35)
             # One debounced pass; its own worker syncs again as results land.
+            # The 0.2 s native Console tick may contribute one independent
+            # context sync during this 0.35 s observation window.
             # What matters is that six keystrokes did not cost six passes.
-            assert counter.context_syncs <= 3
+            assert counter.context_syncs <= 4
 
         assert console._console_conversation_browser_query == "alpha6"
 

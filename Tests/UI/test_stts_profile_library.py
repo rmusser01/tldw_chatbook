@@ -936,7 +936,10 @@ async def _select_action_profile(
     await _open_stts_view(app, pilot, "profiles")
     await _wait_until(
         pilot,
-        lambda: app.query_one("#stts-profile-table", DataTable).row_count == 1,
+        lambda: (
+            len(app.query("#stts-profile-table")) == 1
+            and app.query_one("#stts-profile-table", DataTable).row_count == 1
+        ),
     )
     table = app.query_one("#stts-profile-table", DataTable)
     table.move_cursor(row=0)
@@ -4188,7 +4191,11 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
         app.screen.query_one("#stts-export-choice-bundle", Button).press()
         await _wait_until(
             pilot,
-            lambda: len(app.screen.query("#bundle-warning-ack")) == 1,
+            lambda: (
+                len(app.screen.query("#bundle-warning-ack")) == 1
+                and app.focused is not None
+                and app.focused.id == "bundle-warning-ack"
+            ),
         )
         assert bundle_service.exports == []
         await _wait_focused(app, pilot, "bundle-warning-ack")

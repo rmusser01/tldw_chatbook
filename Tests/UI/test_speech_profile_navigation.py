@@ -460,7 +460,11 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         screen.query_one("#voice-profiles", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen.stts_window.current_view == "profiles",
+            lambda: (
+                screen.stts_window.current_view == "profiles"
+                and len(screen.query(STTSProfileLibrary)) == 1
+                and len(screen.query("#speech-destination-back")) == 1
+            ),
         )
         assert screen.stts_window._voice_tool_origin is not None
         assert len(screen.query("#speech-destination-back")) == 1
@@ -468,7 +472,10 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         screen.query_one("#lab-speech-row-playground", Button).press()
         await _wait_until(
             pilot,
-            lambda: screen.stts_window.current_view == "playground",
+            lambda: (
+                screen.stts_window.current_view == "playground"
+                and len(screen.query(SpeechPlaygroundPane)) == 1
+            ),
         )
         assert screen.stts_window._voice_tool_origin is None
 

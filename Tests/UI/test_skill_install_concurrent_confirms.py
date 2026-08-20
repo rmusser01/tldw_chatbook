@@ -534,7 +534,10 @@ def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_in
     t1 = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
 
-    controller._shutdown_requested.set()  # global flag only -- no per-session fanout
+    # task-15860 split teardown into per-visit and permanent lifecycle
+    # signals. Drive the real permanent boundary so detached/headless rounds
+    # receive their arm-time cancellation event too.
+    controller.begin_shutdown()
     t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
     assert not t1.is_alive(), (
         "a real-session round with no matching _active_cancel_events entry "
@@ -574,7 +577,7 @@ def test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans
     assert controller.session_a not in controller._active_cancel_events
     assert controller.session_b not in controller._active_cancel_events
 
-    controller._shutdown_requested.set()  # global flag only -- no per-session fanout
+    controller.begin_shutdown()
     t1.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
     t2.join(timeout=_MCP_APPROVAL_POLL_SECONDS + 3.0)
 

@@ -255,7 +255,7 @@ class ConsoleSelectionMenu(Vertical):
                 visible); NOT part of the anchor. ``None`` (no row, or its
                 region unmeasured) keeps the plain bottom-pinned clamp.
         """
-        super().__init__(id="console-selection-menu", classes="console-selection-menu")
+        super().__init__(id="console-selection-menu")
         self._anchor = (screen_x, screen_y)
         self._owner = owner
         self._has_add_to_chat = has_add_to_chat

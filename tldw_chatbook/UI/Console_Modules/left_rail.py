@@ -580,7 +580,7 @@ class ConsoleLeftRail(Vertical):
                 cancel_all_button = Button(
                     "Cancel all agents",
                     id=CONSOLE_AGENT_CANCEL_ALL_ID,
-                    classes="console-workspace-action console-agent-cancel-all",
+                    classes="console-workspace-action",
                     compact=True,
                 )
                 cancel_all_button.tooltip = (
