@@ -2,9 +2,10 @@
 id: TASK-16320
 title: Add startup AGENTS.md project context to Console
 status: In Progress
-assignee: []
+assignee:
+  - '@codex'
 created_date: '2026-08-20 15:31'
-updated_date: '2026-08-20 16:40'
+updated_date: '2026-08-20 16:46'
 labels:
   - console
   - agents
@@ -44,4 +45,10 @@ Let new Console agent sessions safely load repository-authored root AGENTS.md gu
 ADR required: yes
 ADR path: backlog/decisions/069-console-project-instruction-local-state-and-preflight.md
 Reason: this changes provider/runtime trust boundaries and local-only durable state.
+
+Baseline evidence (2026-08-20):
+- Schema head: v32.
+- Collision check: only the current codex/agents-md-support branch was found; the open AGENTS.md PR search returned zero results.
+- Command: python -m pytest Tests/Agents/test_tool_catalog_owner_cache.py Tests/Agents/test_agent_runtime_review_hook.py Tests/Chat/test_console_local_review_hook.py Tests/DB/test_chachanotes_context_summary_migration.py Tests/Workspaces/test_workspace_folder_bindings.py Tests/UI/test_console_context_modal.py -q
+- Result: 71 passed, 1 warning in 6.03s.
 <!-- SECTION:PLAN:END -->
