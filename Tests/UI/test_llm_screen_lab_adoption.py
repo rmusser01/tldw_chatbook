@@ -1693,6 +1693,7 @@ async def test_models_lab_insufficient_space_cancel_is_inline_and_never_provisio
                 and bool(app.screen.query("#model-install-confirm"))
             ),
             pilot,
+            attempts=1500,
         )
         modal = app.screen
         assert modal.query_one("#model-install-confirm", Button).disabled is True
@@ -3839,15 +3840,12 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
         assert await _wait_for(
             lambda: (
                 len(service.committed) == 1
-                and str(
-                    external.query_one(
-                        "#external-model-operation-status", Static
-                    ).renderable
-                )
-                == "Runtime required"
+                and bool(statuses := screen.query("#external-model-operation-status"))
+                and str(statuses.first(Static).renderable) == "Runtime required"
             ),
             pilot,
         )
+        external = screen.query_one(ExternalModelView)
         assert service.commit_threads[0] != threading.get_ident()
         owner = service.prepare_calls[0][2]
         assert owner[0] == "scope"
@@ -3871,6 +3869,7 @@ async def test_real_picker_verifies_off_loop_reports_bytes_and_commits_after_suc
                 == "Runtime required"
             ),
             pilot,
+            attempts=1500,
         )
         status = screen.query_one("#external-model-operation-status", Static)
         assert str(status.renderable) == "Runtime required"

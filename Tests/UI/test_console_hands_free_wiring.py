@@ -1706,7 +1706,13 @@ async def test_hands_free_limit_never_auto_sends_the_retained_text(
         await pilot.pause()
 
         service.emit_final("dictated before the limit hit")
-        await pilot.pause()
+        await _wait_for(
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "countdown"
+            ),
+            pilot,
+        )
         console._dictation._handle_console_dictation_limit()
 
         await _wait_for(lambda: console._console_hands_free is None, pilot)

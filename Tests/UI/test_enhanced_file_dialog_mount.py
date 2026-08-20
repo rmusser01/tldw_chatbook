@@ -436,7 +436,14 @@ async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
     )
     app = _DialogHost(dialog)
 
-    with patch.object(efp_module, "save_settings_to_cli_config", batch_spy):
+    with (
+        patch.object(efp_module, "save_settings_to_cli_config", batch_spy),
+        patch.object(
+            dialog,
+            "run_worker",
+            side_effect=AssertionError("persistence must be app-owned"),
+        ),
+    ):
         async with app.run_test() as pilot:
             await pilot.pause()
 

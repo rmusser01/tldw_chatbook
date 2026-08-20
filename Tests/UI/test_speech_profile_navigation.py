@@ -270,6 +270,7 @@ async def _deliver_profile_sample(
     playground._generation_operation_id = artifact.operation_id
     playground._generation_complete(artifact)
     if expect_save:
+        await playground.workers.wait_for_complete()
         await _wait_until(
             pilot,
             lambda: not playground.query_one(

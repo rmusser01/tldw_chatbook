@@ -9751,12 +9751,20 @@ async def test_library_prompt_discard_refuses_while_save_is_in_flight(tmp_path):
 
 async def _open_prompts_list(screen, pilot) -> None:
     """Open the rail's Prompts row (list view, not the editor)."""
+    previous_token = screen._library_prompt_browse_controller.result.request_token
     screen.query_one("#library-row-browse-prompts").press()
-    await pilot.pause()
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while asyncio.get_running_loop().time() < deadline:
+        result = screen._library_prompt_browse_controller.result
+        if result.request_token > previous_token:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError("Prompts rail press never started a browse request")
     await _wait_for_prompt_browse_scope(
         screen,
         pilot,
-        screen._library_prompt_browse_controller.scope,
+        result.scope,
     )
 
 

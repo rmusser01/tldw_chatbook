@@ -1200,7 +1200,10 @@ async def test_cancelling_the_create_form_clears_the_draft():
         await pilot.pause()
 
         screen.query_one("#sources-create-cancel", Button).press()
-        await pilot.pause()
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while screen._source_create_draft["name"] or screen._source_create_form_open:
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.01)
 
         assert screen._source_create_draft == {"name": "", "url": "", "tags": ""}
         assert screen._source_create_form_open is False
@@ -3031,11 +3034,11 @@ async def test_a_background_tree_reload_repaints_the_artifacts_scope_note():
         pane = screen.query_one("#watchlists-artifacts-pane", ArtifactsPane)
 
         service.rename(watchlist["id"], "Morning AI Brief")
-        screen._load_tree_data()
+        await screen._load_tree_data().wait()
         for _ in range(300):
             await pilot.pause(0.01)
-            note = screen.query_one("#artifacts-scope-note", Static)
-            if "Morning AI Brief" in str(note.renderable):
+            notes = screen.query("#artifacts-scope-note")
+            if notes and "Morning AI Brief" in str(notes.first(Static).renderable):
                 break
 
         note = screen.query_one("#artifacts-scope-note", Static)

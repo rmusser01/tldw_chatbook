@@ -19298,7 +19298,7 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         else:
             raise AssertionError("Progress callback never fired.")
         for _ in range(150):
-            if "syncing" in str(
+            if "1/2" in str(
                 screen.query_one("#library-notes-sync-status", Static).renderable
             ):
                 break

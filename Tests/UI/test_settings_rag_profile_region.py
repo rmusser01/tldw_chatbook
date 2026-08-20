@@ -1112,6 +1112,7 @@ async def test_library_rag_index_status_worker_updates_the_static(
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -2974,6 +2975,7 @@ async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
+        await pilot.app.workers.wait_for_complete()
         await _wait_for_starter_panel(screen, pilot, displayed=True)
 
         panel = screen.query_one("#settings-library-rag-starter-panel")

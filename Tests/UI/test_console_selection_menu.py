@@ -8,6 +8,8 @@ Clicks inside the menu stop there so the transcript never treats them as
 click-outside.
 """
 
+import asyncio
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.events import MouseDown, MouseMove, MouseUp
@@ -36,7 +38,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 
 
 async def _wait_for_menu(app, pilot, predicate):
-    for _ in range(500):
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while asyncio.get_running_loop().time() < deadline:
         menus = list(app.query(ConsoleSelectionMenu))
         if menus and predicate(menus[0]):
             return menus[0]
