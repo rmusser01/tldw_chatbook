@@ -130,6 +130,9 @@ class FakeClient:
         ({"notes": [{"id": "page-only"}]}, 1, False),
         ({"notes": [{"id": "exact"}], "count": 7}, 7, True),
         ({"notes": [], "count": 0}, 0, True),
+        ({"notes": [{"id": "boolean"}], "count": True}, 1, False),
+        ({"notes": [{"id": "string"}], "count": "1"}, 1, False),
+        ({"notes": [], "count": -1}, -1, False),
     ],
 )
 async def test_list_server_notes_marks_whether_raw_count_is_exact(
