@@ -7,10 +7,11 @@ This script demonstrates the new features:
 3. Parent document retrieval
 4. Table serialization
 
-Note (chunking-engine-parity task 8): the bespoke PDF-artifact cleaning
-(DocumentStructureParser.clean_text) was deleted together with the retired
-home-grown structure parser; input sanitization now happens inside the
-vendored engine.
+Note (chunking-engine-parity task 8, Q5 ruling): the bespoke PDF-artifact
+cleaning (DocumentStructureParser.clean_text) was DELETED with the retired
+home-grown structure parser — the feature was NOT ported anywhere. The
+vendored engine performs security-oriented input sanitization only, which
+is not a replacement for it.
 """
 
 import pytest
