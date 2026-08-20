@@ -101,6 +101,22 @@ _COST_ROW_ID_PREFIX = "console-inspector-cost-row-"
 # inline.
 SIZE_THRESHOLD_BYTES = 1 * 1024 * 1024
 
+# Next Send tab (task-10 review finding 2): the snapshot-load worker's own
+# ``run_worker`` group -- kept OUT of Textual's "default" group (which the
+# Costs tab's ``_load_turn_captures`` and the Exchange tab's ``_load_
+# exchange_turn`` both land in, since neither passes ``group=``) for two
+# reasons. (a) ``exclusive=True`` cancels every OTHER worker in the SAME
+# group -- left at "default", a Next Send Refresh/"r" would cancel an
+# in-flight Costs/Exchange capture load whose row/turn index is already
+# marked loaded (``_loaded_row_indices``/``_loaded_exchange_turn_
+# indices``), permanently emptying that row with no retry short of
+# reopening the modal. (b) ``on_worker_state_changed`` below filters on
+# this same group, so a Costs/Exchange loader failure (which already
+# handles its own error internally and never reaches ERROR state, but
+# should not be trusted to stay that way forever) can't produce this tab's
+# "Failed to refresh context." toast or clear ITS spinner.
+_NEXT_SEND_WORKER_GROUP = "console-inspector-next-send"
+
 # Shared between the Costs tab's per-turn drill-in and the Exchange tab's
 # turn-level load (task-9) -- identical wording for identical situations,
 # defined once so the two never drift apart.
@@ -208,15 +224,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     .console-inspector-exchange-message { height: auto; }
     .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
     #console-inspector-actions { height: auto; margin-top: 1; }
-    /* Next Send tab (task-10, ported from the retired context modal). The pane
-       normally fills the tab's available space; LY-13 (TASK-2154.23)
-       compacted the OLD modal's own top-level frame to content when there
-       was nothing to show yet -- here the outer modal frame is shared
-       with the Costs/Exchange tabs and stays a fixed size, so this same
-       idea is scoped to the pane's own container instead (see
-       ``_update_view``'s docstring). */
+    /* Next Send tab (task-10, ported from the retired context modal).
+       LY-13 (TASK-2154.23) compacted the OLD modal's own top-level frame
+       to content when there was nothing to show yet; DROPPED here (task-10
+       review finding 1) -- the outer modal frame is now shared with the
+       Costs/Exchange tabs and stays a fixed height regardless of this
+       pane's state, so there was nothing left for a pane-scoped "auto"
+       height to compact (measured identically empty vs. populated). */
     #console-inspector-next-send-pane { height: 1fr; }
-    #console-inspector-next-send-pane.context-empty { height: auto; }
     #console-inspector-next-send-header { height: auto; }
     #console-inspector-next-send-warning { height: auto; color: yellow; }
     #console-inspector-next-send-loading { display: none; }
@@ -415,7 +430,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         the moment this fires, whether or not the user ever switches to
         that tab.
         """
-        self.run_worker(self._load_snapshot, exclusive=True)
+        self.run_worker(
+            self._load_snapshot,
+            exclusive=True,
+            group=_NEXT_SEND_WORKER_GROUP,
+            name="load_snapshot",
+        )
 
     def _build_costs_widgets(self) -> list[Widget]:
         """Costs-tab row widgets: one lazily-drillable Collapsible per row.
@@ -1090,13 +1110,22 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             logger.error(
                 f"Failed to save exchange capture to {path}: {type(exc).__name__}"
             )
-            self.notify(f"Save failed: {exc}", severity="error")
+            # Class name + path, not the raw exception body (task-10
+            # review finding 4 -- brought to the same standard as the
+            # sibling Next Send tab's own ``_save_json`` below; an
+            # OSError's str() can echo the payload-adjacent path, but
+            # nothing about the capture content itself).
+            self.notify(
+                f"Save failed ({type(exc).__name__}): {path}", severity="error"
+            )
         except Exception as exc:
             logger.error(
                 f"Unexpected error saving exchange capture to {path}: "
                 f"{type(exc).__name__}"
             )
-            self.notify(f"Save failed: {exc}", severity="error")
+            self.notify(
+                f"Save failed ({type(exc).__name__}): {path}", severity="error"
+            )
 
     # -- Next Send tab (task-10, ported from the retired context modal) -
 
@@ -1116,13 +1145,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             loading.remove_class("loading")
 
     def _update_view(self) -> None:
-        # LY-13 (TASK-2154.23): compact the PANE (not the modal frame --
-        # see this class's DEFAULT_CSS comment) when there is nothing to
-        # show yet; the pane only earns its full 1fr of the tab's space
-        # once there is actual content.
-        pane = self.query_one("#console-inspector-next-send-pane", Vertical)
-        pane.set_class(not self.snapshot.current_messages, "context-empty")
-
+        # LY-13 (TASK-2154.23) compaction was DROPPED here (task-10 review
+        # finding 1) -- see this class's DEFAULT_CSS comment for why. The
+        # empty state still renders its own guidance copy below
+        # (``_build_current_context_widgets``); it just no longer resizes
+        # the pane's own container to match.
         warning = self.query_one("#console-inspector-next-send-warning", Static)
         if self._in_progress:
             warning.update("A response is in progress; snapshot may change.")
@@ -1280,13 +1307,30 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     async def _load_snapshot(self) -> None:
         self.next_send_loading = True
         try:
-            self.snapshot = await self._snapshot_factory()
+            new_snapshot = await self._snapshot_factory()
+            # Estimate refreshed BEFORE the snapshot assignment below
+            # (task-10 review finding 6): ``self.snapshot = ...`` is a
+            # reactive that triggers ``watch_snapshot`` -> ``_update_view``
+            # SYNCHRONOUSLY, which reads ``self._token_estimate`` for the
+            # header text -- assigning the snapshot first would render
+            # with the PRIOR estimate, one refresh stale (a real bug in
+            # the retired standalone context modal this was ported from).
             if self._estimate_factory is not None:
                 self._token_estimate = self._estimate_factory()
+            self.snapshot = new_snapshot
         finally:
             self.next_send_loading = False
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        # Filtered to THIS pane's own worker group (task-10 review finding
+        # 2a) -- this screen also runs the Costs tab's ``_load_turn_
+        # captures`` and the Exchange tab's ``_load_exchange_turn`` workers
+        # (both left in Textual's "default" group), and an unfiltered
+        # handler here would toast this tab's "Failed to refresh context."
+        # message -- and clear THIS tab's spinner -- for a failure that has
+        # nothing to do with the Next Send tab.
+        if event.worker.group != _NEXT_SEND_WORKER_GROUP:
+            return
         if event.state == WorkerState.ERROR:
             self.next_send_loading = False
             self.notify("Failed to refresh context.", severity="error")
@@ -1299,7 +1343,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#console-inspector-next-send-refresh")
     def _refresh_next_send(self, event: Button.Pressed) -> None:
         event.stop()
-        self.run_worker(self._load_snapshot, exclusive=True)
+        self.run_worker(
+            self._load_snapshot,
+            exclusive=True,
+            group=_NEXT_SEND_WORKER_GROUP,
+            name="load_snapshot",
+        )
 
     @on(Button.Pressed, "#console-inspector-next-send-copy")
     def _copy_json(self, event: Button.Pressed) -> None:
@@ -1380,7 +1429,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         except NoMatches:
             return
         if tabs.active == TAB_NEXT_SEND:
-            self.run_worker(self._load_snapshot, exclusive=True)
+            self.run_worker(
+                self._load_snapshot,
+                exclusive=True,
+                group=_NEXT_SEND_WORKER_GROUP,
+                name="load_snapshot",
+            )
 
     async def action_dismiss(self) -> None:
         """Defensive fallback for the built-in "dismiss" action name."""

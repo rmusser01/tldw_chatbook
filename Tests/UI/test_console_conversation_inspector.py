@@ -11,6 +11,7 @@ one replaced -- both retired outright in task-10).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
@@ -27,6 +28,7 @@ from textual.widgets import (
     TextArea,
 )
 from textual.widgets._collapsible import CollapsibleTitle
+from textual.worker import WorkerState
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import (
@@ -41,6 +43,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     TAB_EXCHANGE,
+    TAB_NEXT_SEND,
     ConsoleConversationInspector,
     InspectorTurn,
     _SAMPLING_EXCLUDED_REQUEST_KEYS,
@@ -1030,3 +1033,112 @@ async def test_exchange_calls_ordered_by_created_at_not_arrival_or_run_tag() -> 
         assert early_index < middle_index < late_index, (
             f"expected chronological order (early, middle, late), got {titles!r}"
         )
+
+
+# --- Next Send worker isolation (task-10 review finding 2) -----------------
+
+
+@pytest.mark.asyncio
+async def test_default_group_worker_error_does_not_toast_next_send_or_clear_its_spinner(
+    monkeypatch,
+) -> None:
+    """task-10 review finding 2a: this screen runs the Costs tab's
+    ``_load_turn_captures`` and the Exchange tab's ``_load_exchange_turn``
+    workers in Textual's "default" group (neither passes ``group=``, same
+    as ``run_worker``'s own default). Before the fix,
+    ``on_worker_state_changed`` was UNFILTERED, so ANY worker owned by
+    this screen reaching ``WorkerState.ERROR`` -- not just the Next Send
+    snapshot load -- toasted "Failed to refresh context." and cleared
+    ``next_send_loading``, even though the failure had nothing to do with
+    Next Send.
+
+    Simulates a Costs/Exchange-shaped failure directly: a throwaway
+    coroutine in the SAME "default" group, ``exit_on_error=False`` so the
+    simulated failure surfaces as ``WorkerState.ERROR`` without crashing
+    the harness (mirrors how a real, uncaught mount-path exception in
+    ``_load_turn_captures``/``_load_exchange_turn`` would be reported --
+    neither of those call sites passes ``exit_on_error=False`` themselves,
+    but Textual still sets the ERROR state before acting on that flag)."""
+    never_ready = asyncio.Event()
+
+    async def _blocking_snapshot() -> ConsoleContextSnapshot:
+        await never_ready.wait()
+        return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+    app = InspectorHarness(**_default_kwargs(snapshot_factory=_blocking_snapshot))
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        assert modal.next_send_loading, "expected the snapshot load still in flight"
+
+        notifications: list[str] = []
+        monkeypatch.setattr(
+            modal, "notify", lambda message, *a, **k: notifications.append(message)
+        )
+
+        async def _boom() -> None:
+            raise RuntimeError("simulated Costs/Exchange mount-path failure")
+
+        worker = modal.run_worker(
+            _boom(), group="default", exclusive=False, exit_on_error=False
+        )
+        await _wait_until(pilot, lambda: worker.state == WorkerState.ERROR)
+        await pilot.pause()
+
+        assert modal.next_send_loading, (
+            "an unrelated default-group worker's error must not clear the "
+            "Next Send tab's own spinner"
+        )
+        assert not notifications, (
+            f"expected no toast from an unrelated worker's error, got {notifications!r}"
+        )
+
+        never_ready.set()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_next_send_refresh_does_not_cancel_an_in_flight_costs_capture_load() -> None:
+    """task-10 review finding 2b: before the fix, the snapshot worker's
+    ``exclusive=True`` lived in the SAME "default" group as the Costs
+    tab's ``_load_turn_captures`` worker (``exclusive`` cancels every
+    OTHER worker in its OWN group) -- refreshing Next Send (Refresh
+    button / "r") while a Costs row's capture load was still in flight
+    would cancel it. Since ``_loaded_row_indices`` already marks that row
+    loaded BEFORE the worker starts (``_on_row_toggled``), a cancelled
+    load left the row permanently empty, with no retry short of
+    reopening the whole modal. Now on its own worker group, a Next Send
+    refresh must leave an in-flight Costs capture load free to complete."""
+    still_loading = asyncio.Event()
+    capture = _capture("run-1", 0, "2026-08-17T09:00:00Z", "gpt-4")
+
+    async def slow_loader(
+        _native_message_id: str,
+    ) -> list[tuple[ExchangeCapture, bool]]:
+        await still_loading.wait()
+        return [(capture, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=slow_loader, initial_tab=TAB_NEXT_SEND)
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+
+        row = modal.query_one("#console-inspector-cost-row-0", Collapsible)
+        row.collapsed = False
+        await pilot.pause()  # let the Costs worker start and block on the event
+
+        await pilot.click("#console-inspector-next-send-refresh")
+        await pilot.pause()
+
+        still_loading.set()
+
+        def _has_call_line() -> bool:
+            return any(
+                "call 0" in str(static.renderable) for static in row.query(Static)
+            )
+
+        await _wait_until(pilot, _has_call_line)

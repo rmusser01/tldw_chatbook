@@ -9,8 +9,15 @@ clickable tab) instead of the standalone modal; only DOM ids that used to
 identify the old modal's own FRAME changed to the pane's ids. Every
 behavioral pin from the original file is kept: the "No conversation
 context" empty-state copy prefix, the save-blocked tooltip, the raw-JSON
-toggle, the 1 MiB size threshold (covered elsewhere, in
-``test_console_conversation_inspector.py``), and the in-progress warning.
+toggle, the 1 MiB size threshold, and the in-progress warning.
+
+task-10 review finding 3: this module's docstring used to claim the 1 MiB
+threshold was "covered elsewhere, in test_console_conversation_inspector
+.py" -- a reviewer grep found no such assertion anywhere in ``Tests/``, and
+since the retired classes' own name sweep is zero-hit, no PRE-task-10 test
+covered it either: the pin the brief listed never actually existed.
+``test_next_send_payload_over_size_threshold_offers_save_instead_of_
+render`` below is that test.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Widgets.Console import console_conversation_inspector
 from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
     CLOSE_BUTTON_ID,
+    SIZE_THRESHOLD_BYTES,
     TAB_NEXT_SEND,
     ConsoleConversationInspector,
 )
@@ -745,6 +753,134 @@ async def test_context_modal_save_to_file_failure(monkeypatch):
         await pilot.pause()
 
 
+@pytest.mark.asyncio
+async def test_copy_json_failure_log_and_toast_omit_the_raw_exception_body(
+    monkeypatch,
+):
+    """task-10 review finding 5: the security half of hard constraints 2/3
+    (no raw exception text -- which can embed payload fragments -- in the
+    log or in a user-visible toast) had no test asserting the actual LOG/
+    TOAST CONTENT; ``test_context_modal_save_to_file_failure`` above only
+    asserted "does not crash". A sentinel exception whose message is a
+    distinctive string proves it: if that string leaked into either
+    surface, this test would catch it (an f-string interpolating ``exc``
+    directly, as the retired standalone modal's own ``_copy_json`` did,
+    would fail here)."""
+    sentinel = "SENTINEL-COPY-boom-must-not-leak-4a7c"
+    fake_copy = types.SimpleNamespace(copy=Mock(side_effect=RuntimeError(sentinel)))
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_copy)
+
+    app = ActionHarness()
+    log_lines: list[str] = []
+    from loguru import logger
+
+    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
+        await pilot.pause()
+
+        toasts: list[str] = []
+        monkeypatch.setattr(
+            app.screen,
+            "notify",
+            lambda message, *a, **k: toasts.append(str(message)),
+        )
+
+        try:
+            await pilot.click("#console-inspector-next-send-copy")
+            await pilot.pause()
+        finally:
+            logger.remove(sink_id)
+
+    combined_log = "\n".join(log_lines)
+    assert sentinel not in combined_log, combined_log
+    assert "RuntimeError" in combined_log, combined_log
+    assert toasts, "expected a toast on copy failure"
+    assert all(sentinel not in toast for toast in toasts), toasts
+
+
+@pytest.mark.asyncio
+async def test_save_json_failure_log_and_toast_include_class_and_path_not_message(
+    monkeypatch,
+):
+    """task-10 review finding 5, save side: same security pin as the copy
+    test above, but for ``_save_json`` -- hard constraint 3 specifically
+    named the retired standalone modal's ``self.notify(f"Save failed:
+    {exc}")`` as the exact toast-leak this replaced. Asserts both the
+    log line and the toast carry the failure CLASS NAME and the
+    destination path (per the fix's own f-string), and neither carries
+    the sentinel exception message."""
+    sentinel = "SENTINEL-SAVE-boom-must-not-leak-92f1"
+    fake_path_str = "/fake/Downloads/chatbook_context_sentinel.json"
+
+    class FailingPath:
+        """Path stand-in whose ``write_text`` always raises ``OSError``
+        with a distinctive sentinel message, and whose ``str()`` is a
+        stable, recognizable fake path."""
+
+        def __str__(self) -> str:
+            return fake_path_str
+
+        @classmethod
+        def home(cls):
+            return cls()
+
+        def __truediv__(self, other: str) -> "FailingPath":
+            return self
+
+        @property
+        def parent(self) -> "FailingPath":
+            # ``_save_json`` calls ``path.parent.mkdir(...)`` before
+            # ``write_text`` -- without this the fake would raise
+            # ``AttributeError`` on ``.parent`` itself, landing in the
+            # generic ``except Exception`` branch instead of ``except
+            # OSError``, and never actually exercising the branch this
+            # test means to pin.
+            return self
+
+        def mkdir(self, **kwargs: object) -> None:
+            return None
+
+        def write_text(self, *args: object, **kwargs: object) -> None:
+            raise OSError(sentinel)
+
+    monkeypatch.setattr(console_conversation_inspector, "Path", FailingPath)
+
+    app = ActionHarness()
+    log_lines: list[str] = []
+    from loguru import logger
+
+    sink_id = logger.add(lambda message: log_lines.append(str(message)), level="WARNING")
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector())
+        await pilot.pause()
+
+        toasts: list[str] = []
+        monkeypatch.setattr(
+            app.screen,
+            "notify",
+            lambda message, *a, **k: toasts.append(str(message)),
+        )
+
+        try:
+            await pilot.click("#console-inspector-next-send-save")
+            await pilot.pause()
+        finally:
+            logger.remove(sink_id)
+
+    combined_log = "\n".join(log_lines)
+    assert sentinel not in combined_log, combined_log
+    assert "OSError" in combined_log, combined_log
+    assert fake_path_str in combined_log, combined_log
+
+    assert toasts, "expected a toast on save failure"
+    assert all(sentinel not in toast for toast in toasts), toasts
+    assert any("OSError" in toast for toast in toasts), toasts
+    assert any(fake_path_str in toast for toast in toasts), toasts
+
+
 PREFILL_SNAPSHOT = ConsoleContextSnapshot(
     current_messages=[
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
@@ -839,13 +975,22 @@ async def test_context_modal_save_button_is_disabled_with_a_reason_when_ephemera
 
 
 @pytest.mark.asyncio
-async def test_context_modal_empty_state_compacts_pane_and_guides():
-    """LY-13 (TASK-2154.23): the empty viewer sizes its PANE to content and
-    guides -- ported from the old modal's own top-level-frame compaction
-    (see ``ConsoleConversationInspector.DEFAULT_CSS``'s Next Send comment
-    for why this now scopes to the pane rather than the shared modal
-    frame: the frame is shared with the Costs/Exchange tabs and stays a
-    fixed size across all three)."""
+async def test_context_modal_empty_state_renders_full_guidance_copy():
+    """LY-13 (TASK-2154.23): the empty viewer guides rather than voids.
+
+    task-10 review finding 1: this test used to ALSO assert
+    ``pane.has_class("context-empty")`` (a pane-scoped port of the old
+    standalone modal's own top-level-frame compaction). A reviewer probe
+    at this same size measured the pane's rendered height IDENTICAL empty
+    vs. populated (``height=27`` both ways) -- inside a fixed-height
+    ``TabPane`` shared with the Costs/Exchange tabs, an ``auto``-height
+    pane is dominated by its own inner ``1fr`` TabbedContent regardless of
+    content, so the class toggled but compacted nothing. The class and its
+    CSS rule were removed outright (see ``ConsoleConversationInspector
+    .DEFAULT_CSS``'s Next Send comment); this test now only pins what
+    actually renders -- the full multi-sentence guidance copy, not just
+    the "No conversation context" prefix ``test_context_modal_empty_
+    state`` already covers."""
     app = ModalHarness()
     app._push_empty = lambda: app.push_screen(_inspector(_empty_factory))
 
@@ -861,17 +1006,62 @@ async def test_context_modal_empty_state_compacts_pane_and_guides():
             (text for text in labels if "No conversation context" in text), ""
         )
         assert "Next Send" in guidance
-        pane = modal_screen.query_one("#console-inspector-next-send-pane", Vertical)
-        assert pane.has_class("context-empty")
 
 
 @pytest.mark.asyncio
-async def test_context_modal_populated_state_keeps_full_height():
-    """The compact class is empty-state-only; populated keeps the room."""
+async def test_context_modal_populated_state_renders_messages_not_guidance():
+    """The populated state renders actual message content, not the
+    empty-state guidance copy (task-10 review finding 1 renamed this from
+    a dead ``context-empty`` class check -- see the sibling empty-state
+    test's docstring for why that class was removed)."""
     app = ModalHarness()  # pushes the populated snapshot on mount
 
     async with app.run_test(size=(120, 44)) as pilot:
         await pilot.pause()
         modal_screen = app.screen
-        pane = modal_screen.query_one("#console-inspector-next-send-pane", Vertical)
-        assert not pane.has_class("context-empty")
+        current_container = modal_screen.query_one(
+            "#console-inspector-next-send-current-body", Vertical
+        )
+        text_areas = current_container.query(TextArea)
+        assert any("Hello" in ta.text for ta in text_areas)
+        labels = [str(label.renderable) for label in current_container.query(Label)]
+        assert not any("No conversation context" in text for text in labels)
+
+
+@pytest.mark.asyncio
+async def test_next_send_payload_over_size_threshold_offers_save_instead_of_render():
+    """task-10 review finding 3: the 1 MiB raw-JSON size guard
+    (``_build_next_send_widgets``) never had a test anywhere in this repo
+    -- not here, not in the retired standalone modal's own suite (the
+    class-name grep sweep is zero-hit, so nothing pre-task-10 exercised
+    it either). Past ``SIZE_THRESHOLD_BYTES``, the Next Send tab must
+    render the "Context exceeds 1 MiB" guidance instead of attempting to
+    render the payload as a giant ``TextArea`` (which would also defeat
+    the point of the raw-JSON checkbox, still checked here to be OFF)."""
+    oversized_payload = {
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "x" * (SIZE_THRESHOLD_BYTES + 1)}],
+    }
+    oversized_snapshot = ConsoleContextSnapshot(
+        current_messages=[
+            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="Hello"),
+        ],
+        next_send_payload=oversized_payload,
+    )
+
+    async def _oversized_factory() -> ConsoleContextSnapshot:
+        return oversized_snapshot
+
+    app = ActionHarness()
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        app.push_screen(_inspector(_oversized_factory))
+        await pilot.pause()
+
+        modal = app.screen
+        next_container = modal.query_one(
+            "#console-inspector-next-send-payload-body", Vertical
+        )
+        labels = [str(label.renderable) for label in next_container.query(Label)]
+        assert any("Context exceeds 1 MiB" in text for text in labels)
+        assert not list(next_container.query(TextArea))
