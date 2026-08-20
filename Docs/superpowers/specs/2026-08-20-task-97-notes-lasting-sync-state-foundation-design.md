@@ -1,7 +1,8 @@
 # TASK-97: Notes Lasting-Sync State Foundation — Design
 
 Date: 2026-08-20
-Status: Draft for independent review
+Status: Independently reviewed; awaiting user approval
+Review: Approved at `904f44aee` with no remaining P0–P2 findings
 Task: [TASK-97](../../../backlog/tasks/task-97%20-%20Conflict-resolution-dialog-for-Notes-sync.md)
 Governing decisions:
 
