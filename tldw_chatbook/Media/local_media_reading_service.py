@@ -18,6 +18,7 @@ from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
@@ -1590,28 +1591,54 @@ class LocalMediaReadingService:
         chunk_size: int,
         chunk_overlap: int,
     ) -> list[dict[str, Any]]:
+        """Split ``text`` into chunks via the converged ChunkingService.
+
+        Phase B (chunking-engine-parity, task 9): the legacy body sliced raw
+        characters in a ``range(0, len(text), step)`` loop, splitting mid-word
+        by construction. It now delegates to the engine-backed
+        ``ChunkingService`` (words method), which splits on word units, while
+        keeping this method's input normalization and output contract
+        unchanged for its callers.
+
+        Args:
+            text: Text to chunk.
+            perform_chunking: When False, chunking is skipped entirely.
+            chunk_size: Target chunk size (legacy semantics: passed through to
+                the engine after normalization; the words method reads it as
+                a max word count).
+            chunk_overlap: Overlap between consecutive chunks.
+
+        Returns:
+            List of chunk dicts with the legacy keys ``index``,
+            ``chunk_index``, ``start_char``, ``end_char`` and ``text``.
+        """
         if not perform_chunking:
             return []
+        # Same normalization as the legacy char-slicer: size floored at 1,
+        # overlap clamped into [0, size - 1]. The engine would raise a
+        # ChunkingError on these degenerate values; the legacy contract clamps.
         normalized_size = max(int(chunk_size or 0), 1)
         normalized_overlap = min(max(int(chunk_overlap or 0), 0), normalized_size - 1)
-        step = normalized_size - normalized_overlap
+        engine_chunks = ChunkingService().chunk_text(
+            text,
+            chunk_size=normalized_size,
+            chunk_overlap=normalized_overlap,
+            method="words",
+        )
         chunks: list[dict[str, Any]] = []
-        for index, start in enumerate(range(0, len(text), step)):
-            end = min(start + normalized_size, len(text))
-            chunk_text = text[start:end]
+        for index, engine_chunk in enumerate(engine_chunks):
+            chunk_text = str(engine_chunk.get("text") or "")
             if chunk_text == "":
                 continue
             chunks.append(
                 {
                     "index": index,
                     "chunk_index": index,
-                    "start_char": start,
-                    "end_char": end,
+                    "start_char": engine_chunk.get("start_char", 0),
+                    "end_char": engine_chunk.get("end_char", 0),
                     "text": chunk_text,
                 }
             )
-            if end >= len(text):
-                break
         return chunks
 
     def create_file_artifact(
