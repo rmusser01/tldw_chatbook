@@ -2945,12 +2945,12 @@ async def _wait_for_starter_panel(
     timeout: float = 10.0,
 ):
     """Wait for the starter panel's projected display state."""
-    panel = screen.query_one("#settings-library-rag-starter-panel")
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
-        if panel.display is displayed:
+        panels = list(screen.query("#settings-library-rag-starter-panel"))
+        if panels and panels[0].display is displayed:
             await pilot.pause()
-            return panel
+            return panels[0]
         await pilot.pause(0.01)
     raise AssertionError(
         f"Starter panel display never became {displayed}. "
